@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import * as tiles from '../js/world/tiles.js';
+import * as lattice from '../js/world/lattice.js';
+import * as waterways from '../js/world/waterways.js';
 
 const require = createRequire(import.meta.url);
 const { loadModule } = require('./helpers/module.cjs');
@@ -58,13 +60,13 @@ function streamerModule() {
 }
 
 // A lattice of 10 m cells from the origin: 120 m tiles
-const lattice = { x0: 0, z0: 0, cell: 10 };
+const lattice10 = { x0: 0, z0: 0, cell: 10 };
 const reply = (worker, data) => worker.onmessage({ data });
 
 test('a layer is bucketed by tile, each worker sent only its own tiles\' triangles, each of them once', () => {
   const { TileStreamer } = streamerModule();
   const scene = new Object3D();
-  const streamer = new TileStreamer({ scene, lattice, ground: null, workers: 2 });
+  const streamer = new TileStreamer({ scene, lattice: lattice10, ground: null, workers: 2 });
   assert.ok(scene.children.includes(streamer.root));
   assert.deepEqual(workers.map((w) => w.sent[0].msg.type), ['init', 'init']);
   const g = streamer.grid;
@@ -96,7 +98,7 @@ test('a layer is bucketed by tile, each worker sent only its own tiles\' triangl
 
 test('tiles are asked for nearest first a few at a time, shown as they come, and dropped once left behind', () => {
   const { TileStreamer } = streamerModule();
-  const streamer = new TileStreamer({ scene: new Object3D(), lattice, ground: null, workers: 1, box: { x0: 0, x1: 2400, z0: 0, z1: 2400 } });
+  const streamer = new TileStreamer({ scene: new Object3D(), lattice: lattice10, ground: null, workers: 1, box: { x0: 0, x1: 2400, z0: 0, z1: 2400 } });
   const g = streamer.grid;
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(new Float32Array(9), 3));
@@ -134,7 +136,7 @@ test('tiles are asked for nearest first a few at a time, shown as they come, and
 
 test('the radius grows with the camera\'s height, and its velocity looks ahead but not across a teleport', () => {
   const { TileStreamer, DETAIL_RADIUS } = streamerModule();
-  const streamer = new TileStreamer({ scene: new Object3D(), lattice, ground: null, workers: 1 });
+  const streamer = new TileStreamer({ scene: new Object3D(), lattice: lattice10, ground: null, workers: 1 });
   streamer.update({ x: 0, z: 0 }, 0, 0.1);
   assert.equal(streamer.focus.radius, DETAIL_RADIUS);
   streamer.update({ x: 0, z: 0 }, 300, 0.1);
@@ -150,7 +152,7 @@ test('the radius grows with the camera\'s height, and its velocity looks ahead b
 
 test('a tile its worker could not lay is let go, not waited on, and its worker freed', async () => {
   const { TileStreamer } = streamerModule();
-  const streamer = new TileStreamer({ scene: new Object3D(), lattice, ground: null, workers: 1 });
+  const streamer = new TileStreamer({ scene: new Object3D(), lattice: lattice10, ground: null, workers: 1 });
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(new Float32Array([10, 0, 10, 20, 0, 10, 10, 0, 20]), 3));
   streamer.addLayer(geometry, {}, { covers: true });
@@ -170,4 +172,63 @@ test('a tile its worker could not lay is let go, not waited on, and its worker f
   assert.equal(streamer.workers[0].busy, 0);
   assert.equal(errors.length, 1);
   assert.equal(JSON.stringify(streamer.stats), JSON.stringify({ loading: 0, shown: 0, layers: 1 }));
+});
+
+// The worker, run as a script with a `self` that keeps what it posts
+function workerScope() {
+  const posted = [];
+  const self = { postMessage: (msg, transfer = []) => posted.push({ msg, transfer }) };
+  loadModule(readFileSync(new URL('../js/world/tile-worker.js', import.meta.url), 'utf8'), {
+    imports: { './tiles.js': tiles, './lattice.js': lattice, './waterways.js': waterways },
+    globals: { self, Math, Map, Float32Array, Uint32Array, String, Infinity, atob }
+  });
+  return { send: (msg) => self.onmessage({ data: msg }), posted };
+}
+
+test('the worker lays a deck tile and opens it over the river channels reaching into that tile', () => {
+  const { send, posted } = workerScope();
+  // 120 m tiles; a channel's hole (a 10 m wide strip from z = 20 to 30 across x = 0..60) and one in another tile
+  send({ type: 'init', lattice: lattice10, cells: 12, ground: null, holes: new Float32Array([0, 20, 60, 20, 60, 30, 0, 20, 60, 30, 0, 30, 500, 500, 510, 500, 510, 510]) });
+  const k = tiles.createTileGrid(lattice10, 12).key(0, 0);
+  // the deck: a 100 x 100 m square in tile (0, 0)
+  const position = new Float32Array([0, 0, 0, 0, 0, 100, 100, 0, 100, 0, 0, 0, 100, 0, 100, 100, 0, 0]);
+  send({ type: 'layer', id: 0, arrays: [position], sizes: [3], normalAt: -1, cutHoles: true, buckets: [[k, new Uint32Array([0, 1])]] });
+  send({ type: 'layer', id: 1, arrays: [position.slice()], sizes: [3], normalAt: -1, cutHoles: false, buckets: [[k, new Uint32Array([0, 1])]] });
+  send({ type: 'tile', key: k, layers: [0, 1] });
+  const [{ msg, transfer }] = posted;
+  assert.equal(msg.key, k);
+  const area = (p) => {
+    let a = 0;
+    for (let t = 0; t < p.length; t += 9) a += Math.abs((p[t + 3] - p[t]) * (p[t + 8] - p[t + 2]) - (p[t + 6] - p[t]) * (p[t + 5] - p[t + 2])) / 2;
+    return a;
+  };
+  assert.ok(Math.abs(area(msg.parts[0].arrays[0]) - (100 * 100 - 60 * 10)) < 0.01, 'the deck opened over its channel');
+  assert.ok(Math.abs(area(msg.parts[1].arrays[0]) - 100 * 100) < 0.01, 'the layers that don\'t ask, whole');
+  assert.equal(transfer.length, 2, 'the arrays handed over');
+  assert.deepEqual([...msg.parts[0].bounds], [0, 0, 0, 100, 0, 100]);
+});
+
+test('a tile the worker cannot lay comes back as an error', () => {
+  const { send, posted } = workerScope();
+  send({ type: 'init', lattice: lattice10, cells: 12, ground: null, holes: null });
+  // (a layer whose triangle list points past its arrays)
+  send({ type: 'layer', id: 0, arrays: null, sizes: [3], normalAt: -1, cutHoles: false, buckets: [[1, new Uint32Array([0])]] });
+  send({ type: 'tile', key: 1, layers: [0] });
+  assert.equal(posted[0].msg.key, 1);
+  assert.equal(posted[0].msg.parts.length, 0);
+  assert.match(posted[0].msg.error, /TypeError/);
+});
+
+test('in the flat city the worker cuts a deck tile in small cells before its holes, which would split it without end', () => {
+  const { send, posted } = workerScope();
+  send({ type: 'init', lattice: null, cells: 12, ground: null, holes: new Float32Array([0, 20, 60, 20, 60, 30, 0, 20, 60, 30, 0, 30]) });
+  const k = tiles.createTileGrid(null, 12).key(0, 0);
+  const position = new Float32Array([0, 0, 0, 0, 0, 450, 450, 0, 450, 0, 0, 0, 450, 0, 450, 450, 0, 0]);
+  send({ type: 'layer', id: 0, arrays: [position], sizes: [3], normalAt: -1, cutHoles: true, buckets: [[k, new Uint32Array([0, 1])]] });
+  send({ type: 'tile', key: k, layers: [0] });
+  const p = posted[0].msg.parts[0].arrays[0];
+  let a = 0;
+  for (let t = 0; t < p.length; t += 9) a += Math.abs((p[t + 3] - p[t]) * (p[t + 8] - p[t + 2]) - (p[t + 6] - p[t]) * (p[t + 5] - p[t + 2])) / 2;
+  assert.ok(Math.abs(a - (450 * 450 - 600)) < 0.05);
+  for (let v = 0; v < p.length; v += 3) assert.equal(p[v + 1], 0, 'left at its height');
 });

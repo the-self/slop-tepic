@@ -15,7 +15,7 @@ import {
 } from '../render/tsl-materials.js';
 import { GEO } from './city-geodata.js';
 import { SLOPES, liftAt, groundSlope } from './ground.js';
-import { drapeMeshes, streamMeshes } from './drape.js';
+import { drapeMeshes, streamMeshes, cutOnCells } from './drape.js';
 import { cutRiverHoles } from './river-channels.js';
 import { openness } from './lot-greenery.js';
 import { cyclewayRuns, CYCLEWAY_HALF } from './medians.js';
@@ -697,7 +697,10 @@ function buildCityGrid(scene, streamer = null) {
   } else {
     // ...and lay them on the town's slopes; the valley floor beyond the hills' grid stays flat
     drapeMeshes(group, new Set([valleyMesh]));
-    // ...and open the deck over the river channels (river-channels.js draws them sunk into the ground)
+    // ...and open the deck over the river channels (river-channels.js draws them sunk into the ground): in the flat
+    // city, cut in small cells first like the slopes' lattice cuts it (the holes cut out of its few triangles kilometres
+    // across would split them into pieces without end)
+    if (!SLOPES) roadMesh.geometry = cutOnCells(roadMesh.geometry);
     roadMesh.geometry = cutRiverHoles(roadMesh.geometry);
   }
 

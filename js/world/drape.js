@@ -1,13 +1,15 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SLOPES, LATTICE, townHeight } from './ground.js';
-import { visibleTriangles, layOnFloor } from './lattice.js';
+import { visibleTriangles, layOnFloor, clipToLattice } from './lattice.js';
 
 // js/world/drape.js
 // Lays the city's ground layers, built flat at y = 0 (the road deck, sidewalks & curbs, meadows, park walks, yards,
 // road paint), on the town's slopes (ground.js): their triangles are cut along the ground's lattice and each vertex
 // raised by the town's floor under it, so a layer follows the ground exactly and the layers stacked on it keep their
 // few centimetres apart. In the flat city (?slopes=0) everything is left as built.
+
+const FLAT_CELL = 37.5; // m: the cells the flat city's deck is cut in before its holes (the slopes' lattice cell)
 
 const _inverse = new THREE.Matrix4();
 const _identity = new THREE.Matrix4();
@@ -40,22 +42,38 @@ function drapeGeometry(geo, { undersides = true } = {}) {
   return draped;
 }
 
+// A mesh (its world matrix up to date) laid on the town's floor in place, without its undersides
+function drapeMesh(obj) {
+  // (in world space: the city's ground layers are, most often, already)
+  const placed = !obj.matrixWorld.equals(_identity);
+  const world = placed ? obj.geometry.clone().applyMatrix4(obj.matrixWorld) : obj.geometry;
+  const draped = drapeGeometry(world, { undersides: false });
+  if (placed) {
+    draped.applyMatrix4(_inverse.copy(obj.matrixWorld).invert());
+    world.dispose();
+  }
+  obj.geometry.dispose();
+  obj.geometry = draped;
+}
+
+/** A geometry (world space) cut in FLAT_CELL squares from the origin: a new, non-indexed geometry */
+function cutOnCells(geo) {
+  const names = Object.keys(geo.attributes).sort((a, b) => (a === 'position' ? -1 : b === 'position' ? 1 : 0));
+  const attrs = names.map((name) => geo.attributes[name]);
+  const out = clipToLattice(attrs.map((a) => a.array), attrs.map((a) => a.itemSize), geo.index ? geo.index.array : null,
+    { x0: 0, z0: 0, cell: FLAT_CELL });
+  const cut = new THREE.BufferGeometry();
+  names.forEach((name, k) => cut.setAttribute(name, new THREE.BufferAttribute(out[k], attrs[k].itemSize, attrs[k].normalized)));
+  geo.dispose();
+  return cut;
+}
+
 /** Every plain (not instanced) mesh under `root` but those in `skip` laid on the town's floor, without its undersides */
 function drapeMeshes(root, skip = null) {
   if (!SLOPES || !LATTICE) return;
   root.updateMatrixWorld(true);
   root.traverse((obj) => {
-    if (!obj.isMesh || obj.isInstancedMesh || (skip && skip.has(obj))) return;
-    // (in world space: the city's ground layers are, most often, already)
-    const placed = !obj.matrixWorld.equals(_identity);
-    const world = placed ? obj.geometry.clone().applyMatrix4(obj.matrixWorld) : obj.geometry;
-    const draped = drapeGeometry(world, { undersides: false });
-    if (placed) {
-      draped.applyMatrix4(_inverse.copy(obj.matrixWorld).invert());
-      world.dispose();
-    }
-    obj.geometry.dispose();
-    obj.geometry = draped;
+    if (obj.isMesh && !obj.isInstancedMesh && !(skip && skip.has(obj))) drapeMesh(obj);
   });
 }
 
@@ -69,10 +87,12 @@ function streamMeshes(root, streamer, { skip = null, covers = new Set(), cutHole
   root.updateMatrixWorld(true);
   const groups = new Map(); // material + attribute names -> { material, geos, castShadow, receiveShadow, renderOrder }
   const meshes = [];
+  const several = []; // (meshes of several materials: laid whole, as drapeMeshes would)
   root.traverse((obj) => {
-    if (!obj.isMesh || obj.isInstancedMesh || (skip && skip.has(obj)) || Array.isArray(obj.material)) return;
-    meshes.push(obj);
+    if (!obj.isMesh || obj.isInstancedMesh || (skip && skip.has(obj))) return;
+    (Array.isArray(obj.material) ? several : meshes).push(obj);
   });
+  if (SLOPES && LATTICE) several.forEach(drapeMesh);
   for (const obj of meshes) {
     let geo = obj.geometry.index ? obj.geometry.toNonIndexed() : obj.geometry.clone();
     if (!obj.matrixWorld.equals(_identity)) geo.applyMatrix4(obj.matrixWorld);
@@ -96,4 +116,4 @@ function streamMeshes(root, streamer, { skip = null, covers = new Set(), cutHole
   }
 }
 
-export { drapeGeometry, drapeMeshes, streamMeshes };
+export { drapeGeometry, drapeMeshes, streamMeshes, cutOnCells, FLAT_CELL };

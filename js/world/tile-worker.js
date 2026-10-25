@@ -11,13 +11,14 @@
 // out: { type: 'tile', key, parts: [{ id, arrays, bounds } | null, ...] }   bounds: [minX, minY, minZ, maxX, maxY, maxZ]
 //      { type: 'tile', key, parts: [], error }                  it could not be laid
 import { createTileGrid, bucketTriangles, drapeTile } from './tiles.js';
-import { decodeHeights, gridSampler } from './lattice.js';
+import { decodeHeights, gridSampler, clipToLattice } from './lattice.js';
 import { cutHoles } from './waterways.js';
 
 let grid = null;
 let lattice = null;
 let height = null;
 let tileHoles = new Map(); // tile key -> the holes (flat triangles) reaching into it
+let cells = null; // the flat city's cells the deck is cut in before its holes (a tile's lattice cells, as if it had one)
 const layers = new Map();
 
 function bounds(pos) {
@@ -38,6 +39,7 @@ self.onmessage = ({ data: msg }) => {
   if (msg.type === 'init') {
     lattice = msg.lattice;
     grid = createTileGrid(lattice, msg.cells);
+    cells = { x0: grid.x0, z0: grid.z0, cell: grid.size / msg.cells };
     // (the town's floor as ground.js reckons it: the grid's heights, its floor beyond it)
     height = msg.ground ? gridSampler(msg.ground, decodeHeights(msg.ground), msg.ground.floor) : () => 0;
     if (msg.holes) {
@@ -64,8 +66,12 @@ self.onmessage = ({ data: msg }) => {
         const layer = layers.get(id);
         let arrays = layer && drapeTile(layer, layer.buckets.get(msg.key), msg.key, grid, lattice, height);
         if (!arrays) return null;
-        // (opened over the channels after it is laid, as drape.js & city-grid.js do the whole deck)
-        if (layer.cuts && tileHoles.has(msg.key)) arrays = cutHoles(arrays, layer.sizes, null, tileHoles.get(msg.key));
+        // (opened over the channels after it is laid, as drape.js & city-grid.js do the whole deck; in the flat city,
+        // cut in the lattice's cells first: holes cut out of a tile's two triangles would split them without end)
+        if (layer.cuts && tileHoles.has(msg.key)) {
+          if (!lattice) arrays = clipToLattice(arrays, layer.sizes, null, cells);
+          arrays = cutHoles(arrays, layer.sizes, null, tileHoles.get(msg.key));
+        }
         if (!arrays[0].length) return null;
         transfer.push(...arrays.map((a) => a.buffer));
         return { id, arrays, bounds: bounds(arrays[0]) };
