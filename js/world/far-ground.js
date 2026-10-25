@@ -25,6 +25,15 @@ const COLORS = {
   airfield: '#6a6c6e'
 };
 
+// The colour a block paints from afar: the open country's meadow, a park's lawn, a camellón's grass, else its lot's,
+// green where it lies open (over 60 % of it: `open`, lot-greenery.js openness) and earth & patios where built up
+function lotColor(b, open = 0.5) {
+  if (b.rural) return COLORS.meadow;
+  if (b.park > 0.6 && !b.median) return COLORS.park;
+  if (b.median) return COLORS.open;
+  return open > 0.6 ? COLORS.open : COLORS.built;
+}
+
 /**
  * Paints the box's ground into a texture. `open`: Map(block -> 0..1) of how open each block's lot lies
  * (city-grid.js); `box`: { x0, x1, z0, z1 }. Returns { texture, origin, span }: world (x, z) to uv is
@@ -53,16 +62,9 @@ function paintFarGround({ open = null, box, size = SIZE } = {}) {
   // the deck, then the blocks on it: each one's lot by how open it lies (a sidewalk's share of it at this scale)
   ctx.fillStyle = COLORS.asphalt;
   ctx.fill(ring(CITY_OUTLINE));
-  const lot = (b) => {
-    if (b.rural) return COLORS.meadow;
-    if (b.park > 0.6 && !b.median) return COLORS.park;
-    if (b.median) return COLORS.open;
-    const o = open?.get(b) ?? 0.5;
-    return o > 0.6 ? COLORS.open : COLORS.built;
-  };
   const byColor = new Map();
   for (const b of BLOCKS) {
-    const c = lot(b);
+    const c = lotColor(b, open?.get(b));
     if (!byColor.has(c)) byColor.set(c, new Path2D());
     ring(b.poly, byColor.get(c));
   }
@@ -131,4 +133,4 @@ function farGroundColor(far, outside) {
   return mix(outside, texture(far.texture, uv).rgb, inside);
 }
 
-export { paintFarGround, farGroundColor, COLORS as FAR_GROUND_COLORS };
+export { paintFarGround, farGroundColor, lotColor, COLORS as FAR_GROUND_COLORS };
