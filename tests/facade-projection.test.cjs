@@ -33,15 +33,17 @@ function matrix(elements) {
   } };
 }
 // (the TypeScript's types blanked out, so the slices run as the JavaScript the bundle ships)
-const source = stripTypes(readFileSync(join(__dirname, '../js/render/tsl-materials.ts'), 'utf8'));
+const read = (path) => stripTypes(readFileSync(join(__dirname, '../js/render/materials', path), 'utf8'));
+const source = read('facade-cell.ts');
+const interiorSource = read('apartment-interior.ts');
 const frame = source.match(/const facadeNormalVertex =[\s\S]*?const facadeAlongZ =[\s\S]*?\.setInterpolation\([\s\S]*?\);/);
 assert.ok(frame, 'the shared camera-independent facade frame must exist');
 const projectionStart = source.indexOf('function facadeCell(');
 const projection = source.slice(source.indexOf('{', projectionStart) + 1, source.indexOf('let bayWidth', projectionStart));
-const interiorStart = source.indexOf('const rayWorld =', source.indexOf('const evaluateApartmentInterior'));
-const interior = source.slice(interiorStart, source.indexOf('// Slab intersection', interiorStart));
+const interiorStart = interiorSource.indexOf('const rayWorld =', interiorSource.indexOf('const evaluateApartmentInterior'));
+const interior = interiorSource.slice(interiorStart, interiorSource.indexOf('// Slab intersection', interiorStart));
 const buildFrame = vm.runInNewContext(`(function (normalLocal, modelNormalMatrix, normalWorldGeometry, cameraViewMatrix) {
-  ${frame[0]}
+  ${frame[0].replace(/^export /gm, '')}
   return {
     normal: facadeWorldNormal, axis: facadeAlongZ,
     project(boxLocal, normalGeometry, positionWorld) { ${projection} return { alongZ, uCoord, isRoof }; },

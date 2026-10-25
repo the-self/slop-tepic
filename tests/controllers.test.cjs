@@ -1,10 +1,30 @@
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
-const { join } = require('node:path');
+const { join, posix } = require('node:path');
 const test = require('node:test');
-const { loadModule } = require('./helpers/module.cjs');
+const { loadModule, stripTypes } = require('./helpers/module.cjs');
 
-const source = readFileSync(join(__dirname, '../js/player/controllers.ts'), 'utf8');
+// The controllers are a facade (js/player/controllers.ts) over its pieces (js/player/controllers/*.ts): each one loaded
+// under the harness with its imports resolved by their path in the repo, a stub's or another piece's (the type-only
+// imports, the pieces' of the facade among them, are stripped)
+function loadControllers(stubs, globals) {
+  const loaded = new Map();
+  const load = (file) => {
+    if (loaded.has(file)) return loaded.get(file);
+    const source = readFileSync(join(__dirname, '..', file), 'utf8');
+    const imports = {};
+    for (const [, specifier] of stripTypes(source).matchAll(/^import\s+[^;]*?\s+from\s+'([^']+)';/gm)) {
+      const path = specifier.startsWith('.') ? posix.join(posix.dirname(file), specifier) : specifier;
+      if (Object.hasOwn(stubs, path)) imports[specifier] = stubs[path];
+      else if (path.startsWith('js/player/controllers/')) imports[specifier] = load(path);
+      else throw new Error(`Missing import stub: ${path} (${file})`);
+    }
+    const module = loadModule(source, { globals, imports, filename: file });
+    loaded.set(file, module);
+    return module;
+  };
+  return load('js/player/controllers.ts');
+}
 // The car's drivetrain & damage are plain modules without imports: the real ones run under the harness
 const realModule = (path) => loadModule(readFileSync(join(__dirname, path), 'utf8'));
 const drivetrain = realModule('../js/player/drivetrain.ts');
@@ -41,24 +61,21 @@ function keyboardHarness(nyc = {}) {
     isTypingInField: (event) => ['INPUT', 'SELECT'].includes(event.target?.tagName),
     ...nyc
   };
-  const { ThirdPersonControllerManager } = loadModule(source, {
-    globals: { window, document },
-    imports: {
-      'three/webgpu': {},
-      '../world/city-config.ts': config,
-      '../render/tsl-materials.ts': {},
-      '../actors/actor-models.ts': {},
-      '../sim/pedestrians.ts': {},
-      '../actors/vehicle-lights.ts': {},
-      './drivetrain.ts': drivetrain,
-      './vehicle-damage.ts': vehicleDamage,
-      '../models/cars/index.ts': carRegistry,
-      '../models/motos/index.ts': realModule('../js/models/motos/index.ts'),
-      './car-blood.ts': realModule('../js/player/car-blood.ts'),
-      './car-physics.ts': realModule('../js/player/car-physics.ts'),
-      '../sim/ragdolls.ts': realModule('../js/sim/ragdolls.ts')
-    }
-  });
+  const { ThirdPersonControllerManager } = loadControllers({
+    'three/webgpu': {},
+    'js/world/city-config.ts': config,
+    'js/render/tsl-materials.ts': {},
+    'js/actors/actor-models.ts': {},
+    'js/sim/pedestrians.ts': {},
+    'js/actors/vehicle-lights.ts': {},
+    'js/player/drivetrain.ts': drivetrain,
+    'js/player/vehicle-damage.ts': vehicleDamage,
+    'js/models/cars/index.ts': carRegistry,
+    'js/models/motos/index.ts': realModule('../js/models/motos/index.ts'),
+    'js/player/car-blood.ts': realModule('../js/player/car-blood.ts'),
+    'js/player/car-physics.ts': realModule('../js/player/car-physics.ts'),
+    'js/sim/ragdolls.ts': realModule('../js/sim/ragdolls.ts')
+  }, { window, document });
   // Exercise the production event handlers without constructing the scene's 3D models.
   const controller = Object.create(ThirdPersonControllerManager.prototype);
   controller.leftCars = []; // (as the constructor leaves it: no cars left behind yet)
