@@ -3,7 +3,10 @@ import test from 'node:test';
 import WebSocket from 'ws';
 import { createServer } from '../index.ts';
 import type { Health } from '../index.ts';
-import { OP, PROTOCOL_VERSION, encodeHello, encodeState, decodeServer } from '../../shared/protocol.ts';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { OP, PROTOCOL_VERSION, encodeHello, encodeState, encodeChat, encodeShot, encodeHit, encodeDown, decodeServer } from '../../shared/protocol.ts';
 import type { ServerMessage } from '../../shared/protocol.ts';
 
 const quiet = () => { /* the tests don't print the joins & leaves */ };
@@ -164,5 +167,97 @@ void test('a client flooding messages is disconnected', async () => {
     await c.closed;
   } finally {
     await server.close();
+  }
+});
+
+// Two players in nayarit#1 who see each other (and a third, Far, 2 km off, out of view), poses sent and seen
+async function threePlayers(port: number) {
+  const [a, b, far] = [connect(port), connect(port), connect(port)];
+  await Promise.all([a.opened, b.opened, far.opened]);
+  a.ws.send(encodeHello('nayarit', 'Ana'));
+  b.ws.send(encodeHello('nayarit', 'Beto'));
+  far.ws.send(encodeHello('nayarit', 'Far'));
+  const [wa, wb, wf] = await Promise.all([a.next(OP.WELCOME), b.next(OP.WELCOME), far.next(OP.WELCOME)]);
+  a.ws.send(pose(0, 0, 'person'));
+  b.ws.send(pose(10, 0, 'person'));
+  far.ws.send(pose(0, 2000, 'person'));
+  await a.next(OP.TICK, (m) => m.moved.some((p) => p.id === wb.id));
+  await b.next(OP.TICK, (m) => m.moved.some((p) => p.id === wa.id));
+  return { a, b, far, ids: { a: wa.id, b: wb.id, far: wf.id } };
+}
+
+void test('chat lines reach the whole room, cleaned, and a chatterbox is held back', async () => {
+  const server = await createServer({ port: 0, tickHz: 20, viewRadius: 500, log: quiet });
+  try {
+    const { a, b, far, ids } = await threePlayers(server.port);
+    a.ws.send(encodeChat('  hola\nBeto\u200b  '));
+    const line = await far.next(OP.CHAT_LINE);
+    assert.deepEqual(line, { op: OP.CHAT_LINE, from: ids.a, name: 'Ana', text: 'hola Beto' }, 'out of view, still in the room');
+    await a.next(OP.CHAT_LINE, (m) => m.text === 'hola Beto'); // (the speaker hears it back: one order for everyone)
+    a.ws.send(encodeChat('   '));
+    for (let i = 0; i < 9; i++) b.ws.send(encodeChat(`spam ${i}`));
+    await new Promise((r) => setTimeout(r, 150));
+    const spam = a.frames.filter((m) => m.op === OP.CHAT_LINE && m.text.startsWith('spam'));
+    assert.equal(spam.length, 5, 'a burst of five, then a line a second');
+    assert.ok(!a.frames.some((m) => m.op === OP.CHAT_LINE && m.text === ''), 'nothing visible: nothing said');
+    for (const c of [a, b, far]) c.ws.close();
+  } finally {
+    await server.close();
+  }
+});
+
+void test('a shot goes to those who see the shooter; a hit reaches its target within reach; a death is told', async () => {
+  const server = await createServer({ port: 0, tickHz: 20, viewRadius: 500, log: quiet });
+  try {
+    const { a, b, far, ids } = await threePlayers(server.port);
+    a.ws.send(encodeShot({ ox: 0, oy: 1.4, oz: 0, ex: 10, ey: 1.2, ez: 0, weapon: 'pistol', rocket: false }));
+    const seen = await b.next(OP.SHOT_SEEN);
+    assert.equal(seen.from, ids.a);
+    assert.deepEqual(seen.shot, { ox: 0, oy: 1.4, oz: 0, ex: 10, ey: 1.2, ez: 0, weapon: 'pistol', rocket: false });
+    a.ws.send(encodeShot({ ox: 0, oy: 1, oz: 0, ex: 0, ey: 1, ez: 5000, weapon: 'pistol', rocket: false })); // (5 km: dropped)
+    a.ws.send(encodeHit(ids.b, 34));
+    const hurt = await b.next(OP.HURT);
+    assert.deepEqual(hurt, { op: OP.HURT, from: ids.a, damage: 34 });
+    a.ws.send(encodeHit(ids.far, 34)); // 2 km off: not believed
+    a.ws.send(encodeHit(ids.a, 34)); // itself: ignored
+    b.ws.send(encodeDown(ids.a));
+    const told = await far.next(OP.CHAT_LINE);
+    assert.deepEqual(told, { op: OP.CHAT_LINE, from: 0, name: '', text: 'Ana mató a Beto' });
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(b.frames.filter((m) => m.op === OP.SHOT_SEEN).length, 1, 'the 5 km shot was dropped');
+    assert.ok(!far.frames.some((m) => m.op === OP.SHOT_SEEN || m.op === OP.HURT), 'Far neither saw the shot nor was hit');
+    assert.ok(!a.frames.some((m) => m.op === OP.SHOT_SEEN || m.op === OP.HURT), 'the shooter hears nothing back');
+    for (const c of [a, b, far]) c.ws.close();
+  } finally {
+    await server.close();
+  }
+});
+
+void test('with a static folder the server is the game page too, and serves nothing else of the folder', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-static-'));
+  fs.writeFileSync(path.join(root, 'index.html'), '<!doctype html><title>Slop</title>');
+  fs.mkdirSync(path.join(root, 'dist'));
+  fs.writeFileSync(path.join(root, 'dist', 'main.js'), 'console.log(1);');
+  fs.mkdirSync(path.join(root, 'server'));
+  fs.writeFileSync(path.join(root, 'server', 'index.ts'), 'secret');
+  fs.writeFileSync(path.join(root, '.env'), 'secret');
+  const server = await createServer({ port: 0, staticDir: root, log: quiet });
+  try {
+    const get = (p: string) => fetch(`http://127.0.0.1:${server.port}${p}`);
+    const page = await get('/');
+    assert.equal(page.status, 200);
+    assert.match(page.headers.get('content-type') ?? '', /text\/html/);
+    assert.match(await page.text(), /Slop/);
+    const js = await get('/dist/main.js');
+    assert.equal(js.status, 200);
+    assert.match(js.headers.get('content-type') ?? '', /javascript/);
+    for (const p of ['/server/index.ts', '/.env', '/dist/../server/index.ts', '/dist/%2e%2e/server/index.ts', '/dist/..%2fserver%2findex.ts', '/package.json']) {
+      const res = await get(p);
+      assert.equal(res.status, 404, p);
+      assert.doesNotMatch(await res.text(), /secret/, p);
+    }
+  } finally {
+    await server.close();
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

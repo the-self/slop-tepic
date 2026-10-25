@@ -17,6 +17,7 @@ import { BODY_SPECS, buildCarGeometry, createLoftedCarMaterial, buildLightbarGeo
 import { WEAPON_MODELS, buildWeaponGeometry, createWeaponMaterial } from '../actors/weapon-models.ts';
 import { createContactShadowMaterial } from '../render/tsl-materials.ts';
 import { isTypingInField } from '../world/city-config.ts';
+import type { Shot } from '../../shared/protocol.ts';
 
 // js/sim/crime.ts
 // The street's crime, GTA-style, played out over the traffic and the crowds (traffic.ts):
@@ -47,7 +48,7 @@ type CruiserState = 'chase' | 'leave';
 // What lies about to be picked up: money, health, armour, or a gun
 type PickupKind = 'money' | 'health' | 'armor' | StreetGun | 'bazooka';
 // What a shot meets first (trace)
-type TraceKind = 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'vehicle';
+type TraceKind = 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'vehicle' | 'remote';
 // The radar's blips, flat: kind ('cop' | 'thief' | 'rojos' | 'verdes' | 'narcos' | 'cruiser' | 'truck' | a
 // PickupKind, or fires.ts's 'fire'), x, z, kind, x, z, ...
 type Blips = (string | number)[];
@@ -201,6 +202,7 @@ interface Cruiser extends XZ {
 // A rocket in flight: where (m), its heading (dx, dz) and climb (dh along, dy up per m), t s since it was fired
 interface RocketFlight {
   r: Rocket;
+  remote?: boolean; // another player's (net/multiplayer.ts): seen and heard here, its harm judged by its shooter
   x: number;
   y: number;
   z: number;
@@ -222,7 +224,21 @@ interface LockTarget extends XZ {
   y?: number;
   mesh?: unknown;
 }
-type TraceTarget = Agent | Cruiser | Ped | Vehicle;
+type TraceTarget = Agent | Cruiser | Ped | Vehicle | RemoteTarget;
+/**
+ * Another player, in multiplayer (net/multiplayer.ts), as shots, blows and blasts find it: its id, where it is (m) and
+ * faces (rad), and its body: on foot a person's (BODY_R, PERSON_H), else its vehicle's half width & length and height
+ * (m). What the player does to it goes out through CrimeSystem.onRemoteHit: its own game takes the damage.
+ */
+export interface RemoteTarget extends XZ {
+  id: number;
+  y: number;
+  heading: number;
+  person: boolean;
+  halfW: number;
+  halfL: number;
+  height: number;
+}
 // What a shot met (trace, reused): t m along it
 interface TraceHit {
   t: number;
@@ -327,6 +343,12 @@ class CrimeSystem {
   solidAt: (x: number, z: number) => boolean;
   audio: CrimeAudio | null;
   onRespawn: ((kind: DownKind) => void) | null;
+  // multiplayer (net/multiplayer.ts): the other players near (as targets), each shot the player fires (for the others to
+  // see), a hit on one of them (its damage in hit points), and no firing while riding in someone else's car
+  remotes: RemoteTarget[] = [];
+  onPlayerShot: ((shot: Shot) => void) | null = null;
+  onRemoteHit: ((id: number, damage: number) => void) | null = null;
+  fireBlocked = false;
   personGround: (owner: unknown, x: number, z: number) => number;
   // (a burning wreck where a blast went off: fires.ts, from main.ts)
   onExplosion?: (x: number, y: number, z: number, radius: number) => void;
@@ -771,7 +793,7 @@ class CrimeSystem {
     }
     this.drawT = Math.max(0, this.drawT - dt);
     // what this weapon can do from here: no guns from the helicopter, no fists or bazooka from a car or a bicycle
-    const usable = this.mode === 'person' || (this.mode !== 'helicopter' && !w.melee && !w.rocket);
+    const usable = !this.fireBlocked && (this.mode === 'person' || (this.mode !== 'helicopter' && !w.melee && !w.rocket));
     const shots = this.arsenal.trigger(held && usable && this.onStreet, dt);
     if (held && usable) this.aimHold = w.melee ? 0.2 : 0.7;
     else this.aimHold = Math.max(0, this.aimHold - dt);
@@ -779,7 +801,7 @@ class CrimeSystem {
     if (free) {
       this.lockTarget = null;
       const hit = this.aimAlong(this.camera, w);
-      aimCtl.onTarget = !w.melee && (hit.kind === 'agent' || hit.kind === 'ped' || hit.kind === 'cruiser' || hit.kind === 'vehicle');
+      aimCtl.onTarget = !w.melee && (hit.kind === 'agent' || hit.kind === 'ped' || hit.kind === 'cruiser' || hit.kind === 'vehicle' || hit.kind === 'remote');
     } else if (this.aim) {
       this.aim.onTarget = false;
     }
@@ -833,6 +855,7 @@ class CrimeSystem {
     const list = this.candidates;
     list.length = 0;
     for (const a of this.agents) if (!a.fallen) list.push(a);
+    for (const r of this.remotes) list.push(r);
     const person = pickTarget(x, z, heading, list, range, cone);
     if (person) return person;
     list.length = 0;
@@ -893,6 +916,8 @@ class CrimeSystem {
     if (this.copNear(m.x, m.z, 40)) this.report('gunfire');
     if (w.rocket) {
       const pitch = Math.atan(slope ?? 0);
+      const reach = w.range * Math.cos(pitch);
+      this.onPlayerShot?.({ ox: m.x, oy: m.y, oz: m.z, ex: m.x + Math.sin(yaw) * reach, ey: m.y + Math.sin(pitch) * w.range, ez: m.z + Math.cos(yaw) * reach, weapon: w.id, rocket: true });
       const r = this.fx.launchRocket(m.x, m.y, m.z, yaw, -pitch);
       if (r) this.rockets.push({ r, x: m.x, y: m.y, z: m.z, dx: Math.sin(yaw), dz: Math.cos(yaw), dh: Math.cos(pitch), dy: Math.sin(pitch), t: 0 });
       return;
@@ -976,6 +1001,14 @@ class CrimeSystem {
       kind = 'cruiser';
       target = cr;
     }
+    for (const r of this.remotes) {
+      const t = r.person ? rayCircle(ox, oz, dx, dz, r.x, r.z, BODY_R) : rayBox(ox, oz, dx, dz, r.x, r.z, r.heading, r.halfW, r.halfL);
+      if (t < from || t >= best) continue;
+      if (pitched && !inBody(oy + slope * t - r.y, r.height)) continue;
+      best = t;
+      kind = 'remote';
+      target = r;
+    }
     const accept = pitched || from > 0
       ? (k: 'ped' | 'vehicle', o: XZ & { bus?: boolean }, t: number) => t >= from && (!pitched || inBody(over(t, o.x, o.z), k === 'ped' ? PERSON_H : o.bus ? BUS_H : CAR_H))
       : null;
@@ -1004,8 +1037,10 @@ class CrimeSystem {
       if (kind === 'agent' || kind === 'ped') ey = this.groundAt(ex, ez) + 1.2;
       else if (kind === 'cruiser' || kind === 'vehicle') ey = this.groundAt(ex, ez) + 0.85;
     }
+    if (kind === 'remote') ey = (target as RemoteTarget).y + ((target as RemoteTarget).person ? 1.2 : 0.85);
     if (kind === 'ground') ey = this.groundAt(ex, ez) + 0.03;
     this.fx.tracer(ox, oy, oz, ex, ey, ez);
+    if (byPlayer) this.onPlayerShot?.({ ox, oy, oz, ex, ey, ez, weapon: w.id, rocket: false });
 
     if (kind === 'wall' || kind === 'ground') this.fx.impact(ex, ey, ez, 'dust', -dx, -dz);
     else if (kind === 'agent') {
@@ -1022,6 +1057,14 @@ class CrimeSystem {
       this.fx.impact(ex, ey, ez, 'metal', -dx, -dz);
       this.traffic.shootVehicle(target as Vehicle, ex, ey, ez, dx, dz);
       if (byPlayer) this.report('shootCar', this.copNear(ex, ez, 50));
+    } else if (kind === 'remote') {
+      // another player: its game takes the damage (a vehicle shields it as the player's own does, crime.hurt)
+      const r = target as RemoteTarget;
+      this.fx.impact(ex, ey, ez, r.person ? 'blood' : 'metal', r.person ? dx : -dx, r.person ? dz : -dz);
+      if (byPlayer) {
+        this.onRemoteHit?.(r.id, w.damage);
+        this.report('shootPed', this.copNear(ex, ez, 50));
+      }
     }
   }
 
@@ -1044,6 +1087,17 @@ class CrimeSystem {
     for (const a of this.agents) if (!a.fallen) consider(a);
     for (const ped of this.traffic.peds) {
       if (ped.placed && !ped.fallen && Math.abs(ped.x - this.px) < 3 && Math.abs(ped.z - this.pz) < 3) consider(ped);
+    }
+    // another player on foot within reach, and nearer than anyone else in front: the punch is theirs
+    for (const r of this.remotes) {
+      if (!r.person) continue;
+      const dx = r.x - this.px, dz = r.z - this.pz;
+      const d = Math.hypot(dx, dz);
+      if (d > bestD || (dx * fx + dz * fz) < d * 0.45) continue;
+      this.audio?.gunfire?.('punch', r.x, r.y + 1.2, r.z);
+      this.onRemoteHit?.(r.id, WEAPONS.fists.damage);
+      this.report('punch', this.copNear(this.px, this.pz, 30));
+      return;
     }
     if (!best) return;
     const d = Math.max(0.01, bestD);
@@ -1189,11 +1243,43 @@ class CrimeSystem {
       if (hit) {
         this.fx.dropRocket(k.r);
         this.rockets.splice(i, 1);
-        this.explode(k.x, Math.max(k.y, this.groundAt(k.x, k.z) + 0.4), k.z, w.blast, w.damage, true);
+        const y = Math.max(k.y, this.groundAt(k.x, k.z) + 0.4);
+        if (k.remote) this.blastSeen(k.x, y, k.z, w.blast);
+        else this.explode(k.x, y, k.z, w.blast, w.damage, true);
       } else {
         this.fx.placeRocket(k.r, k.x, k.y, k.z, Math.atan2(k.dx, k.dz), -Math.asin(k.dy || 0));
       }
     }
+  }
+
+  // Another player's shot (multiplayer): its flash, tracer and strike, its sound, and the passers-by running; a rocket
+  // flies here as it does there. What it hits is the shooter's game to judge (onRemoteHit, its HIT): nothing is hurt
+  showShot(s: Shot): void {
+    const yaw = Math.atan2(s.ex - s.ox, s.ez - s.oz);
+    this.fx.muzzle(s.ox, s.oy, s.oz, yaw, s.rocket);
+    this.audio?.gunfire?.(s.weapon, s.ox, s.oy, s.oz);
+    this.traffic.panic(s.ox, s.oz, s.rocket ? 45 : 35);
+    if (s.rocket) {
+      const along = Math.hypot(s.ex - s.ox, s.ez - s.oz);
+      const pitch = Math.atan2(s.ey - s.oy, Math.max(0.01, along));
+      const r = this.fx.launchRocket(s.ox, s.oy, s.oz, yaw, -pitch);
+      if (r) this.rockets.push({ r, remote: true, x: s.ox, y: s.oy, z: s.oz, dx: Math.sin(yaw), dz: Math.cos(yaw), dh: Math.cos(pitch), dy: Math.sin(pitch), t: 0 });
+      return;
+    }
+    this.fx.tracer(s.ox, s.oy, s.oz, s.ex, s.ey, s.ez);
+    this.fx.impact(s.ex, s.ey, s.ez, 'dust', -Math.sin(yaw), -Math.cos(yaw));
+  }
+
+  // Another player's rocket going off here: the blast seen, heard and felt, the street thrown about, nobody hurt by it
+  // (its shooter's game sends the hits)
+  blastSeen(x: number, y: number, z: number, radius: number): void {
+    this.fx.explosion(x, y, z, radius);
+    this.onExplosion?.(x, y, z, radius);
+    this.audio?.gunfire?.('explosion', x, y, z);
+    const near = Math.hypot(this.camera ? this.camera.position.x - x : 0, this.camera ? this.camera.position.z - z : 0);
+    this.shake = Math.min(1.6, this.shake + clamp(1.6 - near / 40, 0, 1.6));
+    this.traffic.blast(x, z, radius * 1.4, 24);
+    this.traffic.panic(x, z, 70);
   }
 
   // An explosion at (x, y, z) of `radius` m: fire & smoke, people thrown, cars shoved, patrol cars and the player hurt
@@ -1223,6 +1309,13 @@ class CrimeSystem {
       cr.vx += nx * 14 * k;
       cr.vz += nz * 14 * k;
       if (!cr.wreck) this.damageCruiser(cr, damage * k, byPlayer);
+    }
+    // the other players (multiplayer): as hard as the player would be hit there
+    if (byPlayer) {
+      for (const r of this.remotes) {
+        const d = Math.hypot(r.x - x, r.z - z);
+        if (d < radius * 1.3) this.onRemoteHit?.(r.id, 95 * blastFalloff(d, radius * 1.3));
+      }
     }
     // the player
     const pd = Math.hypot(this.px - x, this.pz - z);

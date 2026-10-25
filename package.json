@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "node tools/build.ts --serve",
     "build": "node tools/build.ts",
+    "play": "node tools/play.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p server/tsconfig.json && tsc -p tools/tsconfig.json",
     "lint": "eslint .",
     "test": "node --no-warnings=ExperimentalWarning --test tests/*.test.*",

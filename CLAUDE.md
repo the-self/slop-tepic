@@ -9,6 +9,7 @@ npm install
 npm run dev        # rebuilds on every change and serves http://localhost:8765
 npm run check      # tsc (strict) + ESLint (typescript-eslint strictTypeChecked) + the tests
 npm run build      # the minified bundle in dist/, as the page is published
+npm run play       # play with someone over the internet: the game + its server behind a Cloudflare tunnel (server/README.md)
 (cd server && npm install && npm test)  # multiplayer server tests
 ```
 
@@ -78,4 +79,4 @@ A branch that still adds `.js` modules: merge it, then `node tools/port-to-ts.ts
 
 ## Multiplayer in one paragraph
 
-`server/index.ts` puts players in rooms per region (`ROOM_CAPACITY`, with mirror rooms when full). Every 10 Hz tick it sends each client one binary `TICK` frame. That frame covers only the nearest `VIEW_MAX` players within `VIEW_RADIUS`, and only the poses that changed since that client last heard them. The protocol is in `shared/protocol.ts`: opcodes, integer centimetres, 18-byte poses. The client in `net/multiplayer.ts` draws others 200 ms in the past, interpolated, reusing the player models. The server relays and shape-checks poses but runs no physics.
+`server/index.ts` puts players in rooms per region (`ROOM_CAPACITY`, with mirror rooms when full). Every 10 Hz tick it sends each client one binary `TICK` frame. That frame covers only the nearest `VIEW_MAX` players within `VIEW_RADIUS`, and only the poses that changed since that client last heard them. The protocol is in `shared/protocol.ts`: opcodes, integer centimetres, 18-byte poses. The client in `net/multiplayer.ts` draws others 200 ms in the past, interpolated, reusing the player models. The server relays and shape-checks poses but runs no physics. Players also chat (`CHAT`), see each other's shots (`SHOT`), and hurt each other: the shooter's `sim/crime.ts` traces its shots, blows and blasts against the others' poses (`CrimeSystem.remotes`) and sends `HIT`, which the server passes on as `HURT` to the one struck. A player can ride in a friend's car (mode `passenger`, the camera following the car through `CameraSystem.follow`). With `STATIC_DIR` the server also serves the game's page, which is what `npm run play` puts behind its tunnel.

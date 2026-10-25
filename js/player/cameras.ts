@@ -72,6 +72,8 @@ class CameraSystem {
   currentLookAt: THREE.Vector3;
   initialized: boolean;
   followEntity: PlayerEntity | null;
+  // what the cameras follow instead of the player's own entity (net/multiplayer.ts: a friend's car the player rides in)
+  follow: PlayerEntity | null = null;
   followOffset: THREE.Vector3;
   followLookOffset: THREE.Vector3;
   followBaseY: number;
@@ -310,7 +312,7 @@ class CameraSystem {
   }
 
   update(dt: number, elapsed: number): void {
-    const entity = this.controllerManager.getActiveEntity();
+    const entity = this.follow ?? this.controllerManager.getActiveEntity();
     const desiredPos = this._desiredPos;
     const desiredLook = this._desiredLook;
     // taking aim: the player turns to where the camera looked, so the view comes in over its shoulder without a swing

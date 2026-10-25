@@ -499,7 +499,10 @@ async function initApp(): Promise<void> {
           console.info('[mp] no server to connect to: add &mp-server=wss://… (or serve from localhost)');
           return;
         }
-        multiplayer = new Multiplayer({ scene, controllers: controllerManager, camera: cameraSystem.camera, ...options });
+        multiplayer = new Multiplayer({
+          scene, controllers: controllerManager, camera: cameraSystem.camera, crime: crimeSystem, cameras: cameraSystem, ...options
+        });
+        boarding.ride = multiplayer; // (F by a friend's car: in with them)
       })
       .catch((err: unknown) => { console.warn('[mp] could not start multiplayer:', err); });
   }
@@ -561,6 +564,8 @@ async function initApp(): Promise<void> {
       aimControl.allowed = crimeSystem.state === 'play' && !weaponWheel.isOpen;
       aimControl.update(dt);
     })
+    // riding in a friend's car (multiplayer): the ride where the car is, before the cameras follow it
+    .run('passenger', () => { multiplayer?.seat(); })
     .run('cameras', ({ dt, elapsed }) => {
       cameraSystem.update(dt, elapsed);
       streetDetails.signalClock.value = elapsed;
@@ -630,7 +635,7 @@ async function initApp(): Promise<void> {
     Object.assign(window, { __slop: {
       scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, controllerManager, trafficSystem,
       cameraSystem, streetDetails, cityGrid: city.cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl,
-      weaponWheel, weaponIcons, scheduler
+      weaponWheel, weaponIcons, scheduler, boarding, multiplayer: () => multiplayer
     } });
   }
 

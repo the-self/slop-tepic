@@ -635,6 +635,7 @@ class ThirdPersonControllerManager {
   rotorSpin: number;
   keys: ControlKeys;
   canSprint: boolean;
+  seated = false; // riding in a friend's car (net/multiplayer.ts): the walker stands still where it got in
   roadWet: number;
   roadGrip: number;
   waterAt: ((x: number, z: number) => number) | null;
@@ -2251,7 +2252,8 @@ class ThirdPersonControllerManager {
     const prevZ = active.position.z;
 
     if (this.activeMode === 'person') {
-      this.updatePerson(dt);
+      // (riding in a friend's car, net/multiplayer.ts: the walker waits where it got in, out of sight)
+      if (!this.seated) this.updatePerson(dt);
     } else {
       // The pedestrian rides along (out of sight) in the vehicle it got into
       const p = this.entities.person;
