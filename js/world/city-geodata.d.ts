@@ -146,7 +146,8 @@ export interface SignFace {
   /** CSS colours. */
   bg: string;
   fg: string;
-  border: string;
+  /** CSS colour; a business's own name (one with `trade`) has none. */
+  border?: string;
   stripe?: string;
   /** 1: a chain store's sign. */
   chain?: Flag;
@@ -154,6 +155,9 @@ export interface SignFace {
   big?: Flag;
   /** Index into STOREFRONTS (js/world/storefronts/index.ts). */
   store?: number;
+  /** A business's own name (Overture Maps' places): its trade's generic sign, 1-based into `signs`, which stands in
+   *  when the sign atlas has no name slot free for it (js/world/sign-slots.ts). Only the names carry it. */
+  trade?: number;
 }
 
 /** A hill path: [surface (0 cobbles, 1 concrete / paving, 2 earth), width (m), flat points]. */

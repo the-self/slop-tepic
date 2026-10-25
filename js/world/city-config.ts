@@ -24,7 +24,7 @@ const toPts = (flat: number[]): PointXZ[] => {
 const CITY = GEO.frame;
 
 // The numbered streets & avenues of the New York game this was forked from. Tepic has no such grid: the lists stay
-// empty for the grid-era consumers (road-network.js, city-grid.js, buildings.js), and streetZ / avenueX only remain
+// empty for the grid-era consumers (road-network.ts, city-grid.ts, buildings.ts), and streetZ / avenueX only remain
 // as their former fallbacks for the code that still calls them (controllers.ts, tsl-materials.ts, buildings.ts)
 /** A New York avenue line (x constant, m), what the grid-era consumers read of one. Tepic has none. */
 export interface GridAvenue {
@@ -327,7 +327,7 @@ function cityLandmarks() {
   return out;
 }
 const CITY_LANDMARKS = cityLandmarks();
-// Where a wasted player wakes up (player/stats.js): the town's hospitals and clinics in OpenStreetMap, inside the
+// Where a wasted player wakes up (player/stats.ts): the town's hospitals and clinics in OpenStreetMap, inside the
 // playable box (not the opticians that call themselves "hospital de lentes")
 const HOSPITALS: NamedPoint[] = GEO.pois
   .filter((p) => p.kind === 'hospital' && !/lentes/i.test(p.name))
@@ -365,7 +365,7 @@ function isTypingInField(e: { target: EventTarget | null }): boolean {
   return t !== null && 'tagName' in t && (t.tagName === 'INPUT' || t.tagName === 'SELECT');
 }
 
-// Traffic signal cycle shared by the signal heads (street-details.js) and the traffic (traffic.js), in seconds:
+// Traffic signal cycle shared by the signal heads (street-details.ts) and the traffic (traffic.ts), in seconds:
 // avenues green until avenueAmber, amber until avenueRed; cross streets green from avenueRed until streetAmber,
 // amber until the end of the cycle. Pedestrians cross with the traffic that runs parallel to them, stepping off
 // only on the WALK, the first `walk` seconds of its green: long enough before the cross traffic's green for the

@@ -601,7 +601,7 @@ const SPECIES: TreeSpecies[] = [
   }
 ];
 
-// The month the trees show (0 = January): the Live time's (?live-time=<ISO date>, as main.js reads it) or today's
+// The month the trees show (0 = January): the Live time's (?live-time=<ISO date>, as main.ts reads it) or today's
 function treeMonth() {
   try {
     const q = new URLSearchParams('location' in globalThis ? globalThis.location.search : '').get('live-time');
@@ -1268,7 +1268,7 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
         mesh.visible = n > 0;
         if (n > 0) {
           visible = true;
-          // main.js swaps instanceMatrix for a storage attribute: look it up here on every changed cell.
+          // main.ts swaps instanceMatrix for a storage attribute: look it up here on every changed cell.
           const treeData = mesh.geometry.attributes.aTreeData;
           if (!(treeData instanceof THREE.BufferAttribute)) continue; // (always: set up above)
           for (const attr of [mesh.instanceMatrix, treeData]) {

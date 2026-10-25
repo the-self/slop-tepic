@@ -298,7 +298,7 @@ function writeMotor(item: MotorSound, id: object, kind: MotorKind, x: number, y:
   item.speed = Number.isFinite(speed) ? Math.abs(speed) : 0;
   item.load = unit(load);
   item.verticalSpeed = Number.isFinite(verticalSpeed) ? verticalSpeed : 0;
-  item.rpm = Number.isFinite(rpm) ? rpm : 0; // (an engine whose revs are known: the player's car, drivetrain.js)
+  item.rpm = Number.isFinite(rpm) ? rpm : 0; // (an engine whose revs are known: the player's car, drivetrain.ts)
   item.heading = heading;
   item.police = police;
   item.player = player;
@@ -378,7 +378,7 @@ class CityAudioSources {
     this.motos = trafficSystem.motos ?? [];
     this.peds = trafficSystem.peds;
     this.highwayCars = highwayTraffic.cars;
-    this.pursuers = []; // the patrol cars chasing the player (crime.js): sirens & engines
+    this.pursuers = []; // the patrol cars chasing the player (crime.ts): sirens & engines
     this.signalSites = streetDetails.audioSignals;
     this.motors = new NearestSources(10, motorRecord);
     this.sirens = new NearestSources(2, motorRecord);
@@ -480,7 +480,7 @@ class CityAudioSources {
         const kind = entity.type === 'car' ? 'sedan' : entity.type; // (the moto: the traffic's single-cylinder voice)
         const helicopter = kind === 'helicopter';
         const verticalSpeed = player && helicopter ? helicopterVerticalSpeed(entity, this.floorUnder(entity)) : 0;
-        // the player's car: its engine's own revs & throttle (drivetrain.js), gear changes and all; an electric car has
+        // the player's car: its engine's own revs & throttle (drivetrain.ts), gear changes and all; an electric car has
         // no engine to hear, only a faint drive and its tyres
         const electric = Boolean(entity.spec?.electric);
         const engine = player && entity.drive && !electric ? entity.drive : null;

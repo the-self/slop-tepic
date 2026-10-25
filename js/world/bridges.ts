@@ -348,7 +348,7 @@ function buildBridges(scene: THREE.Scene): { group: THREE.Group; colliders: Coll
   }
 
   // The ground under a span from a to b (lifts l0..l1): bare earth in patches, but where a road passes under (its own
-  // asphalt, half a metre wider) or a river's channel opens (river-channels.js)
+  // asphalt, half a metre wider) or a river's channel opens (river-channels.ts)
   function underSpan(a: P2, b: P2, ma: P2, mb: P2, half: number, l0: number, l1: number, line: BridgeLine) {
     const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / EARTH_PATCH));
     const m = Math.max(1, Math.ceil((2 * half) / EARTH_PATCH));
@@ -387,7 +387,7 @@ function buildBridges(scene: THREE.Scene): { group: THREE.Group; colliders: Coll
   for (const line of roads) deck(line);
   for (const line of rails) deck(line);
 
-  // The raised junctions: a disc of deck joining the links that meet there (ground.js gives it to the traffic and
+  // The raised junctions: a disc of deck joining the links that meet there (ground.ts gives it to the traffic and
   // the player too), its rim walled like theirs
   for (const j of decks.junctions) {
     const SIDES = 16;

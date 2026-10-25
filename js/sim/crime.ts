@@ -634,7 +634,7 @@ class CrimeSystem {
   }
 
   // =========================================================================
-  // 2. INPUT: fire (X, the left button while aiming on foot (aim.js), the right button from a vehicle; touch &
+  // 2. INPUT: fire (X, the left button while aiming on foot (aim.ts), the right button from a vehicle; touch &
   // gamepad through controllers.keys.fire), weapons 1-4, R to cycle, Tab for the wheel (ui/weapon-wheel.ts)
   // =========================================================================
   bindInput(canvas: HTMLElement | null): void {

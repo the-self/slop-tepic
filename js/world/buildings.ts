@@ -42,13 +42,14 @@ import {
 } from '../render/tsl-materials.ts';
 import { GEO } from './city-geodata.js';
 import { STOREFRONTS } from './storefronts/index.ts';
-import { venueKind, VENUE_KINDS } from './venues.ts';
+import { signKind, VENUE_KINDS } from './venues.ts';
 import { LANDMARK_RESERVES as TEPIC_RESERVES } from './tepic-landmarks.ts';
 import { isEnterableStore, storeReserve } from './store-interiors.ts';
+import { createSignSlots } from './sign-slots.ts';
 import { SLOPES, groundHeight, liftAt } from './ground.ts';
 import { pavedPlazaRects, parkTreeSites, sidewalkBlocks } from './city-grid.ts';
 import type { Bounds, CityBlock, GridAvenue, PointXZ } from './city-config.ts';
-import type { LotRect, BlockFrame } from './city-geodata.js';
+import type { LotRect, BlockFrame, SignFace } from './city-geodata.js';
 import type { StoreHall } from './store-interiors.ts';
 import type { LotReserve } from './landmark-models.ts';
 import type { Storefront } from './storefronts/index.ts';
@@ -163,10 +164,22 @@ interface Tinaco {
 }
 
 /**
+ * A page of the shop sign atlas: its canvas (ATLAS_COLS x rows slots) and texture, the instanced sign boxes that read
+ * it (their slot per instance in `slots`) and how many of them this streaming pass placed.
+ */
+export interface AtlasPage {
+  ctx: CanvasRenderingContext2D;
+  tex: THREE.CanvasTexture;
+  inst: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshBasicNodeMaterial>;
+  slots: THREE.InstancedBufferAttribute;
+  count: number;
+}
+
+/**
  * A storefront's awning (m) and its sign: y the awning's height, g the street front's ground, w × d its size, sideDir
  * the way it faces (±1 along its local x), colorIdx its canvas colour; sign the atlas slot of the shop's own sign
  * (signY, signW, signH: its centre's height & size; signPX, signPZ: its place on the wall), noAwning for a fascia
- * alone, noSign for neither sign
+ * alone
  */
 export interface Awning {
   x: number;
@@ -179,7 +192,6 @@ export interface Awning {
   colorIdx: number;
   ry?: number;
   noAwning?: boolean;
-  noSign?: boolean;
   sign?: number;
   signY?: number;
   signW?: number;
@@ -606,7 +618,7 @@ function buildCityBlocks(scene: THREE.Object3D) {
   const stores: StoreHall[] = []; // the big chain stores you can walk into (store-interiors.ts)
   const balconies: { x: number; y: number; z: number; yaw: number }[] = []; // the colonial houses' iron balconies: { x, y, z, yaw } (the slab's top, facing out)
 
-  // Frame of the lots being populated. Irregular blocks come with frontage frames (city-config.js BLOCKS: lots laid
+  // Frame of the lots being populated. Irregular blocks come with frontage frames (city-config.ts BLOCKS: lots laid
   // out along the streets they front, in a frame turned by θ about p); the generator works in the frame as on a grid
   // block, and everything it emits is turned into place (placeInFrame), so buildings line up with their street.
   let xf: { th: number; cs: number; sn: number; px: number; pz: number } | null = null;
@@ -1810,7 +1822,7 @@ function buildCityBlocks(scene: THREE.Object3D) {
     york: [['tower', 4], ['prewar', 2], ['walkups', 2]],
     water: [['tower', 3], ['prewar', 2], ['walkups', 1]]
   };
-  // Corner type of each real avenue line (city-config.js ALL_AVENUES ids), by where along it a block stands
+  // Corner type of each real avenue line (city-config.ts ALL_AVENUES ids), by where along it a block stands
   function avenueKind(ave: GridAvenue, z: number) {
     const uptown = z < streetZ(59);
     const harlem = z < streetZ(110);
@@ -2035,7 +2047,7 @@ function buildCityBlocks(scene: THREE.Object3D) {
     });
   }
 
-  // Profile of a block by its real neighbourhood (city-config.js districtAt)
+  // Profile of a block by its real neighbourhood (city-config.ts districtAt)
   function blockProfile(blk: BlockDetail, district: string): BlockProfile {
     switch (district) {
       case 'centro': return TEPIC_CENTRO;
@@ -2180,7 +2192,7 @@ function buildCityBlocks(scene: THREE.Object3D) {
   }
 
   // ============================================================================
-  // A. EVERY REAL BLOCK OF THE CITY (city-config.js BLOCKS): each curb island's lots inside its property line,
+  // A. EVERY REAL BLOCK OF THE CITY (city-config.ts BLOCKS): each curb island's lots inside its property line,
   //    filled for its neighbourhood. A grid block is one lot rect spanning avenue to avenue (61 m deep between the
   //    streets); Broadway's trapezoids and Lower Manhattan's irregular blocks come with frontage frames: lot rects laid
   //    out along each street they front, filled in the frame and turned into place.
@@ -2251,7 +2263,7 @@ function buildCityBlocks(scene: THREE.Object3D) {
       }
       return blk;
     };
-    // the halls of the stores you walk into (store-interiors.js), first: no other footprint overlapping one is built
+    // the halls of the stores you walk into (store-interiors.ts), first: no other footprint overlapping one is built
     // (Overture's footprints overlap here and there; inside a store they would stand among the shelves)
     const storeHalls = new Set<number>();
     const storeLots: LotReserve[] = [];
@@ -2264,12 +2276,12 @@ function buildCityBlocks(scene: THREE.Object3D) {
       storeHalls.add(i);
       storeLots.push(storeReserve({ cx: HOUSES[i] / 10, cz: HOUSES[i + 1] / 10, w, d, th: HOUSES[i + 4] / 1000 }));
     }
-    // the buildings known as they are (js/world/building-overrides.js): house index -> [storeys (0: as guessed), paint]
+    // the buildings known as they are (js/world/building-overrides.ts): house index -> [storeys (0: as guessed), paint]
     const known = new Map(GEO.overrides.map(([n, storeys, paint]): [number, { storeys: number; paint: number | null }] => [n, { storeys, paint: paint >= 0 ? paint : null }]));
     for (let i = 0; i < HOUSES.length; i += HS) {
       const cx0 = HOUSES[i] / 10, cz0 = HOUSES[i + 1] / 10;
       const own = known.get(i / HS);
-      if (TEPIC_RESERVES.some((r) => r.contains(cx0, cz0))) continue; // a landmark stands there (tepic-landmarks.js)
+      if (TEPIC_RESERVES.some((r) => r.contains(cx0, cz0))) continue; // a landmark stands there (tepic-landmarks.ts)
       if (!storeHalls.has(i) && storeLots.some((r) => r.contains(cx0, cz0))) continue; // inside a store's hall
       const w0 = HOUSES[i + 2] / 10, d0 = HOUSES[i + 3] / 10;
       const th = HOUSES[i + 4] / 1000;
@@ -2319,15 +2331,15 @@ function buildCityBlocks(scene: THREE.Object3D) {
         const tone = strip || coto ? plazaTone : rand();
         const side = big || strip ? WALL_KINDS.bigSide : WALL_KINDS.rear;
         const faces = [side, side, side, side];
-        // (a taquería's, a bar's front: WALL_KINDS.shop + 0.25, its shutter up at night, tsl-materials.js)
-        const venue = hasSign && !chain ? venueKind(sign.text) : null;
+        // (a taquería's, a bar's front: WALL_KINDS.shop + 0.25, its shutter up at night, tsl-materials.ts)
+        const venue = hasSign && !chain ? signKind(sign, SIGNS) : null;
         const nightShop = venue && VENUE_KINDS[venue].night ? 0.25 : 0;
         faces[front] = chain && sign?.store !== undefined ? WALL_KINDS.chainStore + sign.store : big || strip ? WALL_KINDS.bigFront : shop ? WALL_KINDS.shop + nightShop : WALL_KINDS.entry;
         const hx = w * 0.5, hz = d * 0.5;
         const ex = Math.abs(cs) * hx + Math.abs(sn) * hz;
         const ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
         const pts = [[-hx, -hz], [hx, -hz], [hx, hz], [-hx, hz]].map(([a, b]) => ({ x: cx + a * cs + b * sn, z: cz - a * sn + b * cs }));
-        // on a hillside (terrain.js), and anywhere on the town's slopes (ground.js), the house stands on
+        // on a hillside (terrain.ts), and anywhere on the town's slopes (ground.ts), the house stands on
         // the slope: its floor at its lowest corner (a little into the ground), its roof a full height over its
         // highest, the downhill side's foundation showing
         // (the flat city's ground is 0 but on the hills; the town's slopes may be anywhere, even under the datum)
@@ -2358,7 +2370,7 @@ function buildCityBlocks(scene: THREE.Object3D) {
           }
         }
         buckets[MEX].push({ x: cx, y: (base + top) * 0.5, z: cz, w, h: top - base, d, faces, tone, ry: th, paint: own ? own.paint : null, colonial });
-        // a big chain's store is walked into (store-interiors.js: its walls, door & shelves collide instead)
+        // a big chain's store is walked into (store-interiors.ts: its walls, door & shelves collide instead)
         if (storeHalls.has(i) && chain) {
           stores.push({ cx, cz, w, d, th, front, base, top, name: chain.name, band: chain.facade.band });
         } else colliders.push({ minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez, minY: base, maxY: top, obb: { cx, cz, hx, hz, cs, sn } });
@@ -2404,10 +2416,15 @@ function buildCityBlocks(scene: THREE.Object3D) {
         } else if (hasSign || chance(0.55)) {
           const [ax, az] = toFront(0.9);
           const [sx, sz] = toFront(0.16); // the sign flat on the wall above the awning
-          const signY = Math.max(gf, base) + (floors < 2 ? h - 0.45 : storeys[MEX] + 0.6);
+          // (a one-storey shop's awning just over 1.9 m up and its sign standing on the parapet, a board over the roof
+          // line: tucked under it, the sign hid behind the awning's 1.5 m of canvas from the sidewalk. 0.35 m over the
+          // awning's top, it clears its front edge for an eye 1.6 m up from about 8 m out)
+          const awningY = floors < 2 ? 2.3 : Math.min(2.7, storeys[MEX] * 0.9) - 0.15;
+          const signY = Math.max(gf, base) + (floors < 2 ? Math.max(h - 0.33, awningY + 0.375 + 0.35 + 0.31) : storeys[MEX] + 0.6);
           const sg = hasSign ? signNo - 1 : undefined;
-          blk.awnings.push({ x: ax, y: Math.max(gf, base) + Math.min(2.7, storeys[MEX] * 0.9) - 0.15, g: Math.max(gf, base), z: az, w: 1.5, d: Math.min(7, len - 1.2), sideDir: ou || 1,
-            colorIdx: strip ? plazaAwning : irange(0, 4), ry, sign: sg, signY, signPX: sx, signPZ: sz, signW: 0.12, signH: 0.62, noSign: sg === undefined && floors < 2 });
+          // (no business on record: an awning with no sign, never a made-up name)
+          blk.awnings.push({ x: ax, y: Math.max(gf, base) + awningY, g: Math.max(gf, base), z: az, w: 1.5, d: Math.min(7, len - 1.2), sideDir: ou || 1,
+            colorIdx: strip ? plazaAwning : irange(0, 4), ry, sign: sg, signY, signPX: sx, signPZ: sz, signW: 0.12, signH: 0.62 });
         }
       });
     }
@@ -2419,7 +2436,7 @@ function buildCityBlocks(scene: THREE.Object3D) {
   }
 
   // B6. Narrow leftover slabs no building fits on (8-26 m wide: clipped short by the shore highways or cut by Broadway)
-  //     become sitting areas: a row or two of honey locusts & planes in tree pits (planted by street-details.js)
+  //     become sitting areas: a row or two of honey locusts & planes in tree pits (planted by street-details.ts)
   {
     const plazas = pavedPlazaRects ?? [];
     const sites = parkTreeSites;
@@ -2661,93 +2678,72 @@ function buildCityBlocks(scene: THREE.Object3D) {
   }
   group.add(awningInst);
 
-  const signThemes = [
-    { bg: '#161210', border: '#c89d54', text: 'LONCHERÍA LA TEPIQUEÑA', color: '#ffe4a8' },
-    { bg: '#0c2244', border: '#38b6ff', text: 'FARMACIA DEL CENTRO', color: '#ffffff' },
-    { bg: '#142b20', border: '#d4af37', text: 'LIBRERÍA Y CAFÉ NAYAR', color: '#fff2cc' },
-    { bg: '#280a10', border: '#ff5252', text: 'TACOS Y TORTAS · 24 HRS', color: '#ffd180' },
-    { bg: '#101318', border: '#e0e6ed', text: 'RELOJERÍA AMADO NERVO', color: '#f5f9ff' }
-  ];
-  const MAX_SIGNS_PER_THEME = Math.ceil(MAX_AWNINGS / signThemes.length) + 32;
-  const signInsts = signThemes.map((st) => {
-    const c = document.createElement('canvas');
-    c.width = 512;
-    c.height = 96;
-    const ctx = c.getContext('2d');
-    if (!ctx) throw new Error('buildings: no 2D canvas context');
-    ctx.fillStyle = st.bg;
-    ctx.fillRect(0, 0, 512, 96);
-    ctx.strokeStyle = st.border;
-    ctx.lineWidth = 6;
-    ctx.strokeRect(6, 6, 500, 84);
-    ctx.fillStyle = st.color;
-    ctx.font = '800 26px Inter, Arial, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(st.text, 256, 50);
-
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const sMat = new THREE.MeshBasicNodeMaterial({ map: tex });
-    const sInst = new THREE.InstancedMesh(unitBox, sMat, MAX_SIGNS_PER_THEME);
-    sInst.frustumCulled = false;
-    group.add(sInst);
-    return sInst;
-  });
-
-  // 5B. Shop sign atlas (city-geodata.js `signs`: chains under parody names, local businesses, trades): every sign face
-  //     drawn once into one canvas, each sign box picking its slot per instance
+  // 5B. Shop sign atlas (city-geodata.js `signs`: chains under parody names, trades, local businesses), in pages of
+  //     one canvas texture each, each sign box picking its page (its mesh) and slot (per instance). Page 0 holds the
+  //     chains & trades for good; the businesses' own names (some 6,600) come and go in the other pages, drawn in as
+  //     they come within NAME_RADIUS (js/world/sign-slots.ts), and past it or with the pages full show their trade
   const ATLAS_COLS = 8;
-  const ATLAS_ROWS = 102;
   const SLOT_W = 256;
   const SLOT_H = 40;
-  let atlasInst: THREE.InstancedMesh | null = null;
-  let atlasSlots: THREE.InstancedBufferAttribute | null = null;
-  if (SIGNS.length) {
+  const NAME_PAGES = 6;
+  const NAME_PAGE_ROWS = 16; // 128 names a page (2048 x 640 px)
+  const NAME_RADIUS = 220; // m (a 0.6 m sign is a few pixels high further out: its trade's sign reads the same)
+  let fixedSigns = SIGNS.findIndex((sg) => sg.trade);
+  if (fixedSigns < 0) fixedSigns = SIGNS.length;
+  const atlasPages: AtlasPage[] = [];
+  const signSlots = createSignSlots(NAME_PAGES, ATLAS_COLS * NAME_PAGE_ROWS);
+  function drawSign(ctx: CanvasRenderingContext2D, sg: SignFace, slot: number) {
+    const x0 = (slot % ATLAS_COLS) * SLOT_W;
+    const y0 = Math.floor(slot / ATLAS_COLS) * SLOT_H;
+    ctx.fillStyle = sg.bg;
+    ctx.fillRect(x0, y0, SLOT_W, SLOT_H);
+    if (sg.stripe) {
+      // a logo between two stripes (OKSO)
+      ctx.fillStyle = sg.stripe;
+      ctx.fillRect(x0, y0, SLOT_W, 6);
+      ctx.fillRect(x0, y0 + SLOT_H - 6, SLOT_W, 6);
+    } else {
+      ctx.strokeStyle = sg.border || sg.fg;
+      ctx.lineWidth = sg.chain ? 4 : 2;
+      ctx.strokeRect(x0 + 3, y0 + 3, SLOT_W - 6, SLOT_H - 6);
+    }
+    ctx.fillStyle = sg.fg;
+    let px = sg.chain ? 26 : 22;
+    const weight = sg.chain ? '900' : '800';
+    do {
+      ctx.font = `${weight} ${px}px Inter, Arial, sans-serif`;
+      px--;
+    } while (px > 9 && ctx.measureText(sg.text).width > SLOT_W - 18);
+    ctx.fillText(sg.text, x0 + SLOT_W / 2, y0 + SLOT_H / 2 + 1);
+  }
+  function atlasPage(rows: number): AtlasPage {
     const c = document.createElement('canvas');
     c.width = ATLAS_COLS * SLOT_W;
-    c.height = ATLAS_ROWS * SLOT_H;
+    c.height = rows * SLOT_H;
     const ctx = c.getContext('2d');
     if (!ctx) throw new Error('buildings: no 2D canvas context');
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    SIGNS.forEach((sg, k) => {
-      if (k >= ATLAS_COLS * ATLAS_ROWS) return;
-      const x0 = (k % ATLAS_COLS) * SLOT_W;
-      const y0 = Math.floor(k / ATLAS_COLS) * SLOT_H;
-      ctx.fillStyle = sg.bg;
-      ctx.fillRect(x0, y0, SLOT_W, SLOT_H);
-      if (sg.stripe) {
-        // a logo between two stripes (OKSO)
-        ctx.fillStyle = sg.stripe;
-        ctx.fillRect(x0, y0, SLOT_W, 6);
-        ctx.fillRect(x0, y0 + SLOT_H - 6, SLOT_W, 6);
-      } else {
-        ctx.strokeStyle = sg.border;
-        ctx.lineWidth = sg.chain ? 4 : 2;
-        ctx.strokeRect(x0 + 3, y0 + 3, SLOT_W - 6, SLOT_H - 6);
-      }
-      ctx.fillStyle = sg.fg;
-      let px = sg.chain ? 26 : 22;
-      const weight = sg.chain ? '900' : '800';
-      do {
-        ctx.font = `${weight} ${px}px Inter, Arial, sans-serif`;
-        px--;
-      } while (px > 9 && ctx.measureText(sg.text).width > SLOT_W - 18);
-      ctx.fillText(sg.text, x0 + SLOT_W / 2, y0 + SLOT_H / 2 + 1);
-    });
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 4;
     const geo = unitBox.clone();
-    atlasSlots = new THREE.InstancedBufferAttribute(new Float32Array(MAX_AWNINGS), 1);
-    geo.setAttribute('signSlot', atlasSlots);
+    const slots = new THREE.InstancedBufferAttribute(new Float32Array(MAX_AWNINGS), 1);
+    geo.setAttribute('signSlot', slots);
     const mat = new THREE.MeshBasicNodeMaterial();
-    mat.colorNode = texture(tex, atlasSlotUV(attribute('signSlot', 'float'), ATLAS_COLS, ATLAS_ROWS));
-    atlasInst = new THREE.InstancedMesh(geo, mat, MAX_AWNINGS);
-    atlasInst.frustumCulled = false;
-    atlasInst.count = 0;
-    group.add(atlasInst);
+    mat.colorNode = texture(tex, atlasSlotUV(attribute('signSlot', 'float'), ATLAS_COLS, rows));
+    const inst = new THREE.InstancedMesh(geo, mat, MAX_AWNINGS);
+    inst.frustumCulled = false;
+    inst.count = 0;
+    group.add(inst);
+    return { ctx, tex, inst, slots, count: 0 };
+  }
+  if (SIGNS.length) {
+    const fixed = atlasPage(Math.max(1, Math.ceil(fixedSigns / ATLAS_COLS)));
+    for (let k = 0; k < fixedSigns; k++) drawSign(fixed.ctx, SIGNS[k], k);
+    atlasPages.push(fixed);
+    if (fixedSigns < SIGNS.length) for (let p = 0; p < NAME_PAGES; p++) atlasPages.push(atlasPage(NAME_PAGE_ROWS));
+    const mat = fixed.inst.material;
 
     // 5C. Chain stores' pole signs: a tall pole at the corner of the front with the logo box on top (both faces)
     if (pylons.length) {
@@ -2855,8 +2851,8 @@ function buildCityBlocks(scene: THREE.Object3D) {
     let tinacoCount = 0;
     let awningCount = 0;
     let shedCount = 0;
-    const signCounts = signInsts.map(() => 0);
-    let atlasCount = 0;
+    for (const page of atlasPages) page.count = 0;
+    signSlots.begin();
 
     for (let bIdx = 0; bIdx < nearbyBlocks.length; bIdx++) {
       const blk = nearbyBlocks[bIdx];
@@ -2922,19 +2918,25 @@ function buildCityBlocks(scene: THREE.Object3D) {
         awningInst.setMatrixAt(awningCount, dummy.matrix);
         awningInst.setColorAt(awningCount, awningPalette[a.colorIdx % awningPalette.length]);
 
-        const themeIdx = a.sign !== undefined ? a.sign % storeThemeColors.length : awningCount % signInsts.length;
-        if (a.sign !== undefined && atlasInst && atlasSlots) {
-          // the shop's own sign (atlas slot), flat on its facade above the awning (or the chain's fascia band)
+        const themeIdx = (a.sign ?? awningCount) % storeThemeColors.length; // (its shop light's tint)
+        if (a.sign !== undefined && atlasPages.length) {
+          // the shop's own sign (atlas slot), flat on its facade above the awning (or the chain's fascia band): a
+          // business's name near the camera from the name pages, else its trade's (or the chain's) from page 0
+          let page = atlasPages[0], slot = a.sign;
+          const trade = SIGNS[a.sign].trade;
+          if (trade) {
+            const ex = a.x - focusX, ez = a.z - focusZ;
+            const s = ex * ex + ez * ez < NAME_RADIUS * NAME_RADIUS ? signSlots.acquire(a.sign) : -1;
+            if (s >= 0) {
+              page = atlasPages[1 + Math.floor(s / signSlots.perPage)];
+              slot = s % signSlots.perPage;
+            } else slot = trade - 1;
+          }
           dummy.position.set(a.signPX ?? a.x, a.signY ?? 4.68 + (a.g || 0), a.signPZ ?? a.z);
           dummy.scale.set(a.signW ?? 0.28, a.signH ?? 0.86, a.d * 0.92);
           dummy.updateMatrix();
-          atlasInst.setMatrixAt(atlasCount, dummy.matrix);
-          atlasSlots.setX(atlasCount++, a.sign);
-        } else if (!a.noSign && a.sign === undefined && signCounts[themeIdx] < MAX_SIGNS_PER_THEME) {
-          dummy.position.set(a.x, a.signY ?? 4.68 + (a.g || 0), a.z);
-          dummy.scale.set(0.28, 0.86, a.d * 0.92);
-          dummy.updateMatrix();
-          signInsts[themeIdx].setMatrixAt(signCounts[themeIdx]++, dummy.matrix);
+          page.inst.setMatrixAt(page.count, dummy.matrix);
+          page.slots.setX(page.count++, slot);
         }
         if (collectNearLights) {
           activeAwnings.push({ a, themeIdx, ry: a.ry ?? blk.ry ?? 0 });
@@ -2972,14 +2974,16 @@ function buildCityBlocks(scene: THREE.Object3D) {
     flagRange(awningInst.instanceMatrix, awningCount);
     if (awningInst.instanceColor) flagRange(awningInst.instanceColor, awningCount);
 
-    signInsts.forEach((sInst, idx) => {
-      sInst.count = signCounts[idx];
-      flagRange(sInst.instanceMatrix, signCounts[idx]);
-    });
-    if (atlasInst && atlasSlots) {
-      atlasInst.count = atlasCount;
-      flagRange(atlasInst.instanceMatrix, atlasCount);
-      flagRange(atlasSlots, atlasCount);
+    // the names that came near: drawn into their slots, and only their pages uploaded again
+    for (let k = 0; k < signSlots.drawn.length; k += 2) {
+      const s = signSlots.drawn[k];
+      drawSign(atlasPages[1 + Math.floor(s / signSlots.perPage)].ctx, SIGNS[signSlots.drawn[k + 1]], s % signSlots.perPage);
+    }
+    for (const p of signSlots.dirty) atlasPages[1 + p].tex.needsUpdate = true;
+    for (const page of atlasPages) {
+      page.inst.count = page.count;
+      flagRange(page.inst.instanceMatrix, page.count);
+      flagRange(page.slots, page.count);
     }
 
     shedInst.count = shedCount;

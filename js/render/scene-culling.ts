@@ -260,7 +260,7 @@ interface FaceSide {
 
 /**
  * Shows `group` only to the cameras that see `layers`, render by render (scene.onBeforeRender), and visible again
- * after each (onAfterRender), so whatever walks the scene between renders (main.js's shader warm-up) still finds it
+ * after each (onAfterRender), so whatever walks the scene between renders (main.ts's shader warm-up) still finds it
  */
 function showOnlyTo(scene: THREE.Scene, group: THREE.Object3D, layers: THREE.Layers): void {
   // (three.js calls them on the scene: bound to it, as they were)

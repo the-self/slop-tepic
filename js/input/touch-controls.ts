@@ -138,7 +138,7 @@ class TouchControls {
     for (const button of this.buttons) {
       const action = button.getAttribute('data-touch-action') as TouchAction;
       button.hidden = (action === 'up' && (mode === 'cyclist' || mode === 'moto')) || (action === 'down' && mode !== 'helicopter') ||
-        (action === 'fire' && mode === 'helicopter'); // (no guns from the helicopter, crime.js)
+        (action === 'fire' && mode === 'helicopter'); // (no guns from the helicopter, crime.ts)
       button.setAttribute('aria-label', labels[action]);
       const label = this.root.querySelector(`[data-touch-label="${action}"]`);
       if (label) label.textContent = labels[action];

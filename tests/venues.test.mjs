@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { venueKind, venueName, isOpen, frontDoor, findVenues, NAMED_VENUES } from '../js/world/venues.ts';
+import { venueKind, signKind, venueName, isOpen, frontDoor, findVenues, NAMED_VENUES } from '../js/world/venues.ts';
 
 test('signs read as the places they are', () => {
   assert.equal(venueKind('TACOS'), 'tacos');
@@ -54,4 +54,11 @@ test('venues come from the signs, and the hand-placed ones from their spot', () 
   ];
   const v = findVenues(houses, signs, 8);
   assert.deepEqual(v.map((x) => [x.kind, x.name]), [['tacos', 'Taquería'], [n.kind, n.name]]);
+});
+
+test("a business's name that says nothing of its trade goes by its trade's sign", () => {
+  const signs = [{ text: 'CANTINA' }, { text: 'FERRETERÍA' }, { text: 'EL RINCONCITO', trade: 1 }, { text: 'TACOS DON JUAN', trade: 2 }];
+  assert.equal(signKind(signs[2], signs), 'bar');
+  assert.equal(signKind(signs[3], signs), 'tacos', 'its own name first');
+  assert.equal(signKind({ text: 'DON PEPE', trade: 2 }, signs), null);
 });

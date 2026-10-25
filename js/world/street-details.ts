@@ -118,7 +118,7 @@ interface CornerSign {
 
 /**
  * TSL 3-Aspect Traffic Signal Lens Material (red on top, amber, green: the lenses at 0.36, 0, -0.36 in the head)
- * Driven by the shared signal clock and SIGNAL_TIMING (city-config.js), which js/sim/traffic.js obeys.
+ * Driven by the shared signal clock and SIGNAL_TIMING (city-config.ts), which js/sim/traffic.ts obeys.
  */
 function createTrafficSignalLensMaterial(isAvenueHead: boolean, clock: THREE.UniformNode<'float', number>) {
   const { cycle, avenueAmber, avenueRed, streetAmber } = SIGNAL_TIMING;

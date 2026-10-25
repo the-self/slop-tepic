@@ -1054,8 +1054,10 @@ const cotos = [];
 
 // =====================================================================================================================
 // 5C. SHOP SIGNS: the businesses of Overture Maps' places on the buildings they stand in. Chains get a parody name in
-//     their colours on a fascia band, local businesses their own name on the awning (the centro's first, while the
-//     sign atlas has room), every other shop a generic sign of its trade
+//     their colours on a fascia band, local businesses their own name on the awning (those Overture is fairly sure of,
+//     confidence >= 0.5: about half of them are Facebook pages, some closed or pinned on the wrong roof), every other
+//     shop a generic sign of its trade. The game draws the names into its sign atlas only around the camera
+//     (js/world/sign-slots.js), so there's no cap on how many there are
 // =====================================================================================================================
 const signs = [];
 {
@@ -1077,17 +1079,17 @@ const signs = [];
     'FERRETERÍA', 'CELULARES', 'REFACCIONARIA', 'DULCERÍA', 'NEVERÍA', 'BIRRIA', 'MARISCOS', 'PANADERÍA', 'POLLOS ASADOS'];
   const LOCAL_COLOURS = [['#1f4e8c', '#ffffff'], ['#9e1b1b', '#fff3d6'], ['#1d6b3a', '#ffffff'], ['#f2b705', '#1a1a1a'], ['#ffffff', '#b3121b'],
     ['#6a1b9a', '#ffffff'], ['#e8611a', '#ffffff'], ['#0b7a75', '#ffffff'], ['#222222', '#ffd34d']];
-  const ATLAS_SLOTS = 816; // js/world/buildings.js sign atlas: 8 columns x 102 rows
+  const NAME_CONFIDENCE = 0.5;
   const signIndex = new Map();
   const addSign = (key, entry) => {
     if (signIndex.has(key)) return signIndex.get(key);
-    if (signs.length >= ATLAS_SLOTS) return 0;
     signs.push(entry);
     signIndex.set(key, signs.length);
     return signs.length;
   };
   const hashS = (str) => { let h = 2166136261; for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619); return h >>> 0; };
-  // chains first, then the trades, so neither is ever crowded out by local names
+  // chains first, then the trades: the game keeps these in its atlas for good, the names (which carry `trade`, their
+  // trade's sign, for when the atlas is full) come and go
   CHAINS.forEach((sf, k) => addSign(`chain:${sf.id}`, { text: sf.name, ...sf.sign, chain: 1, big: sf.big ? 1 : 0, store: k }));
   for (const t of new Set([...GENERIC.map((g) => g[1]), ...STREET_TRADES, 'MISCELÁNEA'])) {
     const [bg, fg] = LOCAL_COLOURS[hashS(t) % LOCAL_COLOURS.length];
@@ -1146,12 +1148,12 @@ const signs = [];
       const brand = (p.brand && p.brand.names && p.brand.names.primary) || '';
       const cat = p.basic_category || (p.taxonomy && p.taxonomy.primary) || '';
       if (!name || !f.geometry || f.geometry.type !== 'Point') continue;
-      if (/school|place_of_learning|government|worship|college|university|real_estate|attorney|professional_service|home_service|event_or_party|manufacturer/.test(cat)) continue;
+      if (/school|place_of_learning|government|worship|college|university|real_estate|attorney|professional_service|home_service|event_or_party|manufacturer|park|public_plaza/.test(cat)) continue;
       const [x, z] = toWorld(f.geometry.coordinates[0], f.geometry.coordinates[1]);
       if (!inBox(x, z)) continue;
       // a shopping centre (Plaza Cigarrera, Plaza del Valle...; not a public square): the building it stands in is a row
       // of locales, unless it's a hall already
-      if ((cat === 'shopping_mall' || /^plaza\b|centro comercial/i.test(name)) && !/public_plaza|park/.test(cat)) {
+      if (cat === 'shopping_mall' || /^plaza\b|centro comercial/i.test(name)) {
         const i = houseAt(x, z, 12);
         if (i >= 0 && !(houses[i + 6] & (KIND.big | KIND.coto))) { houses[i + 6] |= KIND.strip | KIND.shop; plazas++; }
       }
@@ -1170,21 +1172,42 @@ const signs = [];
       }
       const i = houseAt(x, z, 8);
       if (i < 0 || houses[i + 7] || houses[i + 6] & KIND.coto) continue; // (no shops inside a coto)
-      locals.push({ i, name, cat, d: Math.hypot(x, z) });
+      locals.push({ i, name, cat, conf: p.confidence || 0, d: Math.hypot(x, z) });
     }
   }
-  // local names, nearest the plaza first, while the atlas has room; the rest by trade
-  locals.sort((a, b) => a.d - b.d);
+  // a sign's text: no emoji, no "- Tepic" tacked on the end (Facebook pages' names), something to read left (the emoji
+  // and their joiners one code point at a time: in a character class they'd read as one joined sequence)
+  const signText = (name) => {
+    let t = name.normalize('NFC').replace(/\p{Extended_Pictographic}|\u{FE0F}|\u{200D}|\u{20E3}/gu, '')
+      .replace(/\s*[|·•–—-]\s*tepic\b.*$/i, '').replace(/\s+/g, ' ').trim().toUpperCase();
+    // a long one: its first part ("DENTALUX - ODONTOLOGÍA INTEGRAL"), else cut at a word
+    if (t.length > 30) t = t.replace(/\s*\([^)]*(\)|$)/g, ' ').trim(); // (what's in brackets goes first)
+    if (t.length > 30) {
+      const head = t.split(/\s+[-|:–—]\s+/)[0];
+      if (head.length <= 30 && (head.match(/\p{L}/gu) || []).length >= 4) t = head;
+      else {
+        t = t.slice(0, 29).replace(/\s+\S*$/, '');
+        // (not on "Y", "DE", "LA"...: "PROVEEDORA DE HULES…", not "PROVEEDORA DE HULES Y…")
+        for (let u = ''; u !== t;) [u, t] = [t, t.replace(/[\s,;:.|&\-–(“"]+$/, '').replace(/\s+(Y|E|DE|DEL|LA|LAS|EL|LOS|EN|CON|PARA|AND|THE|OF)$/i, '')];
+        t += '…';
+      }
+    }
+    return /\p{L}.*\p{L}/u.test(t) ? t : null;
+  };
+  // several businesses in one building: the surest names it (then the one nearest the plaza)
+  locals.sort((a, b) => b.conf - a.conf || a.d - b.d);
   for (const l of locals) {
-    if (houses[l.i + 7]) continue; // (several businesses in one building: the one nearest the plaza names it)
-    let text = l.name.toUpperCase().replace(/\s+/g, ' ');
-    if (text.length > 30) text = text.slice(0, 29).trim() + '…';
-    const [bg, fg] = LOCAL_COLOURS[hashS(text) % LOCAL_COLOURS.length];
-    let k = addSign(`name:${text}`, { text, bg, fg, border: fg });
-    if (k) named++;
-    else if (houses[l.i + 6] & KIND.big) continue; // (a hall carries its own name or none, never a trade's)
+    if (houses[l.i + 7]) continue;
+    const trade = signIndex.get(`trade:${tradeOf(l.name, l.cat) || 'MISCELÁNEA'}`);
+    const text = l.conf >= NAME_CONFIDENCE ? signText(l.name) : null;
+    let k;
+    if (text) {
+      const [bg, fg] = LOCAL_COLOURS[hashS(text) % LOCAL_COLOURS.length];
+      k = addSign(`name:${text}`, { text, bg, fg, trade });
+      named++;
+    } else if (houses[l.i + 6] & KIND.big) continue; // (a hall carries its own name or none, never a trade's)
     else {
-      k = signIndex.get(`trade:${tradeOf(l.name, l.cat) || 'MISCELÁNEA'}`);
+      k = trade;
       generic++;
     }
     houses[l.i + 7] = k;

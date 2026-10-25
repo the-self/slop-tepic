@@ -31,7 +31,7 @@ const options: esbuild.BuildOptions = {
   format: 'esm',
   // WebGPU browsers only (Chrome 113+, Safari 26, Firefox 141): no need to lower modern syntax
   target: ['es2024'],
-  // streaming.ts starts the worker at new URL('./tile-worker.js', import.meta.url), so the worker, the entry and
+  // streaming.ts starts the worker at new URL('./tile-worker.ts', import.meta.url), so the worker, the entry and
   // their shared chunks all sit side by side in dist/
   entryNames: '[name]',
   chunkNames: '[name]-[hash]',

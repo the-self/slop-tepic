@@ -100,7 +100,7 @@ interface LayerGroup {
 }
 
 /**
- * Every plain (not instanced) mesh under `root` but those in `skip` handed to the tile streamer (streaming.js) instead
+ * Every plain (not instanced) mesh under `root` but those in `skip` handed to the tile streamer (streaming.ts) instead
  * of laid whole: taken out of the scene, put in world space and merged by material (one layer each, without their
  * undersides), so they are laid on the floor tile by tile around the camera. `covers`: the materials of the layers that
  * cover all the ground under them (the road deck); `cutHoles`: those opened over the river channels once laid.

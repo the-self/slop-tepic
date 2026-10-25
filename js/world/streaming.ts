@@ -93,7 +93,7 @@ export interface StreamLayerOptions {
 }
 
 /**
- * The tiles' state for the hills' floor (terrain.js): a texel per tile, 1 where a layer covering the ground is drawn.
+ * The tiles' state for the hills' floor (terrain.ts): a texel per tile, 1 where a layer covering the ground is drawn.
  * Covers the tiles of the rectangle { x0, x1, z0, z1 } (the detailed city's box), `origin` & `span` placing it in the
  * world.
  */

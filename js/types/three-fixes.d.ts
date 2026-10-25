@@ -1,7 +1,6 @@
 // js/types/three-fixes.d.ts
 // Where @types/three's declarations are narrower than what three.js does, declared here (as extra overloads, so the
-// published ones still hold) instead of casting at every call. (skipLibCheck skips .d.ts files, ours too: ESLint's
-// type-aware rules are what catch a broken type here.)
+// published ones still hold) instead of casting at every call.
 import type { Node, TextureNode } from 'three/webgpu';
 import type SSRNode from 'three/addons/tsl/display/SSRNode.js';
 import type { SSRNodeOptions } from 'three/addons/tsl/display/SSRNode.js';

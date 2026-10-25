@@ -283,7 +283,7 @@ class CityAudioSystem {
     const smallDevice = navigator.hardwareConcurrency <= 4 || matchMedia('(pointer: coarse)').matches;
     this.limits = smallDevice ? { motors: 6, sirens: 1, events: 5, loops: 3 } : { motors: 8, sirens: 2, events: 8, loops: 5 };
     this.motors = new Map();
-    // The sounds that stay where they are (audio-ambience.js): music, planchas, fires, crowds; setAmbience() hands
+    // The sounds that stay where they are (audio-ambience.ts): music, planchas, fires, crowds; setAmbience() hands
     // them over every frame, the nearest few play
     this.loops = new Map();
     this.ambientSources = [];
@@ -582,7 +582,7 @@ class CityAudioSystem {
     return true;
   }
 
-  // A shot, a punch, a blast, a pickup or a gun drawn at (x, y, z) (crime.js): 'pistol' | 'smg' | 'bazooka' | 'punch'
+  // A shot, a punch, a blast, a pickup or a gun drawn at (x, y, z) (crime.ts): 'pistol' | 'smg' | 'bazooka' | 'punch'
   // | 'explosion' | 'pickup' | 'draw'
   gunfire(kind: string, x: number, y: number, z: number) {
     if (!this.ready || !this.enabled || !this.haveListener || this.context?.state !== 'running' || document.hidden) return false;

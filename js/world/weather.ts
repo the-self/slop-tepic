@@ -165,7 +165,7 @@ function rainIntensity(w: Readonly<Weather>): number {
 const wetGrip = (wet: number) => 1 - 0.3 * clamp01(wet);
 
 /**
- * The water on the roads, for driving (not for the look, which lighting.js sets): it rises within a minute or two of
+ * The water on the roads, for driving (not for the look, which lighting.ts sets): it rises within a minute or two of
  * steady rain and drains & dries over ~20 minutes once it stops (quicker in sun & wind). Starts wet if it rained in
  * the past three hours. `rain` eases to the falling intensity, so showers come and go rather than switch.
  */

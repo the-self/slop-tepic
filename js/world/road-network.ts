@@ -813,7 +813,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     // on a bridge or ramp: [distance from `from` along the edge, lift (m over the ground)], ascending (see edgeLift)
     // (every point of a raised link's profile has its lift)
     const lift = profile ? profile.map((p): [number, number] => [(p.x - x0) * dx + (p.z - z0) * dz, p.lift ?? 0]).sort((p, q) => p[0] - q[0]) : null;
-    // (`name`: the street's, OpenStreetMap's; the traffic weighs the busiest avenues by it, traffic-demand.js)
+    // (`name`: the street's, OpenStreetMap's; the traffic weighs the busiest avenues by it, traffic-demand.ts)
     edges.push({ from, to, axis, x0, z0, dx, dz, rx: -dz, rz: dx, span, half, lanes: open.sort((p, q) => p - q), moves: [], general: true, cand: lanes, divided: !!divided, lift, name, ...unplaced });
   }
   // A divided road drawn as two one-way roadways between the same two junctions (most of the Bowery) runs both ways
@@ -1424,7 +1424,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     if (best) signalled.add(best);
   }
 
-  // 9. Sides & right of way at each node, for traffic.js. Its arms are its sides (one crosswalk and approach each): a
+  // 9. Sides & right of way at each node, for traffic.ts. Its arms are its sides (one crosswalk and approach each): a
   //    grid intersection keeps east 0, west 1, south 2, north 3, any other arm counts from 4. The arms of one road (on
   //    opposite sides) form a group: vehicles of different groups never share the intersection box, and group 0 has
   //    the right of way at unsignalised corners (and the avenue phase at signals): the avenue on the grid (north-south

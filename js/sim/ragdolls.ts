@@ -242,7 +242,7 @@ function bleedOf(speed: number): number {
 }
 
 /**
- * Pure: the parts of a person of scale `s` with bind joints `J` posed by `pose` (pedestrians.js: per bone quaternion,
+ * Pure: the parts of a person of scale `s` with bind joints `J` posed by `pose` (pedestrians.ts: per bone quaternion,
  * translation & scale, 8 floats): for each, its body's rotation (its bone's), position (its segment's centre in the
  * world), its capsule (half height & radius, and its axis's rotation from +y in the body's frame), its mass, and its
  * joint to its parent (anchor in the world; the bone's direction & the person's side, in the world).

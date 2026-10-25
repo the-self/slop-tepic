@@ -1237,7 +1237,7 @@ function bloodStains(p: Node<'vec3'>, n: Node<'vec3'>, spec: BodySpec, mask: Nod
  * Instanced traffic reads the per-instance `paintColor` (vec3) and `carState` (vec4: brake, left (+x) & right (-x)
  * turn signal, livery: 1 = NYPD) attributes; with a fixed `fixedColorHex` (the player's taxi, wheels) the state is the
  * `material.userData.carState` uniform instead. With `crumple` (the city's traffic) carState's w also carries how crushed
- * the car is (traffic.js renderCar: livery + 2 × (front + 16 rear + 256 left (+x) + 4096 right (-x)), each in 15ths:
+ * the car is (traffic.ts renderCar: livery + 2 × (front + 16 rear + 256 left (+x) + 4096 right (-x)), each in 15ths:
  * one more vertex buffer would be past WebGPU's 8), and the body is pushed in there and dulled. With `blood` (the
  * player's car: a new material each time, its stains its own) the stains of player/car-blood.ts on its nose, bonnet &
  * windscreen, from `material.userData.blood` ({ front, top }: arrays of vec4 uniforms, car-blood.ts's slots).

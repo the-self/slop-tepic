@@ -264,7 +264,7 @@ class StreetFood {
 
   /**
    * The frame: which stands are out round the camera, drawn with their people, lights & steam; the stand the player
-   * can buy from. `hour`: the local hour (lighting.js hourOfDay)
+   * can buy from. `hour`: the local hour (lighting.ts hourOfDay)
    */
   update(dt: number, hour: number, camera: THREE.Camera) {
     this.hour = hour;
