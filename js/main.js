@@ -38,6 +38,7 @@ import { CrimeSystem } from './sim/crime.js';
 import { CrimeHud } from './ui/crime-hud.js';
 import { WeaponWheel } from './ui/weapon-wheel.js';
 import { AimControl } from './player/aim.js';
+import { createCarPhysics } from './player/car-physics.js';
 import { cityUniforms } from './render/tsl-materials.js';
 import { grassDryness } from './world/lot-greenery.js';
 import { GEO } from './world/city-geodata.js';
@@ -90,6 +91,11 @@ async function initApp() {
     initTimings.push(`${label} ${Math.round(now - initMark)}ms`);
     initMark = now;
   };
+
+  // The player's car is a rigid body on sprung wheels in Jolt Physics (player/car-physics.js): its WASM downloads and
+  // compiles while the city is built
+  const joltReady = import('jolt-physics').then(({ default: initJolt }) => initJolt());
+  joltReady.catch(() => {}); // (awaited below, once the controllers are up)
 
   await renderer.init();
   markInit('renderer');
@@ -218,6 +224,17 @@ async function initApp() {
     controllerManager.setMode(savedMode);
     controllerManager.exitVehicle();
   }
+  try {
+    controllerManager.setCarPhysics(createCarPhysics(await joltReady, {
+      // what the car stands on: the ground at its level (a bridge's deck it is on), the sidewalks over the street
+      groundAt: (x, z, fromY) => controllerManager.getGroundHeight(x, z, 'person', fromY),
+      collidersNear: (x, z, r) => controllerManager.nearColliders(x, z, r)
+    }));
+  } catch (err) {
+    if (loadingStatus) loadingStatus.textContent = 'The car physics (Jolt Physics) could not load: check the connection and reload';
+    throw err;
+  }
+  markInit('physics');
   // Sprinting runs out of breath (player/stats.js)
   const stamina = new Stamina();
 

@@ -7,14 +7,16 @@
   <link rel="icon" href="data:," />
   <meta name="description" content="Slop Tepic: simulación 3D estilo GTA de Tepic, Nayarit, con Three.js WebGPURenderer y TSL. Calles, colonias y parques reales de OpenStreetMap, navegación en tercera persona (a pie, coche, bici y helicóptero) y 11 cámaras cinematográficas." />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
-  <!-- three.js dev branch (builds committed to mrdoob/three.js@dev, served by jsDelivr) -->
+  <!-- three.js dev branch (builds committed to mrdoob/three.js@dev, served by jsDelivr); Jolt Physics for the player's
+       car (player/car-physics.js, MIT) -->
   <script type="importmap">
     {
       "imports": {
         "three": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/build/three.webgpu.js",
         "three/webgpu": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/build/three.webgpu.js",
         "three/tsl": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/build/three.tsl.js",
-        "three/addons/": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/jsm/"
+        "three/addons/": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/jsm/",
+        "jolt-physics": "https://cdn.jsdelivr.net/npm/jolt-physics@1.1.0/dist/jolt-physics.wasm.js"
       }
     }
   </script>
@@ -98,6 +100,7 @@
   <link rel="modulepreload" href="./js/ui/weapon-wheel.js" />
   <link rel="modulepreload" href="./js/player/drivetrain.js" />
   <link rel="modulepreload" href="./js/player/vehicle-damage.js" />
+  <link rel="modulepreload" href="./js/player/car-physics.js" />
   <link rel="modulepreload" href="./js/player/controllers.js" />
   <link rel="modulepreload" href="./js/player/stats.js" />
   <link rel="modulepreload" href="./js/player/aim.js" />

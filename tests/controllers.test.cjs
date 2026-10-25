@@ -172,7 +172,7 @@ function advanceWithTouch(mode, strength, reverse) {
   const entity = { position: { x: 0, y: 0, z: 0 }, heading: 0, speed: 0 };
   if (mode === 'Person') Object.assign(entity, { verticalVel: 0 });
   if (mode === 'Car') Object.assign(entity, {
-    vx: 0, vz: 0, angularVel: 0, steerAngle: 0, pitchVel: 0, rollVel: 0, heaveVel: 0, heaveY: 0, wheelSpin: 0,
+    vx: 0, vz: 0, angularVel: 0, steerAngle: 0, pitchVel: 0, rollVel: 0, heaveVel: 0,
     chassisPivot: { rotation: { x: 0, z: 0 }, position: { y: 0 } }, wheels: []
   });
   if (mode === 'Cyclist') Object.assign(entity, {
@@ -226,8 +226,8 @@ function teleportHarness(mode, colliders = [], shore = () => ({ westX: -500, eas
     position: position(400, mode === 'helicopter' ? 120 : 0, 400), heading: 1, speed: 20,
     mesh: pivot(),
     verticalVel: 5, vx: 3, vz: -4, angularVel: 2, steerAngle: 0.4,
-    pitchVel: 3, rollVel: 4, heaveY: 0.1, heaveVel: 2, chassisPivot: pivot(),
-    lastCollisionSpark: { speed: 5 }, carState: { value: { x: 0 } }, wheelSpin: 1,
+    pitchVel: 3, rollVel: 4, heaveVel: 2, chassisPivot: pivot(),
+    lastCollisionSpark: { speed: 5 }, carState: { value: { x: 0 } },
     wheels: [{ isFront: true, steerPivot: { rotation: { y: 0.4 } }, tire: { rotation: { x: 0 } } }],
     leanAngle: 0.3, leanPivot: pivot(), pedalPhase: 0.7,
     frontWheel: { rotation: { x: 0 } }, rearWheel: { rotation: { x: 0 } },
@@ -264,10 +264,8 @@ for (const mode of ['person', 'car', 'cyclist', 'helicopter']) {
       assert.deepEqual(ent.rig.resetArgs.slice(0, 3), [30, 20, 0.7]);
       assert.equal(ent.rig.resetArgs[3](ent.rig.resetArgs[4], 30, 20), 0.22);
     } else if (mode === 'car') {
-      for (const field of ['vx', 'vz', 'angularVel', 'steerAngle', 'pitchVel', 'rollVel', 'heaveY', 'heaveVel']) assert.equal(ent[field], 0, field);
-      assert.equal(ent.chassisPivot.rotation.x, 0);
-      assert.equal(ent.chassisPivot.rotation.z, 0);
-      assert.equal(ent.chassisPivot.position.y, 0);
+      for (const field of ['vx', 'vz', 'angularVel', 'steerAngle', 'pitchVel', 'rollVel', 'heaveVel']) assert.equal(ent[field], 0, field);
+      assert.equal(ent.physicsPlaced, false, 'its Jolt body is set down at the arrival, at rest');
       assert.equal(ent.wheels[0].steerPivot.rotation.y, 0);
       assert.equal(ent.lastCollisionSpark, null);
     } else if (mode === 'cyclist') {
@@ -534,71 +532,6 @@ test('a vehicle tilts with the ground under its wheels and rolls down the slope'
   near(t.pitch, 0);
   near(t.roll, 0);
   near(flat.slopeAcceleration(5, 5, 1), 0);
-});
-
-// A car driven straight along +z over ground `ground(z)` for `seconds` at a held `speed` (m/s), 60 frames a second:
-// its heights, and how long it was in the air (flying: clear of the suspension's travel)
-function drive(ground, speed, seconds = 3, vy = 0) {
-  const { controller } = keyboardHarness();
-  const car = {
-    position: { x: 0, y: ground(0), z: 0 }, heading: 0, speed, vx: 0, vz: 0, angularVel: 0, steerAngle: 0,
-    pitchVel: 0, rollVel: 0, heaveVel: 0, heaveY: 0, wheelSpin: 0, vy, airborne: false, flying: false,
-    chassisPivot: { rotation: { x: 0, z: 0 }, position: { y: 0 } }, wheels: []
-  };
-  controller.entities = { car };
-  controller.terrainAt = (x, z) => ground(z);
-  controller.resolveHorizontalCollision = () => {};
-  controller.keys.forward = 1; // (the throttle holds the speed against the drag & the slope)
-  let flying = 0, top = -Infinity;
-  for (let i = 0; i < seconds * 60; i++) {
-    car.speed = speed;
-    controller.updateCar(1 / 60);
-    if (car.flying) flying += 1 / 60;
-    top = Math.max(top, car.position.y - ground(car.position.z));
-    assert.ok(car.position.y >= ground(car.position.z) - 1e-9, 'never under the ground');
-  }
-  return { car, flying, top };
-}
-// a hill: 12% up for 40 m, then 12% down
-const crest = (z) => (z < 40 ? z * 0.12 : Math.max(0, 4.8 - (z - 40) * 0.12));
-
-test('a car flies off a crest at speed, and keeps to the ground over it slowly', () => {
-  const fast = drive(crest, 30);
-  assert.ok(fast.flying > 0.4, `${fast.flying.toFixed(2)} s in the air`);
-  assert.ok(fast.top > 0.5, `${fast.top.toFixed(2)} m over the ground`);
-  // landed, on the ground again, the suspension compressed by the touchdown
-  assert.equal(fast.car.airborne, false);
-  const slow = drive(crest, 6);
-  assert.equal(slow.flying, 0);
-  assert.ok(slow.top < 0.15);
-});
-
-test('a car drives up and down plain slopes without leaving the ground', () => {
-  for (const grade of [0.1, -0.1]) {
-    // (already rolling down or up it)
-    const run = drive((z) => z * grade, 30, 1, 30 * grade);
-    assert.equal(run.flying, 0);
-    assert.ok(run.top < 0.01, `${run.top} m over the ground`);
-    assert.equal(run.car.airborne, false);
-  }
-});
-
-test('a car keeps no grip or steering in the air', () => {
-  const { controller } = keyboardHarness();
-  const car = {
-    position: { x: 0, y: 5, z: 0 }, heading: 0, speed: 20, vx: 0, vz: 0, angularVel: 0, steerAngle: 0.5,
-    pitchVel: 0, rollVel: 0, heaveVel: 0, heaveY: 0, wheelSpin: 0, vy: 0, airborne: true, flying: true,
-    chassisPivot: { rotation: { x: 0, z: 0 }, position: { y: 0 } }, wheels: []
-  };
-  controller.entities = { car };
-  controller.terrainAt = () => 0;
-  controller.resolveHorizontalCollision = () => {};
-  controller.keys.forward = 1;
-  controller.keys.left = 1;
-  controller.updateCar(1 / 60);
-  assert.equal(car.heading, 0);
-  assert.ok(car.speed <= 20 && car.speed > 19.9);
-  assert.ok(car.position.y < 5 && car.vy < 0, 'it falls');
 });
 
 test('one key feeds every action bound to it: Space jumps on foot and pulls the car\'s handbrake', () => {

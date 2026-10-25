@@ -91,7 +91,8 @@ function buildSpec(m) {
     // a nitrous kit: the sports cars and supercars come with one (not an electric), the rest of the traffic doesn't;
     // a model's `nitro` says otherwise
     nitro: m.nitro ?? (!m.electric && (m.class === 'sport' || m.class === 'super')),
-    pull: 1 // (see calibratePull)
+    pull: 1, // (see calibratePull)
+    drive: m.drive, cls: m.class
   };
   fitDrag(spec, m);
   if (m.accel) calibratePull(spec, m);
