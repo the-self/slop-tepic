@@ -30,6 +30,7 @@ import {
   time,
   sin,
   cos,
+  atan,
   abs,
   floor,
   fract,
@@ -2579,6 +2580,33 @@ const _transparentEffectMRT = mrt({
 });
 
 /**
+ * A pool of blood on the ground (sim/blood.js; an instanced flat quad grown to its size): dark wet red spreading from
+ * the quad's middle to an uneven rim (three ripples round it, phased by the instance's `bloodSeed`), darkest and
+ * glossiest where it is deep, thinning out at the rim; over the road or the walk like the paint, their G-buffer kept
+ */
+function createBloodPoolMaterial() {
+  const mat = new THREE.MeshStandardNodeMaterial({
+    transparent: true, depthWrite: false, metalness: 0,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 // (over the road's own decals)
+  });
+  mat.mrtNode = _transparentEffectMRT;
+  const seed = attribute('bloodSeed', 'float');
+  const p = uv().sub(0.5).mul(2.0);
+  const r = length(p);
+  const a = atan(p.y, p.x);
+  const rim = float(0.7)
+    .add(sin(a.mul(3.0).add(seed.mul(6.283))).mul(0.1))
+    .add(sin(a.mul(7.0).add(seed.mul(17.0))).mul(0.06))
+    .add(sin(a.mul(13.0).add(seed.mul(29.0))).mul(0.035));
+  const deep = smoothstep(rim, rim.mul(0.35), r);
+  mat.colorNode = mix(color(0x6a0c0a), color(0x360305), deep);
+  mat.opacityNode = smoothstep(rim, rim.sub(0.05), r).mul(0.93);
+  // (wet, but not a mirror: a glossier pool only shows the sky's reflection, near black under a dark one)
+  mat.roughnessNode = mix(float(0.42), float(0.2), deep);
+  return mat;
+}
+
+/**
  * Soft Rounded-Rectangle Under-Vehicle Contact Shadow (Ambient Occlusion) TSL Material
  */
 // Smoke puffs (the player's car, controllers.js): soft balls, thick where they face the camera and fading to nothing
@@ -2687,5 +2715,6 @@ export {
   createRiverWaterMaterial,
   createContactShadowMaterial,
   createSmokeMaterial,
+  createBloodPoolMaterial,
   createCarFlareMaterial
 };

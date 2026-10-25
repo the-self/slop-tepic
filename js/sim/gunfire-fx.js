@@ -182,6 +182,17 @@ class GunfireFX {
     }
   }
 
+  // Someone hit by a vehicle at `speed` m/s (traffic.js knockListener, crime.js): blood thrown from where they were
+  // struck, more of it and further the harder the hit, along the way they were sent (nx, nz) and falling back
+  splatter(x, y, z, speed, nx = 0, nz = 0) {
+    const n = Math.min(36, 6 + Math.round(speed * 1.1));
+    for (let k = 0; k < n; k++) {
+      const throwSpeed = speed * (0.15 + Math.random() * 0.45);
+      this.puff.spawn(x, y + rnd(0.5), z, nx * throwSpeed + rnd(2.4), 0.6 + Math.random() * (1.5 + speed * 0.12), nz * throwSpeed + rnd(2.4),
+        0.5 + Math.random() * 0.5, 0.07 + Math.random() * 0.06, 0.03, 0.3, 0.015, 0.02, 9.8, 0.4);
+    }
+  }
+
   // What a shot hitting something at (x, y, z) throws up: 'blood' off people, 'dust' off walls, sparks off metal
   impact(x, y, z, kind, nx = 0, nz = 0) {
     if (kind === 'blood') {

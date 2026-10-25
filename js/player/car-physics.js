@@ -14,13 +14,18 @@
 //   looked at again every 2 m.
 // The traffic still shoves the car itself (traffic.js collideWithPlayer, moving its position and velocity): the shove is
 // carried over to the body on the next step.
+// The same Jolt world holds the people thrown about as ragdolls (sim/ragdolls.js, through `world` and addSystem): they
+// meet the car, the walls, its ground and their own.
 //
 // Frame: as the game's (metres, y up), the car's own +z ahead and +x its left, its origin on the ground under it at rest.
 // Plain numbers and Jolt only, no three.js: node --test can run it with a local Jolt. Jolt's objects live on the WASM
 // heap: the ones made here for a moment are reused (tmp*) or destroyed, never left to the garbage collector.
 
-const LAYER_STATIC = 0;
-const LAYER_MOVING = 1;
+const LAYER_STATIC = 0; // the walls and the ground under the car
+const LAYER_MOVING = 1; // the car
+const LAYER_RAGDOLL = 2; // people's parts (sim/ragdolls.js)
+const LAYER_RAGDOLL_GROUND = 3; // the ground under each of them, met by nothing else (two grounds under the car would
+// give it two contacts per wheel)
 const PATCH_CELL = 0.5; // m between the ground's samples
 const PATCH_SAMPLES = 64; // per side: a 31.5 m square
 const PATCH_RECENTRE = 6; // m the car may move from the patch's centre before it is sampled again around it
@@ -69,15 +74,23 @@ function isDrive(force, forward) {
  */
 function createCarPhysics(Jolt, world) {
   const settings = new Jolt.JoltSettings();
-  const pairs = new Jolt.ObjectLayerPairFilterTable(2);
+  const pairs = new Jolt.ObjectLayerPairFilterTable(4);
   pairs.EnableCollision(LAYER_STATIC, LAYER_MOVING);
   pairs.EnableCollision(LAYER_MOVING, LAYER_MOVING);
-  const bp = new Jolt.BroadPhaseLayerInterfaceTable(2, 2);
-  bp.MapObjectToBroadPhaseLayer(LAYER_STATIC, new Jolt.BroadPhaseLayer(0));
-  bp.MapObjectToBroadPhaseLayer(LAYER_MOVING, new Jolt.BroadPhaseLayer(1));
+  pairs.EnableCollision(LAYER_STATIC, LAYER_RAGDOLL);
+  pairs.EnableCollision(LAYER_MOVING, LAYER_RAGDOLL);
+  pairs.EnableCollision(LAYER_RAGDOLL, LAYER_RAGDOLL);
+  pairs.EnableCollision(LAYER_RAGDOLL_GROUND, LAYER_RAGDOLL);
+  // broad phase: what never moves, and what does
+  const bp = new Jolt.BroadPhaseLayerInterfaceTable(4, 2);
+  const still = new Jolt.BroadPhaseLayer(0), moving = new Jolt.BroadPhaseLayer(1);
+  bp.MapObjectToBroadPhaseLayer(LAYER_STATIC, still);
+  bp.MapObjectToBroadPhaseLayer(LAYER_RAGDOLL_GROUND, still);
+  bp.MapObjectToBroadPhaseLayer(LAYER_MOVING, moving);
+  bp.MapObjectToBroadPhaseLayer(LAYER_RAGDOLL, moving);
   settings.mObjectLayerPairFilter = pairs;
   settings.mBroadPhaseLayerInterface = bp;
-  settings.mObjectVsBroadPhaseLayerFilter = new Jolt.ObjectVsBroadPhaseLayerFilterTable(bp, 2, pairs, 2);
+  settings.mObjectVsBroadPhaseLayerFilter = new Jolt.ObjectVsBroadPhaseLayerFilterTable(bp, 2, pairs, 4);
   settings.mMaxBodies = 4096;
   const jolt = new Jolt.JoltInterface(settings);
   Jolt.destroy(settings);
@@ -94,36 +107,56 @@ function createCarPhysics(Jolt, world) {
   const yawQuat = (yaw) => { tmpQ.Set(0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)); return tmpQ; };
   system.SetGravity(vec(0, -9.81, 0));
 
+  // What else lives in this world (sim/ragdolls.js): before(dt) each step, after(dt) once it has run
+  const systems = [];
+  const shared = {
+    Jolt, system, bodies, groundAt: world.groundAt,
+    layers: { ragdoll: LAYER_RAGDOLL, ragdollGround: LAYER_RAGDOLL_GROUND }
+  };
+
   // ---- The ground patch -----------------------------------------------------------------------------------------
   const patch = { body: null, cx: NaN, cz: NaN, level: NaN };
-  function samplePatch(cx, cz, fromY) {
+  /**
+   * A static body of ground `n` samples `cell` m apart a side round (cx, cz), sampled at level `fromY`, on `layer`; or
+   * `body` given that shape anew. Returns the body
+   */
+  function groundField(body, cx, cz, fromY, n, cell, layer) {
     const s = new Jolt.HeightFieldShapeSettings();
-    const n = PATCH_SAMPLES;
-    const x0 = Math.round(cx / PATCH_CELL) * PATCH_CELL - (n / 2) * PATCH_CELL;
-    const z0 = Math.round(cz / PATCH_CELL) * PATCH_CELL - (n / 2) * PATCH_CELL;
+    const x0 = Math.round(cx / cell) * cell - (n / 2) * cell;
+    const z0 = Math.round(cz / cell) * cell - (n / 2) * cell;
     s.mOffset.Set(x0, 0, z0);
-    s.mScale.Set(PATCH_CELL, 1, PATCH_CELL);
+    s.mScale.Set(cell, 1, cell);
     s.mSampleCount = n;
     s.mBitsPerSample = 16;
     s.mHeightSamples.resize(n * n);
     const heights = new Float32Array(Jolt.HEAPF32.buffer, Jolt.getPointer(s.mHeightSamples.data()), n * n);
     for (let j = 0; j < n; j++) {
-      for (let i = 0; i < n; i++) heights[j * n + i] = world.groundAt(x0 + i * PATCH_CELL, z0 + j * PATCH_CELL, fromY);
+      for (let i = 0; i < n; i++) heights[j * n + i] = world.groundAt(x0 + i * cell, z0 + j * cell, fromY);
     }
     const result = s.Create();
     const shape = result.Get();
     Jolt.destroy(s);
-    if (!patch.body) {
+    if (!body) {
       tmpQ.Set(0, 0, 0, 1);
-      const bcs = new Jolt.BodyCreationSettings(shape, rvec(0, 0, 0), tmpQ, Jolt.EMotionType_Static, LAYER_STATIC);
+      const bcs = new Jolt.BodyCreationSettings(shape, rvec(0, 0, 0), tmpQ, Jolt.EMotionType_Static, layer);
       bcs.mFriction = 1.0;
-      patch.body = bodies.CreateBody(bcs);
+      body = bodies.CreateBody(bcs);
       Jolt.destroy(bcs);
-      bodies.AddBody(patch.body.GetID(), Jolt.EActivation_DontActivate);
+      bodies.AddBody(body.GetID(), Jolt.EActivation_DontActivate);
     } else {
-      bodies.SetShape(patch.body.GetID(), shape, false, Jolt.EActivation_DontActivate);
+      bodies.SetShape(body.GetID(), shape, false, Jolt.EActivation_DontActivate);
     }
     Jolt.destroy(result); // (the body holds the shape now)
+    return body;
+  }
+  shared.groundField = (body, cx, cz, fromY, n, cell) => groundField(body, cx, cz, fromY, n, cell, LAYER_RAGDOLL_GROUND);
+  shared.dropBody = (body) => {
+    bodies.RemoveBody(body.GetID());
+    bodies.DestroyBody(body.GetID());
+  };
+
+  function samplePatch(cx, cz, fromY) {
+    patch.body = groundField(patch.body, cx, cz, fromY, PATCH_SAMPLES, PATCH_CELL, LAYER_STATIC);
     patch.cx = cx;
     patch.cz = cz;
     patch.level = fromY;
@@ -227,15 +260,23 @@ function createCarPhysics(Jolt, world) {
     const springHz = def.springHz || SPRING_HZ;
     const layout = wheelLayout(def.wheels, springHz);
     const minR = Math.min(...layout.map((w) => w.radius));
-    // the body: from a little over the wheels' bottoms to the roof, its centre of mass low between the axles
+    // the body: from a little over the wheels' bottoms up to the bonnet's height its whole length, the cabin over it
+    // from the windscreen back (someone hit goes over the bonnet into the glass, not into a wall the car's height),
+    // its centre of mass low between the axles
     const y0 = Math.max(0.18, minR * 0.85), y1 = Math.max(y0 + 0.5, def.height * 0.94);
-    const yc = (y0 + y1) / 2;
+    const yHood = y0 + (y1 - y0) * (def.hood ?? 0.45);
     // (each settings object holds the one inside it: destroying the outermost frees them all)
     tmpQ.Set(0, 0, 0, 1);
-    const box = new Jolt.BoxShapeSettings(vec(def.halfW, (y1 - y0) / 2, def.halfL), 0.05);
-    const placed = new Jolt.RotatedTranslatedShapeSettings(vec(0, yc, 0), tmpQ, box);
-    const massed = new Jolt.OffsetCenterOfMassShapeSettings(vec(0, def.cg - yc, 0), placed);
+    const compound = new Jolt.StaticCompoundShapeSettings();
+    // (the position in tmpV2: the box's half extents fill tmpV before AddShape is called)
+    compound.AddShape(vec(0, (y0 + yHood) / 2, 0, tmpV2), tmpQ, new Jolt.BoxShapeSettings(vec(def.halfW, (yHood - y0) / 2, def.halfL), 0.05), 0);
+    const cabinFront = def.halfL * (def.cabin?.[0] ?? 0.35), cabinBack = -def.halfL * (def.cabin?.[1] ?? 0.85);
+    compound.AddShape(vec(0, (yHood + y1) / 2, (cabinFront + cabinBack) / 2, tmpV2), tmpQ,
+      new Jolt.BoxShapeSettings(vec(def.halfW * 0.92, (y1 - yHood) / 2, (cabinFront - cabinBack) / 2), 0.05), 0);
+    const yc = (y0 + y1) / 2;
+    const massed = new Jolt.OffsetCenterOfMassShapeSettings(vec(0, def.cg - yc, 0), compound);
     const result = massed.Create();
+    if (result.HasError()) throw new Error(`[physics] the car's body: ${result.GetError().c_str()}`);
     const bcs = new Jolt.BodyCreationSettings(result.Get(), rvec(x, y, z), yawQuat(yaw), Jolt.EMotionType_Dynamic, LAYER_MOVING);
     bcs.mOverrideMassProperties = Jolt.EOverrideMassProperties_CalculateInertia;
     bcs.mMassPropertiesOverride.mMass = def.mass;
@@ -390,17 +431,29 @@ function createCarPhysics(Jolt, world) {
    * Steps the car `dt` s. `input`: { force (N along the car: drivetrain.js's net drive & resistance, the drive on the
    * driven wheels and the braking on all of them, each no more than its tyre's grip under the weight on it), airDrag (N,
    * against its motion while airborne), steer (-1 left .. 1 right of the full lock), handbrake, hold (brakes on to keep
-   * it standing), grip (the tyres' grip, 1 dry), spinning }. Returns `out` after the step; `out.hit` holds the hardest
-   * knock the body itself took meanwhile (speed 0: none).
+   * it standing), grip (the tyres' grip, 1 dry), spinning, focus ({ x, y, z }: where the walls are fed in round, the
+   * player; the car by default) }. Returns `out` after the step; `out.hit` holds the hardest knock the body itself took
+   * meanwhile (speed 0: none).
    */
   function step(input, dt) {
-    if (!car) return null;
+    if (!car) {
+      // (nobody's car yet: the rest of the world goes on)
+      const f = input?.focus;
+      if (f && !(Math.hypot(f.x - fed.x, f.z - fed.z) < WALL_REFRESH)) feedWalls(f.x, f.z, f.y);
+      for (const sys of systems) sys.before?.(dt);
+      const n = Math.max(1, Math.ceil(dt / STEP - 1e-6));
+      for (let s = 0; s < n; s++) jolt.Step(dt / n, 1);
+      for (const sys of systems) sys.after?.(dt);
+      return null;
+    }
     read();
-    // the ground & walls around it, fed in as it goes
+    // the ground under the car & the walls round the player, fed in as they go
     if (!(Math.hypot(out.x - patch.cx, out.z - patch.cz) < PATCH_RECENTRE) || Math.abs(out.y - patch.level) > PATCH_RELEVEL) {
       samplePatch(out.x, out.z, out.y);
     }
-    if (!(Math.hypot(out.x - fed.x, out.z - fed.z) < WALL_REFRESH)) feedWalls(out.x, out.z, out.y);
+    const f = input.focus || out;
+    if (!(Math.hypot(f.x - fed.x, f.z - fed.z) < WALL_REFRESH)) feedWalls(f.x, f.z, f.y);
+    for (const sys of systems) sys.before?.(dt);
     car.state.grip = input.grip ?? 1;
     car.state.handbrake = Boolean(input.handbrake);
     car.state.spinning = Boolean(input.spinning);
@@ -438,6 +491,7 @@ function createCarPhysics(Jolt, world) {
       }
       jolt.Step(h, 1);
     }
+    for (const sys of systems) sys.after?.(dt);
     read();
     let onGround = 0;
     out.wheels.length = car.wheels.length;
@@ -459,7 +513,10 @@ function createCarPhysics(Jolt, world) {
     return out;
   }
 
-  return { build, place, step, shove, confine, read, dropCar, get car() { return car; }, wallCount: () => walls.size };
+  return {
+    build, place, step, shove, confine, read, dropCar, get car() { return car; }, wallCount: () => walls.size,
+    world: shared, addSystem: (sys) => systems.push(sys)
+  };
 }
 
 export { createCarPhysics, wheelLayout, headingOf, isDrive };

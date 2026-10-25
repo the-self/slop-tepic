@@ -37,6 +37,8 @@ import { CrimeHud } from './ui/crime-hud.js';
 import { WeaponWheel } from './ui/weapon-wheel.js';
 import { AimControl } from './player/aim.js';
 import { createCarPhysics } from './player/car-physics.js';
+import { createRagdolls } from './sim/ragdolls.js';
+import { BloodPools } from './sim/blood.js';
 import { cityUniforms } from './render/tsl-materials.js';
 import { grassDryness } from './world/lot-greenery.js';
 import { GEO } from './world/city-geodata.js';
@@ -204,8 +206,9 @@ async function initApp() {
     controllerManager.setMode(savedMode);
     controllerManager.exitVehicle();
   }
+  let physics;
   try {
-    controllerManager.setCarPhysics(createCarPhysics(await joltReady, {
+    controllerManager.setCarPhysics(physics = createCarPhysics(await joltReady, {
       // what the car stands on: the ground at its level (a bridge's deck it is on), the sidewalks over the street
       groundAt: (x, z, fromY) => controllerManager.getGroundHeight(x, z, 'person', fromY),
       collidersNear: (x, z, r) => controllerManager.nearColliders(x, z, r)
@@ -214,6 +217,15 @@ async function initApp() {
     if (loadingStatus) loadingStatus.textContent = 'The car physics (Jolt Physics) could not load: check the connection and reload';
     throw err;
   }
+  // Who is hit, shot or thrown falls as a body (sim/ragdolls.js), in the car's world; a pool of blood spreads under
+  // whoever was hit hard as they come to rest (sim/blood.js)
+  const ragdolls = createRagdolls(physics);
+  controllerManager.ragdolls = ragdolls;
+  trafficSystem.setRagdolls(ragdolls);
+  const bloodPools = new BloodPools(scene, (x, z, fromY) => controllerManager.getGroundHeight(x, z, 'person', fromY));
+  ragdolls.onSettle = (h) => {
+    if (h.bleed > 0.05) bloodPools.add(h.px, h.pz, h.py + 0.3, 0.9 + h.bleed * 1.7);
+  };
   markInit('physics');
   // Sprinting runs out of breath (player/stats.js)
   const stamina = new Stamina();
@@ -298,6 +310,14 @@ async function initApp() {
   let floodWarned = false;
   let floodSpot = null;
   audioSystem.sources.pursuers = crimeSystem.cruisers;
+  crimeSystem.ragdolls = ragdolls;
+  // Thrown out through the windscreen (controllers.js ejectDriver): on foot now, hurt by how hard it hit, bleeding
+  controllerManager.onEject = (impact, x, z) => {
+    syncMode();
+    const c = controllerManager.entities.car;
+    crimeSystem.fx.splatter(x, c.position.y + 1, z, impact, Math.sin(c.heading), Math.cos(c.heading));
+    crimeSystem.hurt(Math.min(95, 25 + (impact - 19) * 4), x, z);
+  };
   const crimeHud = new CrimeHud();
   // The weapon wheel, held open with Tab (ui/weapon-wheel.js): the game runs slowed meanwhile
   const weaponWheel = new WeaponWheel(crimeSystem, { aim: aimControl });
@@ -508,7 +528,8 @@ async function initApp() {
   const BOARD_REACH = 1.6; // m from the vehicle's body
   const TILL_REACH = 1.8; // m from a store's till (store-interiors.js)
   function boardTarget() {
-    if (controllerManager.activeMode !== 'person') return null;
+    // (not while lying in the road, thrown out of a car)
+    if (controllerManager.activeMode !== 'person' || controllerManager.entities.person.ragdoll) return null;
     const p = controllerManager.entities.person.position;
     const own = controllerManager.ownVehicleNear(BOARD_REACH);
     const taken = trafficSystem.vehicleNear(p.x, p.z, own ? Math.min(BOARD_REACH, own.distance) : BOARD_REACH);
@@ -1070,6 +1091,7 @@ async function initApp() {
     if (streetDetails.breaker) streetDetails.breaker.update(dt, controllerManager.getActiveEntity(), controllerManager.activeMode);
     // Gunfire, the police, gangs & thieves (crime.js), and a blast's shake of the camera
     crimeSystem.update(dt, elapsed, cameraSystem.camera);
+    bloodPools.update(dt);
     streetFood.update(dt, lightingSystem.hourOfDay, cameraSystem.camera);
     nightlife.update(dt, lightingSystem.hourOfDay, weekday, cameraSystem.camera);
     interiors.update(dt, lightingSystem.hourOfDay);

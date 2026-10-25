@@ -69,6 +69,10 @@ function modelFor(look) {
 
 const G = 9.81;
 const AIM_WALK = 2.4; // m/s: walking (and strafing) with the gun up (player/aim.js)
+// A head-on crash this hard (m/s into what it hit, ~70 km/h) throws the driver out through the windscreen, as a
+// ragdoll (sim/ragdolls.js), the car going on without them; they get up once they have lain still GET_UP s
+const EJECT_SPEED = 19;
+const GET_UP = 2.5;
 const SMOKE_PUFFS = 128; // (exhaust, tyre smoke and, on a wet road, the spray off the tyres)
 const BICYCLE_DRIVE = {
   speed: 12.8, boostSpeed: 19, reverseSpeed: 4.5, acceleration: 9, boostAcceleration: 13.5,
@@ -502,7 +506,7 @@ class ThirdPersonControllerManager {
   // Get in: one of the player's own vehicles where it stands, or `taken`, a car or bicycle taken from the traffic
   // (traffic.js hijack): the player's vehicle of that kind takes its place, looks and (slowed) speed
   enterVehicle(mode, taken = null) {
-    if (this.activeMode !== 'person' || mode === 'person' || !this.entities[mode]) return false;
+    if (this.activeMode !== 'person' || mode === 'person' || !this.entities[mode] || this.entities.person.ragdoll) return false;
     const ent = this.entities[mode];
     if (taken) {
       if (mode === 'car') this.setCarLook(taken.bodyType, taken.paint, taken.police, taken.model, taken.route);
@@ -734,6 +738,7 @@ class ThirdPersonControllerManager {
   }
 
   teleportActiveTo(x, z, heading = Math.PI, savedAltitude = null) {
+    this.getUp(); // (a body lying somewhere stays there: the player arrives on its feet)
     const ent = this.getActiveEntity();
     this.resetInput();
     if (!Number.isFinite(heading)) heading = ent.heading;
@@ -1619,7 +1624,8 @@ class ThirdPersonControllerManager {
     const p = this.entities.person;
     if (this.activeMode === 'person') {
       const air = p.position.y - this.getGroundHeight(p.position.x, p.position.z, 'person', p.position.y);
-      p.rig.update(dt, p.position.x, p.position.z, p.heading, personGround, this, air > 0.02 ? air : 0);
+      // (a ragdoll's pose is its own, sim/ragdolls.js)
+      if (!p.ragdoll) p.rig.update(dt, p.position.x, p.position.z, p.heading, personGround, this, air > 0.02 ? air : 0);
       p.crowd.begin();
       p.crowd.add(p.rig, 0);
       p.crowd.end();
@@ -1720,8 +1726,10 @@ class ThirdPersonControllerManager {
     const moto = this.entities.moto;
     if (moto && this.activeMode !== 'moto') moto.leanPivot.rotation.z = moto.leanAngle = 0.16;
 
-    if (this.activeMode === 'car') {
-      this.updateCar(dt, elapsed);
+    // (the mode this frame began in: a driver thrown out mid-frame is not stepped again on foot)
+    const mode = this.activeMode;
+    if (mode === 'car') {
+      this.updateCar(dt, true);
     } else if (this.activeMode === 'cyclist') {
       this.updateCyclist(dt, elapsed);
     } else if (this.activeMode === 'moto') {
@@ -1729,8 +1737,10 @@ class ThirdPersonControllerManager {
     } else if (this.activeMode === 'helicopter') {
       this.updateHelicopter(dt, elapsed);
     }
+    // the car (and the physics' whole world: the people thrown about) goes on with nobody in it
+    if (mode !== 'car') this.updateCar(dt, false);
     // (the car meets the hills in Jolt: a slope its tyres can't climb, it can't)
-    if (this.activeMode !== 'car') this.keepOffHills(active, prevX, prevZ);
+    if (mode !== 'car') this.keepOffHills(active, prevX, prevZ);
     if (this.activeMode === 'cyclist' || this.activeMode === 'moto') this.tiltToGround(active, 1 - Math.exp(-dt * 14));
     if (this.activeMode === 'car') this.recordVelocity(active);
     this.updateSmoke(dt);
@@ -1740,8 +1750,8 @@ class ThirdPersonControllerManager {
       e.mesh.position.copy(e.position);
       e.mesh.rotation.y = e.heading;
     }
-    // the car as its body lies, pitched, rolled, on its roof (updateCar)
-    const q = this.activeMode === 'car' && this.entities.car.bodyOut;
+    // the car as its body lies, pitched, rolled, on its roof (updateCar), driven or not
+    const q = this.entities.car.bodyOut;
     if (q) {
       const mesh = this.entities.car.mesh;
       mesh.rotation.order = 'YXZ'; // (so its Euler y is its heading, as for the other entities)
@@ -1775,6 +1785,10 @@ class ThirdPersonControllerManager {
 
   updatePerson(dt) {
     const p = this.entities.person;
+    if (p.ragdoll) {
+      this.followRagdoll(p);
+      return;
+    }
     const wading = this.waterAt ? Math.min(0.6, this.waterAt(p.position.x, p.position.z) * 1.3) : 0;
     const maxWalk = (this.keys.boost && this.canSprint ? 8.2 : 4.4) * (1 - wading);
     const turnRate = 2.6;
@@ -1818,21 +1832,25 @@ class ThirdPersonControllerManager {
 
   // The car: a rigid body on its sprung wheels in Jolt Physics (car-physics.js, set up by main.js before the first
   // frame). One step: what the traffic did to it since the last one carried over, drivetrain.js's drive pushed through
-  // its tyres, Jolt's step, and the body's pose, speed and wheels read back; a knock the body itself took is a crash
-  updateCar(dt) {
+  // its tyres, Jolt's step, and the body's pose, speed and wheels read back; a knock the body itself took is a crash.
+  // Not `driving`, it stands (or rolls on, its driver thrown out) on its own, and the step is the world's (the people
+  // thrown about, round the player)
+  updateCar(dt, driving = true) {
     const c = this.entities.car;
     const P = this.carPhysics;
     if (!P) return;
     const spec = (c.spec ??= buildSpec(modelFor(c.look)));
     const d = (c.drive ??= createDriveState(spec));
     const dmg = (c.damage ??= createDamage());
-    // what hit it since the last frame (the traffic and the street furniture push it about after it has moved)
-    this.checkImpact(c);
+    // what hit it since the last frame (the traffic and the street furniture push it about after it has moved); with
+    // nobody in it, nothing to compare with when someone gets back in
+    if (driving) this.checkImpact(c);
+    else c.impactArmed = false;
 
-    const throttle = Number(this.keys.forward) || 0;
-    const brake = Number(this.keys.backward) || 0;
-    const handbrake = Boolean(this.keys.handbrake);
-    const shift = this.gearKeys(c, d);
+    const throttle = driving ? Number(this.keys.forward) || 0 : 0;
+    const brake = driving ? Number(this.keys.backward) || 0 : 0;
+    const handbrake = driving && Boolean(this.keys.handbrake);
+    const shift = driving ? this.gearKeys(c, d) : 0;
 
     const sn0 = Math.sin(c.heading), cs0 = Math.cos(c.heading);
     if (c.physicsLook !== c.look) {
@@ -1847,7 +1865,7 @@ class ThirdPersonControllerManager {
       P.place(c.position.x, y, c.position.z, c.heading);
       P.shove(sn0 * c.speed + c.vx, 0, cs0 * c.speed + c.vz, 0, 0, 0);
       c.physicsPlaced = true;
-    } else {
+    } else if (driving) {
       // the traffic's shove (traffic.js collideWithPlayer moves the car and changes its velocity, spin & sway)
       const dvx = sn0 * c.speed + c.vx - out.vx, dvz = cs0 * c.speed + c.vz - out.vz;
       const pitch = (c.pitchVel || 0) * 0.35, roll = (c.rollVel || 0) * 0.35;
@@ -1863,7 +1881,7 @@ class ThirdPersonControllerManager {
     input.throttle = throttle;
     input.brake = brake;
     input.handbrake = false; // (Jolt's own: it locks the rear wheels)
-    input.nitro = Boolean(this.keys.boost);
+    input.nitro = driving && Boolean(this.keys.boost);
     input.shift = shift;
     input.slope = 0; // (gravity is Jolt's)
     // in a flood: over ~0.55 m the water is in the air intake and the engine dies until it is out of it
@@ -1877,20 +1895,26 @@ class ThirdPersonControllerManager {
     const force = spec.mass * (next - v) / dt;
 
     let steerInput = 0;
-    if (this.keys.left) steerInput = this.keys.left;
-    if (this.keys.right) steerInput = -this.keys.right;
+    if (driving && this.keys.left) steerInput = this.keys.left;
+    if (driving && this.keys.right) steerInput = -this.keys.right;
     // speed-sensitive steering: the wheels turn less the faster it goes; a bent front corner pulls it to one side
     const lock = spec.steerLock / (1 + Math.abs(v) / 16);
     c.steerAngle += (steerInput * lock - c.steerAngle) * Math.min(1, dt * 10);
     const steer = c.steerAngle + dmg.pull * Math.min(1, Math.abs(v) / 5);
 
     const body = P.read();
+    const before = (this._carBefore ??= { vx: 0, vy: 0, vz: 0 });
+    before.vx = body.vx; before.vy = body.vy; before.vz = body.vz;
     const speed = Math.hypot(body.vx, body.vy, body.vz);
+    const focus = (this._physicsFocus ??= { x: 0, y: 0, z: 0 });
+    focus.x = (driving ? c : this.getActiveEntity()).position.x;
+    focus.y = (driving ? c : this.getActiveEntity()).position.y;
+    focus.z = (driving ? c : this.getActiveEntity()).position.z;
     const o = P.step({
       force, airDrag: 0.5 * 1.2 * spec.dragArea * speed * speed,
       steer: Math.max(-1, Math.min(1, -steer / spec.steerLock)), // (Jolt's: +1 full right)
       handbrake, hold: !throttle && !brake && Math.abs(v) < 0.5,
-      grip: spec.grip * input.grip, spinning: d.wheelspin
+      grip: spec.grip * input.grip, spinning: d.wheelspin, focus
     }, dt);
 
     // the map's edges and the shore hold it, as they hold everyone (keepInBounds)
@@ -1924,10 +1948,13 @@ class ThirdPersonControllerManager {
     const hit = o.hit;
     if (hit.speed > 1.5) {
       const hx = c.position.x - hit.nx * c.halfL * 0.9, hz = c.position.z - hit.nz * c.halfL * 0.9;
-      this.reportCollision(c, (this._wall ??= { type: 'building' }), 'building', hx, c.position.y + 0.56, hz, hit.nx, 0, hit.nz, hit.speed);
+      // (it hurts whoever is in it: nobody, when it rolls on alone)
+      if (driving) this.reportCollision(c, (this._wall ??= { type: 'building' }), 'building', hx, c.position.y + 0.56, hz, hit.nx, 0, hit.nz, hit.speed);
       this.impactCar(c, hit.nx * hit.speed, hit.nz * hit.speed);
       c.cameraKick = Math.max(c.cameraKick || 0, Math.min(1, (hit.speed - 1.5) / 14)); // (cameras.js speedEffects)
       if (hit.speed > 2.2) c.lastCollisionSpark = { x: hx, y: 0.56, z: hz, nx: hit.nx, nz: hit.nz, speed: hit.speed };
+      // head on (what it hit faces its nose) and hard: out through the windscreen
+      if (driving && hit.speed > EJECT_SPEED && hit.nx * sn + hit.nz * cs < -0.7) this.ejectDriver(c, before, hit.speed);
     }
 
     // the wheels: on their springs, steered, rolling
@@ -1968,6 +1995,46 @@ class ThirdPersonControllerManager {
         for (const side of [-0.8, 0.8]) this.emitSmoke(c, side, 0.12, -1.5, rate * 0.5, 0.94, 0.8);
       }
     }
+  }
+
+  // The driver thrown out through the windscreen at the car's speed before the crash (`v`: vx, vy, vz), from over the
+  // bonnet, as a ragdoll; on foot from here, the car going on without them. main.js hears of it (onEject: the HUD, the
+  // harm)
+  ejectDriver(c, v, impact) {
+    const p = this.entities.person;
+    if (!this.ragdolls || p.ragdoll) return;
+    const sn = Math.sin(c.heading), cs = Math.cos(c.heading);
+    const x = c.position.x + sn * c.halfL * 0.55, z = c.position.z + cs * c.halfL * 0.55;
+    this.setMode('person');
+    this.resetInput();
+    p.heading = c.heading;
+    p.position.set(x, this.getGroundHeight(x, z, 'person', c.position.y + 1), z);
+    p.rig.reset(x, z, c.heading, personGround, this);
+    // lifted onto the bonnet's height: its feet at its top
+    const lift = c.position.y + (c.bodyHeight || 1.45) * 0.55 - p.position.y;
+    for (let b = 0; b < 15; b++) p.rig.pose[b * 8 + 5] += lift;
+    p.ragdoll = this.ragdolls.spawn(p.rig, { vx: v.vx * 0.9, vy: v.vy + 2.5, vz: v.vz * 0.9, spin: 5, bleed: 1 });
+    p.ragdollOwner = 'controllers';
+    this.onEject?.(impact, x, z);
+  }
+
+  // On foot as a ragdoll (thrown out of the car; or down, crime.js): the camera follows the body; one thrown out gets up
+  // once it has lain still a while
+  followRagdoll(p) {
+    const h = p.ragdoll;
+    p.position.set(h.px, this.getGroundHeight(h.px, h.pz, 'person', h.py), h.pz);
+    p.speed = 0;
+    if (p.ragdollOwner !== 'controllers' || h.rest < GET_UP) return;
+    this.getUp();
+    this.settle(p); // (on its feet where it lay)
+  }
+
+  // The player's body (sim/ragdolls.js) let go of: on its feet again, wherever it is put next
+  getUp() {
+    const p = this.entities.person;
+    if (!p?.ragdoll) return;
+    this.ragdolls?.release(p.ragdoll);
+    p.ragdoll = null;
   }
 
   // Jolt's car (car-physics.js), from main.js before the game starts
