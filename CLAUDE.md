@@ -37,7 +37,9 @@ node --test tests/*.test.*           # client and tool tests (Node ≥ 22; no in
 Outside `js/`:
 - `shared/protocol.js`: the binary multiplayer protocol, imported by both the client and the server.
 - `server/`: the region-room WebSocket server.
-- `tools/`: geodata builders and benchmarks.
+- `tools/`: geodata builders and benchmarks; `tools/models/`, the image-to-3D pipeline (Meshy, then `prepare.mjs`).
+- `assets/models/`: the 3D models (`.glb`). **Read `assets/models/CLAUDE.md` before making or placing one**: what to
+  cut, how to place it on the street, and the traps (frozen matrices, released arrays, no quantization).
 - `tests/`: `node:test` suites.
 
 ### Reorganization

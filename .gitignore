@@ -3,3 +3,4 @@
 tools/data/tepic/overture/
 tools/data/tepic/fetch.log
 .env
+tools/models/node_modules/

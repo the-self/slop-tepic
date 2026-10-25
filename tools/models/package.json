@@ -1,0 +1,13 @@
+{
+  "name": "slop-tepic-models",
+  "private": true,
+  "type": "module",
+  "description": "Makes image-to-3D models ready for the game (tools/models/prepare.mjs); see assets/models/CLAUDE.md",
+  "dependencies": {
+    "@gltf-transform/core": "^4.1.0",
+    "@gltf-transform/extensions": "^4.1.0",
+    "@gltf-transform/functions": "^4.1.0",
+    "meshoptimizer": "^0.22.0",
+    "sharp": "^0.33.5"
+  }
+}

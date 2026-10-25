@@ -1,0 +1,4 @@
+{
+  "image": "catedral-facade-nheyob.jpg",
+  "model": { "ai_model": "meshy-7.1", "should_texture": true, "enable_pbr": false, "texture_resolution": "2k", "should_remesh": true, "topology": "triangle", "target_polycount": 60000 }
+}
