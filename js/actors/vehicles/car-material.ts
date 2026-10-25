@@ -59,6 +59,33 @@ function carPlateTexture() {
 }
 
 /**
+ * The material of a car made as a 3D model (models/cars `glb`, modelled white: assets/models/CLAUDE.md): its texture,
+ * with the instance's `paintColor` on its body, and its red lamps at the back (-z) lit by `carState`'s brake, as the
+ * drawn cars' are. Where the body is comes from the model's paint mask (`paintMap`: its metallic-roughness texture, R
+ * the mask and G the roughness, tools/models/prepare.mjs); without one, from where the texture is white. The paint
+ * follows the texture's brightness, so its baked shading shows through.
+ */
+export function createModelCarMaterial(map: THREE.Texture, paintMap: THREE.Texture | null = null): THREE.MeshStandardNodeMaterial {
+  const mat = new THREE.MeshStandardNodeMaterial({ metalness: 0.0 });
+  const rgb = texture(map).rgb;
+  const lum = rgb.dot(vec3(0.299, 0.587, 0.114));
+  let body: Node<'float'>;
+  if (paintMap) {
+    const mask = texture(paintMap);
+    body = mask.r;
+    mat.roughnessNode = mask.g;
+  } else {
+    const sat = max(rgb.r, max(rgb.g, rgb.b)).sub(min(rgb.r, min(rgb.g, rgb.b)));
+    body = smoothstep(0.5, 0.78, lum).mul(float(1).sub(smoothstep(0.06, 0.16, sat)));
+    mat.roughnessNode = mix(float(0.7), float(0.32), body);
+  }
+  mat.colorNode = mix(rgb, attribute('paintColor', 'vec3').mul(lum).mul(1.12), body);
+  const lamp = smoothstep(0.2, 0.4, rgb.r.sub(max(rgb.g, rgb.b))).mul(step(positionLocal.z, 0.0));
+  mat.emissiveNode = color(0xff2a1a).mul(lamp).mul(attribute('carState', 'vec4').x.mul(2.2));
+  return mat;
+}
+
+/**
  * Creates the TSL material for lofted vehicles.
  * Instanced traffic reads the per-instance `paintColor` (vec3) and `carState` (vec4: brake, left (+x) & right (-x)
  * turn signal, livery: 1 = NYPD) attributes; with a fixed `fixedColorHex` (the player's taxi, wheels) the state is the

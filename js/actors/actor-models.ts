@@ -1,7 +1,7 @@
 import { CAR_PARTS, BODY_SPECS } from './vehicles/car-specs.ts';
 import { carLayout, carBodyHalfWidthAt, buildCarSidePatch } from './vehicles/car-body.ts';
 import { bodyDims, buildSteerableWheelGeo, buildCarGeometry, buildCarProxyGeometry } from './vehicles/car-geometry.ts';
-import { createLoftedCarMaterial } from './vehicles/car-material.ts';
+import { createLoftedCarMaterial, createModelCarMaterial } from './vehicles/car-material.ts';
 import { buildLightbarGeometry, createLightbarMaterial } from './vehicles/lightbar.ts';
 import {
   BUS_SPEC, buildLoftedBusBodyGeometry, buildBusSignGeometry, buildCombiSignGeometry, buildBusWheelGeo
@@ -40,6 +40,7 @@ export {
   buildCarGeometry,
   buildCarProxyGeometry,
   createLoftedCarMaterial,
+  createModelCarMaterial,
   buildLightbarGeometry,
   createLightbarMaterial,
   BUS_SPEC,

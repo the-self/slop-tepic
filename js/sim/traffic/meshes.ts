@@ -2,12 +2,12 @@
 // The instanced meshes the cars and camiones are drawn with: a body per shape and level of detail, wheels, route signs,
 // police light bars, contact shadows
 import * as THREE from 'three/webgpu';
-import { BODY_SHARE } from '../../models/cars/index.ts';
+import { BODY_SHARE, CAR_MODELS } from '../../models/cars/index.ts';
 import {
   BODY_SPECS, buildBusSignGeometry, buildBusWheelGeo, buildCarGeometry, buildCarProxyGeometry,
   buildCombiSignGeometry, buildLightbarGeometry, buildLoftedBusBodyGeometry, buildSteerableWheelGeo,
   busLiveryTexture, createBusWheelMaterial, createLightbarMaterial, createLoftedBusMaterial, createLoftedCarMaterial,
-  createRouteSignMaterial, routeSignTexture
+  createModelCarMaterial, createRouteSignMaterial, routeSignTexture
 } from '../../actors/actor-models.ts';
 import type { createContactShadowMaterial } from '../../render/tsl-materials.ts';
 import type { Transit } from '../transit.ts';
@@ -71,6 +71,44 @@ function createVehicleMeshes(group: THREE.Group, transit: Transit, policeCount: 
     combiSignInst
   );
 
+  // The car models made as 3D models (models/cars `glb`, ~8k triangles each): once its file has loaded, a model's near
+  // level is an instanced mesh of its own, its wheels part of it (renderCar); beyond CAR_PROXY_DISTANCE it stays its
+  // body shape's stand-in. Loaded in the background (not preloaded): until then, and if a file fails, the body shape
+  // draws it.
+  const modelBodies = new Map<string, THREE.InstancedMesh>(); // model id -> its instanced mesh
+  const withModel = CAR_MODELS.filter((m) => m.glb);
+  if (withModel.length) {
+    const loading = import('three/addons/loaders/GLTFLoader.js');
+    void loading.then(({ GLTFLoader }) => {
+      const loader = new GLTFLoader();
+      for (const model of withModel) {
+        const file = model.glb;
+        if (!file) continue;
+        loader.load(file, (gltf) => {
+          const found: THREE.Mesh<THREE.BufferGeometry, THREE.Material>[] = [];
+          gltf.scene.traverse((o) => {
+            if (isSingleMesh(o)) found.push(o);
+          });
+          const src = found.at(0);
+          if (!src || !(src.material instanceof THREE.MeshStandardMaterial) || !src.material.map) return;
+          src.updateWorldMatrix(true, false);
+          const geo = src.geometry.clone().applyMatrix4(src.matrixWorld);
+          geo.setAttribute('paintColor', new THREE.InstancedBufferAttribute(new Float32Array(NUM_CARS * 3), 3));
+          geo.setAttribute('carState', new THREE.InstancedBufferAttribute(new Float32Array(NUM_CARS * 4), 4));
+          const mesh = new THREE.InstancedMesh(geo, createModelCarMaterial(src.material.map, src.material.roughnessMap), NUM_CARS);
+          mesh.count = 0;
+          mesh.frustumCulled = false;
+          mesh.castShadow = mesh.receiveShadow = true;
+          group.add(mesh);
+          bodyMeshes.push(mesh);
+          modelBodies.set(model.id, mesh);
+        }, undefined, (err) => {
+          console.warn(`[traffic] ${model.name}: could not load ${file}`, err);
+        });
+      }
+    });
+  }
+
   // =========================================================================
   // 2. LOFTED CAMIONES ON TEPIC'S ROUTES (16 BUSES)
   // =========================================================================
@@ -99,11 +137,16 @@ function createVehicleMeshes(group: THREE.Group, transit: Transit, policeCount: 
   busWheelLeftInst.castShadow = busWheelLeftInst.receiveShadow = true;
   busWheelRightInst.castShadow = busWheelRightInst.receiveShadow = true;
   return {
-    bodies, bodyMeshes, carWheelLeftInst, carWheelRightInst,
+    bodies, bodyMeshes, modelBodies, carWheelLeftInst, carWheelRightInst,
     signNames, combiSignGeo, combiSignRows, combiSignInst, policeLightbarInst, carShadowInst,
     busBodyGeo, busStates, busHeaderGeo, busSignRows, busBodyMat, busDestMat, busWheelMat,
     busBodyInst, busHeaderInst, busWheelLeftInst, busWheelRightInst, busShadowInst
   };
+}
+
+// A mesh with one material
+function isSingleMesh(o: THREE.Object3D): o is THREE.Mesh<THREE.BufferGeometry, THREE.Material> {
+  return o instanceof THREE.Mesh && !Array.isArray(o.material);
 }
 
 /** The instanced meshes of the cars and camiones (createVehicleMeshes), part of the traffic's state */

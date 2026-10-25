@@ -39,6 +39,7 @@ import { bumpBody } from './traffic/collisions.ts';
 import { roadSpot, sidewalkSpot } from './traffic/spawning.ts';
 import { vehicleAt, vehicleBoxAt } from './traffic/bodies.ts';
 import { vehicleNear, hijack, lookKit } from './traffic/carjacking.ts';
+import { withdraw } from './traffic/population.ts';
 import { update } from './traffic/update.ts';
 import { createHighwayTraffic } from './traffic/highway.ts';
 import type { HighwayLaneSpec, HighwayLane, HighwayCar, HighwayKind } from './traffic/highway.ts';
@@ -80,6 +81,7 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     demand: () => ({ hour: ts.hour, cars: ts.carTarget, people: ts.pedTarget, out: { ...ts.active } }),
     vehicleNear: (x: number, z: number, reach: number): Hijackable | null => vehicleNear(ts, x, z, reach),
     hijack: (v: Hijackable): TakenVehicle => hijack(ts, v),
+    withdraw: (v: Vehicle): void => { withdraw(v); },
     lookKit: (look: VehicleLook | null): LookKit | null => lookKit(ts, look),
     setSmokeEmitter: (emit: SmokeEmitter | null): void => { setSmokeEmitter(ts, emit); },
     cars: ts.cars,

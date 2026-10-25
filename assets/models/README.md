@@ -1,7 +1,7 @@
 # Landmark models
 
 3D models of Tepic's landmarks, each standing on its real lot in place of the generic houses
-(`js/world/landmark-models.js`). Everything else in the city stays procedural.
+(`js/world/landmark-models.ts`). Everything else in the city stays procedural.
 
 ## Making one
 
@@ -18,7 +18,7 @@
 
 ## Placing it
 
-Add an entry to `LANDMARK_MODELS` in `js/world/landmark-models.js`:
+Add an entry to `LANDMARK_MODELS` in `js/world/landmark-models.ts`:
 
 ```js
 { name: 'Presidencia Municipal', file: 'assets/models/presidencia-municipal.glb',
@@ -34,6 +34,26 @@ Add an entry to `LANDMARK_MODELS` in `js/world/landmark-models.js`:
 - Optional: `scale` (if the file isn't in metres) and `lift` (to raise it off the ground).
 
 Reload the game. The lot clears at once, and the model appears as soon as it has loaded.
+
+## From one photograph
+
+An image-to-3D service (Meshy, Hunyuan3D, TRELLIS) makes a model from a single photograph in a
+few minutes. The side it sees comes out well; the back and the sides are guessed, and the
+buildings next door come along. `catedral.glb` was made this way, from a photograph of the
+facade, so it replaces only the Catedral's front and towers (`CATEDRAL_MODEL` in
+`js/world/tepic-landmarks.ts`) and the church behind them stays drawn. Clean such a model up as above:
+crop the neighbours, scale it to a known height, and simplify it.
+
+## Credits
+
+- `catedral.glb`: made with [Meshy](https://www.meshy.ai/) (Meshy 7.1) from
+  [a photograph by Nheyob](https://commons.wikimedia.org/wiki/File:Catedral_de_la_Pur%C3%ADsima_Concepci%C3%B3n_(Tepic,_Nayarit)_-_facade.jpg),
+  Wikimedia Commons, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). The
+  model is shared under the same licence. Scaled to 40 m at the crosses of the towers, and cut
+  9.5 m behind the facade: the rest of the church, the casona and the portales are drawn.
+
+- `cars/*.glb`: the ten commonest traffic cars, made with Meshy (Meshy T2.5 smart topology) from
+  images Meshy drew from the prompts in `tools/models/jobs/cars/`.
 
 Models taken from Google Maps, Street View or Google's 3D tiles can't be used: their licence
 doesn't allow copying them.

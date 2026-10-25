@@ -122,10 +122,9 @@ export class Boarding {
       const taken = traffic.hijack(target.taken);
       if (taken.kind === 'car') controllers.leaveCarBehind(); // (the player's own car stays where it is)
       controllers.enterVehicle(taken.kind, taken);
-      // taking a patrol car is always a crime; any other car, if the police see it
-      const p = controllers.entities.person.position;
-      if (taken.kind === 'car' && taken.police) crime.report('stealCop');
-      else crime.report('carjack', crime.copNear(p.x, p.z, 40));
+      // taking a patrol car is always a crime (its crew saw it); any other car, if the police see it
+      if (taken.kind === 'car' && taken.police) crime.report('stealCop', true);
+      else crime.report('carjack');
     } else if (target.left) {
       controllers.takeLeftCar(target.left);
     } else {

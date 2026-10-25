@@ -1,6 +1,7 @@
 // js/sim/crime/dispatch.ts
-// Who turns up (sim/crime.ts): the police for the stars, gangs on their turf, the cartel's trucks, thieves, and
-// health, armour and a bazooka lying about.
+// Who turns up (sim/crime.ts): the police for the stars (and from four the army and the helicopter), the traffic's
+// patrols that spot a wanted player, gangs on their turf, the cartel's trucks, thieves, and health, armour and a
+// bazooka lying about.
 import { POLICE, GANGS, NARCO, gangTurf } from '../crime-rules.ts';
 import { MAX_AGENTS, MAX_TRUCKS, HEALTH_PICKUP, ARMOR_PICKUP, rand } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
@@ -11,17 +12,47 @@ export function dispatch(crime: CrimeSystem, dt: number): void {
   t.dispatch -= dt;
   if (t.dispatch <= 0 && stars > 0) {
     t.dispatch = 1.2;
-    let cops = 0;
-    for (const a of crime.agents) if (a.kind === 'cop' && !a.fallen && a.state !== 'leave') cops++;
-    let cars = 0;
-    for (const cr of crime.cruisers) if (cr.active && !cr.wreck && cr.police && cr.state === 'chase') cars++;
-    if (cops < POLICE.foot[stars] && crime.mode !== 'helicopter') {
-      const s = crime.traffic.sidewalkSpot(crime.px, crime.pz, 35, 75);
-      if (s) crime.spawnAgent('cop', s.x, s.z, { weapon: POLICE.weapon[stars] || 'pistol' });
-    } else if (cars < POLICE.cruisers[stars]) {
-      crime.spawnCruiser('police');
+    let cops = 0, soldiers = 0;
+    for (const a of crime.agents) {
+      if (a.kind !== 'cop' || a.fallen || a.state === 'leave') continue;
+      if (a.army) soldiers++;
+      else cops++;
     }
+    let cars = 0, armyTrucks = 0;
+    for (const cr of crime.cruisers) {
+      if (!cr.active || cr.wreck || cr.state !== 'chase') continue;
+      if (cr.faction === 'police') cars++;
+      else if (cr.faction === 'army') armyTrucks++;
+    }
+    const onFoot = crime.mode !== 'helicopter';
+    // an officer on foot first, else (or with no sidewalk about to send one to) a patrol car
+    let sent = false;
+    if (cops < POLICE.foot[stars] && onFoot) {
+      const s = crime.traffic.sidewalkSpot(crime.px, crime.pz, 35, 75);
+      if (s) sent = Boolean(crime.spawnAgent('cop', s.x, s.z, { weapon: POLICE.weapon[stars] || 'pistol' }));
+    }
+    if (!sent && cars < POLICE.cruisers[stars]) crime.spawnCruiser('police');
+    // the army alongside the police, not after them: a couple of soldiers, then its trucks, then the rest
+    const wantTruck = armyTrucks < POLICE.armyTrucks[stars];
+    let marched = false;
+    if (soldiers < POLICE.soldiers[stars] && onFoot && (soldiers < 2 || !wantTruck)) {
+      const s = crime.traffic.sidewalkSpot(crime.px, crime.pz, 40, 85);
+      if (s) marched = Boolean(crime.spawnAgent('cop', s.x, s.z, { weapon: 'rifle', army: true }));
+    }
+    if (!marched && wantTruck) crime.spawnCruiser('army');
   }
+
+  // the traffic's own patrols: one that sees the wanted player takes up the chase
+  t.patrols -= dt;
+  if (t.patrols <= 0) {
+    t.patrols = 0.5;
+    const v = stars > 0 && crime.onStreet ? crime.trafficPatrolSees(crime.px, crime.pz) : null;
+    if (v && crime.takeOverPatrol(v)) crime.toast('A patrol car spotted you');
+  }
+
+  // the helicopter, from four stars (another a while after one is shot down)
+  t.heli -= dt;
+  if (POLICE.helicopter[stars] && !crime.heli.active && t.heli <= 0) crime.spawnHeli();
 
   // gangs: a group on the corner when the player is on their turf
   t.gangs -= dt;
@@ -63,7 +94,7 @@ export function dispatch(crime: CrimeSystem, dt: number): void {
   if (t.trucks <= 0 && crime.gangAnger[NARCO] > 0 && crime.state === 'play' && crime.mode !== 'helicopter') {
     t.trucks = 7;
     let trucks = 0;
-    for (const cr of crime.cruisers) if (cr.active && !cr.wreck && !cr.police && cr.state === 'chase') trucks++;
+    for (const cr of crime.cruisers) if (cr.active && !cr.wreck && cr.faction === 'narco' && cr.state === 'chase') trucks++;
     if (trucks < MAX_TRUCKS && crime.spawnCruiser('narco') && !trucks) crime.toast('The cartel is sending its people');
   }
 

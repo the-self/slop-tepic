@@ -12,8 +12,8 @@ function world({ mode = 'person', own = null, taken = null, tills = [], inside =
   const crime = {
     state, money: 100,
     toast: (text) => calls.push(['toast', text]),
-    report: (...args) => calls.push(['report', ...args]),
-    copNear: () => true
+    // (whether the police saw it is crime's own to tell: report's default)
+    report: (...args) => calls.push(['report', ...args])
   };
   const controllers = {
     activeMode: mode,
@@ -38,16 +38,16 @@ function world({ mode = 'person', own = null, taken = null, tills = [], inside =
   return { boarding, calls, crime };
 }
 
-test('F on foot takes the traffic vehicle within reach: a patrol car is always a crime, any other one if a cop sees it', () => {
+test('F on foot takes the traffic vehicle within reach: a patrol car is always a crime, any other one if the police see it', () => {
   const patrol = world({ taken: { isPolice: true } });
   assert.equal(patrol.boarding.prompt(), 'Robar la patrulla');
   patrol.boarding.board();
-  assert.deepEqual(patrol.calls, [['leaveCarBehind'], ['enter', 'car', { kind: 'car', police: true }], ['report', 'stealCop'], ['sync']]);
+  assert.deepEqual(patrol.calls, [['leaveCarBehind'], ['enter', 'car', { kind: 'car', police: true }], ['report', 'stealCop', true], ['sync']]);
 
   const bike = world({ taken: { bike: true } });
   assert.equal(bike.boarding.prompt(), 'Robar la bici');
   bike.boarding.board();
-  assert.deepEqual(bike.calls, [['enter', 'cyclist', { kind: 'cyclist', police: false }], ['report', 'carjack', true], ['sync']]);
+  assert.deepEqual(bike.calls, [['enter', 'cyclist', { kind: 'cyclist', police: false }], ['report', 'carjack'], ['sync']]);
 });
 
 test('F gets into the player\'s own vehicle, or the car they left in the street', () => {

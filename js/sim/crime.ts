@@ -4,17 +4,19 @@ import type { RagdollHandle, Ragdolls, Point3 } from './ragdolls.ts';
 import type { Weapon, WeaponId, GroundBox } from './weapons.ts';
 import type { CrimeKind, StreetGun } from './crime-rules.ts';
 import type { PlayerMode } from '../player/controllers.ts';
-import type { Ped } from './traffic.ts';
+import type { Ped, Car } from './traffic.ts';
 import { WEAPONS, Arsenal } from './weapons.ts';
 import { Wanted, GANGS } from './crime-rules.ts';
 import { GunfireFX } from './gunfire-fx.ts';
 import type {
   CrimeState, DownKind, AgentKind, Faction, PickupKind, Blips, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers,
-  CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, RocketFlight, Pickup, LockTarget, TraceHit, RemoteTarget
+  CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, TraceHit, RemoteTarget
 } from './crime/types.ts';
 import type { Shot } from '../../shared/protocol.ts';
-import { MAX_AGENTS, MAX_PICKUPS, COP_SIGHT, CRUISER_SIGHT, rand, zero } from './crime/constants.ts';
-import { buildGuns, buildCruisers } from './crime/models.ts';
+import { MAX_AGENTS, MAX_PICKUPS, COP_SIGHT, CRUISER_SIGHT, HELI_SIGHT, rand, zero } from './crime/constants.ts';
+import { buildGuns, buildCruisers, buildHelicopter } from './crime/models.ts';
+import { spawnHeli, removeHeli, damageHeli, updateHeli } from './crime/helicopter.ts';
+import { witnessed, trafficPatrolSees } from './crime/witnesses.ts';
 import { buildRoadGraph, nearestNode, route, clearLine } from './crime/road-graph.ts';
 import {
   bindInput, updatePlayer, placePlayerGun, findTarget, muzzle, playerFire, punch, hurt, down, updateDown, playerSize
@@ -24,7 +26,7 @@ import {
   spawnAgent, angerGang, removeAgent, damageAgent, knockAgent, kill, updateAgent, walkAgent, findFoe, npcShoot
 } from './crime/agents.ts';
 import {
-  spawnCruiser, removeCruiser, damageCruiser, updateCruiser, pursue, blockerAhead, deployOfficers, moveCruiser, collideCruisers
+  spawnCruiser, takeOverPatrol, removeCruiser, damageCruiser, updateCruiser, pursue, blockerAhead, deployOfficers, moveCruiser, collideCruisers
 } from './crime/cruisers.ts';
 import { dispatch } from './crime/dispatch.ts';
 import { buildPickups, drop, updatePickups, collect } from './crime/pickups.ts';
@@ -34,8 +36,11 @@ import { buildPickups, drop, updatePickups, collect } from './crime/pickups.ts';
 // - The player's guns (weapons.ts: fists, pistol, SMG, bazooka): lock-on aim, hit-scan shots, rockets that explode,
 //   and what they do to people, cars and walls (gunfire-fx.ts draws it).
 // - The wanted level (crime-rules.ts): running people over, shooting, blowing things up or attacking the police bring
-//   one to five stars, lost by staying out of the police's sight. The police come on foot (to arrest, from two stars
-//   to shoot) and in patrol cars that chase the player along the road graph, ram its car and drop officers off.
+//   one to five stars when the police witness it (an officer, a patrol car, the traffic's own patrols, the helicopter),
+//   lost by staying out of their sight. The police come on foot (to arrest, from two stars to shoot) and in patrol cars
+//   that chase the player along the road graph, ram its car and drop officers off; a patrol of the traffic that sees a
+//   wanted player joins the chase. From four stars the army comes too (soldiers with rifles, their trucks) and a
+//   helicopter circles overhead, its gunner firing from the door.
 // - Two gangs on their turf, who shoot back (Los Rojos at anyone who comes close), and thieves who snatch the player's
 //   money and run.
 // - The player's health, armour and money, pickups, and being WASTED (killed) or BUSTED (arrested): back at the
@@ -44,9 +49,10 @@ import { buildPickups, drop, updatePickups, collect } from './crime/pickups.ts';
 //   meet, sending black trucks of reinforcements after whoever takes them on.
 // The people it adds are PersonRigs drawn in one crowd, dressed in their outfits (pedestrians.ts OUTFIT).
 // The pieces, in crime/: types.ts (the types, all exported from here too), constants.ts (the numbers & scratch),
-// models.ts (guns & patrol cars), road-graph.ts (the patrol cars' map & lines of sight), player.ts (input, firing,
-// getting hurt, WASTED & BUSTED), gunfire.ts (shots, rockets & blasts), agents.ts (the people on foot), cruisers.ts
-// (patrol cars & the cartel's trucks), dispatch.ts (who turns up), pickups.ts. Their functions take the CrimeSystem;
+// models.ts (guns, patrol cars & the helicopter), road-graph.ts (the patrol cars' map & lines of sight), player.ts
+// (input, firing, getting hurt, WASTED & BUSTED), gunfire.ts (shots, rockets & blasts), agents.ts (the people on foot),
+// cruisers.ts (patrol cars, the cartel's & the army's trucks), helicopter.ts (the police helicopter), witnesses.ts (who
+// sees a crime), dispatch.ts (who turns up), pickups.ts. Their functions take the CrimeSystem;
 // its methods below hand on to them.
 
 class CrimeSystem {
@@ -104,7 +110,11 @@ class CrimeSystem {
   rockets: RocketFlight[];
   pickups: Pickup[];
   candidates: LockTarget[];
-  timers: { dispatch: number; gangs: number; thief: number; health: number; bazooka: number; trucks: number }; // s to the next
+  // s to the next
+  timers: { dispatch: number; gangs: number; thief: number; health: number; bazooka: number; trucks: number; patrols: number; heli: number };
+  // the traffic's own patrol cars (traffic.ts: every 40th car keeps the livery): witnesses, and they join a chase
+  trafficPolice: Car[];
+  heli: Helicopter;
   lastTurf?: number;
 
   // the models (buildGuns, buildCruisers, buildPickups)
@@ -177,16 +187,18 @@ class CrimeSystem {
     this.rockets = [];
     this.pickups = [];
     this.candidates = []; // lock-on targets, rebuilt per shot
-    this.timers = { dispatch: 0, gangs: 2, thief: rand(40, 70), health: 30, bazooka: 45, trucks: 0 };
+    this.timers = { dispatch: 0, gangs: 2, thief: rand(40, 70), health: 30, bazooka: 45, trucks: 0, patrols: 0, heli: 0 };
+    this.trafficPolice = traffic.cars.filter((v) => v.isPolice);
 
     this.buildGuns();
     this.buildCruisers();
+    this.heli = buildHelicopter(this);
     this.buildPickups();
     this.buildRoadGraph();
     this.bindInput(canvas);
 
     traffic.setKnockListener((_kind, x, z, speed) => {
-      this.report('runOver');
+      this.report('runOver', this.witnessed(x, z));
       traffic.panic(x, z, 25);
       this.fx.splatter(x, this.groundAt(x, z) + 0.9, z, speed);
       controllers.bloodyCar?.(x, z, speed); // (on the player's car, if it was the car)
@@ -282,6 +294,7 @@ class CrimeSystem {
     }
     for (const cr of this.cruisers) if (cr.active) this.updateCruiser(cr, dt);
     this.collideCruisers();
+    this.updateHeli(dt);
     this.updatePickups(dt, elapsed);
 
     // the police see the player: the stars stay
@@ -292,6 +305,9 @@ class CrimeSystem {
     for (const cr of this.cruisers) {
       if (cr.active && !cr.wreck && cr.police && Math.hypot(cr.x - this.px, cr.z - this.pz) < CRUISER_SIGHT) seen = true;
     }
+    const h = this.heli;
+    if (h.active && h.state === 'chase' && Math.hypot(h.x - this.px, h.z - this.pz) < HELI_SIGHT) seen = true;
+    if (!seen && this.wanted.stars > 0) seen = this.trafficPatrolSees(this.px, this.pz) !== null;
     if (this.state === 'play') this.wanted.update(dt, seen);
     this.dispatch(dt);
     this.fx.update(dt);
@@ -361,25 +377,28 @@ class CrimeSystem {
     hurt(this, amount, fromX, fromZ);
   }
 
-  report(kind: CrimeKind, witnessed = true): void {
+  // A crime of `kind` (crime-rules.ts CRIME_HEAT): stars only if the police witness it, by default whoever of them can
+  // see the player now
+  report(kind: CrimeKind, seen = this.witnessed()): void {
     if (this.state !== 'play') return;
-    const gained = this.wanted.report(kind, witnessed);
-    if (gained > 0 && this.wanted.stars === 1) this.toast('The police are after you');
+    const before = this.wanted.stars;
+    const gained = this.wanted.report(kind, seen);
+    if (gained > 0 && before === 0) this.toast('The police are after you');
+    if (gained > 0 && before < 4 && this.wanted.stars >= 4) this.toast('The army and a helicopter are coming');
+  }
+
+  // Do the police see (x, z) (the player's place, left out)? (crime/witnesses.ts)
+  witnessed(x = this.px, z = this.pz): boolean {
+    return witnessed(this, x, z);
+  }
+
+  trafficPatrolSees(x: number, z: number): Car | null {
+    return trafficPatrolSees(this, x, z);
   }
 
   // One of crime's own people (not a passer-by of the traffic's)
   isAgent(o: Agent | Ped): o is Agent {
     return (this.agents as readonly object[]).includes(o);
-  }
-
-  copNear(x: number, z: number, r: number): boolean {
-    for (const a of this.agents) {
-      if (a.kind === 'cop' && !a.fallen && Math.hypot(a.x - x, a.z - z) < r) return true;
-    }
-    for (const cr of this.cruisers) {
-      if (cr.active && !cr.wreck && cr.police && Math.hypot(cr.x - x, cr.z - z) < r) return true;
-    }
-    return false;
   }
 
   // =========================================================================
@@ -415,7 +434,7 @@ class CrimeSystem {
   // =========================================================================
   // 7. PEOPLE: police on foot, gangs, thieves (crime/agents.ts)
   // =========================================================================
-  spawnAgent(kind: AgentKind, x: number, z: number, opts?: { gang?: number; weapon?: StreetGun | null }): Agent | null {
+  spawnAgent(kind: AgentKind, x: number, z: number, opts?: { gang?: number; weapon?: StreetGun | null; army?: boolean }): Agent | null {
     return spawnAgent(this, kind, x, z, opts);
   }
 
@@ -462,8 +481,12 @@ class CrimeSystem {
   // =========================================================================
   // 8. PATROL CARS (crime/cruisers.ts)
   // =========================================================================
-  spawnCruiser(faction?: Faction): Cruiser | null {
-    return spawnCruiser(this, faction);
+  spawnCruiser(faction?: Faction, at?: { x: number; z: number; heading: number; speed: number } | null): Cruiser | null {
+    return spawnCruiser(this, faction, at);
+  }
+
+  takeOverPatrol(v: Car): Cruiser | null {
+    return takeOverPatrol(this, v);
   }
 
   removeCruiser(cr: Cruiser): void {
@@ -504,6 +527,25 @@ class CrimeSystem {
   }
 
   // =========================================================================
+  // 8B. THE POLICE HELICOPTER, four stars on (crime/helicopter.ts)
+  // =========================================================================
+  spawnHeli(): void {
+    spawnHeli(this);
+  }
+
+  removeHeli(): void {
+    removeHeli(this.heli);
+  }
+
+  damageHeli(damage: number, byPlayer: boolean): void {
+    damageHeli(this, damage, byPlayer);
+  }
+
+  updateHeli(dt: number): void {
+    updateHeli(this, dt);
+  }
+
+  // =========================================================================
   // 9. WHO TURNS UP: the police for the stars, gangs on their turf, thieves, pickups (crime/dispatch.ts)
   // =========================================================================
   dispatch(dt: number): void {
@@ -525,11 +567,13 @@ class CrimeSystem {
     collect(this, p);
   }
 
-  // Positions on the minimap: { kind: 'cop' | 'cruiser' | 'gang' | 'thief' | <pickup kind>, x, z } (reused)
+  // Positions on the minimap: { kind: 'cop' | 'soldier' | 'cruiser' | 'army' | 'heli' | 'gang' | 'thief' | <pickup kind>,
+  // x, z } (reused)
   blips(out: Blips = (this._blips ??= [])): Blips {
     out.length = 0;
-    for (const a of this.agents) if (!a.dead) out.push(a.kind === 'gang' ? ['rojos', 'verdes', 'narcos'][a.gang] : a.kind, a.x, a.z);
-    for (const cr of this.cruisers) if (cr.active && !cr.wreck) out.push(cr.police ? 'cruiser' : 'truck', cr.x, cr.z);
+    for (const a of this.agents) if (!a.dead) out.push(a.kind === 'gang' ? ['rojos', 'verdes', 'narcos'][a.gang] : a.army ? 'soldier' : a.kind, a.x, a.z);
+    for (const cr of this.cruisers) if (cr.active && !cr.wreck) out.push(cr.faction === 'police' ? 'cruiser' : cr.faction === 'army' ? 'army' : 'truck', cr.x, cr.z);
+    if (this.heli.active && this.heli.state !== 'down') out.push('heli', this.heli.x, this.heli.z);
     for (const p of this.pickups) out.push(p.kind, p.x, p.z);
     return out;
   }
@@ -537,7 +581,7 @@ class CrimeSystem {
 
 export type {
   CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, NpcGun, CrimePlayer,
-  CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser,
+  CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter,
   RocketFlight, Pickup, LockTarget, RemoteTarget, TraceHit
 } from './crime/types.ts';
 export { CrimeSystem };

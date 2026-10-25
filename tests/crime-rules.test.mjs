@@ -64,3 +64,21 @@ test('the gangs hold turf away from the town centre, the cartel out on the edges
   assert.equal(GANGS.length, 3);
   assert.ok(GANGS[0].hostile && !GANGS[1].hostile && GANGS[2].hostile && GANGS[2].narco);
 });
+
+test('the army and the helicopter come at four stars and five, not before', () => {
+  for (let stars = 0; stars <= 3; stars++) {
+    assert.equal(POLICE.soldiers[stars], 0);
+    assert.equal(POLICE.armyTrucks[stars], 0);
+    assert.equal(POLICE.helicopter[stars], false);
+  }
+  for (const stars of [4, 5]) {
+    assert.ok(POLICE.soldiers[stars] > 0 && POLICE.armyTrucks[stars] > 0 && POLICE.helicopter[stars], `${stars} stars`);
+    assert.ok(POLICE.shoots[stars]);
+  }
+  assert.ok(POLICE.soldiers[5] > POLICE.soldiers[4], 'more soldiers at five');
+  // killing two officers in front of the police is enough to bring them
+  const w = new Wanted();
+  w.report('killCop');
+  w.report('killCop');
+  assert.ok(w.stars >= 4);
+});

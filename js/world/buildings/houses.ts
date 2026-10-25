@@ -130,6 +130,13 @@ function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[]) {
       const ex = Math.abs(cs) * hx + Math.abs(sn) * hz;
       const ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
       const pts = [[-hx, -hz], [hx, -hz], [hx, hz], [-hx, hz]].map(([a, b]) => ({ x: cx + a * cs + b * sn, z: cz - a * sn + b * cs }));
+      // a house reaching into a landmark's lot more than a metre or so gives way to it (Overture's long footprints run
+      // on behind the Catedral's neighbours: their other houses stay)
+      const intoLandmark = ([[0, 0], [-1, -1], [1, -1], [1, 1], [-1, 1]] satisfies [number, number][]).some(([a, b]) => {
+        const pa = a * Math.max(0, hx - 1.2), pb = b * Math.max(0, hz - 1.2);
+        return TEPIC_RESERVES.some((r) => r.contains(cx + pa * cs + pb * sn, cz - pa * sn + pb * cs));
+      });
+      if (intoLandmark) return;
       // on a hillside (terrain.ts), and anywhere on the town's slopes (ground.ts), the house stands on
       // the slope: its floor at its lowest corner (a little into the ground), its roof a full height over its
       // highest, the downhill side's foundation showing

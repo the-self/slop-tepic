@@ -120,9 +120,17 @@ function collideWithPlayer(ts: TrafficState, v: DrivenVehicle, rotY: number, hal
   if (pe.type !== 'person') reportCollision(ts, pe, v, contactX, v.bus ? 0.65 : 0.58, contactZ, nx, nz, approachSpeed, v.hy || 0);
 
   if (typeof pe.speed === 'number') {
-    const headOnDot = Math.abs(pSin * nx + pCos * nz);
-    // the speed lost by the player's share: half of it head on into a car, nearly all into a bus, a few % into a bike
-    pe.speed *= 1.0 - Math.min(0.95, pPush) * headOnDot;
+    const along = pSin * nx + pCos * nz; // the push along the player's heading: + from behind, - into its nose
+    const headOnDot = Math.abs(along);
+    if (pe.speed * along < 0) {
+      // driven into it: the speed lost by the player's share, half of it head on into a car, nearly all into a bus,
+      // a few % into a bike
+      pe.speed *= 1.0 - Math.min(0.95, pPush) * headOnDot;
+    } else {
+      // shunted the way it is going (rear-ended) or standing: the knock goes into its speed instead of braking it,
+      // so a car hit from behind lurches on and can drive away
+      pe.speed += jImpulse * pPush * along * 0.85;
+    }
     if (pe.type === 'car') {
       // pushed off it: what of the hit comes back head on (its speed already lost it above), the approach itself
       // when it only grazes (so it slides off instead of through)

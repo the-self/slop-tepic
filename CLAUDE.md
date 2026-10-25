@@ -48,7 +48,10 @@ A big system is a small facade module with a folder of its pieces next to it: `s
 Outside `js/`:
 - `shared/protocol.ts`: the binary multiplayer protocol, imported by both the client and the server.
 - `server/`: the region-room WebSocket server (TypeScript run by Node, ≥ 22.18).
-- `tools/`: the build (`build.ts`), geodata builders and benchmarks, `port-to-ts.ts` (below).
+- `tools/`: the build (`build.ts`), geodata builders and benchmarks, `port-to-ts.ts` (below); `tools/models/`, the
+  image-to-3D pipeline (Meshy, then `prepare.mjs`).
+- `assets/models/`: the 3D models (`.glb`). **Read `assets/models/CLAUDE.md` before making or placing one**: what to
+  cut, how to place it on the street, and the traps (frozen matrices, released arrays, no quantization).
 - `tests/`: `node:test` suites (plain JavaScript: they import or `loadModule` the `.ts` sources).
 
 ### Branches from before TypeScript

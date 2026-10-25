@@ -100,14 +100,17 @@ function renderCar(ts: TrafficState, c: Car): void {
   if (ts.hasView && !visible(ts, c.x, c.z, 18, (c.hy || 0) + 1)) return;
 
   const near = Math.hypot(c.x - ts.focusX, c.z - ts.focusZ) < CAR_PROXY_DISTANCE;
-  const bodyInst = near ? ts.bodies[c.bodyType].near : ts.bodies[c.bodyType].far;
+  // (a model of its own near the camera: at its real size already, its wheels in it; no crumpling)
+  const own = near && c.model ? ts.modelBodies.get(c.model.id) : undefined;
+  const bodyInst = own ?? (near ? ts.bodies[c.bodyType].near : ts.bodies[c.bodyType].far);
   const slot = bodyInst.count++;
 
   ts.dummy.position.set(c.x, c.hy || 0, c.z);
   // (a crashed car as its body lies in Jolt)
   if (c.crash) ts.dummy.quaternion.set(c.crash.body.out.qx, c.crash.body.out.qy, c.crash.body.out.qz, c.crash.body.out.qw);
   else ts.dummy.rotation.set(c.pitch + (c.gp || 0), rotY, c.roll, 'YXZ');
-  ts.dummy.scale.set(c.sx, c.sy, c.sz); // (the body shape stretched to the model's size)
+  if (own) ts.dummy.scale.set(1, 1, 1);
+  else ts.dummy.scale.set(c.sx, c.sy, c.sz); // (the body shape stretched to the model's size)
   ts.dummy.updateMatrix();
   bodyInst.setMatrixAt(slot, ts.dummy.matrix);
   if (c.isPolice) ts.policeLightbarInst.setMatrixAt(ts.policeDrawn++, ts.dummy.matrix);
@@ -170,6 +173,7 @@ function renderCar(ts: TrafficState, c: Car): void {
     }
   }
 
+  if (own) return;
   if (near && c.crash) placeCrashedWheels(ts, c.crash, ts.wheelCars++, spec.wheelRadius * c.sw);
   else if (near) {
     placeWheels(ts, c, ts.wheelCars++, rotY, c.roll, spec.wheelRadius * c.sw, spec.wheelX * c.sx, spec.wheelZ * c.sz, ts.carWheelLeftInst, ts.carWheelRightInst);

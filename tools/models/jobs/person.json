@@ -1,0 +1,5 @@
+{
+  "prompt": "Full-body photo-real 3D character of an ordinary Mexican man in his thirties from Tepic, short black hair, brown skin, plain grey t-shirt, blue jeans, white sneakers, neutral face, standing straight with arms relaxed slightly away from the body, front view, whole body from head to feet in frame, isolated on a plain white background, soft even studio light",
+  "imageOptions": { "pose_mode": "a-pose", "remove_background": true },
+  "model": { "model_type": "smart-topology", "ai_model": "meshy-t2.5", "target_polycount": 6000, "should_texture": true, "texture_resolution": "2k", "pose_mode": "a-pose" }
+}

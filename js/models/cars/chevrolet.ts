@@ -5,12 +5,12 @@ import type { CarModel } from './index.ts';
 
 export const CARS: CarModel[] = [
   {
-    id: 'chevrolet-aveo', name: 'Chevrolet Aveo', body: 'sedan', class: 'economy',
+    id: 'chevrolet-aveo', glb: 'assets/models/cars/chevrolet-aveo.glb', name: 'Chevrolet Aveo', body: 'sedan', class: 'economy',
     size: [4.40, 1.73, 1.47], mass: 1120, drive: 'fwd', power: [72, 6000], torque: [136, 4000], redline: 6500,
     gears: 5, top: 175, accel: 11.6, rarity: 22
   },
   {
-    id: 'chevrolet-onix', name: 'Chevrolet Onix', body: 'sedan', class: 'economy',
+    id: 'chevrolet-onix', glb: 'assets/models/cars/chevrolet-onix.glb', name: 'Chevrolet Onix', body: 'sedan', class: 'economy',
     size: [4.47, 1.73, 1.48], mass: 1130, drive: 'fwd', power: [85, 5500], torque: [180, 2000], redline: 6200,
     gears: 6, top: 190, accel: 10.2, rarity: 12
   },

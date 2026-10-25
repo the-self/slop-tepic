@@ -39,6 +39,7 @@ export interface CarModel {
   electric?: boolean; // battery-electric: one gear, full torque from 0 rpm, regenerative braking
   rarity: number; // weight in the traffic draw (~20 for the best sellers, 0.05 for a Ferrari), 0 for never
   paints?: number[]; // body colours (hex)
+  glb?: string; // a 3D model of it (assets/models/cars/<id>.glb: white, nose to +z, at its real length), drawn near the camera instead of its body shape
   traffic?: boolean; // false keeps it out of the random traffic
   nitro?: boolean; // whether it has a nitrous kit (by default the sport and super cars do, electric ones never)
   wheelRadius?: number; // m, when the body shape's own doesn't fit

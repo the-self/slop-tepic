@@ -1,0 +1,14 @@
+{
+  "prompt": "Product render of a 2021 Nissan Versa compact sedan (third generation, V-motion grille, boomerang lamps), plain glossy white paint, dark tinted windows, black plastic trim, its stock wheels, no logos, no badges, no emblems, no license plates, no text, three-quarter front view from slightly above, the whole car centered, isolated on a plain white background, soft even studio light, no reflections of surroundings",
+  "imageOptions": {
+    "aspect_ratio": "4:3",
+    "remove_background": true
+  },
+  "model": {
+    "model_type": "smart-topology",
+    "ai_model": "meshy-t2.5",
+    "target_polycount": 8000,
+    "should_texture": true,
+    "texture_resolution": "2k"
+  }
+}

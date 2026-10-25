@@ -1,0 +1,5 @@
+{
+  "prompt": "Product render of a generic modern compact four-door sedan car, like the most common taxi and family car in Mexico, plain white paint, dark tinted windows, black plastic bumpers trim, silver alloy wheels, no logos, no badges, no license plate, three-quarter front view from slightly above, centered, isolated on a plain white background, studio lighting, soft even light, no shadows on the body",
+  "imageOptions": { "aspect_ratio": "4:3", "remove_background": true },
+  "model": { "model_type": "smart-topology", "ai_model": "meshy-t2.5", "target_polycount": 8000, "should_texture": true, "texture_resolution": "2k" }
+}
