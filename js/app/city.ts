@@ -3,7 +3,7 @@
 // the camera by workers, world/streaming.ts; ?stream=0 lays all of them at start-up), the streets, the floor painted
 // beyond the tiles, the hills, the rivers, the landmarks, the blocks and stores, the street details, the traffic on the
 // road network, the paint, the pavements, the airport and the overpasses; and gathers what the player collides with.
-import * as THREE from 'three/webgpu';
+import type * as THREE from 'three/webgpu';
 import { color } from 'three/tsl';
 import { ISLAND_BOUNDS } from '../world/city-config.ts';
 import { buildCityGrid } from '../world/city-grid.ts';
@@ -48,9 +48,7 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   // hills' floor under them on the slopes, the valley floor in the flat city
   const farGround = streamer ? paintFarGround({ open: cityGrid.open, box }) : null;
   const valley = cityGrid.valley.material;
-  if (farGround && !SLOPES && valley instanceof THREE.MeshStandardNodeMaterial) {
-    valley.colorNode = farGroundColor(farGround, color(valley.color));
-  }
+  if (farGround && !SLOPES) valley.colorNode = farGroundColor(farGround, color(valley.color));
   mark('farGround');
   // The hills around the valley (Tepic: Cerro de San Juan, Cerro de la Cruz...), over the flat city, and the floor
   // under the streamed tiles not loaded

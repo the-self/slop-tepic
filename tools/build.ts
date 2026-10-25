@@ -4,7 +4,7 @@
 //   node tools/build.ts            one minified build, for the page as it is published
 //   node tools/build.ts --serve    rebuilds on every change and serves the repo at http://localhost:8765
 import * as esbuild from 'esbuild';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
 
 const serve = process.argv.includes('--serve');
 const port = Number(process.env.PORT ?? 8765);
@@ -43,6 +43,8 @@ const options: esbuild.BuildOptions = {
   plugins: [geodata],
 };
 
+// A fresh dist/ each time: the chunks' names carry their content's hash, so the last build's would stay behind
+rmSync('dist', { recursive: true, force: true });
 if (serve) {
   const context = await esbuild.context(options);
   await context.watch();

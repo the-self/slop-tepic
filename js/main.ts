@@ -184,8 +184,6 @@ async function initApp(): Promise<void> {
   document.getElementById('btn-sound')?.addEventListener('click', () => { audioSystem.setEnabled(!audioSystem.enabled); });
   hud.showSound(audioSystem);
 
-  // The rooms behind the venues' doors (world/interiors.ts, below): a teleport or a save from inside one goes by its door
-  let interiors: Interiors | null = null;
   // Guns, the police, gangs & thieves (sim/crime.ts); killed, the player comes round at the nearest hospital
   // (OpenStreetMap's, HOSPITALS), arrested at the nearest teleport spot, on foot either way
   const crimeSystem = new CrimeSystem({
@@ -221,7 +219,6 @@ async function initApp(): Promise<void> {
   const nightlife = new Nightlife({ scene, venues, houses: GEO.houses, stride: GEO.houseStride || 8, controllers: controllerManager, audio: audioSystem });
   // In through their doors (F): the restaurants', bars' and antros' rooms, the Tapanko's tapanco and all
   const rooms = new Interiors({ scene, venues, controllers: controllerManager, cameras: cameraSystem, crime: crimeSystem });
-  interiors = rooms;
   // Burning wrecks, house fires, the dry season's quemas, and the bomberos who come for them (sim/fires.ts)
   const fires = new Fires({ scene, crime: crimeSystem, controllers: controllerManager, houses: GEO.houses, stride: GEO.houseStride || 8 });
   crimeSystem.onExplosion = (x, y, z, radius) => { fires.onExplosion(x, y, z, radius); };
@@ -428,7 +425,7 @@ async function initApp(): Promise<void> {
 
   const teleportTo = createTeleport({
     controllers: controllerManager, touch: touchControls, gamepad: gamepadControls, cameras: cameraSystem,
-    room: () => interiors, selectCamera
+    room: () => rooms, selectCamera
   });
   const mapSystem = new CityMapSystem({
     controllerManager,

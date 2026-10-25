@@ -10,13 +10,13 @@ export class EventBus<Events extends object> {
   private readonly handlers = new Map<keyof Events, Handler<never>[]>();
 
   /** Calls `handler` on every `type` event from now on; the returned function unsubscribes it */
+  // (Subscribing and unsubscribing replace a type's list instead of changing it: an emit() under way keeps walking
+  // the list it started with, so a handler that unsubscribes itself doesn't make the next one miss the event.)
   on<K extends keyof Events>(type: K, handler: Handler<Events[K]>): () => void {
-    let list = this.handlers.get(type);
-    if (!list) this.handlers.set(type, list = []);
-    list.push(handler);
+    this.handlers.set(type, [...(this.handlers.get(type) ?? []), handler]);
     return () => {
-      const at = list.indexOf(handler);
-      if (at >= 0) list.splice(at, 1);
+      const list = this.handlers.get(type);
+      if (list) this.handlers.set(type, list.filter((h) => h !== handler));
     };
   }
 
