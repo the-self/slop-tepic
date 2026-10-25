@@ -86,4 +86,36 @@ function drapeTile(layer, tris, key, grid, lattice, height) {
   return lattice ? layOnFloor(inTile, layer.sizes, lattice, height, layer.normalAt) : inTile;
 }
 
-export { TILE_CELLS, createTileGrid, bucketTriangles, drapeTile };
+// Distance (m, in x & z) from (x, z) to a rectangle: 0 inside it
+function rectDistance(r, x, z) {
+  const dx = x < r.x0 ? r.x0 - x : x > r.x1 ? x - r.x1 : 0;
+  const dz = z < r.z0 ? r.z0 - z : z > r.z1 ? z - r.z1 : 0;
+  return Math.hypot(dx, dz);
+}
+
+/**
+ * The tiles a focus wants, nearest first: those of `candidates` (tile keys: the tiles with anything in them) within
+ * `radius` of where the player is (x, z) or of where they are heading (ax, az: a few seconds ahead), each with its
+ * distance, the nearer of the two: [{ key, d }].
+ */
+function tilesAround(grid, candidates, radius, x, z, ax = x, az = z) {
+  const out = [];
+  const seen = new Set();
+  for (const [px, pz] of [[x, z], [ax, az]]) {
+    const i0 = Math.floor((px - radius - grid.x0) / grid.size), i1 = Math.floor((px + radius - grid.x0) / grid.size);
+    const j0 = Math.floor((pz - radius - grid.z0) / grid.size), j1 = Math.floor((pz + radius - grid.z0) / grid.size);
+    for (let i = i0; i <= i1; i++) {
+      for (let j = j0; j <= j1; j++) {
+        const key = grid.key(i, j);
+        if (seen.has(key) || !candidates.has(key)) continue;
+        seen.add(key);
+        const r = grid.rect(key);
+        const d = Math.min(rectDistance(r, x, z), rectDistance(r, ax, az));
+        if (d <= radius) out.push({ key, d });
+      }
+    }
+  }
+  return out.sort((a, b) => a.d - b.d);
+}
+
+export { TILE_CELLS, createTileGrid, bucketTriangles, drapeTile, rectDistance, tilesAround };

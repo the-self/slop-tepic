@@ -3,7 +3,7 @@ import { pass, mrt, output, normalView, positionView, metalness, roughness, vec2
 import { ssr } from 'three/addons/tsl/display/SSRNode.js';
 import { createPostProcessing } from './render/post-processing.js';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
-import { CITY, getLocationLabel, isTypingInField, ROADS, CITY_LANDMARKS, TELEPORT_LOCATIONS, HOSPITALS } from './world/city-config.js';
+import { CITY, getLocationLabel, isTypingInField, ROADS, CITY_LANDMARKS, TELEPORT_LOCATIONS, HOSPITALS, ISLAND_BOUNDS } from './world/city-config.js';
 import { buildCityGrid } from './world/city-grid.js';
 import { buildCityBlocks } from './world/buildings.js';
 import { buildStreetDetails } from './world/street-details.js';
@@ -29,7 +29,8 @@ import { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDyna
 import { CityAudioSystem } from './audio/audio-system.js';
 import { buildTerrain } from './world/terrain.js';
 import { buildRiverChannels } from './world/river-channels.js';
-import { groundHeight, townHeight, landHeight, liftAt, deckLift, surfaceHeight } from './world/ground.js';
+import { groundHeight, townHeight, landHeight, liftAt, deckLift, surfaceHeight, SLOPES, LATTICE } from './world/ground.js';
+import { TileStreamer } from './world/streaming.js';
 import { buildTepicLandmarks } from './world/tepic-landmarks.js';
 import { buildCotos } from './world/cotos.js';
 import { CrimeSystem } from './sim/crime.js';
@@ -107,10 +108,20 @@ async function initApp() {
   }
 
   // 3. Build the city: streets, hills, landmarks, blocks, street details & traffic
+  // The heaviest ground layers are laid on the slopes tile by tile around the camera, by workers (streaming.js);
+  // ?stream=0 lays all of them at start-up, as before
+  const streamer = new URLSearchParams(location.search).get('stream') === '0' ? null : new TileStreamer({
+    scene,
+    lattice: SLOPES ? LATTICE : null,
+    ground: SLOPES ? GEO.ground : null,
+    box: { x0: ISLAND_BOUNDS.minX, x1: ISLAND_BOUNDS.maxX, z0: ISLAND_BOUNDS.minZ, z1: ISLAND_BOUNDS.maxZ },
+    workers: Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 4) - 2))
+  });
   const cityGrid = buildCityGrid(scene);
   markInit('cityGrid');
-  // The hills around the valley (Tepic: Cerro de San Juan, Cerro de la Cruz...), over the flat city
-  buildTerrain(scene);
+  // The hills around the valley (Tepic: Cerro de San Juan, Cerro de la Cruz...), over the flat city, and the floor
+  // under the streamed tiles not loaded
+  buildTerrain(scene, { mask: streamer?.mask });
   markInit('terrain');
   // The Río Mololoa & the arroyos in their channels, under the deck the city grid opened over them
   const rivers = buildRiverChannels(scene);
@@ -142,7 +153,7 @@ async function initApp() {
   streetDetails.addJunctionSignals?.(trafficSystem.network, allColliders); // (their poles stop the player)
   const highwayTraffic = createHighwayTraffic(scene, cityGrid.highwayLanes);
   buildRoadPaint(scene, trafficSystem.network);
-  buildPavements(scene); // (the empedrado, adoquín, earth & concrete streets, under the paint)
+  buildPavements(scene, streamer); // (the empedrado, adoquín, earth & concrete streets, under the paint)
   buildAirport(scene); // (the runway, taxiways & apron south-east of town, and the airliners at the gates)
   markInit('roadPaint');
   // The overpasses, their ramps & the railway; their walls, parapets & piers stop the player (not the traffic's
@@ -320,7 +331,7 @@ async function initApp() {
     .filter(Boolean);
   setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
   // ...whose world matrices never change again: rendering stops walking them (the loop updates the rest of the scene)
-  const staticRoots = [...cullingRoots, ...['TepicLandmarks', 'Cotos', 'Airport', 'RoadMarkings', 'Pavements', 'Topes']
+  const staticRoots = [...cullingRoots, ...['TepicLandmarks', 'Cotos', 'Airport', 'RoadMarkings', 'Pavements', 'Topes', 'StreamedTiles']
     .map((name) => scene.getObjectByName(name))
     .filter((o) => o && o.parent === scene)];
   freezeStaticMatrices(scene, staticRoots);
@@ -862,7 +873,20 @@ async function initApp() {
   markInit('ui');
   // Debugging handle for the console, only with ?debug in the URL
   if (new URLSearchParams(location.search).has('debug')) {
-    window.__slop = { scene, renderer, streetFood, venues, floods, nightlife, interiors, fires, controllerManager, trafficSystem, cameraSystem, streetDetails, cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl, weaponWheel };
+    window.__slop = { scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors, fires, controllerManager, trafficSystem, cameraSystem, streetDetails, cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl, weaponWheel };
+  }
+
+  // The streamed tiles round the player, laid before the first frame; and a stand-in of every streamed layer for the
+  // shader warm-up, so no tile builds pipelines in play when its layer first comes in (taken out after the first frame)
+  let streamWarmup = null;
+  if (streamer) {
+    if (loadingStatus) loadingStatus.textContent = 'Laying the streets around you...';
+    const here = controllerManager.getActiveEntity().position;
+    await streamer.preload(here.x, here.z);
+    streamWarmup = new THREE.Group();
+    streamWarmup.add(...streamer.warmupMeshes());
+    scene.add(streamWarmup);
+    markInit(`tiles ${streamer.stats.shown}`);
   }
 
   // The loading screen stays up while the shaders compile (precompileShaders() & the warm-up frame, see the loop) and
@@ -1083,6 +1107,10 @@ async function initApp() {
     mapSystem.update();
     audioSystem.update(dt, elapsed, cameraSystem.camera, lightingSystem.isNight);
     if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
+    if (streamer) {
+      const eye = cameraSystem.camera.position;
+      streamer.update(eye, eye.y - groundHeight(eye.x, eye.z), Math.max(0, rawDt));
+    }
     // The clustered lighting takes the first 256 point & spot lights it finds: those switched off (intensity 0: the
     // traffic's by day, the pools waiting) are hidden, so they don't take the places of the ones on
     if (elapsed - lightsCounted > 2) {
@@ -1136,6 +1164,7 @@ async function initApp() {
         markInit('gpu');
         // What the warm-up drew of the static city is on the GPU now: its CPU-side copies go, and the rest's as it
         // gets drawn (below)
+        if (streamWarmup) scene.remove(streamWarmup);
         const released = releaseStaticArrays(renderer);
         markInit(`release ${Math.round(released / 1e6)}MB`);
         nextRelease = performance.now() + 3000;

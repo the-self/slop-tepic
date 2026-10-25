@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createTileGrid, bucketTriangles, drapeTile } from '../js/world/tiles.js';
+import { createTileGrid, bucketTriangles, drapeTile, tilesAround } from '../js/world/tiles.js';
 import { clipToRect } from '../js/world/lattice.js';
 
 // A 10 m lattice from (-5, -5): tiles of 4 cells, 40 m a side
@@ -91,4 +91,21 @@ test('an indexed layer (quads sharing their corners) is bucketed and cut by its 
     for (let v = 0; v < a.length; v++) assert.equal(a[v], p[v * 3 + 2] < 35 ? 1 : 2, 'each vertex keeps its quad\'s attribute');
   }
   assert.ok(Math.abs(total - 600) < 1e-3);
+});
+
+test('the tiles around a focus and ahead of it, nearest first, only those with anything in them', () => {
+  const g = createTileGrid({ x0: 0, z0: 0, cell: 10 }, 10); // 100 m tiles
+  const all = new Set();
+  for (let i = -10; i <= 10; i++) for (let j = -10; j <= 10; j++) all.add(g.key(i, j));
+  const near = tilesAround(g, all, 120, 50, 50);
+  assert.equal(near[0].key, g.key(0, 0));
+  assert.equal(near[0].d, 0);
+  assert.ok(near.every((t, n) => n === 0 || t.d >= near[n - 1].d), 'nearest first');
+  assert.ok(near.every((t) => t.d <= 120));
+  assert.ok(near.some((t) => t.key === g.key(-1, 1)) && !near.some((t) => t.key === g.key(2, 2)));
+  // heading east: the tiles round the point ahead come in too, at their distance from it
+  const ahead = tilesAround(g, all, 120, 50, 50, 650, 50);
+  assert.ok(ahead.some((t) => t.key === g.key(6, 0) && t.d === 0));
+  // only candidates
+  assert.deepEqual(tilesAround(g, new Set([g.key(1, 0)]), 120, 50, 50).map((t) => t.key), [g.key(1, 0)]);
 });
