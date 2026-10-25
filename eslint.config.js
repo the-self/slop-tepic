@@ -24,10 +24,15 @@ export default defineConfig(
       '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
       // Unused bindings are compile errors already (noUnusedLocals / noUnusedParameters); `_name` marks one kept on purpose
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrors: 'none' }],
+      // `count || 1` and `name || 'Unnamed'` treat 0 and '' as missing on purpose in the builders, and `??` would change
+      // what they draw: the rule still holds for objects, where the two can't differ
+      '@typescript-eslint/prefer-nullish-coalescing': ['error', { ignorePrimitives: { number: true, string: true, boolean: true } }],
+      // Both `x!` and `x as T` hide a missing value: narrow it with a check instead (no-non-null-assertion is on)
+      '@typescript-eslint/non-nullable-type-assertion-style': 'off',
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/no-import-type-side-effects': 'error',
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
-      eqeqeq: ['error', 'always'],
+      eqeqeq: ['error', 'always', { null: 'ignore' }],
       'no-var': 'error',
       'prefer-const': 'error',
       'no-console': ['error', { allow: ['info', 'warn', 'error'] }],
