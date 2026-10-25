@@ -416,4 +416,47 @@ function updateDynamicMatrices(scene) {
   }
 }
 
-export { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices, SHADOW_PROXY_LAYER };
+// Below this many vertices a geometry keeps its arrays: the small shared ones (unit boxes, a prop's shape) may still be
+// cloned or merged by something built later, and the memory is all in the big merged batches anyway
+const RELEASE_MIN_VERTICES = 2048;
+
+/**
+ * Drops the CPU-side copies of the static city's vertex data once the GPU holds it. three.js keeps every attribute's
+ * array after the upload, so the frozen city (its streets, facades, paint & shadow stand-ins: ~10M vertices) sat twice
+ * in memory, ~1 GB of it in the JS heap alone. Call it after a frame that drew everything (the warm-up). Only the
+ * attributes the renderer has already uploaded go (an object that has not been drawn yet keeps its own), and never the
+ * instance matrices & colours (knocked-over props change theirs: mayhem.js). Each attribute keeps its count and its
+ * array's type (the pipelines read both); its array becomes empty, so nothing may read or change it afterwards.
+ * Returns the bytes released.
+ */
+function releaseStaticArrays(renderer) {
+  const backend = renderer.backend;
+  const done = new Set();
+  let bytes = 0;
+  const release = (attribute) => {
+    const target = attribute.isInterleavedBufferAttribute ? attribute.data : attribute;
+    if (done.has(target)) return;
+    done.add(target);
+    const data = backend.has(target) ? backend.get(target) : null;
+    if (!data || !(data.buffer || data.bufferGPU) || !target.array?.length) return;
+    bytes += target.array.byteLength;
+    target.array = new target.array.constructor(0);
+  };
+  for (const root of state.frozen) {
+    root.traverse((o) => {
+      const geo = o.geometry;
+      if (!o.isMesh || !geo || geo.userData.keepArrays) return;
+      const pos = geo.attributes.position;
+      if (!pos || pos.count < RELEASE_MIN_VERTICES) return;
+      // (three.js would compute these from the arrays the first time it culled or bounded the object)
+      if (!geo.boundingBox) geo.computeBoundingBox();
+      if (!geo.boundingSphere) geo.computeBoundingSphere();
+      if (o.isInstancedMesh && !o.boundingSphere) o.computeBoundingSphere();
+      for (const attribute of Object.values(geo.attributes)) if (!attribute.isInstancedBufferAttribute) release(attribute);
+      if (geo.index) release(geo.index);
+    });
+  }
+  return bytes;
+}
+
+export { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices, releaseStaticArrays, SHADOW_PROXY_LAYER };

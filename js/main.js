@@ -25,7 +25,7 @@ import { createRain } from './render/rain.js';
 import { CityMapSystem } from './ui/city-map.js';
 import { Tachometer } from './ui/tachometer.js';
 import { gearLabel } from './player/drivetrain.js';
-import { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices } from './render/scene-culling.js';
+import { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices, releaseStaticArrays } from './render/scene-culling.js';
 import { CityAudioSystem } from './audio/audio-system.js';
 import { buildTerrain } from './world/terrain.js';
 import { buildRiverChannels } from './world/river-channels.js';
@@ -1128,6 +1128,9 @@ async function initApp() {
       const device = renderer.backend.device;
       Promise.resolve(device && device.queue.onSubmittedWorkDone()).catch(() => {}).then(() => {
         markInit('gpu');
+        // The warm-up drew the whole static city, so the GPU holds all of it now: its CPU-side copies can go
+        const released = releaseStaticArrays(renderer);
+        markInit(`release ${Math.round(released / 1e6)}MB`);
         console.log(`[init] ${initTimings.join(', ')}`);
         initTimings = null;
         if (loadingOverlay) loadingOverlay.classList.add('hidden');

@@ -109,3 +109,44 @@ test('the frozen static city is left out of the per-frame matrix updates, everyt
   update(scene);
   assert.deepEqual(updated, ['Player', 'Rocket']);
 });
+
+test('the static city drops the CPU copies the GPU already holds, keeping what it may still need', () => {
+  const ctx = { state: { culled: [], frozen: new Set() }, Set, Object, RELEASE_MIN_VERTICES: 2048 };
+  const release = vm.runInNewContext(`(${topLevel('releaseStaticArrays')})`, ctx);
+  const uploaded = new Set();
+  const renderer = { backend: { has: (a) => uploaded.has(a), get: () => ({ buffer: {} }) } };
+  const attr = (n, itemSize, extra = {}) => Object.assign(new BufferAttribute(new Float32Array(n * itemSize), itemSize), extra);
+  const geometry = (n, extra = {}) => {
+    const g = new BufferGeometry();
+    g.userData = {};
+    g.boundingBox = g.boundingSphere = {};
+    g.setAttribute('position', attr(n, 3));
+    g.setAttribute('normal', attr(n, 3));
+    return Object.assign(g, extra);
+  };
+  const big = geometry(3000);
+  big.index = new BufferAttribute(new Uint32Array(6000), 1);
+  const small = geometry(24); // (a unit box something may still clone)
+  const pending = geometry(3000); // (not drawn yet: nothing on the GPU)
+  const kept = geometry(3000);
+  kept.userData.keepArrays = true;
+  const props = geometry(3000);
+  props.setAttribute('instanceTint', attr(10, 3, { isInstancedBufferAttribute: true }));
+  for (const g of [big, small, kept, props]) for (const a of [...Object.values(g.attributes), g.index]) if (a) uploaded.add(a);
+  const root = new Object3D();
+  const meshes = [big, small, pending, kept, props].map((g) => Object.assign(new Mesh(g, {}), { isMesh: true }));
+  root.traverse = (fn) => meshes.forEach(fn);
+  ctx.state.frozen.add(root);
+  const bytes = release(renderer);
+  assert.equal(big.attributes.position.array.length, 0);
+  assert.equal(big.attributes.position.count, 3000, 'the count the draws use stays');
+  assert.ok(big.attributes.position.array instanceof Float32Array, 'and the array type the pipelines read');
+  assert.equal(big.index.array.length, 0);
+  assert.ok(big.index.array instanceof Uint32Array);
+  assert.equal(small.attributes.position.array.length, 24 * 3);
+  assert.equal(pending.attributes.position.array.length, 3000 * 3);
+  assert.equal(kept.attributes.position.array.length, 3000 * 3);
+  assert.equal(props.attributes.position.array.length, 0);
+  assert.equal(props.attributes.instanceTint.array.length, 30, 'instance data stays: knocked-over props change it');
+  assert.equal(bytes, (3000 * 6 * 4 + 6000 * 4) + 3000 * 6 * 4);
+});
