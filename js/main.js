@@ -25,7 +25,7 @@ import { createRain } from './render/rain.js';
 import { CityMapSystem } from './ui/city-map.js';
 import { Tachometer } from './ui/tachometer.js';
 import { gearLabel } from './player/drivetrain.js';
-import { setupSceneCulling, updateSceneCulling } from './render/scene-culling.js';
+import { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices } from './render/scene-culling.js';
 import { CityAudioSystem } from './audio/audio-system.js';
 import { buildTerrain } from './world/terrain.js';
 import { buildRiverChannels } from './world/river-channels.js';
@@ -290,6 +290,11 @@ async function initApp() {
     .map((name) => scene.getObjectByName(name))
     .filter(Boolean);
   setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
+  // ...whose world matrices never change again: rendering stops walking them (the loop updates the rest of the scene)
+  const staticRoots = [...cullingRoots, ...['TepicLandmarks', 'Cotos', 'Airport', 'RoadMarkings', 'Pavements', 'Topes']
+    .map((name) => scene.getObjectByName(name))
+    .filter((o) => o && o.parent === scene)];
+  freezeStaticMatrices(scene, staticRoots);
   markInit('culling');
 
   // On WebGPU, small InstancedMeshes (<= 1000 instances) keep their matrices in uniform buffers that three.js
@@ -1001,6 +1006,7 @@ async function initApp() {
     mapSystem.update();
     audioSystem.update(dt, elapsed, cameraSystem.camera, lightingSystem.isNight);
     if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
+    updateDynamicMatrices(scene);
 
     // Render frame via TSL RenderPipeline (SSR + Bloom)
     if (!warmedUp) {
