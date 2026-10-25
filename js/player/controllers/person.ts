@@ -10,6 +10,8 @@ import type { ThrowOptions } from '../../sim/ragdolls.ts';
 import type { PersonEntity } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
 
+const TURN_TO_STEER = 11; // 1/s: how fast the player swings round to the way it is steered (~0.3 s to turn about)
+
 // =========================================================================
 // 1. PERSON (SKINNED PEDESTRIAN WITH PLANTED-FOOTSTEP IK GAIT, see pedestrians.ts)
 // =========================================================================
@@ -44,7 +46,7 @@ export function createPersonEntity(ctl: ThirdPersonControllerManager): PersonEnt
     speed: 0,
     verticalVel: 0,
     cameraTargetOffset: new THREE.Vector3(0, 1.55, 0),
-    chaseDistance: 4.3,
+    chaseDistance: 4.0,
     chaseHeight: 1.95
   };
 }
@@ -68,6 +70,21 @@ export function updatePerson(ctl: ThirdPersonControllerManager, dt: number): voi
     const k = AIM_WALK / Math.max(1, Math.hypot(ahead, side));
     targetSpeed = ahead * k;
     targetStrafe = side * k;
+  } else if (ctl.viewHeading !== null) {
+    // GTA-style, steered from the camera (cameras.ts): W walks away from it, S towards it, A / D across it; the player
+    // turns round to face the way it goes, and only gets going once it roughly faces it
+    const ahead = (Number(ctl.keys.forward) || 0) - (Number(ctl.keys.backward) || 0);
+    const side = (Number(ctl.keys.right) || 0) - (Number(ctl.keys.left) || 0);
+    const push = Math.min(1, Math.hypot(ahead, side));
+    if (push > 0.05) {
+      // (the camera's forward is (sin v, cos v), its right (-cos v, sin v))
+      const v = ctl.viewHeading, sv = Math.sin(v), cv = Math.cos(v);
+      let turn = (Math.atan2(sv * ahead - cv * side, cv * ahead + sv * side) - p.heading) % (Math.PI * 2);
+      if (turn > Math.PI) turn -= Math.PI * 2;
+      else if (turn < -Math.PI) turn += Math.PI * 2;
+      p.heading += turn * (1 - Math.exp(-dt * TURN_TO_STEER));
+      targetSpeed = maxWalk * push * Math.max(0, Math.cos(turn));
+    }
   } else {
     if (ctl.keys.forward) targetSpeed = maxWalk * Number(ctl.keys.forward);
     else if (ctl.keys.backward) targetSpeed = -maxWalk * 0.65 * Number(ctl.keys.backward);

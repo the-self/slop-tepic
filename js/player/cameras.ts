@@ -3,7 +3,7 @@ import type { PlayerEntity, ThirdPersonControllerManager } from './controllers.t
 import type { AimControl } from './aim.ts';
 
 // js/player/cameras.ts
-// Multi-camera system supporting Third-Person Chase (with mouse/touch orbit + zoom),
+// Multi-camera system supporting Third-Person Chase (with mouse look under the pointer lock, touch orbit + zoom),
 // Low-Angle Action Cam, POV/Cockpit Cam, the scenic cameras over Tepic's landmarks, and Auto-Director Drone.
 // (The scenic preset ids are the New York game's; main.ts anchors each one on a spot of the city.)
 
@@ -56,6 +56,13 @@ const CAMERA_PRESETS: CameraPreset[] = [
 ];
 
 const SCENIC_ORIGIN: ScenicAnchor = { x: 0, z: 0, heading: Math.PI };
+const MOUSE_LOOK = 0.0024; // rad per pixel of mouse movement under the pointer lock (as aim.ts's)
+// On foot, GTA-style: the chase camera orbits the player's head (cameraTargetOffset) at its chaseDistance, a little
+// above it, and looks straight at it, so the whole body stands in the lower middle of the view
+const FOOT_PITCH = 0.08; // rad, added to the orbit's tilt on foot
+const FOOT_CLEARANCE = 0.45; // m: how low over the ground it may come, looking up from the street
+// (the tilt's range: the person's wider, down to the street and up to the rooftops; the vehicles' framings over it)
+const PITCH_RANGE = { person: [-0.6, 1.0], vehicle: [-0.32, 0.68] } as const;
 
 class CameraSystem {
   domElement: HTMLElement;
@@ -102,8 +109,16 @@ class CameraSystem {
   declare _chaseHeight: number;
   declare _chaseLookY: number;
   declare _clearPointers: () => void; // (bindPointerControls)
+  declare _chaseAhead: number;
   groundAt?: ((x: number, z: number) => number) | null;
+  obstacleAt?: ((x: number, y: number, z: number) => boolean) | null;
   interior?: CameraRoom | null;
+  // on foot the orbit holds its world yaw while the player turns about under it: the heading it was last frame (rad)
+  headingEntity: PlayerEntity | null;
+  lastHeading: number;
+  // how far out from the head the chase camera may go before a wall (0..1 of its distance), eased back out
+  reach: number;
+  viewYaw: number; // rad
 
   constructor(domElement: HTMLElement, controllerManager: CameraTarget) {
     this.domElement = domElement;
@@ -155,6 +170,10 @@ class CameraSystem {
     this._shake = new THREE.Vector3(); // (speedEffects)
     this.shakeAmp = 0;
     this.speedRush = 0;
+    this.headingEntity = null;
+    this.lastHeading = 0;
+    this.reach = 1;
+    this.viewYaw = 0;
 
     this.bindPointerControls();
   }
@@ -194,8 +213,22 @@ class CameraSystem {
     const pointers = new Map<number, DragPointer>();
     canvas.style.touchAction = 'none';
 
+    // A click on the game takes the pointer lock, as on a PC game: from then on the mouse looks around with no button
+    // held, and the left button is the trigger (aim.ts, crime.ts); Esc lets go of it. Where the lock is refused (an
+    // embedded page) a drag still turns the camera
+    const locked = () => document.pointerLockElement === canvas;
     canvas.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || pointers.size >= 2) return;
+      if (e.pointerType === 'mouse') {
+        if (locked()) return;
+        if (this.getActivePreset().category === 'follow' && 'requestPointerLock' in canvas) {
+          try {
+            canvas.requestPointerLock().catch(() => { /* (refused: the drag below) */ });
+          } catch {
+            // (refused: as above)
+          }
+        }
+      }
       // Only two touch pointers may share a gesture; mouse and pen drags stay independent.
       if (pointers.size && (e.pointerType !== 'touch' || pointers.values().next().value?.type !== 'touch')) return;
       e.preventDefault();
@@ -229,9 +262,17 @@ class CameraSystem {
         }
       } else {
         this.orbitYawOffset -= dx * 0.0065;
-        this.orbitPitchOffset = Math.max(-0.32, Math.min(0.68, this.orbitPitchOffset + dy * 0.005));
+        this.orbitPitchOffset = this.clampPitch(this.orbitPitchOffset + dy * 0.005);
       }
       this.userOrbitTimer = 4.0;
+    });
+    document.addEventListener('mousemove', (e) => {
+      // (taking aim the mouse turns the player instead, aim.ts)
+      if (!locked() || this.aim?.active) return;
+      this.orbitYawOffset -= (e.movementX || 0) * MOUSE_LOOK;
+      this.orbitPitchOffset = this.clampPitch(this.orbitPitchOffset + (e.movementY || 0) * MOUSE_LOOK);
+      // (a vehicle's camera swings back behind it soon after the mouse rests)
+      this.userOrbitTimer = Math.max(this.userOrbitTimer, 1.5);
     });
 
     const releasePointer = (id: number) => {
@@ -276,9 +317,21 @@ class CameraSystem {
     if (this.activePresetId !== 'chase') zoom = 0;
     if (!lookX && !lookY && !zoom) return;
     this.orbitYawOffset -= lookX * 2.0 * dt;
-    this.orbitPitchOffset = Math.max(-0.32, Math.min(0.68, this.orbitPitchOffset + lookY * 1.25 * dt));
+    this.orbitPitchOffset = this.clampPitch(this.orbitPitchOffset + lookY * 1.25 * dt);
     this.zoomMultiplier = Math.max(0.45, Math.min(2.4, this.zoomMultiplier + zoom * 0.9 * dt));
     this.userOrbitTimer = 4.0;
+  }
+
+  // The orbit's tilt kept within the followed entity's range (rad)
+  clampPitch(pitch: number): number {
+    const [lo, hi] = PITCH_RANGE[this.controllerManager.getActiveEntity().type === 'person' ? 'person' : 'vehicle'];
+    return Math.max(lo, Math.min(hi, pitch));
+  }
+
+  // Which way the camera looks (rad, as a heading), which the player on foot is steered by (controllers.ts); null on
+  // the cameras it isn't (the action cam sits behind the player, the scenic ones look elsewhere)
+  viewHeading(): number | null {
+    return this.activePresetId === 'chase' || this.activePresetId === 'pov' ? this.viewYaw : null;
   }
 
   resetOrbit(): void {
@@ -299,6 +352,8 @@ class CameraSystem {
     this.followOffset.set(0, 0, 0);
     this.followLookOffset.set(0, 0, 0);
     this.followBaseY = 0;
+    this.headingEntity = null;
+    this.reach = 1;
     this.setCameraPreset('chase', true);
   }
 
@@ -315,6 +370,8 @@ class CameraSystem {
     const entity = this.follow ?? this.controllerManager.getActiveEntity();
     const desiredPos = this._desiredPos;
     const desiredLook = this._desiredLook;
+    // (into a vehicle, the tilt turned on foot may go further than its framing takes)
+    this.orbitPitchOffset = this.clampPitch(this.orbitPitchOffset);
     // taking aim: the player turns to where the camera looked, so the view comes in over its shoulder without a swing
     const aiming = Boolean(this.aim?.active) && entity.type === 'person';
     if (aiming && !this.aimWas) {
@@ -323,12 +380,21 @@ class CameraSystem {
       this.userOrbitTimer = 0;
     }
     this.aimWas = aiming;
+    // On foot the player turns to the way it is steered, the camera doesn't: the orbit keeps its world yaw (taking aim
+    // the mouse turns the player, and the camera with it)
+    const freeLook = entity.type === 'person' && (this.activePresetId === 'chase' || this.activePresetId === 'pov');
+    if (freeLook && !aiming && this.headingEntity === entity) {
+      this.orbitYawOffset -= entity.heading - this.lastHeading;
+    }
+    this.headingEntity = entity;
+    this.lastHeading = entity.heading;
 
     if (this.userOrbitTimer > 0 && !this.isDragging) {
       this.userOrbitTimer = Math.max(0, this.userOrbitTimer - dt);
     }
 
-    if (!this.isDragging && this.userOrbitTimer <= 0 && Math.abs(entity.speed) > 0.5) {
+    // (a vehicle's camera swings back behind it as it drives; on foot it stays where it was turned, as in GTA)
+    if (!freeLook && !this.isDragging && this.userOrbitTimer <= 0 && Math.abs(entity.speed) > 0.5) {
       this.orbitYawOffset -= Math.round(this.orbitYawOffset / (Math.PI * 2)) * (Math.PI * 2);
       this.orbitYawOffset += (0.0 - this.orbitYawOffset) * (1 - Math.exp(-dt * 2.2));
     }
@@ -339,9 +405,22 @@ class CameraSystem {
     const speedLag = this.smoothedSpeed * 0.1;
 
     const totalYaw = entity.heading + this.orbitYawOffset;
+    this.viewYaw = totalYaw;
 
     switch (this.activePresetId) {
       case 'chase': {
+        if (entity.type === 'person') {
+          // round the head, looking straight at it (pulled back a little as it runs)
+          const pivotY = entity.cameraTargetOffset.y;
+          const dist = entity.chaseDistance * this.zoomMultiplier + speedLag * 0.6;
+          const pitch = this.orbitPitchOffset + FOOT_PITCH;
+          this._chaseYaw = totalYaw;
+          this._chaseHoriz = Math.cos(pitch) * dist;
+          this._chaseHeight = pivotY + Math.sin(pitch) * dist;
+          this._chaseLookY = pivotY;
+          this._chaseAhead = 0;
+          break;
+        }
         const dist = entity.chaseDistance * this.zoomMultiplier * (1 + Math.min(0.25, this.smoothedSpeed * 0.01));
         const height = entity.chaseHeight * this.zoomMultiplier + Math.sin(this.orbitPitchOffset) * dist * 0.85;
         const horizDist = Math.cos(this.orbitPitchOffset) * dist + speedLag;
@@ -351,6 +430,7 @@ class CameraSystem {
         this._chaseHoriz = horizDist;
         this._chaseHeight = height;
         this._chaseLookY = entity.cameraTargetOffset.y + lookUpBias;
+        this._chaseAhead = 5.2;
         break;
       }
 
@@ -450,7 +530,8 @@ class CameraSystem {
     if (this.groundAt) {
       const p = this.currentPos, t = this.currentLookAt;
       const g = Math.max(this.groundAt(p.x, p.z), this.groundAt((p.x + t.x) / 2, (p.z + t.z) / 2) - 0.5);
-      if (p.y < g + 1.2) p.y = g + 1.2;
+      const clearance = entity.type === 'person' && this.activePresetId === 'chase' ? FOOT_CLEARANCE : 1.2;
+      if (p.y < g + clearance) p.y = g + clearance;
     }
     // inside a room (interiors.ts): the camera stays between its walls and under its ceiling
     const room = this.interior;
@@ -576,18 +657,46 @@ class CameraSystem {
       Math.max(0.65, this.orbitBaseY + this.orbitHeight),
       p.z - cos * this.orbitHoriz
     );
+    this.keepInSight(p.x, this.orbitBaseY + this._chaseLookY, p.z, dt);
     // after a switch the view eases from where it was looking over to the entity
-    const b = this.orbitLookBlend;
+    const b = this.orbitLookBlend, ahead = this._chaseAhead;
     this.currentLookAt.set(
-      p.x + this.orbitLookFrom.x * (1 - b) + sin * 5.2 * b,
+      p.x + this.orbitLookFrom.x * (1 - b) + sin * ahead * b,
       this.orbitBaseY + this.orbitLookFrom.y * (1 - b) + this._chaseLookY * b,
-      p.z + this.orbitLookFrom.z * (1 - b) + cos * 5.2 * b
+      p.z + this.orbitLookFrom.z * (1 - b) + cos * ahead * b
     );
+  }
+
+  // A wall between the followed entity's (x, y, z) and the chase camera: the camera comes in in front of it at once,
+  // as in GTA, so the player is never hidden behind a building, and eases back out once past it
+  keepInSight(x: number, y: number, z: number, dt: number): void {
+    const cam = this.currentPos;
+    const dx = cam.x - x, dy = cam.y - y, dz = cam.z - z;
+    const len = Math.hypot(dx, dy, dz);
+    let free = 1;
+    if (this.obstacleAt && len > 0.6) {
+      // (stepped every ~0.3 m out from the entity: a wall is metres thick, a pole is left out by the query)
+      const steps = Math.ceil(len / 0.3);
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        if (this.obstacleAt(x + dx * t, y + dy * t, z + dz * t)) {
+          free = Math.max(0.6, t * len - 0.35) / len;
+          break;
+        }
+      }
+    }
+    this.reach = free < this.reach ? free : this.reach + (free - this.reach) * (1 - Math.exp(-dt * 3));
+    if (this.reach < 0.999) cam.set(x + dx * this.reach, y + dy * this.reach, z + dz * this.reach);
   }
 
   // Inside a room ({ minX, maxX, minZ, maxZ, maxY }, interiors.ts) or out of it (null)
   setInterior(room: CameraRoom | null | undefined): void {
     this.interior = room ?? null;
+  }
+
+  // Whether (x, y, z) is inside a building or a wall (controllers.ts isSolidAt): the chase camera keeps in front of it
+  setObstacleQuery(fn: ((x: number, y: number, z: number) => boolean) | null | undefined): void {
+    this.obstacleAt = typeof fn === 'function' ? fn : null;
   }
 
   // Height of the ground (the hills over the flat city) at (x, z): the cameras keep above it

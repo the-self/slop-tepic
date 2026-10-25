@@ -271,3 +271,48 @@ test('teleport releases every camera pointer and ignores old gestures before acc
   close(h.camera.orbitYawOffset, -0.065);
   assert.equal(h.camera.isDragging, true);
 });
+
+function personHarness() {
+  return cameraHarness({
+    position: new Vector3(0, 0, 100), heading: 0, speed: 0, type: 'person',
+    chaseDistance: 4.0, chaseHeight: 1.95, cameraTargetOffset: new Vector3(0, 1.55, 0)
+  });
+}
+
+test('on foot the camera holds its world yaw while the player turns about under it, and steers the walk', () => {
+  const h = personHarness();
+  for (let i = 0; i < 30; i++) h.camera.update(1 / 60, i / 60);
+  const yaw = () => Math.atan2(h.entity.position.x - h.camera.currentPos.x, h.entity.position.z - h.camera.currentPos.z);
+  close(yaw(), 0);
+  close(h.camera.viewHeading(), 0);
+  h.entity.heading = 2.0; // (turned round to walk off to the side)
+  h.entity.speed = 4;
+  for (let i = 0; i < 120; i++) h.camera.update(1 / 60, 1 + i / 60);
+  assert.ok(Math.abs(yaw()) < 1e-6, 'no swing round behind the player as it walks');
+  close(h.camera.viewHeading(), 0);
+  h.camera.setCameraPreset('action');
+  assert.equal(h.camera.viewHeading(), null, 'the action cam sits behind the player: steered as before');
+});
+
+test('on foot the camera orbits the head and looks at it, so the whole body is in view', () => {
+  const h = personHarness();
+  for (let i = 0; i < 60; i++) h.camera.update(1 / 60, i / 60);
+  const p = h.camera.currentPos, t = h.camera.currentLookAt, e = h.entity.position;
+  close(t.y, e.y + 1.55);
+  close(Math.hypot(p.x - t.x, p.y - t.y, p.z - t.z), 4.0);
+  // the feet are inside the view's lower half (56° fov: 28° each way)
+  const down = (y) => Math.atan2(p.y - y, Math.hypot(p.x - e.x, p.z - e.z)) * 180 / Math.PI;
+  assert.ok(down(e.y) - down(t.y) < 24, `the feet ${(down(e.y) - down(t.y)).toFixed(1)}° under the middle`);
+});
+
+test('a wall between the player and the chase camera brings the camera in front of it, then lets it back out', () => {
+  const h = personHarness();
+  let wall = true;
+  // a wall 2 m behind the player (the camera sits ~4 m behind, along -z)
+  h.camera.setObstacleQuery((x, y, z) => wall && z < 98);
+  for (let i = 0; i < 10; i++) h.camera.update(1 / 60, i / 60);
+  assert.ok(h.camera.currentPos.z >= 98, `in front of the wall (z ${h.camera.currentPos.z.toFixed(2)})`);
+  wall = false;
+  for (let i = 0; i < 240; i++) h.camera.update(1 / 60, 1 + i / 60);
+  assert.ok(h.camera.currentPos.z < 96.5, 'back out at its distance');
+});

@@ -94,10 +94,12 @@ export function resetInput(ctl: ThirdPersonControllerManager): void {
   for (const action of Object.keys(ctl.keys) as InputAction[]) ctl.keys[action] = false;
 }
 
-// The mode the player is sprinting in now ('person' | 'cyclist', shift held going forward at speed), or null: what
-// runs the stamina down (player/stats.ts)
+// The mode the player is sprinting in now ('person' | 'cyclist', shift held going forward at speed: on foot, any way
+// it is steered), or null: what runs the stamina down (player/stats.ts)
 export function sprintingMode(ctl: ThirdPersonControllerManager): SprintMode | null {
   const mode = ctl.activeMode;
-  if (!ctl.keys.boost || !ctl.keys.forward || !ctl.canSprint || (mode !== 'person' && mode !== 'cyclist')) return null;
+  const k = ctl.keys;
+  const going = mode === 'person' ? k.forward || k.backward || k.left || k.right : k.forward;
+  if (!k.boost || !going || !ctl.canSprint || (mode !== 'person' && mode !== 'cyclist')) return null;
   return ctl.entities[mode].speed > (mode === 'person' ? 4.6 : 3) ? mode : null;
 }

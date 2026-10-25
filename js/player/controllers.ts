@@ -66,6 +66,7 @@ class ThirdPersonControllerManager {
   waterAt: ((x: number, z: number) => number) | null;
   interior: PlayerRoom | null;
   aiming: boolean;
+  viewHeading: number | null; // rad
   entities: PlayerEntities;
   // (bindKeyboard: the codes held, and each source's actions)
   declare _pressedCodes: Set<string>;
@@ -134,6 +135,9 @@ class ThirdPersonControllerManager {
     this.interior = null;
     // Taking aim on foot (player/aim.ts sets it every frame): the player walks and strafes instead of turning
     this.aiming = false;
+    // Which way the camera looks (cameras.ts viewHeading, main.ts sets it every frame), GTA-style: on foot WASD walk
+    // away from it, across it and towards it. Null on the cameras that sit behind the player (the action cam)
+    this.viewHeading = null;
 
     this.entities = {
       person: this.createPersonEntity(),

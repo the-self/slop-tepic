@@ -79,6 +79,7 @@ function keyboardHarness(nyc = {}) {
   // Exercise the production event handlers without constructing the scene's 3D models.
   const controller = Object.create(ThirdPersonControllerManager.prototype);
   controller.leftCars = []; // (as the constructor leaves it: no cars left behind yet)
+  controller.viewHeading = null; // (...and no camera to steer the walk by)
   controller.keys = Object.fromEntries(['forward', 'backward', 'left', 'right', 'up', 'down', 'boost'].map((action) => [action, false]));
   controller.bindKeyboard();
   return {
@@ -242,6 +243,29 @@ for (const mode of ['Person', 'Car', 'Cyclist', 'Helicopter']) {
     }
   });
 }
+
+test('on foot WASD go the way the camera looks: the player turns to face it, and only then gets going', () => {
+  const run = (keys, view) => {
+    const { controller } = keyboardHarness();
+    const entity = { position: { x: 0, y: 0, z: 0 }, heading: 0, speed: 0, verticalVel: 0 };
+    controller.entities = { person: entity };
+    controller.getGroundHeight = () => 0;
+    controller.resolveHorizontalCollision = () => {};
+    controller.viewHeading = view;
+    for (const k of keys) controller.setTouchInput(k, 1);
+    for (let i = 0; i < 60; i++) controller.updatePerson(1 / 60, 0);
+    return entity;
+  };
+  // the camera looking along +x (heading pi/2): W walks along +x
+  const w = run(['forward'], Math.PI / 2);
+  assert.ok(Math.abs(w.heading - Math.PI / 2) < 0.01 && w.position.x > 2 && Math.abs(w.position.z) < 1);
+  // ...S turns round and walks back towards the camera, along -x
+  const s = run(['backward'], Math.PI / 2);
+  assert.ok(Math.abs(Math.abs(s.heading) - Math.PI / 2) < 0.01 && s.position.x < -1);
+  // the camera looking along +z: D walks to its right, -x (the right of heading h is (-cos h, sin h))
+  const d = run(['right'], 0);
+  assert.ok(Math.abs(d.heading + Math.PI / 2) < 0.01 && d.position.x < -1);
+});
 
 function teleportHarness(mode, colliders = [], shore = () => ({ westX: -500, eastX: 500 })) {
   const harness = keyboardHarness({
