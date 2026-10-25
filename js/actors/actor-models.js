@@ -24,7 +24,8 @@ import {
   texture,
   time,
   instanceIndex,
-  uv
+  uv,
+  positionLocal
 } from 'three/tsl';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BODY_SHAPES } from '../models/bodies.js';
@@ -1479,7 +1480,15 @@ function createLoftedCarMaterial(spec, fixedColorHex = null, { crumple = false }
     const inL = damage.z.sqrt().mul(smoothstep(w.sub(0.55), w, p.x)).mul(0.3);
     const inRt = damage.w.sqrt().mul(smoothstep(w.negate().add(0.55), w.negate(), p.x)).mul(0.3);
     const fold = inF.add(inR).mul(smoothstep(0.55, 1.1, p.y)).mul(0.45);
-    mat.positionNode = p.add(vec3(inRt.sub(inL), fold.negate(), inR.sub(inF)).mul(wrinkle).mul(shell));
+    // in the body's own frame, before the instance places it: a positionNode would come after the instance (three's
+    // NodeMaterial.setupPosition), and overwriting positionLocal there with this model-space point drew every car at
+    // the origin, the wheels (another mesh) running along without their bodies
+    const crushedPosition = p.add(vec3(inRt.sub(inL), fold.negate(), inR.sub(inF)).mul(wrinkle).mul(shell));
+    const setupPosition = mat.setupPosition;
+    mat.setupPosition = function (builder) {
+      positionLocal.assign(crushedPosition);
+      return setupPosition.call(this, builder);
+    };
   }
   mat.colorNode = col;
   mat.roughnessNode = rough;
