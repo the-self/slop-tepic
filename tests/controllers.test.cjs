@@ -53,6 +53,8 @@ function keyboardHarness(nyc = {}) {
       './vehicle-damage.js': vehicleDamage,
       '../models/cars/index.js': carRegistry,
       '../models/motos/index.js': realModule('../js/models/motos/index.js'),
+      './car-blood.js': realModule('../js/player/car-blood.js'),
+      '../sim/ragdolls.js': realModule('../js/sim/ragdolls.js')
     }
   });
   // Exercise the production event handlers without constructing the scene's 3D models.
@@ -574,4 +576,28 @@ test('a car crash is the sudden change in its velocity: it dents the side it was
   const turned = { heading: Math.PI / 2, speed: 0, vx: 0, vz: 0, wheels: [], damage: vehicleDamage.createDamage() };
   controller.impactCar(turned, 0, -12);
   assert.ok(turned.damage.right > 0 && turned.damage.left === 0);
+});
+
+test('running someone down with the nose bloodies it; backing over them or clipping them with a flank does not', () => {
+  const { controller } = keyboardHarness();
+  const blood = realModule('../js/player/car-blood.js');
+  const slot = () => ({ value: { v: [0, 0, 0, 0], fromArray(a, o) { this.v = Array.from(a.slice(o, o + 4)); } } });
+  const car = {
+    position: { x: 0, y: 0, z: 0 }, heading: 0, halfL: 2.2, speed: 12, scale: { x: 1, z: 1 },
+    blood: { front: [slot(), slot(), slot(), slot()], top: Array.from({ length: 6 }, slot) },
+    stains: blood.createStains(),
+    bloodFrame: blood.bloodFrame({ zFront: 2.2, bumpers: [[0.46, 0.03]], bumperLine: [0.775], cabin: { cowl: 1.0, roofFront: 0.3 } }, 0.88)
+  };
+  controller.entities = { car };
+  controller.activeMode = 'car';
+  controller.bloodyCar(0.3, -2.4, 12); // (behind it)
+  controller.bloodyCar(1.1, 0, 12); // (beside it)
+  assert.equal(car.blood.front[0].value.v[3], 0);
+  car.speed = -8;
+  controller.bloodyCar(0.3, 2.4, -8); // (backing: nose ahead, moving away)
+  assert.equal(car.blood.front[0].value.v[3], 0);
+  car.speed = 12;
+  controller.bloodyCar(0.3, 2.4, 12);
+  assert.ok(car.blood.front[0].value.v[3] > 0, 'on the nose');
+  assert.ok(car.blood.top.some((u) => u.value.v[3] > 0), 'and up the bonnet at 43 km/h');
 });

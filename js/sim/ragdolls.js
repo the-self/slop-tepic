@@ -175,8 +175,9 @@ function poseFromParts(pose, base, rot0, pos0, rot, pos, delta = rot.map(() => [
 /**
  * The ragdolls in the world of `physics` (player/car-physics.js createCarPhysics). spawn(rig, { vx, vy, vz, bleed })
  * throws a PersonRig from its pose as it stands (its pose array then follows the physics); the handle it returns has
- * px, py, pz (the pelvis), rest (s it has lain still) and settled; release(handle) lets it go. `onSettle(handle)` is
- * called as one comes to rest (main.js: a pool of blood under someone hit hard).
+ * px, py, pz (the pelvis), x0, z0 (where it was thrown from), rest (s it has lain still) and settled; release(handle)
+ * lets it go. `onSettle(handle)` is called as one comes to rest (main.js: a pool of blood under someone hit hard, and
+ * their smear back to where they were struck).
  */
 function createRagdolls(physics) {
   const { Jolt, system, bodies, layers } = physics.world;
@@ -289,7 +290,7 @@ function createRagdolls(physics) {
       rig, base, parts, joints, ground: null, gx: NaN, gz: NaN, gy: NaN,
       rot0: layout.map((l) => l.rotation), pos0: layout.map((l) => l.position),
       rot: layout.map(() => [0, 0, 0, 1]), pos: layout.map(() => [0, 0, 0]), delta: layout.map(() => [0, 0, 0, 1]),
-      px: p[0], py: p[1], pz: p[2], age: 0, still: 0, rest: 0, speed: Infinity, settled: false, bleed
+      px: p[0], py: p[1], pz: p[2], x0: p[0], z0: p[2], age: 0, still: 0, rest: 0, speed: Infinity, settled: false, bleed
     };
     handles.add(h);
     return h;

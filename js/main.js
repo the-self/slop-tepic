@@ -247,7 +247,10 @@ async function initApp() {
   trafficSystem.setRagdolls(ragdolls);
   const bloodPools = new BloodPools(scene, (x, z, fromY) => controllerManager.getGroundHeight(x, z, 'person', fromY));
   ragdolls.onSettle = (h) => {
-    if (h.bleed > 0.05) bloodPools.add(h.px, h.pz, h.py + 0.3, 0.9 + h.bleed * 1.7);
+    if (!(h.bleed > 0.05)) return;
+    bloodPools.add(h.px, h.pz, h.py + 0.3, 0.9 + h.bleed * 1.7);
+    // ...and smeared along the ground from where they were struck to where they lie
+    bloodPools.trail(h.x0, h.z0, h.px, h.pz, h.py + 0.3, h.bleed);
   };
   markInit('physics');
   // Sprinting runs out of breath (player/stats.js)
@@ -1065,6 +1068,7 @@ async function initApp() {
     const falling = interiors.active ? 0 : roadWater.rain;
     rain.update(falling, Math.sin(toward) * wind, -Math.cos(toward) * wind, elapsed, cameraSystem.camera);
     controllerManager.roadWet = floods.level > 0.05 ? 1 : roadWater.wet; // (a flood soaks every street)
+    controllerManager.rain = roadWater.rain; // (washing the blood off the car, controllers.js)
     controllerManager.roadGrip = wetGrip(roadWater.wet);
     trafficSystem.setRoadWater(roadWater.wet, roadWater.rain, controllerManager.roadGrip);
     audioSystem.setRain(falling);

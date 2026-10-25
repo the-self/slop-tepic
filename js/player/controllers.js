@@ -26,6 +26,8 @@ import { buildSpec, createDriveState, stepDrive, pedalForce, PEDALS } from './dr
 import { CAR_MODEL_BY_ID, TAXI_MODEL, POLICE_MODEL, BUS_MODEL, pickModel } from '../models/cars/index.js';
 import { PLAYER_MOTO, MOTO_MODEL_BY_ID } from '../models/motos/index.js';
 import { MIN_IMPACT, createDamage, applyImpact, enginePower, deformBody } from './vehicle-damage.js';
+import { createStains, bloodFrame, addHit, wash, clean } from './car-blood.js';
+import { bleedOf } from '../sim/ragdolls.js';
 
 // js/player/controllers.js
 // Sculpted, non-blocky GTA 6-style 3D models, animations, and physics controllers
@@ -452,13 +454,18 @@ class ThirdPersonControllerManager {
     const yaw = Math.atan2(-Math.cos(c.heading), Math.sin(c.heading));
     const cs = Math.cos(yaw), sn = Math.sin(yaw), hx = c.halfL, hz = c.halfW;
     const ex = Math.abs(cs) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
+    // (its stains and the material showing them its own from here on: the next car of its look gets another)
+    if (this._bloodMats?.get(`${c.look.bodyType}_${c.look.paint}`) === c.bodyMesh.material) {
+      this._bloodMats.delete(`${c.look.bodyType}_${c.look.paint}`);
+    }
     this.leftCars.push({
       mesh, x, y, z, heading: c.heading, halfW: c.halfW, halfL: c.halfL, look: { ...c.look }, damage: c.damage,
-      dented: c.dented, kit: c.kit,
+      dented: c.dented, kit: c.kit, stains: c.stains, material: c.bodyMesh.material,
       collider: { minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez, minY: y - 0.3, maxY: y + (c.kit && c.kit.wheels ? 3.0 : 1.5), obb: { cx: x, cz: z, hx, hz, cs, sn }, _order: 1e15 }
     });
     c.dented = null;
     c.damage = createDamage();
+    c.stains = createStains();
     this.dropLookKit(c, false);
     if (this.leftCars.length > LEFT_CARS) this.forgetLeftCar(this.leftCars[0]);
   }
@@ -469,6 +476,7 @@ class ThirdPersonControllerManager {
     left.mesh.removeFromParent();
     if (left.kit) for (const m of left.kit.chassis) m.geometry.dispose();
     if (dispose && left.dented) left.dented.geometry.dispose();
+    if (dispose && left.material?.userData.blood) left.material.dispose();
   }
 
   // Back into a car left behind: the one the player had is left where it is in its place, and the car becomes this
@@ -479,7 +487,14 @@ class ThirdPersonControllerManager {
     this.leaveCarBehind();
     this.forgetLeftCar(left, false);
     const { look } = left;
+    // (its material back for its look, its stains on it)
+    if (left.material?.userData.blood) this._bloodMats?.set(`${look.bodyType}_${look.paint}`, left.material);
     this.setCarLook(look.bodyType, look.paint, look.police, look.model, look.route);
+    if (left.stains) {
+      c.stains = left.stains;
+      c.bloody = true;
+      this.showBlood(c);
+    }
     c.position.set(left.x, left.y, left.z);
     c.heading = left.heading;
     c.damage = left.damage;
@@ -563,7 +578,10 @@ class ThirdPersonControllerManager {
     }
     const model = modelFor({ bodyType, police, model: modelId });
     const spec = BODY_SPECS[bodyType] || BODY_SPECS[model.body] || BODY_SPECS.taxi;
-    const mat = createLoftedCarMaterial(spec, paint);
+    // (its own material, for its stains: one for each look, one more for each car of it left behind, leaveCarBehind)
+    const looks = (this._bloodMats ??= new Map());
+    const mat = looks.get(`${spec.name}_${paint}`) ?? createLoftedCarMaterial(spec, paint, { blood: true });
+    looks.set(`${spec.name}_${paint}`, mat);
     const geos = (this._carGeos ??= {});
     const g = (geos[spec.name] ??= {
       body: buildCarGeometry(spec, false),
@@ -593,6 +611,8 @@ class ThirdPersonControllerManager {
     c.headLights.forEach((spot, i) => placeVehicleHeadlight(spot, spec, i === 0 ? -1 : 1));
     c.carState = mat.userData.carState;
     if (c.carState) c.carState.value.set(0, 0, 0, police ? 1 : 0); // (livery: 1 = police)
+    c.blood = mat.userData.blood;
+    c.bloodFrame = bloodFrame(spec, dims.halfW);
     c.label = spec.name === 'taxi' ? LABELS.car : police ? 'Patrulla' : model.name;
     c.look = { bodyType: spec.name, paint, police: Boolean(police), model: model.id, route: kit ? route : null };
     if (kit) {
@@ -627,6 +647,7 @@ class ThirdPersonControllerManager {
     c.bodyHeight = BUS_MODEL.size[2];
     c.headLights.forEach((spot, i) => placeVehicleHeadlight(spot, BUS_SPEC, i === 0 ? -1 : 1));
     c.carState = null;
+    c.blood = null; // (the camión's body is the traffic's: no stains drawn on it)
     c.label = kit.label;
     c.look = { bodyType: 'bus', paint: 0xffffff, police: false, model: BUS_MODEL.id, route };
     c.zFront = BUS_SPEC.zFront;
@@ -662,6 +683,9 @@ class ThirdPersonControllerManager {
   // The car like new: no damage, the shared undented body mesh back, the wheels true
   repairCar(c = this.entities.car) {
     c.damage = createDamage();
+    clean(c.stains ??= createStains());
+    c.bloody = false;
+    this.showBlood(c);
     if (c.dented) {
       c.dented.geometry.dispose();
       c.dented = null;
@@ -669,6 +693,30 @@ class ThirdPersonControllerManager {
     const geo = this._carGeos && this._carGeos[c.look.bodyType];
     if (geo) c.bodyMesh.geometry = geo.body;
     for (const wheel of c.wheels) wheel.steerPivot.rotation.z = 0;
+  }
+
+  // Someone struck by the car's nose at (x, z), `speed` m/s: their blood on it, and up its bonnet and windscreen as
+  // hard as it hit them (player/car-blood.js); only the player's car, driven forwards
+  bloodyCar(x, z, speed) {
+    const c = this.entities.car;
+    const bleed = bleedOf(Math.abs(speed));
+    if (this.activeMode !== 'car' || !c.blood || !(bleed > 0) || c.speed <= 0) return;
+    // struck by its nose, not by its flank or its tail (backing over someone), and where across it, in its body
+    // shape's frame (its left: (cos h, -sin h))
+    const sn = Math.sin(c.heading), cs = Math.cos(c.heading);
+    if ((x - c.position.x) * sn + (z - c.position.z) * cs < c.halfL * 0.4) return;
+    const across = ((x - c.position.x) * cs - (z - c.position.z) * sn) / (c.scale?.x || 1);
+    addHit(c.stains, c.bloodFrame, across, Math.abs(speed), bleed);
+    c.bloody = true;
+    this.showBlood(c);
+  }
+
+  // The car's stains into its material's uniforms
+  showBlood(c) {
+    if (!c.blood) return;
+    const { front, top } = c.stains;
+    for (let i = 0; i < c.blood.front.length; i++) c.blood.front[i].value.fromArray(front, i * 4);
+    for (let i = 0; i < c.blood.top.length; i++) c.blood.top[i].value.fromArray(top, i * 4);
   }
 
   // ...and the player's bicycle the frame colour of the one it was taken from
@@ -2015,6 +2063,11 @@ class ThirdPersonControllerManager {
       if (wheel.isFront) wheel.steerPivot.rotation.y = steer;
     });
     this.carEffects(c, c.drive, c.damage, throttle, c.speed, slip, water, dt);
+    // heavy rain washing its stains off (this.rain: main.js, the rain falling, 0..1)
+    if (c.bloody && c.blood && (this.rain || 0) > 0.35) {
+      c.bloody = wash(c.stains, dt, this.rain);
+      this.showBlood(c);
+    }
   }
 
   // The brake lamps, and the smoke: the engine's once it is damaged (grey, then black), the tyres' when they slide or
