@@ -31,6 +31,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { boxHit, riderKnocked, slide } from './mayhem.js';
 import { throwVelocity, bleedOf } from './ragdolls.js';
 import { TAXI_MODEL, POLICE_MODEL, BUS_MODEL, CAR_MODEL_BY_ID, BODY_SHARE, paintsOf, pickModel, pickBody } from '../models/cars/index.js';
+import { pickMoto } from '../models/motos/index.js';
 import { rayCircle, rayBox, roundBox, blastFalloff } from './weapons.js';
 import { MIN_IMPACT, createDamage, applyImpact } from '../player/vehicle-damage.js';
 import { roadClass, carDensity, peopleDensity, carDemand, busyFactor, ROUTE_PULL } from './traffic-demand.js';
@@ -435,7 +436,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   for (let i = 0; i < NUM_MOTOS; i++) {
     const moto = createVehicle(false, 1.05, 0.4, 0.68, MOTO_DRIVER, 10.5 + (i % 5) * 1.1);
     Object.assign(moto, {
-      moto: true, bodyType: 'moto', color: motoPalette[i % motoPalette.length], pedal: 0, wreck: null,
+      moto: true, bodyType: 'moto', color: motoPalette[i % motoPalette.length], pedal: 0, wreck: null, model: pickMoto(),
       rider: riderLooks(700, i)
     });
     motos.push(moto);
@@ -1787,7 +1788,8 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   // Put v in a free lane around the focus. Normal replenishment protects the near view; teleports can fill it. Buses
   // & combis go on the roads of their routes (where the map has any).
   function spawnVehicle(v, rMin, rMax, protectView) {
-    if (!v.bus && !v.bike && !v.moto) drawModel(v); // (a car comes back as another model)
+    if (!v.bus && !v.bike && !v.moto) drawModel(v); // (a car comes back as another model, a motorcyclist on another moto)
+    else if (v.moto) v.model = pickMoto();
     const onRoutes = !!v.fleet && transit.paths.length > 0;
     const pool = onRoutes ? nearTransitEdges : nearEdges;
     for (let attempt = 0; attempt < 12; attempt++) {
@@ -3020,14 +3022,13 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   const FLEE_SPEED = 4.6; // m/s running away
   const BAIL_TURN = 7; // rad/s
 
-  // The car, camión or bicycle the player on foot could take: the nearest whose body is within `reach` metres of
-  // (x, z), going slowly enough to be stopped (no motorcycles: the player has none of their own to ride yet), its
-  // engine not dead
+  // The car, camión, bicycle or moto the player on foot could take: the nearest whose body is within `reach` metres of
+  // (x, z), going slowly enough to be stopped, its engine not dead
   function vehicleNear(x, z, reach) {
     let best = null;
     let bestDistance = reach;
     for (const v of vehicles) {
-      if (v.moto || v.wreck || v.wrecked || !v.edge || v.speed > 7) continue;
+      if (v.wreck || v.wrecked || !v.edge || v.speed > 7) continue;
       const dx = x - v.x;
       const dz = z - v.z;
       if (Math.abs(dx) > 10 || Math.abs(dz) > 10) continue;
@@ -3045,24 +3046,27 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   }
 
   // Take v out of the traffic (it comes back elsewhere, out of sight, like any vehicle left behind) and put its
-  // driver out on the street: what the player's own car or bicycle needs to take its place
+  // driver out on the street: what the player's own car, bicycle or moto needs to take its place
   function hijack(v) {
     const yaw = v.yaw + v.yawOffset;
     // (a camión or a combi keeps its route: its name on the glass or the roof, the camión its livery)
     const route = v.bus || (v.fleet === 'combi' && v.sign >= 0) ? { sign: Math.max(0, v.sign), livery: v.bus ? v.livery : 0 } : null;
     const taken = v.bike
       ? { kind: 'cyclist', x: v.x, z: v.z, heading: yaw, speed: v.speed, color: v.color.getHex() }
-      : v.bus
+      : v.moto
+        ? { kind: 'moto', x: v.x, z: v.z, heading: yaw, speed: v.speed, model: v.model.id, paint: v.color.getHex() }
+        : v.bus
         ? { kind: 'car', bus: true, x: v.x, z: v.z, heading: yaw, speed: v.speed, bodyType: 'bus', police: false, model: BUS_MODEL.id, paint: 0xffffff, route }
         : {
             kind: 'car', x: v.x, z: v.z, heading: yaw, speed: v.speed, bodyType: v.bodyType, police: v.isPolice, model: v.model.id,
             paint: new THREE.Color().setRGB(v.paint[0], v.paint[1], v.paint[2]).getHex(), route
           };
     // out of the driver's door (on the left: heading 0 faces +z, left is +x; a camión's driver sits at its nose), or
-    // off the bicycle
-    const side = v.halfWidth + (v.bike ? 0.4 : 0.55);
-    const ahead = v.bike ? 0 : v.bus ? 4.6 : 0.35;
-    bail(v.x + Math.cos(yaw) * side + Math.sin(yaw) * ahead, v.z - Math.sin(yaw) * side + Math.cos(yaw) * ahead, yaw, v.bike ? v : null);
+    // off the bicycle or the moto
+    const two = v.bike || v.moto;
+    const side = v.halfWidth + (two ? 0.4 : 0.55);
+    const ahead = two ? 0 : v.bus ? 4.6 : 0.35;
+    bail(v.x + Math.cos(yaw) * side + Math.sin(yaw) * ahead, v.z - Math.sin(yaw) * side + Math.cos(yaw) * ahead, yaw, two ? v : null);
     v.edge = null;
     v.conn = null;
     v.trail = null;

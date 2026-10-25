@@ -176,9 +176,8 @@ function advanceWithTouch(mode, strength, reverse) {
     chassisPivot: { rotation: { x: 0, z: 0 }, position: { y: 0 } }, wheels: []
   });
   if (mode === 'Cyclist') Object.assign(entity, {
-    leanAngle: 0, leanPivot: { rotation: { z: 0 } },
-    frontWheel: { rotation: { x: 0 } }, rearWheel: { rotation: { x: 0 } },
-    pedalPhase: 0, crankPivot: { rotation: { x: 0 } }, pedals: []
+    type: 'cyclist', vx: 0, vz: 0, steerInput: 0, leanAngle: 0, leanPivot: { rotation: { z: 0 } },
+    wheelSpots: { radius: 0.38, rear: -0.58, front: 0.58, caster: 0.3, travel: 0.05 }
   });
   if (mode === 'Helicopter') Object.assign(entity, {
     verticalSpeed: 0, pitchAngle: 0, rollAngle: 0,
@@ -190,6 +189,15 @@ function advanceWithTouch(mode, strength, reverse) {
   controller.setTouchInput(reverse ? 'backward' : 'forward', strength);
   controller.setTouchInput(reverse ? 'right' : 'left', strength);
   if (mode === 'Helicopter') controller.setTouchInput(reverse ? 'down' : 'up', strength);
+  if (mode === 'Car' || mode === 'Cyclist') {
+    // (Jolt stood in for: what the vehicle's drive asks of its body before the world's step, its force for its speed,
+    // and its steering)
+    const out = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, forward: 0 };
+    controller.carPhysics = { add: () => ({ out }), place() {}, shove() {}, read: (v) => v.out };
+    if (mode === 'Car') controller.driveCar(0.1, true);
+    else controller.driveTwoWheeler(entity, 0.1, true);
+    return { speed: entity.vehicle.input.force, steerAngle: entity.steerAngle, steerInput: entity.steerInput };
+  }
   controller[`update${mode}`](0.1, 0);
   return entity;
 }
@@ -197,11 +205,12 @@ function advanceWithTouch(mode, strength, reverse) {
 for (const mode of ['Person', 'Car', 'Cyclist', 'Helicopter']) {
   test(`analog ${mode.toLowerCase()} input proportionally scales movement and turning`, () => {
     for (const reverse of [false, true]) {
-      // (a car below its tyres' grip: at full throttle traction control caps its pull)
+      // (a car below its tyres' grip: at full throttle traction control caps its pull; a car's or bicycle's `speed`, its
+      // drive's force)
       const full = advanceWithTouch(mode, mode === 'Car' ? 0.5 : 1, reverse);
       const partial = advanceWithTouch(mode, mode === 'Car' ? 0.2 : 0.4, reverse);
       assert.ok(Math.abs(partial.speed - full.speed * 0.4) < 1e-10, 'movement should scale with joystick strength');
-      const turn = mode === 'Car' ? 'steerAngle' : 'heading';
+      const turn = mode === 'Car' ? 'steerAngle' : mode === 'Cyclist' ? 'steerInput' : 'heading';
       assert.ok(Math.abs(partial[turn] - full[turn] * 0.4) < 1e-10, 'turning should scale with joystick strength');
       if (mode === 'Helicopter') {
         assert.ok(Math.abs(partial.verticalSpeed - full.verticalSpeed * 0.4) < 1e-10);
@@ -218,7 +227,9 @@ function teleportHarness(mode, colliders = [], shore = () => ({ westX: -500, eas
     blockAt: () => null
   });
   const { controller } = harness;
-  const position = (x = 0, y = 0, z = 0) => ({ x, y, z, copy(p) { this.x = p.x; this.y = p.y; this.z = p.z; } });
+  const position = (x = 0, y = 0, z = 0) => ({
+    x, y, z, copy(p) { this.x = p.x; this.y = p.y; this.z = p.z; }, set(a, b, c) { this.x = a; this.y = b; this.z = c; }
+  });
   const pivot = () => ({ position: position(), rotation: { x: 0.1, y: 0, z: -0.2 } });
   const chase = { person: [4.3, 1.95], car: [6.9, 2.12], cyclist: [4.8, 2.05], helicopter: [11.4, 3.3] };
   const ent = {
@@ -229,8 +240,9 @@ function teleportHarness(mode, colliders = [], shore = () => ({ westX: -500, eas
     pitchVel: 3, rollVel: 4, heaveVel: 2, chassisPivot: pivot(),
     lastCollisionSpark: { speed: 5 }, carState: { value: { x: 0 } },
     wheels: [{ isFront: true, steerPivot: { rotation: { y: 0.4 } }, tire: { rotation: { x: 0 } } }],
-    leanAngle: 0.3, leanPivot: pivot(), pedalPhase: 0.7,
-    frontWheel: { rotation: { x: 0 } }, rearWheel: { rotation: { x: 0 } },
+    leanAngle: 0.3, leanPivot: pivot(), pedalPhase: 0.7, steerPivot: pivot(), shadow: pivot(),
+    wheelSpots: { radius: 0.38, rear: -0.58, front: 0.58, caster: 0.3, travel: 0.05 },
+    frontWheel: pivot(), rearWheel: pivot(),
     crankPivot: { rotation: { x: 0 } }, pedals: [],
     verticalSpeed: -8, pitchAngle: 0.2, rollAngle: -0.2, tiltPivot: pivot(),
     rig: { reset(...args) { this.resetArgs = args; } },
@@ -279,7 +291,10 @@ for (const mode of ['person', 'car', 'cyclist', 'helicopter']) {
       assert.equal(ent.position.y, 120, 'keep the helicopter altitude when already above the minimum');
     }
     const before = [ent.position.x, ent.position.y, ent.position.z, ent.heading];
-    controller[`update${mode[0].toUpperCase()}${mode.slice(1)}`](0.1, 0);
+    // (no Jolt here: a vehicle's body stays where it was set down)
+    if (mode === 'car') controller.driveCar(0.1, true);
+    else if (mode === 'cyclist') controller.driveTwoWheeler(ent, 0.1, true);
+    else controller[`update${mode[0].toUpperCase()}${mode.slice(1)}`](0.1, 0);
     assert.deepEqual([ent.position.x, ent.position.y, ent.position.z, ent.heading], before, 'the first neutral frame stays at the arrival');
   });
 }
@@ -512,7 +527,7 @@ test('on the slopes a walker stands on the curb over the town floor, a hill abov
   near(hilly.getGroundHeight(10, 20, 'person'), floor(10, 20) + 3);
 });
 
-test('a vehicle tilts with the ground under its wheels and rolls down the slope', () => {
+test('a vehicle tilts with the ground under its wheels', () => {
   const { controller } = slopeHarness();
   const t = {};
   // heading 0 faces +z (uphill 0.1), its left is +x (up 0.05)
@@ -523,15 +538,12 @@ test('a vehicle tilts with the ground under its wheels and rolls down the slope'
   controller.groundTilt(0, 0, -Math.PI / 2, 1.35, 0.8, t);
   near(t.pitch, Math.atan(0.05));
   near(t.roll, Math.atan(0.1));
-  near(controller.slopeAcceleration(0, 0, 0), -9.81 * 0.1 / Math.hypot(1, 0.1));
-  near(controller.slopeAcceleration(0, 0, Math.PI), 9.81 * 0.1 / Math.hypot(1, 0.1));
   // flat ground: no tilt, no pull
   const flat = slopeHarness().controller;
   flat.terrainAt = () => 0;
   flat.groundTilt(5, 5, 1, 1, 1, t);
   near(t.pitch, 0);
   near(t.roll, 0);
-  near(flat.slopeAcceleration(5, 5, 1), 0);
 });
 
 test('one key feeds every action bound to it: Space jumps on foot and pulls the car\'s handbrake', () => {

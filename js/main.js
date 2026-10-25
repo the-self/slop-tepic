@@ -196,6 +196,8 @@ async function initApp() {
       const car = saved.looks?.car;
       if (car && Number.isFinite(car.paint)) controllerManager.setCarLook(car.bodyType, car.paint, car.police, car.model, car.route);
       if (Number.isFinite(saved.looks?.cyclist?.color)) controllerManager.setBikeColor(saved.looks.cyclist.color);
+      const moto = saved.looks?.moto;
+      if (moto && Number.isFinite(moto.paint)) controllerManager.setMotoLook(moto.model, moto.paint);
       savedMode = saved.activeMode;
       savedMoney = saved.stats?.money;
     }
@@ -238,7 +240,8 @@ async function initApp() {
       }]));
       const door = interiors?.inside?.venue;
       if (door) entities.person = { x: door.x + door.nx * 1.2, y: 0, z: door.z + door.nz * 1.2, heading: door.heading };
-      const looks = { car: controllerManager.entities.car.look, cyclist: controllerManager.entities.cyclist.look };
+      const { car, cyclist, moto } = controllerManager.entities;
+      const looks = { car: car.look, cyclist: cyclist.look, moto: moto.look };
       localStorage.setItem(PLAYER_STATE_KEY, JSON.stringify({
         version: 1, activeMode: controllerManager.activeMode, entities, looks, stats: { money: crimeSystem.money }
       }));
@@ -311,12 +314,14 @@ async function initApp() {
   let floodSpot = null;
   audioSystem.sources.pursuers = crimeSystem.cruisers;
   crimeSystem.ragdolls = ragdolls;
-  // Thrown out through the windscreen (controllers.js ejectDriver): on foot now, hurt by how hard it hit, bleeding
-  controllerManager.onEject = (impact, x, z) => {
+  // Thrown out through the windscreen (controllers.js ejectDriver), or off the moto (ejectRider; stepping off it as it
+  // falls over, offMoto, impact 0): on foot now, bleeding; out of the car hurt by how hard it hit (off the moto, the
+  // crash itself already hurt, crashDamage)
+  controllerManager.onEject = (impact, x, z, kind) => {
     syncMode();
-    const c = controllerManager.entities.car;
-    crimeSystem.fx.splatter(x, c.position.y + 1, z, impact, Math.sin(c.heading), Math.cos(c.heading));
-    crimeSystem.hurt(Math.min(95, 25 + (impact - 19) * 4), x, z);
+    const v = controllerManager.entities[kind];
+    if (impact > 0) crimeSystem.fx.splatter(x, v.position.y + 1, z, impact, Math.sin(v.heading), Math.cos(v.heading));
+    if (kind === 'car') crimeSystem.hurt(Math.min(95, 25 + (impact - 19) * 4), x, z);
   };
   const crimeHud = new CrimeHud();
   // The weapon wheel, held open with Tab (ui/weapon-wheel.js): the game runs slowed meanwhile
@@ -483,7 +488,7 @@ async function initApp() {
   };
   // Boosted top speeds in km/h (controllers.js caps them at 8.2, 19 & 52 m/s; the car has its tachometer instead):
   // full scale of the speed meter
-  const topSpeedKmh = { person: 30, car: 200, cyclist: 68, helicopter: 187, moto: 110 };
+  const topSpeedKmh = { person: 30, car: 200, cyclist: 48, helicopter: 187, moto: 110 };
 
   function renderControlHints(mode, spec = null) {
     if (!elControlsHint) return;
@@ -597,7 +602,7 @@ async function initApp() {
       const target = boardTarget();
       if (target?.taken) {
         const v = target.taken;
-        text = v.bike ? 'Robar la bici' : v.isPolice ? 'Robar la patrulla' : v.bus ? 'Robar el camión' : v.fleet === 'combi' ? 'Robar la combi' : 'Robar el coche';
+        text = v.bike ? 'Robar la bici' : v.moto ? 'Robar la moto' : v.isPolice ? 'Robar la patrulla' : v.bus ? 'Robar el camión' : v.fleet === 'combi' ? 'Robar la combi' : 'Robar el coche';
       }
       else if (target?.till) text = 'Asaltar la caja';
       else if (target) text = promptNames[target.mode];
