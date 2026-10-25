@@ -11,13 +11,17 @@ import { createTrafficSystem, createHighwayTraffic } from './sim/traffic.js';
 import { buildRoadPaint } from './world/road-paint.js';
 import { buildPavements } from './world/pavements.js';
 import { buildBridges } from './world/bridges.js';
+import { buildAirport } from './world/airport.js';
+import { buildLandmarkModels } from './world/landmark-models.js';
+import { buildStores } from './world/store-interiors.js';
 import { ThirdPersonControllerManager } from './player/controllers.js';
 import { Stamina, struckDamage, hardness, crashDamage, walletAmount, nearest, CRASH_GRACE } from './player/stats.js';
 import { TouchControls } from './input/touch-controls.js';
 import { GamepadControls } from './input/gamepad-controls.js';
 import { CameraSystem, CAMERA_PRESETS } from './player/cameras.js';
 import { LightingSystem } from './render/lighting.js';
-import { WEATHER_SAMPLES, weatherLabel } from './world/weather.js';
+import { WEATHER_SAMPLES, weatherLabel, CLEAR_WEATHER, RoadWater, wetGrip } from './world/weather.js';
+import { createRain } from './render/rain.js';
 import { CityMapSystem } from './ui/city-map.js';
 import { Tachometer } from './ui/tachometer.js';
 import { gearLabel } from './player/drivetrain.js';
@@ -30,6 +34,8 @@ import { buildTepicLandmarks } from './world/tepic-landmarks.js';
 import { buildCotos } from './world/cotos.js';
 import { CrimeSystem } from './sim/crime.js';
 import { CrimeHud } from './ui/crime-hud.js';
+import { WeaponWheel } from './ui/weapon-wheel.js';
+import { AimControl } from './player/aim.js';
 
 // js/main.js
 // Main entry point for the city (Tepic, Nayarit) in Three.js WebGPURenderer & TSL (three.js dev, see index.html)
@@ -80,6 +86,11 @@ async function initApp() {
   // 2. Build Scene & Physical Atmospheric Sky / PMREM IBL / 4096x4096 Shadow Lighting
   const scene = new THREE.Scene();
   const lightingSystem = new LightingSystem(scene, renderer);
+  // Rain falling round the camera, and the water it leaves on the roads (Live weather only: the fixed times of day
+  // stay dry)
+  const rain = createRain(scene, lightingSystem.uNightFactor);
+  const roadWater = new RoadWater();
+  let nextLightning = 0;
   markInit('lighting');
 
   if (loadingStatus) {
@@ -96,14 +107,18 @@ async function initApp() {
   buildRiverChannels(scene);
   markInit('rivers');
   const { colliders: landmarkColliders } = buildTepicLandmarks(scene);
+  // (and the landmarks made as 3D models, js/world/landmark-models.js: their lots now, the models as they load)
+  const { colliders: modelColliders } = buildLandmarkModels(scene);
   markInit('landmarks');
   const cityBlocks = buildCityBlocks(scene);
+  // The big chain stores you can walk into: their walls, door, shelves & tills (js/world/store-interiors.js)
+  const stores = buildStores(scene, cityBlocks.stores);
   markInit('blocks');
   // The gated communities' walls & guard booths (the houses inside are among the blocks')
   const { colliders: cotoColliders } = buildCotos(scene);
-  const allColliders = [...landmarkColliders, ...cityBlocks.colliders, ...cotoColliders, ...(cityGrid.colliders || [])];
+  const allColliders = [...landmarkColliders, ...modelColliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...(cityGrid.colliders || [])];
 
-  const streetDetails = buildStreetDetails(scene);
+  const streetDetails = buildStreetDetails(scene, stores.reserves);
   markInit('streetDetails');
   // Buildings turned along non-grid streets have oriented colliders whose world bounds reach past their lots: they stay
   // inside the property line anyway, so the road network (lanes & sidewalks) doesn't need them.
@@ -119,6 +134,7 @@ async function initApp() {
   const highwayTraffic = createHighwayTraffic(scene, cityGrid.highwayLanes);
   buildRoadPaint(scene, trafficSystem.network);
   buildPavements(scene); // (the empedrado, adoquín, earth & concrete streets, under the paint)
+  buildAirport(scene); // (the runway, taxiways & apron south-east of town, and the airliners at the gates)
   markInit('roadPaint');
   // The overpasses, their ramps & the railway; their walls, parapets & piers stop the player (not the traffic's
   // footprints: the lanes on and under them stay open)
@@ -137,6 +153,8 @@ async function initApp() {
   // People, bicycles & hydrants knocked flying bounce off the buildings' walls (mayhem.js)
   const solidAt = (x, z) => controllerManager.isSolidAt(x, z, 1.5, groundHeight(x, z));
   trafficSystem.setSolidQuery(solidAt);
+  // (the walls the sidewalks' walkers turn back at: the buildings', not the poles' they pass by)
+  trafficSystem.setWallQuery((x, z) => controllerManager.isSolidAt(x, z, 1.5, groundHeight(x, z), 2));
   // A camión or combi the player takes is built from the traffic's own parts, its route and all
   controllerManager.setLookKits((look) => trafficSystem.lookKit(look));
   // The traffic's damaged engines smoke with the player's car's smoke
@@ -187,6 +205,9 @@ async function initApp() {
   }
 
   const cameraSystem = new CameraSystem(renderer.domElement, controllerManager);
+  // Free aim on foot: the right button (or Z) brings the camera over the shoulder with a crosshair (player/aim.js)
+  const aimControl = new AimControl({ canvas: renderer.domElement, controllers: controllerManager });
+  cameraSystem.aim = aimControl;
   cameraSystem.setGroundQuery(groundHeight); // the chase cameras stay over the ground
   // The scenic cameras frame the city's own spots (see cameras.js)
   const T = TELEPORT_LOCATIONS;
@@ -213,7 +234,7 @@ async function initApp() {
   // HOSPITALS), arrested at the nearest teleport spot, on foot either way
   const crimeSystem = new CrimeSystem({
     scene, controllers: controllerManager, traffic: trafficSystem, groundHeight, solidAt, canvas: renderer.domElement,
-    audio: audioSystem,
+    audio: audioSystem, aim: aimControl,
     onRespawn: (kind) => {
       if (controllerManager.activeMode === 'helicopter') {
         controllerManager.setMode('person');
@@ -232,6 +253,8 @@ async function initApp() {
   if (Number.isFinite(savedMoney)) crimeSystem.money = Math.max(0, Math.round(savedMoney));
   audioSystem.sources.pursuers = crimeSystem.cruisers;
   const crimeHud = new CrimeHud();
+  // The weapon wheel, held open with Tab (ui/weapon-wheel.js): the game runs slowed meanwhile
+  const weaponWheel = new WeaponWheel(crimeSystem, { aim: aimControl });
   // Crashes hurt as well as sound: each system has a single collision listener, shared here with the audio's
   let lastCrash = -Infinity;
   for (const system of [controllerManager, trafficSystem, streetDetails.breaker]) {
@@ -377,8 +400,9 @@ async function initApp() {
 
   // Keyboard guide for each mode: [keys, action]
   const controlHints = {
-    person: [[['W', 'S'], 'Walk'], [['A', 'D'], 'Turn'], [['Shift'], 'Sprint'], [['Space'], 'Jump'], [['RMB', 'X'], 'Fire'],
-      [['1-4', 'R'], 'Weapon'], [['F'], 'Robar / Subir']], // (3 again: SMG / rifle)
+    person: [[['W', 'S'], 'Walk'], [['A', 'D'], 'Turn'], [['Shift'], 'Sprint'], [['Space'], 'Jump'], [['RMB', 'Z'], 'Aim'],
+      [['LMB', 'X'], 'Fire'], [['Tab', '1-4'], 'Weapons'], [['F'], 'Robar / Subir']], // (3 again: SMG / rifle)
+    // (Shift's Nitro only in a car with a kit, drivetrain.js)
     car: [[['W', 'S'], 'Gas / Brake'], [['A', 'D'], 'Steer'], [['Shift'], 'Nitro'], [['Space'], 'Handbrake'], [['E', 'Q'], 'Gears'],
       [['T'], 'Auto / Manual'], [['RMB', 'X'], 'Shoot'], [['F'], 'Bajar']],
     cyclist: [[['W', 'S'], 'Pedal / Brake'], [['A', 'D'], 'Lean & Turn'], [['Shift'], 'Sprint'], [['RMB', 'X'], 'Shoot'], [['F'], 'Bajar']],
@@ -390,9 +414,10 @@ async function initApp() {
   // full scale of the speed meter
   const topSpeedKmh = { person: 30, car: 200, cyclist: 68, helicopter: 187, moto: 110 };
 
-  function renderControlHints(mode) {
+  function renderControlHints(mode, spec = null) {
     if (!elControlsHint) return;
-    const items = (controlHints[mode] || []).map(([keys, action]) => {
+    const hints = (controlHints[mode] || []).filter(([, action]) => action !== 'Nitro' || spec?.nitro);
+    const items = hints.map(([keys, action]) => {
       const item = document.createElement('span');
       item.className = 'hint';
       for (const key of keys) {
@@ -417,7 +442,7 @@ async function initApp() {
     document.body.dataset.mode = mode;
     const ent = controllerManager.getActiveEntity();
     if (elMode) elMode.textContent = ent.label;
-    renderControlHints(mode);
+    renderControlHints(mode, ent.spec);
 
     // If currently on a static scenic camera, switch to 3rd-Person Chase so user sees their selected character/vehicle
     const currentCam = cameraSystem.getActivePreset();
@@ -430,13 +455,31 @@ async function initApp() {
   // vehicles or take the nearest car or bicycle from the traffic, whose driver is left in the street; in a vehicle, get
   // out (a helicopter once it has landed)
   const BOARD_REACH = 1.6; // m from the vehicle's body
+  const TILL_REACH = 1.8; // m from a store's till (store-interiors.js)
   function boardTarget() {
     if (controllerManager.activeMode !== 'person') return null;
     const p = controllerManager.entities.person.position;
     const own = controllerManager.ownVehicleNear(BOARD_REACH);
     const taken = trafficSystem.vehicleNear(p.x, p.z, own ? Math.min(BOARD_REACH, own.distance) : BOARD_REACH);
     if (taken) return { taken };
-    return own ? { mode: own.mode, left: own.left } : null;
+    if (own) return { mode: own.mode, left: own.left };
+    for (const till of stores.tills) if (Math.hypot(till.x - p.x, till.z - p.z) < TILL_REACH) return { till };
+    return null;
+  }
+  // Robbing a store's till: what's in it (a supermarket's takings since it was last emptied), the store's alarm (two
+  // stars: the staff call the police) and the shoppers' panic; it's empty for ten minutes after
+  function robTill(till) {
+    const now = performance.now() / 1000;
+    if (now < till.refill) {
+      crimeSystem.toast('The till is empty');
+      return;
+    }
+    const amount = Math.round(400 + Math.random() * 1100);
+    crimeSystem.money += amount;
+    crimeSystem.toast(`+$${amount} · ${till.store.name}`);
+    crimeSystem.report('robbery', true);
+    trafficSystem.panic(till.x, till.z, 45);
+    till.refill = now + 600;
   }
   function board() {
     if (mapSystem.isFullMapOpen || crimeSystem.state !== 'play') return;
@@ -446,6 +489,10 @@ async function initApp() {
     }
     const target = boardTarget();
     if (!target) return;
+    if (target.till) {
+      robTill(target.till);
+      return;
+    }
     if (target.taken) {
       const taken = trafficSystem.hijack(target.taken);
       if (taken.kind === 'car') controllerManager.leaveCarBehind(); // (the player's own car stays where it is)
@@ -472,6 +519,7 @@ async function initApp() {
         const v = target.taken;
         text = v.bike ? 'Robar la bici' : v.isPolice ? 'Robar la patrulla' : v.bus ? 'Robar el camión' : v.fleet === 'combi' ? 'Robar la combi' : 'Robar el coche';
       }
+      else if (target?.till) text = 'Asaltar la caja';
       else if (target) text = promptNames[target.mode];
     } else if (controllerManager.activeMode === 'helicopter') {
       const h = controllerManager.entities.helicopter;
@@ -486,7 +534,7 @@ async function initApp() {
       // the touch button: get in or take what is at hand, or get out
       boardButton.hidden = onFoot && !text;
       const label = boardButton.querySelector('[data-board-label]');
-      if (label) label.textContent = !onFoot ? 'Bajar' : text.startsWith('Robar') ? 'Robar' : 'Subir';
+      if (label) label.textContent = !onFoot ? 'Bajar' : text.startsWith('Robar') || text.startsWith('Asaltar') ? 'Robar' : 'Subir';
     }
     if (!elPrompt) return;
     elPrompt.hidden = !text;
@@ -770,7 +818,7 @@ async function initApp() {
   markInit('ui');
   // Debugging handle for the console, only with ?debug in the URL
   if (new URLSearchParams(location.search).has('debug')) {
-    window.__slop = { scene, renderer, controllerManager, trafficSystem, cameraSystem, streetDetails, cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina };
+    window.__slop = { scene, renderer, controllerManager, trafficSystem, cameraSystem, streetDetails, cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl, weaponWheel };
   }
 
   // The loading screen stays up while the shaders compile (precompileShaders() & the warm-up frame, see the loop) and
@@ -861,6 +909,32 @@ async function initApp() {
   markInit('compile');
 
   // 6. Animation Loop
+  // The rain & the wet roads from the Live weather: drops round the camera slanted by the wind, the tyres' grip for
+  // the player & the traffic, the hiss in the audio, and in a thunderstorm lightning every 8-30 s with its thunder
+  // after the time its sound takes to arrive
+  function updateRain(dt, elapsed) {
+    const w = lightingSystem.activePresetId === 'live' ? lightingSystem.liveWeather || CLEAR_WEATHER : CLEAR_WEATHER;
+    roadWater.update(dt, w);
+    // wind blows from windDirection (° clockwise from true north): toward the opposite bearing, in the grid frame
+    const toward = (w.windDirection + 180 - (CITY.bearingDeg || 0)) * Math.PI / 180;
+    const wind = (w.windSpeed || 0) / 3.6;
+    rain.update(roadWater.rain, Math.sin(toward) * wind, -Math.cos(toward) * wind, elapsed, cameraSystem.camera);
+    controllerManager.roadWet = roadWater.wet;
+    controllerManager.roadGrip = wetGrip(roadWater.wet);
+    trafficSystem.setRoadWater(roadWater.wet, roadWater.rain, controllerManager.roadGrip);
+    audioSystem.setRain(roadWater.rain);
+    if (w.code >= 95 && roadWater.rain > 0.3) {
+      if (!nextLightning) nextLightning = elapsed + 4 + Math.random() * 10;
+      if (elapsed >= nextLightning) {
+        const distance = 600 + Math.random() * 5400; // m to the strike
+        const near = 1 - distance / 6000;
+        lightingSystem.flash(0.35 + 0.65 * near);
+        audioSystem.thunder(distance / 343, near);
+        nextLightning = elapsed + 8 + Math.random() * 22;
+      }
+    } else nextLightning = 0;
+  }
+
   let lastTime = performance.now();
   let elapsed = 0;
   let frameCount = 0;
@@ -873,7 +947,7 @@ async function initApp() {
   renderer.setAnimationLoop((now) => {
     const rawDt = (now - lastTime) * 0.001;
     lastTime = now;
-    const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
+    const dt = Math.min(Math.max(rawDt, 0.001), 0.05) * weaponWheel.timeScale;
     elapsed += dt;
 
     // Update 3rd-person controllers, camera, signals, traffic & vehicle collisions, building LODs, and dynamic shadow focus
@@ -888,8 +962,13 @@ async function initApp() {
       const engine = v.damage ? 1 - v.damage.engine : 1;
       tachometer.update(v.spec, v.drive, Math.round(Math.abs(v.speed) * 3.6), engine, engine <= 0, v.drive ? gearLabel(v.drive, v.spec) : '1');
     }
+    // (aiming only on foot and in play, not while choosing a weapon)
+    aimControl.allowed = crimeSystem.state === 'play' && !weaponWheel.isOpen;
+    aimControl.update(dt);
     cameraSystem.update(dt, elapsed);
     streetDetails.signalClock.value = elapsed;
+    // the hour sets how much traffic and how many people are out (traffic-demand.js): rush hours on the avenues
+    trafficSystem.setHour(lightingSystem.hourOfDay);
     trafficSystem.setParked(crimeSystem.addObstacles(controllerManager.parkedVehicles()));
     trafficSystem.update(
       dt,
@@ -907,14 +986,17 @@ async function initApp() {
     crimeSystem.shakeCamera(cameraSystem.camera);
     stamina.update(dt, crimeSystem.state === 'play' ? controllerManager.sprintingMode() : null);
     crimeHud.update(crimeSystem, dt, stamina);
+    weaponWheel.update();
     if (!document.hidden && now >= nextPlayerSave) {
       savePlayerState();
       nextPlayerSave = now + 5000;
     }
     cityBlocks.update(cameraSystem.currentPos.x, cameraSystem.currentPos.z);
+    stores.update(cameraSystem.currentPos.x, cameraSystem.currentPos.z);
     if (cityBlocks.updateLights) cityBlocks.updateLights(cameraSystem.camera);
     if (streetDetails.update) streetDetails.update(cameraSystem.camera);
     lightingSystem.update(cameraSystem.currentPos);
+    updateRain(dt, elapsed);
     if (multiplayer) multiplayer.update(dt, elapsed);
     mapSystem.update();
     audioSystem.update(dt, elapsed, cameraSystem.camera, lightingSystem.isNight);

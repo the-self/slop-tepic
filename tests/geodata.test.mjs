@@ -17,6 +17,7 @@ test('Tepic geodata builds with default paths in a checkout containing spaces an
     }
     fs.symlinkSync(path.join(root, 'tools/data'), path.join(dir, 'tools/data'), 'dir');
     fs.cpSync(path.join(root, 'js/world/storefronts'), path.join(dir, 'js/world/storefronts'), { recursive: true });
+    fs.copyFileSync(path.join(root, 'js/world/building-overrides.js'), path.join(dir, 'js/world/building-overrides.js'));
     const env = { ...process.env };
     delete env.GEO_DATA;
     const result = spawnSync(process.execPath, ['--max-old-space-size=8192', path.join(dir, 'tools/build-tepic-geodata.mjs')], {

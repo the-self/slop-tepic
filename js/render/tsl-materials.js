@@ -562,10 +562,12 @@ function createMexicanHouseMaterial({ floorHeight = 3.0, chains = [] } = {}) {
     const isBack = float(1.0).sub(isFront).sub(isChain).sub(isBig).max(0.0);
     const rawBlock = isBack.mul(step(wallSeed, 0.42));
 
-    // the house's paint
+    // the house's paint: its own where known (paint.w = 1), else the palette's by tone
     let paint = color(PALETTE[0]);
     const idx = floor(tone.mul(PALETTE.length));
     for (let i = 1; i < PALETTE.length; i++) paint = mix(paint, color(PALETTE[i]), step(i - 0.5, idx));
+    const ownPaint = attribute('paint', 'vec4');
+    paint = mix(paint, ownPaint.xyz, ownPaint.w);
     const blockGrey = color(0x8e8b85);
     const mortar = max(lineAA(fract(y.div(0.2)).sub(0.5), 0.04), lineAA(fract(sx.div(0.4).add(step(0.5, fract(y.div(0.4))).mul(0.5))).sub(0.5), 0.02));
     const block = blockGrey.mul(float(1.0).sub(mortar.mul(0.25))).mul(hash2D(vec2(floor(sx.div(0.4)), floor(y.div(0.2)))).mul(0.12).add(0.94));
@@ -1258,8 +1260,13 @@ function createFacadeBoxes(material, boxes) {
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   const box = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
   const faces = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
+  // a building's own paint, where it is known (the centro's overrides, js/world/building-overrides.js): rgb, 1 (0: the
+  // palette's, by tone)
+  const paint = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
   geometry.setAttribute('box', box);
   geometry.setAttribute('faces', faces);
+  geometry.setAttribute('paint', paint);
+  const colour = new THREE.Color();
 
   const mesh = new THREE.InstancedMesh(geometry, material, boxes.length);
   const matrix = new THREE.Matrix4();
@@ -1270,8 +1277,15 @@ function createFacadeBoxes(material, boxes) {
   boxes.forEach((b, i) => {
     if (b.ry) mesh.setMatrixAt(i, matrix.compose(pos.set(b.x, b.y, b.z), quat.setFromAxisAngle(up, b.ry), scale.set(b.w, b.h, b.d)));
     else mesh.setMatrixAt(i, matrix.makeScale(b.w, b.h, b.d).setPosition(b.x, b.y, b.z));
-    box.setXYZW(i, b.w, b.h, b.d, ((i * 29) % 1000) + 0.1 + 0.8 * (b.tone ?? 0.5));
+    // the seed from where the building stands, not its place in the list: a house added or taken away elsewhere
+    // leaves this one's door, gate & back walls as they were
+    const h = Math.sin(b.x * 12.9898 + b.z * 78.233) * 43758.5453;
+    box.setXYZW(i, b.w, b.h, b.d, Math.floor((h - Math.floor(h)) * 1000) + 0.1 + 0.8 * (b.tone ?? 0.5));
     if (b.faces) faces.setXYZW(i, b.faces[0], b.faces[1], b.faces[2], b.faces[3]);
+    if (b.paint !== undefined && b.paint !== null) {
+      colour.set(b.paint);
+      paint.setXYZW(i, colour.r, colour.g, colour.b, 1);
+    }
   });
   return mesh;
 }
@@ -1662,6 +1676,52 @@ const roadPatch = Fn(([wx, wz]) => {
  * - 3 concreto hidráulico: pale poured slabs, 3.5 m between the joints, hairline cracks
  * Fine detail settles to its mean colour once it shrinks under a pixel.
  */
+/**
+ * The airfield (airport.js), by the per-vertex `field`: 0 the apron's concrete slabs, 1 the runway's asphalt and its
+ * white markings, 2 a taxiway's asphalt and its yellow centreline, 3 a helipad's concrete. `along` is metres from the
+ * strip's start, `across` metres from its centreline, `half` its half-width and `span` its length, so the runway paints
+ * its markings to ICAO Annex 14: edge lines, the dashed centreline (30 m dashes, 20 m gaps), threshold piano keys,
+ * touchdown-zone bars and the aiming points, both ends alike.
+ */
+function createAirfieldMaterial() {
+  const mat = new THREE.MeshStandardNodeMaterial({ metalness: 0.0, roughness: 0.85 });
+  const field = attribute('field', 'float');
+  const along = attribute('along', 'float');
+  const across = abs(attribute('across', 'float'));
+  const half = attribute('half', 'float');
+  const span = attribute('span', 'float');
+  const isField = (k) => step(k - 0.5, field).mul(step(field, k + 0.5));
+  const p = positionWorld.xz;
+  const band = (v, lo, hi) => step(lo, v).mul(step(v, hi));
+
+  // concrete: 7.5 m slabs, joints, a little staining
+  const slabs = max(gridLine(p.x, 7.5, 0.02), gridLine(p.y, 7.5, 0.02));
+  const concTone = noise2D(p.mul(0.25)).mul(0.6).add(noise2D(p.mul(1.9)).mul(0.4));
+  const concrete = mix(color(0x9d9a92), color(0xb5b1a8), concTone).mul(float(1.0).sub(slabs.mul(0.35)));
+  // asphalt, darker with tyre rubber where the wheels touch down
+  const end = min(along, span.sub(along));
+  const rubber = band(end, 150.0, 900.0).mul(smoothstep(9.0, 2.0, across)).mul(isField(1));
+  const asphalt = mix(color(0x34363a), color(0x3e4044), noise2D(p.mul(0.4))).mul(float(1.0).sub(rubber.mul(0.35)));
+
+  // runway markings
+  const edgeLine = band(across, half.sub(1.8), half.sub(0.9));
+  const centre = step(across, 0.45).mul(step(fract(along.div(50.0)), 0.6)).mul(step(180.0, end));
+  const piano = band(end, 6.0, 36.0).mul(band(across, 1.8, half.sub(3.0))).mul(step(fract(across.sub(1.8).div(3.6)), 0.5));
+  const touchdown = max(max(band(end, 150.0, 172.5), band(end, 300.0, 322.5)), band(end, 600.0, 622.5)).mul(band(across, 6.0, 15.0))
+    .mul(step(fract(across.sub(6.0).div(3.0)), 0.6));
+  const aiming = band(end, 400.0, 460.0).mul(band(across, 6.0, 16.0));
+  const white = max(max(edgeLine, centre), max(max(piano, touchdown), aiming)).mul(isField(1));
+  // taxiway centreline
+  const yellow = step(across, 0.15).mul(isField(2));
+
+  const base = mix(mix(concrete, asphalt, max(isField(1), isField(2))), concrete.mul(0.92), isField(3));
+  mat.colorNode = mix(mix(base, color(0xe9e8e2), white), color(0xd9a925), yellow);
+  // wet: the pavement darkens and goes glossy (the roads' film, lighting.js)
+  mat.roughnessNode = mix(float(0.88), float(0.62), max(white, yellow)).sub(cityUniforms.uRoadWetness.mul(0.45)).max(0.12);
+  mat.aoNode = canyonSkyAONode();
+  return mat;
+}
+
 function createPavementMaterial() {
   const mat = new THREE.MeshStandardNodeMaterial({ metalness: 0.0, roughness: 0.9 });
   const kind = attribute('pave', 'float');
@@ -2272,6 +2332,7 @@ export {
   createRoadSurfaceMaterial,
   createRoadPaintMaterial,
   createPavementMaterial,
+  createAirfieldMaterial,
   createWireMaterial,
   WIRE_FADE,
   createBridgeConcreteMaterial,

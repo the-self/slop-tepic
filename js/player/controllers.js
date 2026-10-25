@@ -68,10 +68,11 @@ function modelFor(look) {
 }
 
 const G = 9.81;
+const AIM_WALK = 2.4; // m/s: walking (and strafing) with the gun up (player/aim.js)
 // The car's tyres hold it in a corner up to its grip × this (an arcade allowance over a real road car's ~0.9 g, so
 // Tepic's corners can be taken at speed)
 const CORNER_GRIP = 1.25;
-const SMOKE_PUFFS = 64;
+const SMOKE_PUFFS = 128; // (exhaust, tyre smoke and, on a wet road, the spray off the tyres)
 // The car off the ground (rideGround): the gap (m) under its wheels from which it flies (no grip, no steering: smaller
 // dips the suspension rides out), the landing it takes without losing speed (m/s down), the air's drag in flight, and
 // how fast the ground's rise can speed it up (m/s²: ~3 g, a ramp's foot at any speed, no step)
@@ -246,6 +247,12 @@ class ThirdPersonControllerManager {
     };
     // Out of breath (player/stats.js), shift no longer sprints on foot nor on the bicycle; the motors don't tire
     this.canSprint = true;
+    // The road under the tyres (main.js, from weather.js RoadWater): the water on it 0..1 and what that leaves of
+    // the tyres' dry grip (wetGrip)
+    this.roadWet = 0;
+    this.roadGrip = 1;
+    // Taking aim on foot (player/aim.js sets it every frame): the player walks and strafes instead of turning
+    this.aiming = false;
 
     this.entities = {
       person: this.createPersonEntity(),
@@ -680,7 +687,8 @@ class ThirdPersonControllerManager {
   // The player's car & bicycle left standing, for the traffic to stop behind (traffic.js setParked)
   parkedVehicles() {
     const slots = (this._parkedSlots ??= {
-      car: { x: 0, z: 0, halfW: 0.86, halfL: 2.18 }, cyclist: { x: 0, z: 0, halfW: 0.32, halfL: 0.95 }, moto: { x: 0, z: 0, halfW: 0.4, halfL: 1.0 }
+      car: { x: 0, z: 0, heading: 0, halfW: 0.86, halfL: 2.18 }, cyclist: { x: 0, z: 0, heading: 0, halfW: 0.32, halfL: 0.95 },
+      moto: { x: 0, z: 0, heading: 0, halfW: 0.4, halfL: 1.0 }
     });
     slots.car.halfW = this.entities.car.halfW || 0.86;
     slots.car.halfL = this.entities.car.halfL || 2.18;
@@ -691,6 +699,7 @@ class ThirdPersonControllerManager {
       const e = this.entities[mode];
       slots[mode].x = e.position.x;
       slots[mode].z = e.position.z;
+      slots[mode].heading = e.heading || 0;
       out.push(slots[mode]);
     }
     for (const left of this.leftCars || NO_CARS) out.push(left);
@@ -1475,10 +1484,12 @@ class ThirdPersonControllerManager {
   // The colliders whose bounds come within `r` of (x, z), in their original order. They never move, so they are
   // bucketed once into 48 m cells (tens of thousands of buildings: testing them all every frame cost ~0.5 ms)
   // Is ground point (x, z) inside a building below `height`? (Things thrown about by knock-downs, mayhem.js)
-  isSolidAt(x, z, height = 1.5, ground = 0) {
+  // (`minSize` m: leave out what is narrower than that both ways, the poles and bollards a walker steps round)
+  isSolidAt(x, z, height = 1.5, ground = 0, minSize = 0) {
     for (const c of this.nearColliders(x, z, 0)) {
       // (only what stands between the ground there, a hill's or the street's, and `height` over it)
       if ((c.minY ?? 0) > ground + height || (c.maxY ?? Infinity) <= ground || x < c.minX || x > c.maxX || z < c.minZ || z > c.maxZ) continue;
+      if (minSize > 0 && (c.obb ? Math.max(c.obb.hx, c.obb.hz) * 2 : Math.max(c.maxX - c.minX, c.maxZ - c.minZ)) < minSize) continue;
       if (!c.obb) return true;
       // the box's own frame: world = c + R_y(θ)·local, so local = R_y(−θ)·(p − c)
       const { cx, cz, hx, hz, cs, sn } = c.obb;
@@ -1783,16 +1794,28 @@ class ThirdPersonControllerManager {
     const turnRate = 2.6;
 
     let targetSpeed = 0;
-    if (this.keys.forward) targetSpeed = maxWalk * this.keys.forward;
-    else if (this.keys.backward) targetSpeed = -maxWalk * 0.65 * this.keys.backward;
+    let targetStrafe = 0;
+    if (this.aiming) {
+      // aiming (player/aim.js): the mouse turns the player, A / D step sideways, all at a walk
+      const ahead = (Number(this.keys.forward) || 0) - (Number(this.keys.backward) || 0);
+      const side = (Number(this.keys.right) || 0) - (Number(this.keys.left) || 0);
+      const k = AIM_WALK / Math.max(1, Math.hypot(ahead, side));
+      targetSpeed = ahead * k;
+      targetStrafe = side * k;
+    } else {
+      if (this.keys.forward) targetSpeed = maxWalk * this.keys.forward;
+      else if (this.keys.backward) targetSpeed = -maxWalk * 0.65 * this.keys.backward;
 
-    if (this.keys.left) p.heading += turnRate * dt * this.keys.left;
-    if (this.keys.right) p.heading -= turnRate * dt * this.keys.right;
+      if (this.keys.left) p.heading += turnRate * dt * this.keys.left;
+      if (this.keys.right) p.heading -= turnRate * dt * this.keys.right;
+    }
 
     p.speed += (targetSpeed - p.speed) * Math.min(1, dt * 10);
+    p.strafe = (p.strafe || 0) + (targetStrafe - (p.strafe || 0)) * Math.min(1, dt * 10);
 
-    p.position.x += Math.sin(p.heading) * p.speed * dt;
-    p.position.z += Math.cos(p.heading) * p.speed * dt;
+    // (to the right is (-cos, sin) of the heading)
+    p.position.x += (Math.sin(p.heading) * p.speed - Math.cos(p.heading) * p.strafe) * dt;
+    p.position.z += (Math.cos(p.heading) * p.speed + Math.sin(p.heading) * p.strafe) * dt;
     this.resolveHorizontalCollision(p.position, 0.48);
 
     const groundY = this.getGroundHeight(p.position.x, p.position.z, 'person', p.position.y);
@@ -1830,6 +1853,7 @@ class ThirdPersonControllerManager {
     input.shift = shift;
     input.slope = c.flying ? 0 : this.slopeAcceleration(c.position.x, c.position.z, c.heading, c.position.y);
     input.power = enginePower(dmg);
+    input.grip = this.roadGrip ?? 1;
     const driven = stepDrive(d, spec, input, c.speed, dt);
     // in the air the wheels push on nothing (the engine still revs): only the air slows it
     c.speed = c.flying ? previousSpeed / (1 + CAR_AIR.drag * Math.abs(previousSpeed) * dt) : driven;
@@ -1860,7 +1884,7 @@ class ThirdPersonControllerManager {
     const u = c.speed;
     const rearLoose = handbrake || (d.wheelspin && spec.driven === 0.5);
     const steer = c.steerAngle + dmg.pull * Math.min(1, Math.abs(u) / 5);
-    const cornerGrip = spec.grip * CORNER_GRIP * G;
+    const cornerGrip = spec.grip * (this.roadGrip ?? 1) * CORNER_GRIP * G;
     const maxYaw = cornerGrip / Math.max(3, Math.abs(u)) * (handbrake ? 1.9 : rearLoose ? 1.35 : 1);
     const yawTarget = Math.max(-maxYaw, Math.min(maxYaw, u * Math.tan(steer) / spec.wheelbase * (handbrake ? 1.5 : 1)));
     // (in the air the tyres turn nothing: it keeps the spin it left the ground with)
@@ -1932,6 +1956,11 @@ class ThirdPersonControllerManager {
       if ((c.drifting || d.wheelspin) && Math.abs(u) > 1.5) {
         const rate = dt * (d.wheelspin ? 18 : Math.min(26, slip * 4));
         for (const side of [-0.75, 0.75]) this.emitSmoke(c, side, 0.18, -1.35, rate * 0.5, 0.86, 1.25);
+      }
+      // On a wet road the tyres throw up a spray behind them, more the faster it goes
+      if ((this.roadWet || 0) > 0.25 && !c.flying && Math.abs(u) > 6) {
+        const rate = dt * Math.min(14, (Math.abs(u) - 6) * 0.9) * this.roadWet;
+        for (const side of [-0.8, 0.8]) this.emitSmoke(c, side, 0.12, -1.5, rate * 0.5, 0.94, 0.8);
       }
     }
   }
@@ -2143,7 +2172,10 @@ class ThirdPersonControllerManager {
     if (this.keys.forward) throttle = this.keys.forward;
     else if (this.keys.backward) throttle = -0.6 * this.keys.backward;
 
-    b.speed = driveSpeed(b.speed, throttle, this.keys.boost && this.canSprint, dt, BICYCLE_DRIVE);
+    // (rim brakes in the wet: they bite later and the tyre slips sooner)
+    const wetBicycle = (this._wetBicycle ??= { ...BICYCLE_DRIVE });
+    wetBicycle.brake = BICYCLE_DRIVE.brake * (this.roadGrip ?? 1);
+    b.speed = driveSpeed(b.speed, throttle, this.keys.boost && this.canSprint, dt, wetBicycle);
     if (throttle || Math.abs(b.speed) > 0.3) b.speed += this.slopeAcceleration(b.position.x, b.position.z, b.heading, b.position.y) * dt;
 
     let turnInput = 0;
@@ -2193,13 +2225,14 @@ class ThirdPersonControllerManager {
     input.shift = shift;
     input.slope = this.slopeAcceleration(m.position.x, m.position.z, m.heading, m.position.y);
     input.power = 1;
+    input.grip = this.roadGrip ?? 1;
     m.speed = stepDrive(d, spec, input, m.speed, dt);
 
     let turnInput = 0;
     if (this.keys.left) turnInput = this.keys.left;
     if (this.keys.right) turnInput = -this.keys.right;
     const u = m.speed;
-    const maxYaw = spec.grip * G / Math.max(2, Math.abs(u));
+    const maxYaw = spec.grip * (this.roadGrip ?? 1) * G / Math.max(2, Math.abs(u));
     const yawTarget = Math.max(-maxYaw, Math.min(maxYaw, turnInput * Math.min(2.2, Math.abs(u) / 1.4) * Math.sign(u)));
     m.yawRate += (yawTarget - m.yawRate) * (1 - Math.exp(-dt * 6));
     m.heading += m.yawRate * dt;

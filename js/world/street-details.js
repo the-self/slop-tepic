@@ -60,7 +60,8 @@ function createTrafficSignalLensMaterial(isAvenueHead, clock) {
   return mat;
 }
 
-function buildStreetDetails(scene) {
+// keepClear: lots no tree is planted in ({ contains(x, z) }: the halls of the stores you walk into)
+function buildStreetDetails(scene, keepClear = []) {
   const group = new THREE.Group();
   group.name = 'StreetDetails';
 
@@ -809,7 +810,7 @@ function buildStreetDetails(scene) {
 
   // Procedural trees (js/world/trees.js): species skeletons with leaf-spray cards, one instanced mesh per species, variant &
   // level of detail, each tree's level following the camera
-  const treeField = createTreeField(scene, treePositions);
+  const treeField = createTreeField(scene, keepClear.length ? treePositions.filter((t) => !keepClear.some((r) => r.contains(t.x, t.z))) : treePositions);
   group.add(treeField.group);
   // ...and their trunks stop the player, like the CFE poles (main.js adds both to the player's colliders)
   for (const c of treeTrunkColliders(treePositions)) cfeColliders.push(c);

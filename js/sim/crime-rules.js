@@ -19,7 +19,8 @@ const CRIME_HEAT = {
   shootCop: 110,
   killCop: 170,
   explosion: 45,
-  stealCop: 60
+  stealCop: 60,
+  robbery: 70 // a store's till (main.js): two stars, the staff call the police
 };
 
 // The police each star sends after the player: officers on foot and patrol cars

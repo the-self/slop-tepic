@@ -86,7 +86,10 @@ function buildSpec(m) {
     torque: torqueCurve(m, idle), gears, reverse: gears[0], final, efficiency,
     wheelbase: m.size[0] * 0.6, steerLock: m.size[0] > 5.2 ? 0.52 : 0.58,
     engineBrake: m.torque[0] * 0.2, regen: m.electric ? 0.12 * m.mass * G : 0,
-    vmax: m.limited ? vmax : Infinity, dragArea: 0.7
+    vmax: m.limited ? vmax : Infinity, dragArea: 0.7,
+    // a nitrous kit: the sports cars and supercars come with one (not an electric), the rest of the traffic doesn't;
+    // a model's `nitro` says otherwise
+    nitro: m.nitro ?? (!m.electric && (m.class === 'sport' || m.class === 'super'))
   };
   // Drag area so that the power at the top-speed revs (in top gear) just holds the top speed (or a little over the
   // limiter): P·η = (Crr·m·g + ½ρ·CdA·v²)·v
@@ -134,7 +137,7 @@ function gearTopSpeed(spec, gear) {
 
 function createDriveState(spec = VEHICLE_SPECS.taxi) {
   return {
-    gear: 1, rpm: spec.idle, manual: false, shift: 0, lock: 0, nitro: 1, nitroOn: false,
+    gear: 1, rpm: spec.idle, manual: false, shift: 0, lock: 0, nitro: spec.nitro ? 1 : 0, nitroOn: false,
     load: 0, limiter: false, wheelspin: false, braking: false, reversing: false, power: 1
   };
 }
@@ -166,7 +169,8 @@ function autoShift(d, spec, v, throttle) {
 /**
  * One step of the car along its heading. `input`: throttle 0..1 (W), brake 0..1 (S), handbrake, nitro (booleans),
  * shift (+1 / -1 for a manual shift this frame, 0 otherwise), slope (m/s² the hill adds along the heading), power
- * (0..1, what the damage leaves of the engine). Returns the new speed; d holds the gear, revs and the rest.
+ * (0..1, what the damage leaves of the engine), grip (0..1, what the road leaves of the tyres' dry grip: a wet one
+ * ~0.7, see weather.js wetGrip). Returns the new speed; d holds the gear, revs and the rest.
  */
 function stepDrive(d, spec, input, v, dt) {
   const throttleKey = input.throttle || 0;
@@ -200,8 +204,8 @@ function stepDrive(d, spec, input, v, dt) {
   const slipping = !spec.electric && (d.gear === 1 || d.gear === -1) && coupled < spec.launch && throttle > 0;
   let rpm = Math.max(spec.idle, slipping ? spec.launch : coupled);
   d.limiter = coupled >= spec.redline;
-  d.nitroOn = Boolean(input.nitro && throttle > 0 && d.nitro > 0 && d.gear > 0 && d.power > 0);
-  d.nitro = d.nitroOn ? Math.max(0, d.nitro - NITRO_BURN * dt) : Math.min(1, d.nitro + NITRO_REFILL * dt);
+  d.nitroOn = Boolean(spec.nitro && input.nitro && throttle > 0 && d.nitro > 0 && d.gear > 0 && d.power > 0);
+  if (spec.nitro) d.nitro = d.nitroOn ? Math.max(0, d.nitro - NITRO_BURN * dt) : Math.min(1, d.nitro + NITRO_REFILL * dt);
 
   // Drive force at the wheels, cut while shifting and by the rev limiter, limited by what the tyres can put down
   let drive = 0;
@@ -210,7 +214,8 @@ function stepDrive(d, spec, input, v, dt) {
     drive = torque * ratio * spec.efficiency / spec.wheelRadius;
   }
   // Traction control holds the tyres at their limit; with far more torque than that they still break loose
-  const traction = spec.grip * spec.mass * G * spec.driven;
+  const grip = input.grip ?? 1;
+  const traction = spec.grip * grip * spec.mass * G * spec.driven;
   d.wheelspin = drive > traction * 1.25;
   if (d.wheelspin) rpm = Math.min(spec.redline, rpm + Math.min(1, drive / traction - 1.25) * 1500); // the engine flares
   if (drive > traction) drive = traction * (d.wheelspin ? 0.88 : 0.97);
@@ -219,8 +224,8 @@ function stepDrive(d, spec, input, v, dt) {
   // engine braking off the throttle, rolling resistance, air drag
   const speed = Math.abs(v);
   let resist = 0;
-  if (brake > 0) resist += brake * spec.brake * spec.mass;
-  if (input.handbrake) resist += 0.45 * spec.mass * G * 0.5;
+  if (brake > 0) resist += brake * spec.brake * grip * spec.mass;
+  if (input.handbrake) resist += 0.45 * grip * spec.mass * G * 0.5;
   if (!throttle && !d.shift) {
     // off the throttle: engine braking, or an electric car's regenerative braking (fading out as it stops)
     resist += spec.electric ? spec.regen * Math.min(1, speed / 5) : spec.engineBrake * (rpm / spec.redline) * ratio / spec.wheelRadius;

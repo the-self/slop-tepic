@@ -194,6 +194,10 @@ function populationContext() {
     nearEdges: [], nearTransitEdges: [], nearSignals: [], track: {}, KERB: 1.6, QUEUE_GAP: 0.62,
     transit: { paths: [] }, fleetRoutes: [],
     atCurb: () => {}, laneClear: () => true, drawModel: () => {},
+    vehicleAt: () => false, wallAt: null,
+    // (the hour's weighing, traffic-demand.js: uniform here)
+    nearCarWeights: [], nearPedWeights: [], weighNear: () => {},
+    pickWeighted: (list) => list[Math.floor(Math.random() * list.length)],
     place: (v, e, lane, s) => Object.assign(v, { edge: e, lane, s })
   };
   context.nearView = trafficFunction('nearView', context);

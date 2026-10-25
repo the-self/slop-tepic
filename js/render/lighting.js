@@ -22,7 +22,8 @@ import { SunLight } from 'three/addons/lights/SunLight.js';
 import { SunLightNode } from 'three/addons/lights/SunLightNode.js';
 import { cityUniforms } from './tsl-materials.js';
 import { GEO } from '../world/city-geodata.js';
-import { LiveWeather, sunDirection } from '../world/weather.js';
+import { LiveWeather, sunDirection, isRaining } from '../world/weather.js';
+import { localHour } from '../sim/traffic-demand.js';
 import { SLOPES, townHeight } from '../world/ground.js';
 
 // js/render/lighting.js
@@ -34,6 +35,7 @@ const TIME_PRESETS = {
   golden: {
     id: 'golden',
     name: 'Golden Hour · 17:45',
+    hour: 17.75, // (the traffic's and the crowds' hour, traffic-demand.js)
     // Crisp street-canyon sun slicing across avenues & intersections so buildings, cars, trees & pedestrians cast sharp shadows
     sunDir: new THREE.Vector3(-0.44, 0.58, -0.68).normalize(),
     sunColor: 0xffca92,
@@ -61,6 +63,7 @@ const TIME_PRESETS = {
   midday: {
     id: 'midday',
     name: 'Sunny Midday · 13:30',
+    hour: 13.5,
     sunDir: new THREE.Vector3(-0.34, 0.82, -0.46).normalize(),
     sunColor: 0xfff5e8,
     sunIntensity: 6.6,
@@ -87,6 +90,7 @@ const TIME_PRESETS = {
   twilight: {
     id: 'twilight',
     name: 'Blue Hour · 19:15',
+    hour: 19.25,
     sunDir: new THREE.Vector3(-0.52, 0.36, -0.77).normalize(),
     sunColor: 0xff9466,
     sunIntensity: 3.1,
@@ -113,6 +117,7 @@ const TIME_PRESETS = {
   midnight: {
     id: 'midnight',
     name: 'Night · 23:00',
+    hour: 23,
     sunDir: new THREE.Vector3(0.42, 0.68, -0.60).normalize(),
     sunColor: 0x8cb0e8,
     sunIntensity: 1.45,
@@ -182,7 +187,7 @@ function mixPresets(a, b, t) {
 
 // Overlays live conditions onto blended preset params; returns how much of the direct sun the clouds block (0..1)
 function applyWeather(p, w) {
-  const raining = w.rainRate > 0.05 || (w.code >= 51 && w.code <= 67) || (w.code >= 80 && w.code <= 82) || w.code >= 95;
+  const raining = isRaining(w);
   const storm = w.code >= 95 ? 1 : 0;
   const foggy = w.code === 45 || w.code === 48 ? 1 : 0;
   // Low & mid decks shade the sun; thin high cirrus barely does
@@ -353,6 +358,13 @@ class LightingSystem {
     this.scene.add(this.sky);
   }
 
+  // The hour of the day it is in the town (0-24, local): the live clock's in the weather location's time zone, or the
+  // preset's own
+  get hourOfDay() {
+    if (this.activePresetId !== 'live') return TIME_PRESETS[this.activePresetId]?.hour ?? 14;
+    return localHour(this.liveClock(), this.weather.location?.timeZone);
+  }
+
   get isNight() {
     return this.activePresetId === 'midnight' || (this.activePresetId === 'live' && this.uNightFactor.value > 0.5);
   }
@@ -448,6 +460,7 @@ class LightingSystem {
     this.hemiLight.color.set(p.hemiSky);
     this.hemiLight.groundColor.set(p.hemiGround);
     this.hemiLight.intensity = p.hemiIntensity;
+    this.baseHemi = p.hemiIntensity; // (what a lightning flash adds to, see flash())
 
     this.scene.fog.color.set(p.fogColor);
     this.scene.fog.density = p.fogDensity;
@@ -462,6 +475,7 @@ class LightingSystem {
     this.sky.cloudDensity.value = p.cloudDensity;
     this.sky.sunPosition.value.copy(skySunDir);
     this.uSkyExposure.value = p.skyExposure;
+    this.baseSkyExposure = p.skyExposure;
     this.uNightFactor.value = p.nightFactor;
 
     cityUniforms.uSunColor.value.set(p.sunColor);
@@ -487,6 +501,24 @@ class LightingSystem {
     const altitude = focusPos && Number.isFinite(focusPos.y) ? Math.max(0, focusPos.y - townHeight(focusPos.x, focusPos.z)) : 0;
     this.sunLight.shadow.camera.far = Math.max(300, Math.min(720, 260 + altitude * 1.6));
     if (this.activePresetId === 'live') this.updateLive();
+    if (this.flashStart) this.updateFlash();
+  }
+
+  // Lightning: the sky and everything under it light up white for a moment, flicker once or twice and fade within a
+  // second (strength 0..1, a near strike 1). main.js fires it during thunderstorms
+  flash(strength = 1) {
+    this.flashStart = performance.now();
+    this.flashStrength = strength;
+    this.flashFlicker = 0.18 + Math.random() * 0.12;
+  }
+
+  updateFlash() {
+    const t = (performance.now() - this.flashStart) / 1000;
+    const on = t < 0.08 || Math.abs(t - this.flashFlicker) < 0.05 ? 1 : 0.35;
+    const f = t > 0.9 ? 0 : this.flashStrength * Math.exp(-t * 4) * on;
+    this.hemiLight.intensity = (this.baseHemi ?? this.hemiLight.intensity) + 4 * f;
+    if (this.baseSkyExposure !== undefined) this.uSkyExposure.value = this.baseSkyExposure * (1 + 3 * f);
+    if (!f) this.flashStart = 0;
   }
 }
 

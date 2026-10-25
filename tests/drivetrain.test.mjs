@@ -57,7 +57,7 @@ test('a limited car stops pulling at its limiter', () => {
 });
 
 test('nitro adds power while it lasts, then refills', () => {
-  const s = spec('nissan-sentra');
+  const s = spec('volkswagen-golf-gti');
   // (from 60 km/h: below that a front-drive car can't put more power down anyway)
   const run = (nitro) => {
     const d = createDriveState(s);
@@ -73,6 +73,25 @@ test('nitro adds power while it lasts, then refills', () => {
   const d = nitro.d;
   stepDrive(d, s, { throttle: 1, nitro: false, power: 1 }, 30, 1);
   assert.ok(d.nitro > 0 && d.nitro < 0.1, 'and refills slowly off it');
+});
+
+test('only the sports cars and supercars have a nitrous kit', () => {
+  for (const m of CAR_MODELS) {
+    const kit = spec(m.id).nitro;
+    assert.equal(kit, !m.electric && (m.class === 'sport' || m.class === 'super'), `${m.id}: ${kit ? 'a kit' : 'none'}`);
+  }
+  const s = spec('nissan-sentra');
+  const d = createDriveState(s);
+  assert.equal(d.nitro, 0);
+  d.gear = 3;
+  const v0 = 60 / 3.6;
+  const plain = createDriveState(s);
+  plain.gear = 3;
+  assert.equal(stepDrive(d, s, { throttle: 1, nitro: true, power: 1 }, v0, DT), stepDrive(plain, s, { throttle: 1, nitro: false, power: 1 }, v0, DT),
+    'Shift does nothing in a Sentra');
+  assert.equal(d.nitroOn, false);
+  stepDrive(d, s, { throttle: 0, nitro: false, power: 1 }, v0, 30);
+  assert.equal(d.nitro, 0, 'and there is no tank to refill');
 });
 
 test('S brakes a moving car, then reverses it from a standstill; W brings it back into first', () => {
@@ -170,4 +189,23 @@ test('the Italika motos top out at their own speeds', async () => {
     const top = launch(buildSpec(m), 60).v * 3.6;
     assert.ok(Math.abs(top - m.top) <= m.top * 0.03, `${m.id} tops out at ${top.toFixed(0)} km/h, not ${m.top}`);
   }
+});
+
+test('on a wet road a car stops in a longer distance and puts down less power', () => {
+  const s = spec('nissan-versa');
+  const stopping = (grip) => {
+    const d = createDriveState(s);
+    let v = 20, x = 0;
+    while (v > 0.05) {
+      v = stepDrive(d, s, { brake: 1, power: 1, grip }, v, DT);
+      x += v * DT;
+    }
+    return x;
+  };
+  const dry = stopping(1), wet = stopping(0.7);
+  assert.ok(wet > dry * 1.25 && wet < dry * 1.6, `from 72 km/h: ${dry.toFixed(1)} m dry, ${wet.toFixed(1)} m wet`);
+  const fast = spec(CAR_MODELS.reduce((a, m) => (m.power[0] > a.power[0] ? m : a)).id);
+  const d = createDriveState(fast);
+  stepDrive(d, fast, { throttle: 1, power: 1, grip: 0.7 }, 1, DT);
+  assert.equal(d.wheelspin, true, 'the most powerful car spins its tyres pulling away in the wet');
 });
