@@ -410,7 +410,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
           const geo = src.geometry.clone().applyMatrix4(src.matrixWorld);
           geo.setAttribute('paintColor', new THREE.InstancedBufferAttribute(new Float32Array(NUM_CARS * 3), 3));
           geo.setAttribute('carState', new THREE.InstancedBufferAttribute(new Float32Array(NUM_CARS * 4), 4));
-          const mesh = new THREE.InstancedMesh(geo, createModelCarMaterial(src.material.map), NUM_CARS);
+          const mesh = new THREE.InstancedMesh(geo, createModelCarMaterial(src.material.map, src.material.roughnessMap), NUM_CARS);
           mesh.count = 0;
           mesh.frustumCulled = false;
           mesh.castShadow = mesh.receiveShadow = true;

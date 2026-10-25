@@ -122,14 +122,19 @@ Use `--keep-width` for props that stand alone.
 
 - **Cars are in.** The ten best sellers (Versa, Aveo, March, NP300, Vento, Gol, Kicks, Onix, Yaris, Rio) are
   Meshy models in `assets/models/cars/`. They were drawn white from prompts (`tools/models/jobs/cars/`, 18
-  credits each), then prepared with `prepare.mjs --length <its real length> --yaw 90 --ratio 1 --texture 1024`.
+  credits each), then prepared with `prepare.mjs --length <its real length> --yaw 90 --wheel <tyre radius> --ratio 1 --texture 1024`.
   Meshy's front view has every car's nose at -x, and the game's cars face +z.
   - **Data**: a car model's `glb` field (`js/models/cars/`) names its file.
   - **Traffic**: `sim/traffic.js` loads those files in the background. Near the camera (`CAR_PROXY_DISTANCE`) such
     a car is drawn with its own instanced mesh, at scale 1, with its wheels in it. Beyond that distance it is
     its body shape's ~250-triangle stand-in, as before.
-  - **Material**: `createModelCarMaterial` (`actors/actor-models.js`) puts the instance's paint where the
-    texture is white and unsaturated, and lights the red lamps at the back with the brake.
+  - **Paint mask**: `prepare.mjs` bakes one into each car's metallic-roughness texture (R: the mask, G: the
+    roughness). The mask is the texture's white areas, minus the wheels, grown 3 px over edges and seams.
+    `createModelCarMaterial` (`actors/actor-models.js`) paints the instance's colour through it, following the
+    texture's brightness, and lights the red lamps at the back with the brake.
+  - **Two mistakes not to repeat**: a plain "paint where it's white" threshold left pale stripes along every
+    edge and seam, and it painted the silver rims too. The wheels are found where the tyres touch the ground;
+    `--wheel` must be the real tyre radius, from the tyre size, or the disc also takes the fender's paint.
   - **Not done yet**: these cars don't crumple and their wheels don't turn. The prompts asked for no badges,
     but Nano Banana still drew some on the grilles.
   - **Adding one**: a job, the preparation, the `glb` field. Check that the nose faces +z (`.claude/cars.html`
