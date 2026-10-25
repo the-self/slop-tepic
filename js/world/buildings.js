@@ -2056,10 +2056,15 @@ function buildCityBlocks(scene) {
         } else if (hasSign || chance(0.55)) {
           const [ax, az] = toFront(0.9);
           const [sx, sz] = toFront(0.16); // the sign flat on the wall above the awning
-          const signY = Math.max(gf, base) + (floors < 2 ? h - 0.45 : storeys[MEX] + 0.6);
+          // (a one-storey shop's awning just over 1.9 m up and its sign standing on the parapet, a board over the roof
+          // line: tucked under it, the sign hid behind the awning's 1.5 m of canvas from the sidewalk. 0.35 m over the
+          // awning's top, it clears its front edge for an eye 1.6 m up from about 8 m out)
+          const awningY = floors < 2 ? 2.3 : Math.min(2.7, storeys[MEX] * 0.9) - 0.15;
+          const signY = Math.max(gf, base) + (floors < 2 ? Math.max(h - 0.33, awningY + 0.375 + 0.35 + 0.31) : storeys[MEX] + 0.6);
           const sg = hasSign ? signNo - 1 : undefined;
-          blk.awnings.push({ x: ax, y: Math.max(gf, base) + Math.min(2.7, storeys[MEX] * 0.9) - 0.15, g: Math.max(gf, base), z: az, w: 1.5, d: Math.min(7, len - 1.2), sideDir: ou || 1,
-            colorIdx: strip ? plazaAwning : irange(0, 4), ry, sign: sg, signY, signPX: sx, signPZ: sz, signW: 0.12, signH: 0.62, noSign: sg === undefined && floors < 2 });
+          // (no business on record: an awning with no sign, never a made-up name)
+          blk.awnings.push({ x: ax, y: Math.max(gf, base) + awningY, g: Math.max(gf, base), z: az, w: 1.5, d: Math.min(7, len - 1.2), sideDir: ou || 1,
+            colorIdx: strip ? plazaAwning : irange(0, 4), ry, sign: sg, signY, signPX: sx, signPZ: sz, signW: 0.12, signH: 0.62 });
         }
       });
     }
@@ -2313,39 +2318,6 @@ function buildCityBlocks(scene) {
   }
   group.add(awningInst);
 
-  const signThemes = [
-    { bg: '#161210', border: '#c89d54', text: 'LONCHERÍA LA TEPIQUEÑA', color: '#ffe4a8' },
-    { bg: '#0c2244', border: '#38b6ff', text: 'FARMACIA DEL CENTRO', color: '#ffffff' },
-    { bg: '#142b20', border: '#d4af37', text: 'LIBRERÍA Y CAFÉ NAYAR', color: '#fff2cc' },
-    { bg: '#280a10', border: '#ff5252', text: 'TACOS Y TORTAS · 24 HRS', color: '#ffd180' },
-    { bg: '#101318', border: '#e0e6ed', text: 'RELOJERÍA AMADO NERVO', color: '#f5f9ff' }
-  ];
-  const MAX_SIGNS_PER_THEME = Math.ceil(MAX_AWNINGS / signThemes.length) + 32;
-  const signInsts = signThemes.map((st) => {
-    const c = document.createElement('canvas');
-    c.width = 512;
-    c.height = 96;
-    const ctx = c.getContext('2d');
-    ctx.fillStyle = st.bg;
-    ctx.fillRect(0, 0, 512, 96);
-    ctx.strokeStyle = st.border;
-    ctx.lineWidth = 6;
-    ctx.strokeRect(6, 6, 500, 84);
-    ctx.fillStyle = st.color;
-    ctx.font = '800 26px Inter, Arial, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(st.text, 256, 50);
-
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const sMat = new THREE.MeshBasicNodeMaterial({ map: tex });
-    const sInst = new THREE.InstancedMesh(unitBox, sMat, MAX_SIGNS_PER_THEME);
-    sInst.frustumCulled = false;
-    group.add(sInst);
-    return sInst;
-  });
-
   // 5B. Shop sign atlas (city-geodata.js `signs`: chains under parody names, trades, local businesses), in pages of
   //     one canvas texture each, each sign box picking its page (its mesh) and slot (per instance). Page 0 holds the
   //     chains & trades for good; the businesses' own names (some 6,600) come and go in the other pages, drawn in as
@@ -2518,7 +2490,6 @@ function buildCityBlocks(scene) {
     let tinacoCount = 0;
     let awningCount = 0;
     let shedCount = 0;
-    const signCounts = signInsts.map(() => 0);
     for (const page of atlasPages) page.count = 0;
     signSlots.begin();
 
@@ -2586,7 +2557,7 @@ function buildCityBlocks(scene) {
         awningInst.setMatrixAt(awningCount, dummy.matrix);
         awningInst.setColorAt(awningCount, awningPalette[a.colorIdx % awningPalette.length]);
 
-        const themeIdx = a.sign !== undefined ? a.sign % storeThemeColors.length : awningCount % signInsts.length;
+        const themeIdx = (a.sign ?? awningCount) % storeThemeColors.length; // (its shop light's tint)
         if (a.sign !== undefined && atlasPages.length) {
           // the shop's own sign (atlas slot), flat on its facade above the awning (or the chain's fascia band): a
           // business's name near the camera from the name pages, else its trade's (or the chain's) from page 0
@@ -2605,11 +2576,6 @@ function buildCityBlocks(scene) {
           dummy.updateMatrix();
           page.inst.setMatrixAt(page.count, dummy.matrix);
           page.slots.setX(page.count++, slot);
-        } else if (!a.noSign && a.sign === undefined && signCounts[themeIdx] < MAX_SIGNS_PER_THEME) {
-          dummy.position.set(a.x, a.signY ?? 4.68 + (a.g || 0), a.z);
-          dummy.scale.set(0.28, 0.86, a.d * 0.92);
-          dummy.updateMatrix();
-          signInsts[themeIdx].setMatrixAt(signCounts[themeIdx]++, dummy.matrix);
         }
         if (collectNearLights) {
           activeAwnings.push({ a, themeIdx, ry: a.ry ?? blk.ry ?? 0 });
@@ -2647,10 +2613,6 @@ function buildCityBlocks(scene) {
     flagRange(awningInst.instanceMatrix, awningCount);
     if (awningInst.instanceColor) flagRange(awningInst.instanceColor, awningCount);
 
-    signInsts.forEach((sInst, idx) => {
-      sInst.count = signCounts[idx];
-      flagRange(sInst.instanceMatrix, signCounts[idx]);
-    });
     // the names that came near: drawn into their slots, and only their pages uploaded again
     for (let k = 0; k < signSlots.drawn.length; k += 2) {
       const s = signSlots.drawn[k];
