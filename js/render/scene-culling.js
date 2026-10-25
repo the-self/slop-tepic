@@ -12,6 +12,10 @@ import * as THREE from 'three/webgpu';
 //    originals stop casting. The stand-ins share one material per face side, so a cell costs one draw.
 // 3. Splits the remaining large batches into cells for view-frustum culling, keeping their full draw distance: the
 //    instanced ones by instance, the plain merged ones (the city's curbs, sidewalks & meadows) by triangle.
+// 4. Trims what the two cascades walk and draw (each re-renders the scene: ~6.5 ms of CPU a frame at street level,
+//    half of it spent walking & culling objects, not drawing): the stand-ins in regions culled whole against each
+//    cascade, the static meshes that cast nothing out of their walk, and the small props out of the far cascade,
+//    whose texels (~22 cm at street level) they would cover a couple of.
 
 const SHADOW_PROXY_LAYER = 3;
 // Distance at which an instance of typical size s (m) is culled: about s / d * 1100 px tall on a 1300 px viewport
@@ -21,6 +25,12 @@ const CULL_MAX = 2000; // beyond this the props are kept at any distance
 const PROXY_CELL = 500; // the far cascade spans ~400 m at street level: a cascade sees a few cells
 const PROXY_TRIANGLES = 600; // ...but a sparse caster's cells grow to hold about as many triangles (the hills' 75 m cells)
 const STATIC_CELL = 1000;
+// The stand-ins are culled against each cascade's frustum a region at a time (~2200 cells, of which a cascade draws a
+// few dozen): a region holds the cells whose centres fall in it
+const PROXY_REGION = 2000;
+// Props smaller than this (typical size, instanceSize) cast into the near cascade only: in the far one a texel is
+// ~22 cm at street level (690 m over 3072 px), so a lamp post's or a bin's shadow there is a texel or two wide
+const FAR_SHADOW_MIN = 1.5;
 
 const _m = new THREE.Matrix4();
 const _wm = new THREE.Matrix4();
@@ -28,6 +38,9 @@ const _size = new THREE.Vector3();
 const _a = new THREE.Vector3();
 const _b = new THREE.Vector3();
 const _c = new THREE.Vector3();
+const _pm = new THREE.Matrix4();
+const _frustum = new THREE.Frustum();
+const _sphere = new THREE.Sphere();
 
 const triangleCount = (geo) => (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
 
@@ -217,6 +230,74 @@ function showOnlyTo(scene, group, layers) {
   };
 }
 
+// Whether anything under `o` casts a shadow or is a light (the clustered lighting gathers the lights render by render)
+function castsOrLights(o) {
+  if (o.isLight || (o.castShadow && (o.isMesh || o.isLine || o.isPoints))) return true;
+  for (const c of o.children) if (castsOrLights(c)) return true;
+  return false;
+}
+
+/**
+ * Moves the children of `root` (a child of the scene) that neither cast a shadow nor hold a light into one group under
+ * it, so the cascades can skip them whole (null when there are fewer than two). The group sits where they did, at
+ * identity under the same parent, so their world matrices don't change; it carries the root's render order, which
+ * three.js hands down from groups only.
+ */
+function gatherQuietChildren(root) {
+  const quiet = [];
+  const kept = [];
+  for (const c of root.children) (castsOrLights(c) ? kept : quiet).push(c);
+  if (quiet.length < 2) return null;
+  const group = new THREE.Group();
+  group.name = root.name + 'NoShadow';
+  group.renderOrder = root.isGroup ? root.renderOrder : 0;
+  // (straight on the arrays: Object3D.remove splices one child at a time, and StreetDetails has ~7000)
+  root.children = kept;
+  for (const c of quiet) {
+    c.parent = group;
+    group.children.push(c);
+  }
+  root.add(group);
+  return group;
+}
+
+/**
+ * Culls for the two cascade cameras `cams` (near, far), render by render: the stand-in `regions` ({ group, sphere })
+ * outside the cascade's frustum, the `quiet` groups (nothing in them casts), and in the far cascade the `nearOnly`
+ * props. Everything is as it was after each render. The regions wait for `live()`: the warm-up frame must see every
+ * stand-in to compile its pipeline.
+ */
+function cullForCascades(scene, cams, regions, quiet, nearOnly, live) {
+  const before = scene.onBeforeRender, after = scene.onAfterRender;
+  const shown = new Uint8Array(nearOnly.length);
+  scene.onBeforeRender = function (renderer, scn, camera, target) {
+    before.call(this, renderer, scn, camera, target);
+    const i = cams.indexOf(camera);
+    if (i < 0) return;
+    for (const g of quiet) g.visible = false;
+    if (live()) {
+      // (the frustum three.js culls each object with, from the same matrices)
+      _pm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      _frustum.setFromProjectionMatrix(_pm, camera.coordinateSystem, camera.reversedDepth);
+      for (const r of regions) r.group.visible = _frustum.intersectsSphere(r.sphere);
+    }
+    if (i === 1) {
+      for (let k = 0; k < nearOnly.length; k++) {
+        shown[k] = nearOnly[k].visible ? 1 : 0;
+        nearOnly[k].visible = false;
+      }
+    }
+  };
+  scene.onAfterRender = function (renderer, scn, camera, target) {
+    after.call(this, renderer, scn, camera, target);
+    const i = cams.indexOf(camera);
+    if (i < 0) return;
+    for (const g of quiet) g.visible = true;
+    for (const r of regions) r.group.visible = true;
+    if (i === 1) for (let k = 0; k < nearOnly.length; k++) nearOnly[k].visible = shown[k] === 1;
+  };
+}
+
 /**
  * Sets up the culling of the static city under `roots` (Object3Ds). `shadow` is the SunLightShadow whose cascade
  * cameras render the shadow stand-ins (none are made without it). Per-frame culling runs in updateSceneCulling().
@@ -240,7 +321,8 @@ function setupSceneCulling(scene, roots, shadow = null) {
   for (const mesh of chunkable) {
     // unlit (glowing) props, like signal lenses & lamp bulbs, read from much further away at night
     const glow = mesh.material.isMeshBasicNodeMaterial || mesh.material.type === 'MeshBasicNodeMaterial' ? 3 : 1;
-    const cullDist = Math.max(CULL_MIN, instanceSize(mesh) * CULL_PER_METRE * glow);
+    const size = instanceSize(mesh);
+    const cullDist = Math.max(CULL_MIN, size * CULL_PER_METRE * glow);
     if (cullDist > CULL_MAX) {
       largeMeshes.push(mesh);
       continue;
@@ -248,7 +330,7 @@ function setupSceneCulling(scene, roots, shadow = null) {
     const cell = Math.min(600, Math.max(250, cullDist * 0.5));
     for (const chunk of replaceWithChunks(mesh, cell)) {
       const sphere = chunk.boundingSphere.clone().applyMatrix4(chunk.matrixWorld);
-      culled.push({ mesh: chunk, x: sphere.center.x, y: sphere.center.y, z: sphere.center.z, r: sphere.radius, d: cullDist });
+      culled.push({ mesh: chunk, x: sphere.center.x, y: sphere.center.y, z: sphere.center.z, r: sphere.radius, d: cullDist, size });
     }
   }
 
@@ -261,6 +343,7 @@ function setupSceneCulling(scene, roots, shadow = null) {
       if (cam && cam.layers) cams.push(cam);
     }
   }
+  const regions = [];
   if (cams.length) {
     const instancedBySig = new Map(); // geometry signature + face side -> { geometry, material, cells: Map(key -> [matrices]) }
     const triCells = new Map(); // face side -> Map(key -> number[] world positions)
@@ -365,6 +448,7 @@ function setupSceneCulling(scene, roots, shadow = null) {
     proxyLayers.set(SHADOW_PROXY_LAYER);
     showOnlyTo(scene, proxies, proxyLayers);
     const firstProxy = new Map(); // material + kind -> the stand-in that compiles their shared pipeline
+    const byRegion = new Map(); // region key -> { group, sphere }
     const addProxy = (mesh) => {
       mesh.name = 'ShadowProxy';
       mesh.layers.set(SHADOW_PROXY_LAYER);
@@ -375,7 +459,19 @@ function setupSceneCulling(scene, roots, shadow = null) {
       const kind = mesh.material.uuid + (mesh.isInstancedMesh ? ':i' : ':m');
       if (firstProxy.has(kind)) mesh.userData.sharesPipelineWith = firstProxy.get(kind);
       else firstProxy.set(kind, mesh);
-      proxies.add(mesh);
+      // (the stand-ins sit at identity: their bounding spheres are in the world already)
+      _sphere.copy(mesh.isInstancedMesh ? mesh.boundingSphere : mesh.geometry.boundingSphere);
+      const key = Math.floor(_sphere.center.x / PROXY_REGION) + ',' + Math.floor(_sphere.center.z / PROXY_REGION);
+      let region = byRegion.get(key);
+      if (!region) {
+        region = { group: new THREE.Group(), sphere: _sphere.clone() };
+        region.group.name = 'ShadowProxyRegion';
+        region.group.userData.shadowProxy = true;
+        proxies.add(region.group);
+        byRegion.set(key, region);
+      }
+      region.sphere.union(_sphere);
+      region.group.add(mesh);
     };
     for (const entry of instancedBySig.values()) {
       for (const list of entry.cells.values()) {
@@ -395,13 +491,13 @@ function setupSceneCulling(scene, roots, shadow = null) {
       }
     }
     for (const cam of cams) cam.layers.enable(SHADOW_PROXY_LAYER);
+    regions.push(...byRegion.values());
   }
 
-  // Preserve the shadow stand-ins above before splitting their visible geometry.
-  // These large objects stay visible at any distance and need no per-frame distance checks.
-  for (const mesh of largeMeshes) {
-    if (!mesh.castShadow) replaceWithChunks(mesh, STATIC_CELL);
-  }
+  // After the shadow stand-ins above, split the large props into cells. They stay visible at any distance and need no
+  // per-frame distance checks; those still casting their own shadows (the knock-over ones, like the plazas' faroles:
+  // ~3000 of them, 1.2M triangles in one batch) are then drawn into each cascade only where it reaches.
+  for (const mesh of largeMeshes) replaceWithChunks(mesh, STATIC_CELL);
   const largePlain = [];
   for (const root of roots) {
     root.traverse((o) => {
@@ -417,13 +513,27 @@ function setupSceneCulling(scene, roots, shadow = null) {
   // (in a few dozen squares at most: the hills' mesh spans 38 km, and every square is a draw)
   for (const mesh of largePlain) splitMesh(mesh, Math.max(STATIC_CELL, mesh.geometry.boundingSphere.radius * mesh.matrixWorld.getMaxScaleOnAxis() / 4));
 
+  // 4. What the cascades walk and draw: each root's meshes that cast nothing in one group they skip (~1800 of them at
+  //    street level, which they would cull & sort only to drop), the stand-ins by region, and the small props cast
+  //    into the near cascade only
+  if (cams.length) {
+    const quiet = [];
+    for (const root of roots) {
+      const group = root.parent === scene ? gatherQuietChildren(root) : null;
+      if (group) quiet.push(group);
+    }
+    const nearOnly = culled.filter((c) => c.mesh.castShadow && c.size < FAR_SHADOW_MIN).map((c) => c.mesh);
+    cullForCascades(scene, cams, regions, quiet, nearOnly, () => state.live);
+  }
+
   state.culled = culled;
 }
 
-const state = { culled: [], frozen: new Set(), pendingRelease: null };
+const state = { culled: [], frozen: new Set(), pendingRelease: null, live: false };
 
 // Per frame (after the warm-up frame, which must see everything): hide the chunks beyond their cull distance
 function updateSceneCulling(cameraPosition) {
+  state.live = true;
   const { x, y, z } = cameraPosition;
   for (const c of state.culled) {
     const dx = c.x - x;
