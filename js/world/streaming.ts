@@ -1,15 +1,19 @@
 import * as THREE from 'three/webgpu';
 import { TILE_CELLS, createTileGrid, bucketTriangles, tilesAround } from './tiles.ts';
+import type { Ground } from './city-geodata.js';
+import type { FloatArray, Lattice, Rect } from './lattice.ts';
+import type { TileGrid } from './tiles.ts';
+import type { Bounds6, TileInitMessage, TileLayerMessage, TilePart, TileRequestMessage, TileWorkerOut } from './tile-worker.ts';
 
-// js/world/streaming.js
+// js/world/streaming.ts
 // Streams the city's heaviest layers tile by tile around the camera, the way GTA streams its map: the flat ground
 // layers (the road deck, sidewalks & curbs, lots, paint, empedrado: built at y = 0 in world space) are handed over
 // once with addLayer(); from then on only the tiles within DETAIL_RADIUS of the camera, and of where it is heading
 // LOOKAHEAD seconds on, are laid on the slopes and drawn, and those left behind are dropped. Laying a tile (cutting it
-// out and onto the ground's lattice) is the costly part: Web Workers do it (tile-worker.js), each for its share of the
+// out and onto the ground's lattice) is the costly part: Web Workers do it (tile-worker.ts), each for its share of the
 // tiles, and the main thread only puts what they send back in the scene, a few milliseconds' worth a frame. Where the
 // tiles of a layer that covers the ground (the road deck) are not drawn, the hills' mesh draws a plain floor
-// (terrain.js, through `mask`), so nothing is ever a hole.
+// (terrain.ts, through `mask`), so nothing is ever a hole.
 
 const DETAIL_RADIUS = 1100; // m around the camera at street level...
 const ALTITUDE_RADIUS = 1.0; // ...and this much more per metre it is over the ground (to DETAIL_RADIUS * 2)
@@ -22,12 +26,78 @@ const PLAN_EVERY = 0.2; // s between the plans of what to load & drop
 const RUSH_BUDGET = 12; // ms a frame of showing tiles just after a teleport, while those round the player come in...
 const RUSH_RADIUS = 300; // ...as far as this (m)
 
+/** The hills' floor's mask of the tiles drawn: world (x, z) to its uv is (x - origin) / span. */
+export interface TileMask {
+  texture: THREE.DataTexture;
+  origin: THREE.Vector2;
+  span: THREE.Vector2;
+  set: (key: number, on: boolean) => void;
+}
+/** A layer handed to the streamer: how its meshes are drawn, its attributes' names, item sizes and normalization, and
+ *  the tiles it has something in. */
+export interface StreamLayer {
+  id: number;
+  name: string;
+  material: THREE.Material;
+  castShadow: boolean;
+  receiveShadow: boolean;
+  renderOrder: number;
+  covers: boolean;
+  names: string[];
+  sizes: number[];
+  normalized: boolean[];
+  keys: Set<number>;
+}
+export type TileState = 'loading' | 'arrived' | 'shown' | 'failed' | 'dropped';
+/** A tile in hand: its group once shown, the parts the worker sent until then, its distance (m) from the focus, and
+ *  whether a layer covering the ground is drawn in it. */
+export interface StreamTile {
+  key: number;
+  state: TileState;
+  group: THREE.Group | null;
+  parts: (TilePart | null)[] | null;
+  d: number;
+  covered: boolean;
+}
+interface WorkerSlot {
+  worker: Worker;
+  /** tiles it is laying */
+  busy: number;
+}
+/** Where the tiles are laid round: position (m), smoothed velocity (m/s), the last frame's seconds, the radius (m). */
+interface Focus {
+  x: number;
+  z: number;
+  vx: number;
+  vz: number;
+  dt: number;
+  radius: number;
+  primed: boolean;
+}
+export interface TileStreamerOptions {
+  scene: THREE.Object3D;
+  lattice: Lattice | null;
+  ground: Ground | null;
+  box?: Rect | null;
+  holes?: Float32Array | null;
+  workers?: number;
+}
+export interface StreamLayerOptions {
+  name?: string;
+  castShadow?: boolean;
+  receiveShadow?: boolean;
+  undersides?: boolean;
+  renderOrder?: number;
+  covers?: boolean;
+  cutHoles?: boolean;
+}
+
 /**
  * The tiles' state for the hills' floor (terrain.js): a texel per tile, 1 where a layer covering the ground is drawn.
  * Covers the tiles of the rectangle { x0, x1, z0, z1 } (the detailed city's box), `origin` & `span` placing it in the
  * world.
  */
-function createTileMask(grid, box) {
+function createTileMask(grid: TileGrid, box: Rect): TileMask {
   const i0 = Math.floor((box.x0 - grid.x0) / grid.size), i1 = Math.floor((box.x1 - grid.x0) / grid.size);
   const j0 = Math.floor((box.z0 - grid.z0) / grid.size), j1 = Math.floor((box.z1 - grid.z0) / grid.size);
   const w = i1 - i0 + 1, h = j1 - j0 + 1;
@@ -51,12 +121,24 @@ function createTileMask(grid, box) {
 }
 
 class TileStreamer {
+  grid: TileGrid;
+  root: THREE.Group;
+  mask: TileMask | null;
+  layers: StreamLayer[];
+  candidates: Set<number>;
+  tiles: Map<number, StreamTile>;
+  arrived: StreamTile[];
+  focus: Focus;
+  sincePlan: number;
+  rush: boolean;
+  workers: WorkerSlot[];
+
   /**
-   * `lattice`: the ground's (ground.js LATTICE, null in the flat city); `ground`: GEO.ground on the slopes (else null);
+   * `lattice`: the ground's (ground.ts LATTICE, null in the flat city); `ground`: GEO.ground on the slopes (else null);
    * `box`: the rectangle the hills' floor is masked over; `holes`: the river channels' holes in the road deck
-   * (waterways.js holes(): flat triangles x0 z0 x1 z1 x2 z2), cut out of the layers that ask for it once laid.
+   * (waterways.ts holes(): flat triangles x0 z0 x1 z1 x2 z2), cut out of the layers that ask for it once laid.
    */
-  constructor({ scene, lattice, ground, box = null, holes = null, workers = 2 }) {
+  constructor({ scene, lattice, ground, box = null, holes = null, workers = 2 }: TileStreamerOptions) {
     this.grid = createTileGrid(lattice, TILE_CELLS);
     this.root = new THREE.Group();
     this.root.name = 'StreamedTiles';
@@ -74,10 +156,10 @@ class TileStreamer {
     this.workers = [];
     for (let n = 0; n < workers; n++) {
       const worker = new Worker(new URL('./tile-worker.js', import.meta.url), { type: 'module' });
-      const slot = { worker, busy: 0 };
-      worker.onmessage = ({ data }) => this.receive(slot, data);
-      worker.onerror = (e) => console.error('[streaming] tile worker', e.message || e);
-      worker.postMessage({ type: 'init', lattice, cells: TILE_CELLS, ground, holes });
+      const slot: WorkerSlot = { worker, busy: 0 };
+      worker.onmessage = ({ data }: MessageEvent<TileWorkerOut>) => { this.receive(slot, data); };
+      worker.onerror = (e) => { console.error('[streaming] tile worker', e.message || e); };
+      worker.postMessage({ type: 'init', lattice, cells: TILE_CELLS, ground, holes } satisfies TileInitMessage);
       this.workers.push(slot);
     }
   }
@@ -90,10 +172,11 @@ class TileStreamer {
    * covers (it covers all the ground of the tiles it reaches, like the road deck: where its tiles are drawn, the hills'
    * floor under them is not); cutHoles (each tile laid is opened over the river channels, like the road deck).
    */
-  addLayer(geometry, material, { name = '', castShadow = false, receiveShadow = true, undersides = true, renderOrder = 0, covers = false, cutHoles = false } = {}) {
+  addLayer(geometry: THREE.BufferGeometry, material: THREE.Material,
+    { name = '', castShadow = false, receiveShadow = true, undersides = true, renderOrder = 0, covers = false, cutHoles = false }: StreamLayerOptions = {}): number {
     const names = Object.keys(geometry.attributes).sort((a, b) => (a === 'position' ? -1 : b === 'position' ? 1 : 0));
     const attrs = names.map((n) => geometry.attributes[n]);
-    const arrays = attrs.map((a) => (a.isInterleavedBufferAttribute
+    const arrays = attrs.map((a) => ('isInterleavedBufferAttribute' in a
       ? Float32Array.from({ length: a.count * a.itemSize }, (_, i) => a.getComponent(Math.floor(i / a.itemSize), i % a.itemSize))
       : a.array));
     const sizes = attrs.map((a) => a.itemSize);
@@ -108,8 +191,8 @@ class TileStreamer {
     const N = this.workers.length;
     this.workers.forEach((slot, n) => {
       // this worker's tiles' triangles, each once, renumbered in the order they are copied out
-      const local = new Map();
-      const share = [];
+      const local = new Map<number, number>();
+      const share: [key: number, tris: Uint32Array][] = [];
       for (const [key, tris] of buckets) {
         if (key % N !== n) continue;
         share.push([key, Uint32Array.from(tris, (t) => {
@@ -128,7 +211,7 @@ class TileStreamer {
           }
         }
       }
-      slot.worker.postMessage({ type: 'layer', id, arrays: out, sizes, normalAt: names.indexOf('normal'), cutHoles, buckets: share },
+      slot.worker.postMessage({ type: 'layer', id, arrays: out, sizes, normalAt: names.indexOf('normal'), cutHoles, buckets: share } satisfies TileLayerMessage,
         [...out.map((a) => a.buffer), ...share.map(([, tris]) => tris.buffer)]);
     });
     geometry.dispose();
@@ -141,7 +224,7 @@ class TileStreamer {
    * Loads and shows every tile within the radius of (x, z) before the game starts (the first frame must not open on
    * holes): a promise, resolved once none is still being laid
    */
-  async preload(x, z) {
+  async preload(x: number, z: number): Promise<void> {
     this.place(x, z, 0, true);
     this.plan();
     while ([...this.tiles.values()].some((t) => t.state === 'loading' || t.state === 'arrived')) {
@@ -152,7 +235,7 @@ class TileStreamer {
   }
 
   // Where the camera is, its velocity (smoothed, for the lookahead) and the radius its height over the ground asks for
-  place(x, z, altitude, reset = false) {
+  place(x: number, z: number, altitude: number, reset = false): void {
     const f = this.focus;
     if (reset || !f.primed) {
       Object.assign(f, { x, z, vx: 0, vz: 0, primed: true });
@@ -179,7 +262,7 @@ class TileStreamer {
    * is in), `altitude` its height over the ground there, `dt` the frame's seconds. Plans what to load and drop now and
    * then, and shows what the workers sent back within the frame's budget.
    */
-  update(position, altitude, dt) {
+  update(position: { x: number; z: number }, altitude: number, dt: number): void {
     this.focus.dt = dt;
     this.place(position.x, position.z, altitude);
     this.sincePlan += dt;
@@ -193,7 +276,7 @@ class TileStreamer {
   }
 
   // Ask the workers for the wanted tiles not in hand, nearest first; drop the ones left behind
-  plan() {
+  plan(): void {
     const { x, z, vx, vz, radius } = this.focus;
     const ax = x + vx * LOOKAHEAD, az = z + vz * LOOKAHEAD;
     const wanted = tilesAround(this.grid, this.candidates, radius, x, z, ax, az);
@@ -209,15 +292,15 @@ class TileStreamer {
       if (slot.busy >= MAX_IN_FLIGHT) continue;
       slot.busy++;
       this.tiles.set(key, { key, state: 'loading', group: null, parts: null, d, covered: false });
-      slot.worker.postMessage({ type: 'tile', key, layers: this.layers.filter((l) => l.keys.has(key)).map((l) => l.id) });
+      slot.worker.postMessage({ type: 'tile', key, layers: this.layers.filter((l) => l.keys.has(key)).map((l) => l.id) } satisfies TileRequestMessage);
     }
   }
 
-  receive(slot, msg) {
-    if (msg.type !== 'tile') return;
+  receive(slot: WorkerSlot, msg: TileWorkerOut): void {
+    // (a tile's: the only message the workers send)
     slot.busy--;
     const tile = this.tiles.get(msg.key);
-    if (!tile || tile.state !== 'loading') return; // (dropped meanwhile)
+    if (tile?.state !== 'loading') return; // (dropped meanwhile)
     if (msg.error) {
       // (not asked again while it stays in range: it would fail again)
       console.error(`[streaming] tile ${this.grid.i(msg.key)},${this.grid.j(msg.key)} could not be laid:`, msg.error);
@@ -230,16 +313,17 @@ class TileStreamer {
   }
 
   // Puts the arrived tiles in the scene, nearest first, for up to `budget` ms
-  showArrived(budget) {
+  showArrived(budget: number): void {
     const start = performance.now();
     this.arrived.sort((a, b) => a.d - b.d);
     while (this.arrived.length && performance.now() - start < budget) {
       const tile = this.arrived.shift();
+      if (!tile) break;
       if (this.tiles.get(tile.key) !== tile) continue;
       const group = new THREE.Group();
       group.name = `Tile ${this.grid.i(tile.key)},${this.grid.j(tile.key)}`;
       group.matrixAutoUpdate = false;
-      for (const part of tile.parts) {
+      for (const part of tile.parts ?? []) {
         if (!part) continue;
         const layer = this.layers[part.id];
         group.add(this.layerMesh(layer, part.arrays, part.bounds));
@@ -254,12 +338,12 @@ class TileStreamer {
   }
 
   // A layer's mesh over arrays (its attributes in the layer's order) whose bounds are known
-  layerMesh(layer, arrays, [x0, y0, z0, x1, y1, z1]) {
+  layerMesh(layer: StreamLayer, arrays: FloatArray[], [x0, y0, z0, x1, y1, z1]: Bounds6): THREE.Mesh {
     const geometry = new THREE.BufferGeometry();
     layer.names.forEach((n, k) => geometry.setAttribute(n, new THREE.BufferAttribute(arrays[k], layer.sizes[k], layer.normalized[k])));
     geometry.boundingBox = new THREE.Box3(new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1));
     geometry.boundingSphere = geometry.boundingBox.getBoundingSphere(new THREE.Sphere());
-    geometry.userData.keepArrays = true; // (dropped with its tile: scene-culling.js leaves it alone)
+    geometry.userData.keepArrays = true; // (dropped with its tile: scene-culling.ts leaves it alone)
     const mesh = new THREE.Mesh(geometry, layer.material);
     mesh.name = layer.name;
     mesh.castShadow = layer.castShadow;
@@ -270,10 +354,10 @@ class TileStreamer {
   }
 
   /**
-   * A mesh per layer for the start-up's shader warm-up (main.js), so no layer's pipelines are first built in play when
+   * A mesh per layer for the start-up's shader warm-up (main.ts), so no layer's pipelines are first built in play when
    * its first tile comes in: one triangle of no size each, under the city, every attribute in place
    */
-  warmupMeshes() {
+  warmupMeshes(): THREE.Mesh[] {
     return this.layers.map((layer) => {
       const arrays = layer.sizes.map((size) => new Float32Array(3 * size));
       for (let v = 0; v < 3; v++) arrays[0][v * 3 + 1] = -1000;
@@ -283,7 +367,7 @@ class TileStreamer {
     });
   }
 
-  drop(tile) {
+  drop(tile: StreamTile): void {
     this.tiles.delete(tile.key);
     if (tile.group) {
       this.root.remove(tile.group);
@@ -293,12 +377,12 @@ class TileStreamer {
     tile.state = 'dropped';
   }
 
-  disposeGroup(group) {
-    for (const mesh of group.children) mesh.geometry.dispose();
+  disposeGroup(group: THREE.Group): void {
+    for (const mesh of group.children as THREE.Mesh[]) mesh.geometry.dispose(); // (layerMesh's, every one)
   }
 
   /** How many tiles are loading, waiting and drawn */
-  get stats() {
+  get stats(): { loading: number; shown: number; layers: number } {
     let loading = 0, shown = 0;
     for (const t of this.tiles.values()) {
       if (t.state === 'shown') shown++;

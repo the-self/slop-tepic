@@ -1,7 +1,9 @@
-// js/models/cars/honda.js
+// js/models/cars/honda.ts
 // Honda (built in Celaya). Fields: README.md
 
-export const CARS = [
+import type { CarModel } from './index.ts';
+
+export const CARS: CarModel[] = [
   {
     id: 'honda-civic', name: 'Honda Civic', body: 'sedan', class: 'family',
     size: [4.67, 1.80, 1.42], mass: 1340, drive: 'fwd', power: [118, 6500], torque: [187, 4200], redline: 6800,

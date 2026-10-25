@@ -1,10 +1,12 @@
-// js/sim/crime-rules.js
+// js/sim/crime-rules.ts
 // The rules of the street, GTA-style: the wanted level (heat from crimes, one to five stars, lost by staying out of the
 // police's sight), the gangs' turf across the town, and how many police each star sends. No three.js, so node --test
-// imports it directly (tests/crime-rules.test.mjs). crime.js plays them out.
+// imports it directly (tests/crime-rules.test.mjs). crime.ts plays them out.
+
+import type { WeaponId } from './weapons.ts';
 
 // Heat at which each star is reached (index = stars)
-const STAR_HEAT = [0, 10, 60, 150, 320, 560];
+const STAR_HEAT: readonly number[] = [0, 10, 60, 150, 320, 560];
 const MAX_HEAT = 800;
 // Heat each crime adds when it is reported. Running someone over always gets reported (someone calls it in): the
 // first one is a star, the third two.
@@ -20,11 +22,23 @@ const CRIME_HEAT = {
   killCop: 170,
   explosion: 45,
   stealCop: 60,
-  robbery: 70 // a store's till (main.js): two stars, the staff call the police
+  robbery: 70 // a store's till (main.ts): two stars, the staff call the police
 };
+// A crime Wanted.report() knows
+type CrimeKind = keyof typeof CRIME_HEAT;
 
-// The police each star sends after the player: officers on foot and patrol cars
-const POLICE = {
+// The guns the police and the gangs carry
+type StreetGun = Extract<WeaponId, 'pistol' | 'smg' | 'rifle'>;
+
+// The police each star sends after the player: officers on foot and patrol cars (each array indexed by stars, 0..5)
+interface PoliceByStars {
+  foot: readonly number[];
+  cruisers: readonly number[];
+  shoots: readonly boolean[];
+  weapon: readonly (StreetGun | null)[];
+  speed: readonly number[];
+}
+const POLICE: PoliceByStars = {
   foot: [0, 2, 3, 4, 5, 6],
   cruisers: [0, 1, 2, 3, 4, 5],
   shoots: [false, false, true, true, true, true], // one star: they only come to arrest
@@ -33,27 +47,31 @@ const POLICE = {
 };
 
 // Seconds out of the police's sight it takes to lose a star
-const evadeTime = (stars) => 10 + stars * 5;
+const evadeTime = (stars: number): number => 10 + stars * 5;
 
-const starsFor = (heat) => {
+const starsFor = (heat: number): number => {
   let stars = 0;
   for (let i = 1; i < STAR_HEAT.length; i++) if (heat >= STAR_HEAT[i]) stars = i;
   return stars;
 };
 
 class Wanted {
+  heat = 0;
+  stars = 0; // 0..5
+  unseen = 0; // s since the police last saw the player
+
   constructor() {
     this.clear();
   }
 
-  clear() {
+  clear(): void {
     this.heat = 0;
     this.stars = 0;
     this.unseen = 0; // s since the police last saw the player
   }
 
   // A crime of `kind` (CRIME_HEAT); unwitnessed crimes go unpunished. Returns the stars gained.
-  report(kind, witnessed = true) {
+  report(kind: CrimeKind, witnessed = true): number {
     if (!witnessed || !Object.hasOwn(CRIME_HEAT, kind)) return 0;
     const before = this.stars;
     this.heat = Math.min(MAX_HEAT, this.heat + CRIME_HEAT[kind]);
@@ -63,7 +81,7 @@ class Wanted {
   }
 
   // Stars stay while the police can see the player; out of sight long enough, they drop one at a time
-  update(dt, seen) {
+  update(dt: number, seen: boolean): void {
     if (this.stars === 0) {
       this.heat = Math.max(0, this.heat - dt * 2);
       return;
@@ -77,16 +95,25 @@ class Wanted {
   }
 
   // 0..1: how close the player is to losing the next star (for the HUD's flashing stars)
-  get evading() {
+  get evading(): number {
     return this.stars ? Math.min(1, this.unseen / evadeTime(this.stars)) : 0;
   }
 }
 
 // Two street gangs share the town's turf: Los Rojos shoot at whoever comes close, Los Verdes only at whoever starts
 // it. Out on the town's edges the (made-up) Cártel de la Sierra holds the ground with rifles: they shoot on sight,
-// fight the police wherever they meet, and send trucks of reinforcements after whoever takes them on (crime.js).
-// outfit: the colours they wear (pedestrians.js OUTFIT); sight: m they open fire from
-const GANGS = [
+// fight the police wherever they meet, and send trucks of reinforcements after whoever takes them on (crime.ts).
+// outfit: the colours they wear (pedestrians.ts OUTFIT); sight: m they open fire from
+interface Gang {
+  id: number; // its index in GANGS
+  name: string;
+  outfit: number;
+  hostile: boolean; // shoots at whoever comes close, not only at whoever starts it
+  weapon: StreetGun;
+  sight: number;
+  narco?: boolean;
+}
+const GANGS: readonly Gang[] = [
   { id: 0, name: 'Los Rojos', outfit: 2, hostile: true, weapon: 'smg', sight: 15 },
   { id: 1, name: 'Los Verdes', outfit: 3, hostile: false, weapon: 'pistol', sight: 15 },
   { id: 2, name: 'Cártel de la Sierra', outfit: 5, hostile: true, weapon: 'rifle', sight: 28, narco: true }
@@ -95,7 +122,7 @@ const NARCO = 2; // GANGS index
 const NARCO_RADIUS = 900; // m from the plaza beyond which the cartel can hold a square
 const TURF_CELL = 260; // m: the turf is cut in squares this big, each one a gang's or nobody's
 
-function hash2(ix, iz) {
+function hash2(ix: number, iz: number): number {
   let h = (Math.imul(ix | 0, 374761393) + Math.imul(iz | 0, 668265263)) | 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   h ^= h >>> 16;
@@ -104,7 +131,7 @@ function hash2(ix, iz) {
 
 // The gang whose turf (x, z) is in (an index into GANGS), or -1. The town centre (within 300 m of the origin, the
 // plaza) belongs to nobody; the cartel only holds squares on the town's edges.
-function gangTurf(x, z) {
+function gangTurf(x: number, z: number): number {
   if (Math.hypot(x, z) < 300) return -1;
   const ix = Math.floor(x / TURF_CELL), iz = Math.floor(z / TURF_CELL);
   const h = hash2(ix, iz);
@@ -113,4 +140,5 @@ function gangTurf(x, z) {
   return h < 0.2 ? 0 : h < 0.4 ? 1 : h < 0.55 && edge ? NARCO : -1;
 }
 
+export type { CrimeKind, StreetGun, PoliceByStars, Gang };
 export { STAR_HEAT, CRIME_HEAT, POLICE, GANGS, NARCO, NARCO_RADIUS, TURF_CELL, Wanted, starsFor, evadeTime, gangTurf };

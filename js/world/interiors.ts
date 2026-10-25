@@ -4,36 +4,159 @@ import { Fn, color, positionWorld, floor, fract, step, mix, sin, uniform } from 
 import { isOpen } from './venues.ts';
 import { hash } from './hash.ts';
 import { Bystanders, BYSTANDER_STYLES } from '../sim/bystanders.ts';
+import type { Collider } from './buildings.ts';
 
-// js/world/interiors.js
+// js/world/interiors.ts
 // Going into a restaurant, a cantina or an antro (F at its door: "Entrar a ..."): the room the street front opens on,
 // built once per kind and kept high over an empty corner of the map (inside the city's box, which the controllers keep
-// the player in), where the player walks about it on its own floor & walls (controllers.js setInterior) under a
-// camera kept inside it (cameras.js). F at the door again goes back out to the street.
+// the player in), where the player walks about it on its own floor & walls (controllers.ts setInterior) under a
+// camera kept inside it (cameras.ts). F at the door again goes back out to the street.
 // - restaurant (the restaurants, marisquerías, taquerías & burger places): tables, a counter with the kitchen behind,
 //   papel picado; the cooks & customers; F at the counter orders something to eat
 // - bar (the cantinas & bars): a long bar with its bottles, high tables, a pool table, the TV; cumbia or banda
 // - disco (the antros: the Tapanko, Queens Disco...): a dark hall, a dance floor lit from under, the DJ up on the
 //   tapanco (the mezzanine across the back, up its stairs), the bar along the side, reggaetón, a crowd dancing
 
+/** A kind of room: its size (m), its music, what the counter sells (price in pesos, health it gives back) and how much
+ *  its lamps are scaled up */
+export interface RoomSpec {
+  w: number;
+  d: number;
+  h: number;
+  music: string;
+  price: number;
+  heal: number;
+  item: string;
+  light: number;
+}
+
+/** A venue with a door on the street (venues.ts findVenues): what this module reads of it */
+export interface InteriorVenue {
+  kind: string;
+  name: string;
+  /** its door (m) and the street's outward normal there; heading (rad) away from the door */
+  x: number;
+  z: number;
+  nx: number;
+  nz: number;
+  heading: number;
+  /** the antro with a mezzanine up its stairs */
+  tapanco?: boolean;
+}
+
+/** The floor's height (m) under (x, z), for a body now at fromY (the tapanco over the hall's) */
+export type FloorAt = (x: number, z: number, fromY?: number) => number;
+
+/** What a room hands the controllers (setInterior): its bounds (m), its floor, its walls & furniture */
+export interface InteriorRoomBounds {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  floorAt: FloorAt;
+  colliders: Collider[];
+}
+
+/** The box the camera is kept in, inside a room (m) */
+export interface InteriorCameraBounds {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  maxY: number;
+}
+
+/** Where someone stands in a room: x, z (m from the room's centre), yaw (rad), and the floor (m over the hall's) */
+type Spot = [x: number, z: number, yaw: number, floor?: number];
+
+interface RoomSpots {
+  staff: Spot[];
+  guests: Spot[];
+  dancers: Spot[];
+  /** where the counter's served (x, z from the room's centre), or none */
+  counter: [number, number] | null;
+  /** the music's speaker: x, y, z from the room's floor centre (m) */
+  music: [number, number, number];
+}
+
+/** A sound record for the audio's loops: its kind ('cumbia', 'crowd'...), a key it's known by, where (m), how loud */
+export interface InteriorSound {
+  kind: string;
+  id: object;
+  x: number;
+  y: number;
+  z: number;
+  gain: number;
+  range: number;
+  seed: number;
+}
+
+interface TextCanvas {
+  tex: THREE.CanvasTexture;
+  canvas: HTMLCanvasElement;
+  g: CanvasRenderingContext2D;
+}
+
+/** One room, built once, high over the map: its origin (ox, y0, oz) and size (w, d, h) in m */
+interface Room {
+  kind: string;
+  K: RoomSpec;
+  group: THREE.Group;
+  colliders: Collider[];
+  floorAt: FloorAt;
+  spots: RoomSpots;
+  lights: THREE.PointLight[];
+  sign: TextCanvas;
+  signMesh: THREE.Mesh;
+  ox: number;
+  oz: number;
+  y0: number;
+  w: number;
+  d: number;
+  h: number;
+}
+
+// What the rooms use of the player's controllers (player/controllers.ts), the camera (player/cameras.ts) and the crime
+// system (sim/crime.ts)
+interface InteriorControllers {
+  entities: { person: { position: THREE.Vector3 } };
+  activeMode: string;
+  getGroundHeight(x: number, z: number, mode: string, fromY: number): number;
+  setInterior(room: InteriorRoomBounds | null): void;
+  teleportActiveTo(x: number, z: number, heading: number): void;
+  settle(entity: { position: THREE.Vector3 }): void;
+}
+interface InteriorCameras {
+  setInterior(room: InteriorCameraBounds | null): void;
+  resetForTeleport(): void;
+}
+interface InteriorCrime {
+  money: number;
+  health: number;
+  state: string;
+  toast(text: string): void;
+}
+
+type BystanderStyle = (typeof BYSTANDER_STYLES)[keyof typeof BYSTANDER_STYLES];
+
 const POCKET = { x: 10150, z: 9850, y: 2600 }; // over the box's empty south-east corner, 2.6 km up
-const KINDS = {
+const KINDS: Record<string, RoomSpec> = {
   restaurant: { w: 12, d: 10, h: 3.3, music: 'cumbia', price: 80, heal: 50, item: 'una orden de comida', light: 1.2 },
   bar: { w: 12, d: 9, h: 3.4, music: 'banda', price: 40, heal: 10, item: 'una cerveza', light: 1.3 },
   disco: { w: 16, d: 15, h: 6.4, music: 'reggaeton', price: 70, heal: 5, item: 'una cuba', light: 8 }
 };
 // (`light`: the lamps' intensities below scaled for the room: the antro's dark walls take much more than a dining room's)
-const ROOM_OF = { restaurant: 'restaurant', seafood: 'restaurant', tacos: 'restaurant', burger: 'restaurant', bar: 'bar', disco: 'disco' };
+const ROOM_OF: Record<string, string> = { restaurant: 'restaurant', seafood: 'restaurant', tacos: 'restaurant', burger: 'restaurant', bar: 'bar', disco: 'disco' };
 const MEZZ_Y = 3.0; // the tapanco's floor over the hall's
 const MEZZ_D = 4.5; // its depth from the back wall
 const DOOR_REACH = 1.8; // m from a door the player goes in or out by
 
 // Box geometry at (x, y, z) local, its bottom at y
-const box = (w, h, d, x, y, z) => new THREE.BoxGeometry(w, h, d).translate(x, y + h / 2, z).toNonIndexed();
-const cyl = (r0, r1, h, x, y, z, n = 12) => new THREE.CylinderGeometry(r0, r1, h, n).translate(x, y + h / 2, z).toNonIndexed();
+const box = (w: number, h: number, d: number, x: number, y: number, z: number) => new THREE.BoxGeometry(w, h, d).translate(x, y + h / 2, z).toNonIndexed();
+const cyl = (r0: number, r1: number, h: number, x: number, y: number, z: number, n = 12) => new THREE.CylinderGeometry(r0, r1, h, n).translate(x, y + h / 2, z).toNonIndexed();
 
 // A tiled floor: square tiles `size` m in two tones (TSL, in world metres)
-function tileMaterial(a, b, size = 0.5, roughness = 0.35) {
+function tileMaterial(a: number, b: number, size = 0.5, roughness = 0.35) {
   const m = new THREE.MeshStandardNodeMaterial({ roughness, metalness: 0 });
   m.colorNode = Fn(() => {
     const p = positionWorld.xz.div(size);
@@ -45,7 +168,7 @@ function tileMaterial(a, b, size = 0.5, roughness = 0.35) {
 }
 
 // An antro's dance floor: tiles lit from under in colours that run across it with the beat (uniform uBeat: s)
-function danceFloorMaterial(uTime) {
+function danceFloorMaterial(uTime: THREE.UniformNode<'float', number>) {
   const m = new THREE.MeshBasicNodeMaterial();
   m.colorNode = Fn(() => {
     const p = positionWorld.xz;
@@ -62,30 +185,49 @@ function danceFloorMaterial(uTime) {
 }
 
 // A sign's or a menu board's text on a canvas (the venue's name, or the menu)
-function textTexture(lines, w = 512, h = 256, bg = '#1d1b19', fg = '#f6e7b0', font = 'bold 44px sans-serif') {
+function textTexture(lines: string[], w = 512, h = 256, bg = '#1d1b19', fg = '#f6e7b0', font = 'bold 44px sans-serif'): TextCanvas {
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
   const g = canvas.getContext('2d');
+  if (!g) throw new Error('interiors: no 2D canvas context');
   g.fillStyle = bg;
   g.fillRect(0, 0, w, h);
   g.fillStyle = fg;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.font = font;
-  lines.forEach((t, i) => g.fillText(t, w / 2, (h / (lines.length + 1)) * (i + 1)));
+  lines.forEach((t, i) => {
+    g.fillText(t, w / 2, (h / (lines.length + 1)) * (i + 1));
+  });
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   return { tex, canvas, g };
 }
 
 class Interiors {
+  controllers: InteriorControllers;
+  cameras: InteriorCameras;
+  crime: InteriorCrime;
+  venues: InteriorVenue[];
+  /** the venues by 50 m cell */
+  cells: Map<number, InteriorVenue[]>;
+  /** s, the rooms' clock (the dance floor's beat) */
+  uTime: THREE.UniformNode<'float', number>;
+  rooms: Record<string, Room>;
+  people: Bystanders;
+  inside: { room: Room; venue: InteriorVenue; seed: number; sounds: InteriorSound[] } | null;
+  doorNear: InteriorVenue | null;
+  counterNear: boolean;
+  exitNear = false;
+  time: number;
+
   /**
-   * @param {object} o - scene; venues (venues.js findVenues); controllers (player/controllers.js); camera
-   *   (cameras.js CameraSystem); crime (money, health, toasts: sim/crime.js); colliders: the controllers' own list
+   * @param o - scene; venues (venues.ts findVenues); controllers (player/controllers.ts); camera
+   *   (cameras.ts CameraSystem); crime (money, health, toasts: sim/crime.ts); colliders: the controllers' own list
    *   (the rooms' walls & furniture join it)
    */
-  constructor({ scene, venues, controllers, cameras, crime }) {
+  constructor({ scene, venues, controllers, cameras, crime }: { scene: THREE.Object3D; venues: InteriorVenue[]; controllers: InteriorControllers; cameras: InteriorCameras; crime: InteriorCrime }) {
     this.controllers = controllers;
     this.cameras = cameras;
     this.crime = crime;
@@ -101,7 +243,7 @@ class Interiors {
     this.rooms = {};
     let i = 0;
     for (const kind of Object.keys(KINDS)) this.rooms[kind] = this.buildRoom(scene, kind, POCKET.x - i++ * 40, POCKET.z);
-    this.people = new Bystanders(scene, 48, (x, z) => controllers.getGroundHeight(x, z, 'person', POCKET.y + 4));
+    this.people = new Bystanders(scene, 48, (x: number, z: number) => controllers.getGroundHeight(x, z, 'person', POCKET.y + 4));
     this.inside = null; // { room, venue }
     this.doorNear = null;
     this.counterNear = false;
@@ -109,7 +251,7 @@ class Interiors {
   }
 
   // One room of `kind` at (ox, POCKET.y, oz): its meshes, its walls & furniture as colliders, its floor, its spots
-  buildRoom(scene, kind, ox, oz) {
+  buildRoom(scene: THREE.Object3D, kind: string, ox: number, oz: number): Room {
     const K = KINDS[kind];
     const { w, d, h } = K;
     const y0 = POCKET.y;
@@ -117,9 +259,9 @@ class Interiors {
     group.name = `Interior_${kind}`;
     group.position.set(ox, y0, oz);
     scene.add(group);
-    const colliders = [];
+    const colliders: Collider[] = [];
     // (local x across, z from the back wall (-d/2) to the street front (+d/2) with its door in the middle)
-    const solid = (x0, x1, z0, z1, yMin = 0, yMax = h) => colliders.push({
+    const solid = (x0: number, x1: number, z0: number, z1: number, yMin = 0, yMax = h) => colliders.push({
       minX: ox + x0, maxX: ox + x1, minZ: oz + z0, maxZ: oz + z1, minY: y0 + yMin, maxY: y0 + yMax
     });
     const T = 0.3; // walls' thickness
@@ -137,7 +279,7 @@ class Interiors {
     solid(-0.8, 0.8, d / 2 + 0.6, d / 2 + 1.5); // (the doorway leads nowhere: the street is out the other side)
     const paint = kind === 'disco' ? 0x16141c : kind === 'bar' ? 0x7a3b2a : [0xe7c98f, 0xd7e6c8, 0xf0b8a0][Math.floor(hash(ox, oz) * 3)];
     const wallMat = new THREE.MeshStandardNodeMaterial({ color: paint, roughness: 0.85 });
-    const add = (geos, mat, cast = true) => {
+    const add = (geos: THREE.BufferGeometry | THREE.BufferGeometry[], mat: THREE.Material, cast = true) => {
       const mesh = new THREE.Mesh(Array.isArray(geos) ? mergeGeometries(geos) : geos, mat);
       mesh.castShadow = cast;
       mesh.receiveShadow = true;
@@ -153,8 +295,8 @@ class Interiors {
     // the venue's name over the counter / the bar / the DJ (redrawn for each venue)
     const sign = textTexture(['']);
     const signMesh = add(new THREE.PlaneGeometry(3.2, 0.8), new THREE.MeshBasicNodeMaterial({ map: sign.tex }), false);
-    const lights = [];
-    const light = (x, y, z, c, intensity, dist) => {
+    const lights: THREE.PointLight[] = [];
+    const light = (x: number, y: number, z: number, c: number, intensity: number, dist: number) => {
       const l = new THREE.PointLight(c, intensity * K.light, dist, 1.6);
       l.position.set(x, y, z);
       l.visible = false; // (on only while the player is in the room: the clustered lighting takes 256 lights at most)
@@ -162,11 +304,11 @@ class Interiors {
       lights.push(l);
       return l;
     };
-    const spots = { staff: [], guests: [], dancers: [], counter: null, music: [0, 2, 0] };
+    const spots: RoomSpots = { staff: [], guests: [], dancers: [], counter: null, music: [0, 2, 0] };
     const wood = new THREE.MeshStandardNodeMaterial({ color: 0x6a4630, roughness: 0.6 });
     const steel = new THREE.MeshStandardNodeMaterial({ color: 0xb8bbbd, roughness: 0.3, metalness: 0.8 });
     const plastic = new THREE.MeshStandardNodeMaterial({ color: 0xc8241f, roughness: 0.5 });
-    let floorAt = () => y0;
+    let floorAt: FloorAt = () => y0;
 
     if (kind === 'restaurant') {
       // the counter across the back, the kitchen behind it, the menu over it
@@ -177,7 +319,7 @@ class Interiors {
       add(new THREE.PlaneGeometry(3.4, 1.4).translate(2.4, 2.3, -d / 2 + 0.02), new THREE.MeshBasicNodeMaterial({ map: menu.tex }), false);
       signMesh.position.set(-1.8, 2.45, -d / 2 + 0.03);
       // tables with their red plastic chairs (the brewery's), in two rows
-      const tables = [], chairs = [];
+      const tables: THREE.BufferGeometry[] = [], chairs: THREE.BufferGeometry[] = [];
       for (const tx of [-3.8, 0, 3.8]) {
         for (const tz of [-0.6, 2.0]) { // (clear of the way in at the door)
           tables.push(box(1.0, 0.04, 1.0, tx, 0.74, tz), cyl(0.04, 0.04, 0.74, tx, 0, tz, 6), cyl(0.3, 0.3, 0.03, tx, 0, tz, 12));
@@ -191,7 +333,7 @@ class Interiors {
       add(tables, wood);
       add(chairs, plastic);
       // papel picado strung across the ceiling, in rows of colours
-      const flags = [];
+      const flags: THREE.BufferGeometry[] = [];
       const colors = [0xe8336d, 0x2bb5e0, 0xf2c12e, 0x3ccf6e, 0xa45be0, 0xff7a1c];
       for (let r = 0; r < 4; r++) {
         for (let i = 0; i < 22; i++) {
@@ -214,11 +356,11 @@ class Interiors {
       // the long bar down the left, the bottles on their shelves behind it lit from under, stools, a pool table, the TV
       add([box(0.7, 1.1, 6.5, -w / 2 + 2.0, 0, -0.8), box(0.95, 0.06, 6.6, -w / 2 + 2.0, 1.1, -0.8)], wood);
       solid(-w / 2 + 1.6, -w / 2 + 2.45, -4.1, 2.5);
-      const bottles = [];
+      const bottles: THREE.BufferGeometry[] = [];
       for (let s = 0; s < 3; s++) for (let i = 0; i < 16; i++) bottles.push(cyl(0.04, 0.045, 0.3, -w / 2 + 0.25, 1.15 + s * 0.42, -3.8 + i * 0.4, 6));
       add(bottles, new THREE.MeshBasicNodeMaterial({ color: 0xd9a441 }), false);
       add([box(0.35, 0.03, 6.6, -w / 2 + 0.25, 1.12, -0.8), box(0.35, 0.03, 6.6, -w / 2 + 0.25, 1.54, -0.8), box(0.35, 0.03, 6.6, -w / 2 + 0.25, 1.96, -0.8)], wood);
-      const stools = [];
+      const stools: THREE.BufferGeometry[] = [];
       for (let i = 0; i < 7; i++) stools.push(cyl(0.2, 0.2, 0.05, -w / 2 + 2.85, 0.72, -3.6 + i * 0.95), cyl(0.04, 0.04, 0.72, -w / 2 + 2.85, 0, -3.6 + i * 0.95, 6));
       add(stools, steel);
       // the pool table
@@ -226,7 +368,7 @@ class Interiors {
       add([box(2.8, 0.72, 1.6, 2.4, 0, -1.2)], wood);
       solid(1.0, 3.8, -2.0, -0.4, 0, 0.9);
       // high tables
-      const tops = [];
+      const tops: THREE.BufferGeometry[] = [];
       for (const [tx, tz] of [[0.8, 1.4], [3.6, 2.6], [-1.2, -2.8]]) {
         tops.push(cyl(0.38, 0.38, 0.04, tx, 1.05, tz, 14), cyl(0.04, 0.04, 1.05, tx, 0, tz, 6));
         solid(tx - 0.4, tx + 0.4, tz - 0.4, tz + 0.4, 0, 1.1);
@@ -253,7 +395,7 @@ class Interiors {
         new THREE.MeshStandardNodeMaterial({ color: 0x2a2a30, roughness: 0.6, metalness: 0.4 }));
       // its railing (a gap for the stairs), the stairs up the right wall
       add([box(w - 2.2, 0.06, 0.06, -1.1, MEZZ_Y + 1.0, -d / 2 + MEZZ_D), ...Array.from({ length: 12 }, (_, i) => box(0.05, 1.0, 0.05, -w / 2 + 0.3 + i * 1.12, MEZZ_Y, -d / 2 + MEZZ_D))], steel);
-      const steps = [];
+      const steps: THREE.BufferGeometry[] = [];
       const STEPS = 12, RUN = 4.8;
       for (let i = 0; i < STEPS; i++) steps.push(box(1.6, (MEZZ_Y / STEPS) * (i + 1), RUN / STEPS, w / 2 - 0.8, 0, -d / 2 + MEZZ_D + RUN - (i + 0.5) * (RUN / STEPS)));
       add(steps, new THREE.MeshStandardNodeMaterial({ color: 0x3a3a40, roughness: 0.7 }));
@@ -298,12 +440,12 @@ class Interiors {
   }
 
   // The door of an open venue the player on foot is at (within DOOR_REACH of it), or null
-  doorAt(x, z, hour) {
-    let best = null, bd = DOOR_REACH;
+  doorAt(x: number, z: number, hour: number) {
+    let best: InteriorVenue | null = null, bd = DOOR_REACH;
     const ix = Math.floor(x / 50), iz = Math.floor(z / 50);
     for (let a = -1; a <= 1; a++) {
       for (let b = -1; b <= 1; b++) {
-        for (const v of this.cells.get((ix + a) * 100003 + iz + b) || []) {
+        for (const v of this.cells.get((ix + a) * 100003 + iz + b) ?? []) {
           const d = Math.hypot(v.x - x, v.z - z);
           if (d < bd && isOpen(v.kind, hour)) { bd = d; best = v; }
         }
@@ -317,14 +459,14 @@ class Interiors {
   }
 
   // In through the venue's door: the room of its kind, its name over the counter, the player just inside the door
-  enter(venue) {
+  enter(venue: InteriorVenue) {
     const room = this.rooms[ROOM_OF[venue.kind]];
     const c = this.controllers;
     // (the venue's people & its sound records, made once as the player comes in: nothing is built per frame)
     const seed = Math.floor(hash(venue.x, venue.z) * 1e4);
     const [mx, my, mz] = room.spots.music;
     const music = room.kind === 'restaurant' ? 'cumbia' : room.kind === 'bar' ? (hash(venue.x, venue.z, 1) < 0.5 ? 'banda' : 'cumbia') : 'reggaeton';
-    const sounds = [
+    const sounds: InteriorSound[] = [
       { kind: music, id: room, x: room.ox + mx, y: room.y0 + my, z: room.oz + mz, gain: room.kind === 'disco' ? 1 : 0.45, range: 60, seed: 3 },
       { kind: 'crowd', id: room.spots, x: room.ox, y: room.y0 + 1.6, z: room.oz, gain: room.kind === 'restaurant' ? 0.5 : 0.35, range: 40, seed: 4 }
     ];
@@ -350,7 +492,7 @@ class Interiors {
     this.crime.toast(venue.tapanco ? `${venue.name}: sube al tapanco por la escalera` : venue.name);
   }
 
-  // Out of the room without going back through its door (main.js: a teleport from the map, a respawn), and the room's
+  // Out of the room without going back through its door (main.ts: a teleport from the map, a respawn), and the room's
   // lights off; nothing if the player is outside
   abandon() {
     if (!this.inside) return;
@@ -362,6 +504,7 @@ class Interiors {
 
   // Back out to the street, at the door, facing away from it
   leave() {
+    if (!this.inside) return;
     const v = this.inside.venue;
     this.abandon();
     this.controllers.teleportActiveTo(v.x + v.nx * 1.2, v.z + v.nz * 1.2, v.heading);
@@ -369,7 +512,8 @@ class Interiors {
   }
 
   // The room's people of one `list` of spots ([x, z, yaw, floor?]), kept by number from `base` on
-  placeAll(list, base, style) {
+  placeAll(list: Spot[], base: number, style: BystanderStyle) {
+    if (!this.inside) return;
     const { room, seed } = this.inside;
     for (let i = 0; i < list.length; i++) {
       const spot = list[i];
@@ -381,7 +525,7 @@ class Interiors {
    * The frame: which door is at hand outside, or inside the room's people, lights & music, the counter at hand.
    * `hour` local
    */
-  update(dt, hour) {
+  update(dt: number, hour: number) {
     this.time += dt;
     this.uTime.value = this.time;
     const c = this.controllers;
@@ -416,7 +560,7 @@ class Interiors {
     ppl.end(dt);
   }
 
-  // What F would do here (main.js updatePrompt)
+  // What F would do here (main.ts updatePrompt)
   prompt() {
     if (this.inside) {
       if (this.exitNear) return 'Salir a la calle';
@@ -457,7 +601,7 @@ class Interiors {
   }
 
   // The room's music & talk, for the audio's loops (inside it, nothing of the street's carries)
-  sounds(out) {
+  sounds(out: InteriorSound[]) {
     if (this.inside) for (const snd of this.inside.sounds) out.push(snd);
     return out;
   }

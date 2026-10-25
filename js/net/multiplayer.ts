@@ -7,9 +7,10 @@ import {
   encodeState,
   decodeServer
 } from '../../shared/protocol.ts';
+import type { Mode, MovedPlayer, PoseSource, ServerMessage } from '../../shared/protocol.ts';
 
-// js/net/multiplayer.js
-// Browser side of the room server (server/index.js), loaded only with ?multiplayer=1 (see main.js). Sends the active
+// js/net/multiplayer.ts
+// Browser side of the room server (server/index.ts), loaded only with ?multiplayer=1 (see main.ts). Sends the active
 // player's pose SEND_HZ times a second, keeps a local list of the players the server says are in view, and draws them
 // INTERP_DELAY_MS in the past, interpolating between the poses it received so 10 Hz updates look smooth.
 //
@@ -30,31 +31,98 @@ const NAME_KEY = 'mp-name';
 
 const _v = new THREE.Vector3();
 
-const lerpAngle = (a, b, t) => a + ((((b - a) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI) * t;
+// The local player's meshes a remote player's look is cloned from (player/controllers.ts entities)
+interface EntityLook {
+  mesh: THREE.Object3D;
+  leanPivot?: THREE.Object3D; // cyclist & moto: the frame that leans into turns
+  mainRotorPivot?: THREE.Object3D; // helicopter
+  tailRotorPivot?: THREE.Object3D;
+}
+type BikeFrame = Parameters<PersonRig['ride']>[2];
+interface BikeLook extends EntityLook {
+  bikeFrame: BikeFrame; // where a rider's hands, seat & feet go (PersonRig.ride)
+}
+/** Out-param of groundTilt: radians, for an Euler of order YXZ */
+export interface GroundTilt {
+  pitch: number;
+  roll: number;
+}
+
+/** What multiplayer uses of the controller manager (player/controllers.ts ThirdPersonControllerManager) */
+export interface MultiplayerControllers {
+  entities: Readonly<Partial<Record<Mode, EntityLook>>> & { readonly cyclist: BikeLook; readonly moto: BikeLook };
+  activeMode: string;
+  getActiveEntity(): PoseSource;
+  getGroundHeight(x: number, z: number, mode?: string): number;
+  groundTilt(x: number, z: number, heading: number, along: number, across: number, out: GroundTilt): GroundTilt;
+}
+
+export interface MultiplayerOptions {
+  scene: THREE.Scene;
+  controllers: MultiplayerControllers;
+  camera: THREE.Camera;
+  url: string; // ws:// or wss://
+  region?: string;
+  name?: string;
+}
+
+export type MultiplayerStatus = 'connecting' | 'online' | 'offline' | 'error';
+
+/** A remote player's pose: metres, radians, m/s */
+export interface RemotePose {
+  x: number;
+  y: number;
+  z: number;
+  heading: number;
+  speed: number;
+}
+/** A received pose, stamped with the performance.now() ms it arrived at */
+interface PoseSample extends RemotePose {
+  t: number;
+}
+
+const lerpAngle = (a: number, b: number, t: number) => a + ((((b - a) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI) * t;
 
 // The node at the same child-index path in a clone as `node` is in `root`
-function counterpart(root, clone, node) {
-  const path = [];
-  for (let n = node; n && n !== root; n = n.parent) path.unshift(n.parent.children.indexOf(n));
-  let c = clone;
-  for (const i of path) c = c && c.children[i];
+function counterpart(root: THREE.Object3D, clone: THREE.Object3D, node: THREE.Object3D | undefined): THREE.Object3D | undefined {
+  const path: number[] = [];
+  for (let n: THREE.Object3D | null | undefined = node; n && n !== root; n = n.parent) {
+    if (!n.parent) return undefined; // (not under root)
+    path.unshift(n.parent.children.indexOf(n));
+  }
+  let c: THREE.Object3D | undefined = clone;
+  for (const i of path) c = c?.children.at(i); // (i ≥ 0: an indexOf of a child that is there)
   return c;
 }
 
 // A visual copy of a player entity's mesh sharing its geometry & materials, without its lights (dozens of remote
 // headlamps would swamp the clustered light budget)
-function cloneVisual(entity) {
+function cloneVisual(entity: EntityLook): THREE.Object3D {
   const copy = entity.mesh.clone(true);
-  const lights = [];
+  const lights: THREE.Light[] = [];
   copy.traverse((o) => {
-    if (o.isLight) lights.push(o);
+    if (o instanceof THREE.Light) lights.push(o);
   });
   for (const l of lights) l.removeFromParent();
   return copy;
 }
 
 class RemotePlayer {
-  constructor(id, name) {
+  id: number;
+  name: string;
+  mode: Mode | null;
+  samples: PoseSample[];
+  visual: THREE.Object3D | null;
+  rig: PersonRig | null;
+  label: HTMLDivElement | null;
+  pedalPhase: number; // rad
+  pose: RemotePose;
+  // the parts of `visual` that move, found by counterpart() in the local player's mesh
+  leanPivot?: THREE.Object3D;
+  mainRotor?: THREE.Object3D;
+  tailRotor?: THREE.Object3D;
+
+  constructor(id: number, name: string) {
     this.id = id;
     this.name = name;
     this.mode = null;
@@ -66,8 +134,8 @@ class RemotePlayer {
     this.pose = { x: 0, y: 0, z: 0, heading: 0, speed: 0 };
   }
 
-  push(t, s, tickMs) {
-    const last = this.samples[this.samples.length - 1];
+  push(t: number, s: MovedPlayer, tickMs: number): void {
+    const last = this.samples.at(-1);
     if (last && Math.hypot(s.x - last.x, s.z - last.z) > SNAP_DISTANCE) this.samples.length = 0;
     else if (last && t - last.t > tickMs * 2.5) {
       // it stood still (the server sent nothing): start the new motion from a fresh copy, not a minutes-long glide
@@ -78,7 +146,7 @@ class RemotePlayer {
   }
 
   // Pose at renderTime: between the two samples around it, else held at the nearest end
-  sample(renderTime) {
+  sample(renderTime: number): RemotePose {
     const s = this.samples;
     const p = this.pose;
     if (s.length === 0) return p;
@@ -106,7 +174,30 @@ class RemotePlayer {
 }
 
 class Multiplayer {
-  constructor({ scene, controllers, camera, url, region = DEFAULT_REGION, name = '' }) {
+  scene: THREE.Scene;
+  controllers: MultiplayerControllers;
+  camera: THREE.Camera;
+  url: string;
+  region: string;
+  name: string;
+  ws: WebSocket | null;
+  id: number;
+  room: string;
+  roomPlayers: number;
+  tickMs: number; // ms between server ticks
+  remotes: Map<number, RemotePlayer>;
+  status: MultiplayerStatus;
+  retryMs: number;
+  stopped: boolean;
+  lastSent: Uint8Array | null;
+  lastSentAt: number; // performance.now() ms
+  nextSendAt: number;
+  crowd: PersonCrowd;
+  _tilt: GroundTilt;
+  badge: HTMLDivElement;
+  labels: HTMLDivElement;
+
+  constructor({ scene, controllers, camera, url, region = DEFAULT_REGION, name = '' }: MultiplayerOptions) {
     this.scene = scene;
     this.controllers = controllers;
     this.camera = camera;
@@ -127,7 +218,7 @@ class Multiplayer {
     this.nextSendAt = 0;
 
     this.crowd = new PersonCrowd(MAX_REMOTE_PEOPLE, { farDistance: 40 });
-    this._tilt = {};
+    this._tilt = { pitch: 0, roll: 0 };
     this.crowd.meshes.forEach((m) => scene.add(m));
 
     this.badge = document.createElement('div');
@@ -137,12 +228,12 @@ class Multiplayer {
     this.labels.className = 'mp-labels';
     document.body.append(this.labels);
     // under the brand panel, top left, so it never collides with the toolbar
-    (document.querySelector('.hud-top-left') || document.body).append(this.badge);
+    (document.querySelector('.hud-top-left') ?? document.body).append(this.badge);
     this.renderBadge();
     this.connect();
   }
 
-  connect() {
+  connect(): void {
     if (this.stopped) return;
     this.status = 'connecting';
     this.renderBadge();
@@ -151,7 +242,7 @@ class Multiplayer {
       ws = new WebSocket(this.url);
     } catch (err) {
       this.status = 'error';
-      this.renderBadge(err.message);
+      this.renderBadge(err instanceof Error ? err.message : undefined);
       return;
     }
     ws.binaryType = 'arraybuffer';
@@ -160,8 +251,8 @@ class Multiplayer {
       ws.send(encodeHello(this.region, this.name));
       this.lastSent = null;
     };
-    ws.onmessage = (e) => {
-      if (typeof e.data === 'string') return;
+    ws.onmessage = (e: MessageEvent<unknown>) => {
+      if (!(e.data instanceof ArrayBuffer)) return; // (binaryType 'arraybuffer': anything else is a text frame)
       const msg = decodeServer(e.data);
       if (msg) this.receive(msg);
     };
@@ -172,12 +263,12 @@ class Multiplayer {
       if (this.stopped) return;
       this.status = 'offline';
       this.renderBadge();
-      setTimeout(() => this.connect(), this.retryMs);
+      setTimeout(() => { this.connect(); }, this.retryMs);
       this.retryMs = Math.min(RETRY_MAX_MS, this.retryMs * 2);
     };
   }
 
-  receive(msg) {
+  receive(msg: ServerMessage): void {
     if (msg.op === OP.WELCOME) {
       this.id = msg.id;
       this.room = msg.room;
@@ -209,7 +300,7 @@ class Multiplayer {
     this.renderBadge();
   }
 
-  setMode(r, mode) {
+  setMode(r: RemotePlayer, mode: Mode): void {
     if (r.visual) r.visual.removeFromParent();
     r.visual = null;
     r.mode = mode;
@@ -229,7 +320,7 @@ class Multiplayer {
     }
   }
 
-  removeRemote(id) {
+  removeRemote(id: number): void {
     const r = this.remotes.get(id);
     if (!r) return;
     if (r.visual) r.visual.removeFromParent();
@@ -237,13 +328,13 @@ class Multiplayer {
     this.remotes.delete(id);
   }
 
-  clearRemotes() {
+  clearRemotes(): void {
     for (const id of [...this.remotes.keys()]) this.removeRemote(id);
     this.roomPlayers = 0;
   }
 
   // Once a frame from the main loop, after the local controllers moved
-  update(dt, elapsed) {
+  update(dt: number, _elapsed: number): void {
     const now = performance.now();
     this.sendPose(now);
 
@@ -257,7 +348,7 @@ class Multiplayer {
       if (r.visual) {
         r.visual.position.set(p.x, p.y, p.z);
         r.visual.rotation.y = p.heading;
-        // a car or bicycle lies on the slope under its wheels, as the local player's does (controllers.js tiltToGround)
+        // a car or bicycle lies on the slope under its wheels, as the local player's does (controllers.ts tiltToGround)
         if (r.mode === 'car' || r.mode === 'cyclist' || r.mode === 'moto') {
           const car = r.mode === 'car';
           const t = this.controllers.groundTilt(p.x, p.z, p.heading, car ? 1.35 : 0.55, car ? 0.8 : 0.3, this._tilt);
@@ -266,15 +357,15 @@ class Multiplayer {
           r.visual.rotation.z = car ? t.roll : 0;
         }
       }
-      if (r.mode === 'person') {
+      if (r.mode === 'person' && r.rig) {
         const air = p.y - this.controllers.getGroundHeight(p.x, p.z, 'person');
         r.rig.update(dt, p.x, p.z, p.heading, groundFor, this.controllers, air > 0.05 ? air : 0);
         this.crowd.add(r.rig, dist);
-      } else if (r.mode === 'cyclist' && r.leanPivot) {
+      } else if (r.mode === 'cyclist' && r.leanPivot && r.rig) {
         r.pedalPhase += (p.speed / 0.35 / 3.2) * dt;
         r.rig.ride(r.leanPivot, r.pedalPhase, this.controllers.entities.cyclist.bikeFrame);
         this.crowd.add(r.rig, dist);
-      } else if (r.mode === 'moto' && r.leanPivot) {
+      } else if (r.mode === 'moto' && r.leanPivot && r.rig) {
         r.rig.ride(r.leanPivot, 0, this.controllers.entities.moto.bikeFrame);
         this.crowd.add(r.rig, dist);
       } else if (r.mode === 'helicopter') {
@@ -286,25 +377,26 @@ class Multiplayer {
     this.crowd.end();
   }
 
-  sendPose(now) {
+  sendPose(now: number): void {
     const ws = this.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN || this.status !== 'online' || now < this.nextSendAt) return;
+    if (ws?.readyState !== WebSocket.OPEN || this.status !== 'online' || now < this.nextSendAt) return;
     this.nextSendAt = now + 1000 / SEND_HZ;
     const frame = encodeState(this.controllers.getActiveEntity(), this.controllers.activeMode);
-    const same = this.lastSent && this.lastSent.length === frame.length && this.lastSent.every((b, i) => b === frame[i]);
+    const same = this.lastSent?.length === frame.length && this.lastSent.every((b, i) => b === frame[i]);
     if (same && now - this.lastSentAt < KEEPALIVE_MS) return;
     ws.send(frame);
     this.lastSent = frame;
     this.lastSentAt = now;
   }
 
-  placeLabel(r, p, dist) {
+  placeLabel(r: RemotePlayer, p: RemotePose, dist: number): void {
     const show = dist < LABEL_DISTANCE;
     if (show && !r.label) {
-      r.label = document.createElement('div');
-      r.label.className = 'mp-label';
-      r.label.textContent = r.name;
-      this.labels.append(r.label);
+      const label = document.createElement('div');
+      label.className = 'mp-label';
+      label.textContent = r.name;
+      this.labels.append(label);
+      r.label = label;
     }
     if (!r.label) return;
     const height = r.mode === 'helicopter' ? 3.6 : r.mode === 'car' ? 2.2 : 2.25;
@@ -318,7 +410,7 @@ class Multiplayer {
     r.label.style.opacity = String(Math.max(0.35, 1 - dist / LABEL_DISTANCE));
   }
 
-  renderBadge(detail = '') {
+  renderBadge(detail = ''): void {
     const text = {
       connecting: 'Connecting…',
       online: `Online · ${this.room} · ${this.roomPlayers} ${this.roomPlayers === 1 ? 'player' : 'players'}`,
@@ -330,10 +422,10 @@ class Multiplayer {
   }
 }
 
-const groundFor = (controllers, x, z) => controllers.getGroundHeight(x, z, 'person');
+const groundFor = (controllers: MultiplayerControllers, x: number, z: number) => controllers.getGroundHeight(x, z, 'person');
 
 // Reads ?multiplayer & friends; returns null when multiplayer is off or there is no server to reach
-function multiplayerOptions(search = location.search, host = location.hostname) {
+function multiplayerOptions(search = location.search, host = location.hostname): Pick<MultiplayerOptions, 'url' | 'region' | 'name'> | null {
   const params = new URLSearchParams(search);
   if (!params.has('multiplayer') || params.get('multiplayer') === '0') return null;
   const local = host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.localhost');

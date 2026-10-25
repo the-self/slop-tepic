@@ -9,8 +9,12 @@ import {
   getLocationLabel,
   isTypingInField
 } from '../world/city-config.ts';
+import type { Bounds, CityLandmark, CityRoad, PointXZ } from '../world/city-config.ts';
+import type { Footprint } from '../world/buildings.ts';
+import type { Blips } from '../sim/crime.ts';
+import type { Vector3 } from 'three/webgpu';
 
-// js/ui/city-map.js
+// js/ui/city-map.ts
 // GTA 6-Style Live Radar Minimap + Full-Screen Interactive City Map.
 // Synchronized 1:1 with the 3D world (1 unit = 1 m; x = east, z = south on the centro's street grid, GEO.frame.bearingDeg
 // east of true north; both maps turn it back, true north up, so they match every other map of Tepic). They draw the very geography the city is built
@@ -19,7 +23,7 @@ import {
 // colonias and the points of interest.
 
 const FONT = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-const FRAME = (GEO && GEO.frame) || {};
+const FRAME = GEO.frame;
 const MIN_ZOOM = 0.05; // full map, pixels per metre: the whole valley
 const MAX_ZOOM = 3.0; // single lots
 const RADAR_SCALE = 0.32; // radar pixels per metre on the ground (zooms out with altitude)
@@ -51,36 +55,42 @@ const MAP = {
 };
 
 // The dry valley floor around the city
-// Radar blips for crime.js: [colour, radius in px]
-const BLIP_STYLES = {
+// Radar blips for crime.ts: [colour, radius in px]
+const BLIP_STYLES: Partial<Record<string, readonly [colour: string, radius: number]>> = {
   cop: ['#4d8dff', 3], cruiser: ['#4d8dff', 4.2], rojos: ['#ff4d4d', 3], verdes: ['#45d16b', 3], thief: ['#f2f2f2', 3.4],
   narcos: ['#c9a24a', 3.2], truck: ['#c9a24a', 4.4],
   money: ['#6fe39a', 2.6], health: ['#ff6b6b', 3], armor: ['#7fb0ff', 3], pistol: ['#ffd24a', 2.6], smg: ['#ffa53a', 2.6],
   rifle: ['#d6e04a', 2.8], bazooka: ['#ff7a2a', 3.4],
-  fire: ['#ff5a1f', 5] // (a fire burning, sim/fires.js)
+  fire: ['#ff5a1f', 5] // (a fire burning, sim/fires.ts)
 };
 const MAP_BASE = '#101511';
 
 // The city's colonias (GEO.places) at their real places (world metres)
-const AREA_LABELS = (GEO.places || []).map((p) => [p.name.toUpperCase(), p.x, p.z]);
+const AREA_LABELS = GEO.places.map((p): [label: string, x: number, z: number] => [p.name.toUpperCase(), p.x, p.z]);
 
 // ---------------------------------------------------------------------------------------------------------------------
 // World-space vector layers: built once into Path2D objects (world metres) and drawn through a canvas transform
 // ---------------------------------------------------------------------------------------------------------------------
 
-// Point accessors for rings / polylines given as [{x, z}, ...] or flat [x0, z0, x1, z1, ...]
-function accessor(pts) {
-  const flat = typeof pts[0] === 'number';
-  return {
-    n: flat ? pts.length >> 1 : pts.length,
-    X: flat ? (i) => pts[2 * i] : (i) => pts[i].x,
-    Z: flat ? (i) => pts[2 * i + 1] : (i) => pts[i].z
-  };
+/** A ring or polyline: [{x, z}, ...] or flat [x0, z0, x1, z1, ...] (m) */
+type Pts = readonly PointXZ[] | readonly number[];
+interface Accessor {
+  n: number;
+  X: (i: number) => number;
+  Z: (i: number) => number;
 }
 
-function boundsOf(pts) {
+const isFlat = (pts: Pts): pts is readonly number[] => typeof pts[0] === 'number';
+
+// Point accessors for rings / polylines given as [{x, z}, ...] or flat [x0, z0, x1, z1, ...]
+function accessor(pts: Pts): Accessor {
+  if (isFlat(pts)) return { n: pts.length >> 1, X: (i) => pts[2 * i], Z: (i) => pts[2 * i + 1] };
+  return { n: pts.length, X: (i) => pts[i].x, Z: (i) => pts[i].z };
+}
+
+function boundsOf(pts: Pts): Bounds {
   const { n, X, Z } = accessor(pts);
-  const b = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
+  const b: Bounds = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
   for (let i = 0; i < n; i++) {
     const x = X(i);
     const z = Z(i);
@@ -94,7 +104,7 @@ function boundsOf(pts) {
 
 // Appends a closed ring, always wound the same way as Path2D.rect (so overlapping rings of one path union under the
 // nonzero fill rule instead of cancelling out)
-function addRing(path, pts) {
+function addRing(path: Path2D, pts: Pts | null | undefined): void {
   if (!pts || pts.length < 3) return;
   const { n, X, Z } = accessor(pts);
   if (n < 3) return;
@@ -110,7 +120,7 @@ function addRing(path, pts) {
   path.closePath();
 }
 
-function addLine(path, pts) {
+function addLine(path: Path2D, pts: Pts | null | undefined): void {
   if (!pts || pts.length < 2) return;
   const { n, X, Z } = accessor(pts);
   path.moveTo(X(0), Z(0));
@@ -121,13 +131,20 @@ function addLine(path, pts) {
  * A vector layer split into square tiles of Path2D, so a view only rasterizes the tiles it overlaps. Every item goes
  * to the tile holding its centre; a tile's bounds grow to cover its items.
  */
+interface LayerTile extends Bounds {
+  path: Path2D;
+}
+
 class TiledLayer {
+  size: number; // m, a tile's side
+  tiles: Map<string, LayerTile>;
+
   constructor(size = 500) {
     this.size = size;
     this.tiles = new Map();
   }
 
-  pathFor(b) {
+  pathFor(b: Bounds): Path2D {
     const ix = Math.floor((b.minX + b.maxX) * 0.5 / this.size);
     const iz = Math.floor((b.minZ + b.maxZ) * 0.5 / this.size);
     const key = `${ix},${iz}`;
@@ -144,20 +161,20 @@ class TiledLayer {
     return t.path;
   }
 
-  ring(pts) {
+  ring(pts: Pts | null | undefined): void {
     if (pts && pts.length > 2) addRing(this.pathFor(boundsOf(pts)), pts);
   }
 
-  line(pts) {
+  line(pts: Pts | null | undefined): void {
     if (pts && pts.length > 1) addLine(this.pathFor(boundsOf(pts)), pts);
   }
 
-  rect(x0, z0, x1, z1) {
+  rect(x0: number, z0: number, x1: number, z1: number): void {
     this.pathFor({ minX: x0, maxX: x1, minZ: z0, maxZ: z1 }).rect(x0, z0, x1 - x0, z1 - z0);
   }
 
   /** Calls fn(path) for every tile overlapping the view */
-  each(v, fn) {
+  each(v: Bounds, fn: (path: Path2D) => void): void {
     for (const t of this.tiles.values()) {
       if (t.maxX < v.minX || t.minX > v.maxX || t.maxZ < v.minZ || t.minZ > v.maxZ) continue;
       fn(t.path);
@@ -165,27 +182,62 @@ class TiledLayer {
   }
 }
 
-let LAYERS = null;
-function mapLayers() {
+/** A river's name along its course: world metres, angle in radians from +x towards +z */
+interface RiverName {
+  name: string;
+  x: number;
+  z: number;
+  angle: number;
+  river: boolean; // (else an arroyo)
+}
+
+/** The maps' world-space layers (world metres), built once */
+interface MapLayers {
+  city: Path2D;
+  parkLand: TiledLayer;
+  water: TiledLayer;
+  rivers: TiledLayer;
+  streams: TiledLayer;
+  drains: TiledLayer;
+  riverNames: RiverName[];
+  aprons: TiledLayer;
+  runways: TiledLayer;
+  taxiways: TiledLayer;
+  blocks: TiledLayer;
+  parkBlocks: TiledLayer;
+  mainRoads: TiledLayer;
+  highways: Path2D;
+}
+
+let LAYERS: MapLayers | null = null;
+function mapLayers(): MapLayers {
   if (LAYERS) return LAYERS;
-  const L = {};
+  const L: MapLayers = {
+    city: new Path2D(),
+    parkLand: new TiledLayer(),
+    water: new TiledLayer(),
+    rivers: new TiledLayer(1000),
+    streams: new TiledLayer(1000),
+    drains: new TiledLayer(1000),
+    riverNames: [],
+    aprons: new TiledLayer(1000),
+    runways: new TiledLayer(1000),
+    taxiways: new TiledLayer(1000),
+    blocks: new TiledLayer(),
+    parkBlocks: new TiledLayer(),
+    mainRoads: new TiledLayer(1000),
+    highways: new Path2D()
+  };
 
   // The city outline (the roadway deck colour: the streets are the gaps between the blocks)
-  L.city = new Path2D();
   addRing(L.city, CITY_OUTLINE);
 
-  // Parkland, the curb islands (blocks: raised sidewalks & lots) and the park blocks, exactly as city-grid.js /
-  // buildings.js treat them
-  L.parkLand = new TiledLayer();
-  L.water = new TiledLayer();
-  for (const park of GEO.parks || []) for (const ring of park.rings || []) (park.cat === 'water' ? L.water : L.parkLand).ring(ring);
+  // Parkland, the curb islands (blocks: raised sidewalks & lots) and the park blocks, exactly as city-grid.ts /
+  // buildings.ts treat them
+  for (const park of GEO.parks) for (const ring of park.rings) (park.cat === 'water' ? L.water : L.parkLand).ring(ring);
   // The rivers & arroyos (GEO.waterways, above ground) by width: the Mololoa, the arroyos the blocks leave a gap for,
   // the canals & drains; and anchors for the rivers' names along their course, every ~1.2 km
-  L.rivers = new TiledLayer(1000);
-  L.streams = new TiledLayer(1000);
-  L.drains = new TiledLayer(1000);
-  L.riverNames = [];
-  for (const [kind, , name, flags, pts] of GEO.waterways || []) {
+  for (const [kind, , name, flags, pts] of GEO.waterways) {
     if (flags & 2) continue;
     (kind === 'river' ? L.rivers : kind === 'stream' ? L.streams : L.drains).line(pts);
     if (!name || (kind !== 'river' && kind !== 'stream')) continue;
@@ -199,20 +251,13 @@ function mapLayers() {
     }
   }
   // The airport: its apron & helipads, the runway and the taxiways (GEO.airport, drawn at their real widths)
-  L.aprons = new TiledLayer(1000);
-  L.runways = new TiledLayer(1000);
-  L.taxiways = new TiledLayer(1000);
-  const airport = GEO.airport || { aprons: [], helipads: [], runways: [], taxiways: [] };
+  const airport = GEO.airport;
   for (const ring of [...airport.aprons, ...airport.helipads]) L.aprons.ring(ring);
   for (const [, , pts] of airport.runways) L.runways.line(pts);
   for (const [, , pts] of airport.taxiways) L.taxiways.line(pts);
-  L.blocks = new TiledLayer();
-  L.parkBlocks = new TiledLayer();
   for (const b of BLOCKS) (b.park > 0.6 && !b.median ? L.parkBlocks : L.blocks).ring(b.poly);
 
   // Street network at low zoom (the wide streets, once the gaps between blocks are under a pixel) and the highways
-  L.mainRoads = new TiledLayer(1000);
-  L.highways = new Path2D();
   for (const r of ROADS) {
     if (r.highway) {
       if (!/Underpass|Tunnel/.test(r.name)) addLine(L.highways, r.pts);
@@ -223,14 +268,26 @@ function mapLayers() {
   return L;
 }
 
-// Building footprints as generated by buildings.js, by height: up to 45 m, 95 m, taller
-let FOOTPRINTS = null;
-function footprintLayers(all) {
-  if (!all || !all.length) return null;
-  if (FOOTPRINTS && FOOTPRINTS.src === all && FOOTPRINTS.n === all.length) return FOOTPRINTS;
-  const tones = [new TiledLayer(), new TiledLayer(), new TiledLayer()];
+/** What the maps read of a block of buildings (world/buildings.ts BlockDetail) */
+export interface MapBlock {
+  footprints?: readonly Footprint[];
+}
+/** The footprints by height, for `src` as it was when it had `n` blocks; version counts the rebuilds */
+interface FootprintLayers {
+  src: readonly MapBlock[];
+  n: number;
+  tones: [TiledLayer, TiledLayer, TiledLayer];
+  version: number;
+}
+
+// Building footprints as generated by buildings.ts, by height: up to 45 m, 95 m, taller
+let FOOTPRINTS: FootprintLayers | null = null;
+function footprintLayers(all: readonly MapBlock[] | null | undefined): FootprintLayers | null {
+  if (!all?.length) return null;
+  if (FOOTPRINTS?.src === all && FOOTPRINTS.n === all.length) return FOOTPRINTS;
+  const tones: FootprintLayers['tones'] = [new TiledLayer(), new TiledLayer(), new TiledLayer()];
   for (const blk of all) {
-    for (const f of blk.footprints || []) {
+    for (const f of blk.footprints ?? []) {
       const layer = tones[f.h > 95 ? 2 : f.h > 45 ? 1 : 0];
       if (f.pts) layer.ring(f.pts); // turned to follow a non-grid street
       else layer.rect(f.x0, f.z0, f.x1, f.z1);
@@ -243,11 +300,27 @@ function footprintLayers(all) {
 // Street name labels: anchors every ~260 m along each straight run of a real centreline (fixed in the world, so labels
 // never slide while the map pans), with the direction of the street there (never upside down: vertical names read
 // upwards)
-const ROAD_LABELS = [];
+/** A place along a street for its name: world metres; ang in radians (never upside down), len the run's metres */
+interface LabelAnchor {
+  x: number;
+  z: number;
+  ang: number;
+  len: number;
+}
+interface RoadLabel extends Bounds {
+  text: string;
+  lower: string;
+  raw: string;
+  road: CityRoad;
+  major: boolean;
+  highway: boolean;
+  anchors: LabelAnchor[];
+}
+const ROAD_LABELS: RoadLabel[] = [];
 for (const r of ROADS) {
   const text = r.name;
-  if (!text || /^Unnamed/.test(text)) continue;
-  const anchors = [];
+  if (!text || text.startsWith('Unnamed')) continue;
+  const anchors: LabelAnchor[] = [];
   const pts = r.pts;
   for (let i = 0; i + 1 < pts.length;) {
     // the straight run from pts[i]: consecutive segments within ~5° of its first one (the centreline has a vertex at
@@ -293,8 +366,21 @@ const ROAD_NAME_COUNT = new Set(ROAD_LABELS.map((l) => l.text)).size;
  * A map viewport: centre (cx, cz) in world metres, s pixels per metre, w x h CSS pixels on a canvas of pixel ratio dpr,
  * the world turned `rot` radians clockwise on screen (MAP_ROT: true north up). minX..maxZ bound what it can see.
  */
-class MapView {
-  constructor(cx, cz, s, w, h, dpr = 1, rot = MAP_ROT) {
+class MapView implements Bounds {
+  cx: number;
+  cz: number;
+  s: number; // pixels per metre
+  w: number; // CSS px
+  h: number;
+  dpr: number;
+  cos: number;
+  sin: number;
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+
+  constructor(cx: number, cz: number, s: number, w: number, h: number, dpr = 1, rot = MAP_ROT) {
     this.cx = cx;
     this.cz = cz;
     this.s = s;
@@ -313,7 +399,7 @@ class MapView {
   }
 
   /** Canvas transform for world metres */
-  world(ctx) {
+  world(ctx: CanvasRenderingContext2D): void {
     const { s, dpr, cos, sin } = this;
     const a = s * cos, b = s * sin;
     ctx.setTransform(a * dpr, b * dpr, -b * dpr, a * dpr,
@@ -321,25 +407,25 @@ class MapView {
   }
 
   /** Canvas transform for CSS pixels from the canvas centre (what toX / toY return) */
-  screen(ctx) {
+  screen(ctx: CanvasRenderingContext2D): void {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, this.dpr * this.w * 0.5, this.dpr * this.h * 0.5);
   }
 
-  toX(x, z) {
+  toX(x: number, z: number): number {
     return ((x - this.cx) * this.cos - (z - this.cz) * this.sin) * this.s;
   }
 
-  toY(x, z) {
+  toY(x: number, z: number): number {
     return ((x - this.cx) * this.sin + (z - this.cz) * this.cos) * this.s;
   }
 
-  sees(b) {
-    return b && b.maxX >= this.minX && b.minX <= this.maxX && b.maxZ >= this.minZ && b.minZ <= this.maxZ;
+  sees(b: Bounds | null | undefined): boolean {
+    return !!b && b.maxX >= this.minX && b.minX <= this.maxX && b.maxZ >= this.minZ && b.minZ <= this.maxZ;
   }
 }
 
 // A direction in the world (radians from +x towards +z) as drawn on the map, turned so text never reads upside down
-function uprightAngle(ang) {
+function uprightAngle(ang: number): number {
   let a = ang + MAP_ROT;
   while (a > Math.PI * 0.5 + 0.01) a -= Math.PI;
   while (a <= -Math.PI * 0.5 - 0.01) a += Math.PI;
@@ -347,20 +433,20 @@ function uprightAngle(ang) {
 }
 
 // Screen pixels (dx, dy) from the centre -> world metres (dx, dz) from the centre, at s pixels per metre
-function screenToWorldDelta(dx, dy, s) {
+function screenToWorldDelta(dx: number, dy: number, s: number): { x: number; z: number } {
   const c = Math.cos(MAP_ROT), n = Math.sin(MAP_ROT);
   return { x: (dx * c + dy * n) / s, z: (-dx * n + dy * c) / s };
 }
 
 // Pixels per metre that fit the bounds b in w x h CSS pixels with the margins mx, my (as drawn: turned by MAP_ROT)
-function fitScale(b, w, h, mx, my) {
+function fitScale(b: Bounds, w: number, h: number, mx: number, my: number): number {
   const c = Math.abs(Math.cos(MAP_ROT)), n = Math.abs(Math.sin(MAP_ROT));
   const bw = b.maxX - b.minX, bd = b.maxZ - b.minZ;
   return Math.min(w / ((bw * c + bd * n) * mx + 1), h / ((bw * n + bd * c) * my + 1));
 }
 
 // Player heading arrow at the (already rotated) origin: white, on a dark halo
-function drawPlayerArrow(ctx, tipY, halfWidth, tailY) {
+function drawPlayerArrow(ctx: CanvasRenderingContext2D, tipY: number, halfWidth: number, tailY: number): void {
   ctx.beginPath();
   ctx.moveTo(0, tipY);
   ctx.lineTo(halfWidth, tailY);
@@ -375,10 +461,93 @@ function drawPlayerArrow(ctx, tipY, halfWidth, tailY) {
   ctx.fill();
 }
 
-const overlaps = (boxes, b) => boxes.some((o) => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]);
+/** A label's screen box: [x0, y0, x1, y1] CSS px */
+type LabelBox = [x0: number, y0: number, x1: number, y1: number];
+
+const overlaps = (boxes: readonly LabelBox[], b: LabelBox) => boxes.some((o) => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]);
+
+/** What the maps use of the controller manager (player/controllers.ts) */
+export interface MapControllers {
+  getActiveEntity(): { position: { x: number; y: number; z: number }; heading: number };
+  floorHeight(x: number, z: number): number; // m, the town's floor under (x, z)
+}
+/** What the radar's view cone uses of the camera rig (player/cameras.ts) */
+export interface MapCamera {
+  currentPos: Vector3;
+  currentLookAt: Vector3;
+}
+/** What the radar's traffic blips use of the traffic (sim/traffic.ts) */
+export interface MapTraffic {
+  cars?: readonly { x: number; z: number }[];
+}
+
+export interface CityMapOptions {
+  controllerManager: MapControllers;
+  cameraSystem: MapCamera;
+  trafficSystem?: MapTraffic | null;
+  allBlocks?: readonly MapBlock[];
+  onTeleport?: (x: number, z: number) => void;
+  onToggle?: (open: boolean) => void;
+}
+
+/** The radar's ground layers & names, rendered twice its size around (cx, cz) at s px/m */
+interface MiniCache {
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  cx: number;
+  cz: number;
+  s: number;
+  version: number; // of the footprints it drew
+}
+
+interface RoadLabelOptions {
+  fontPx?: number;
+  maxLabels?: number;
+  sameNameGap?: number; // px
+  placed?: LabelBox[]; // boxes already taken (it adds its own)
+  majorOnly?: boolean;
+}
 
 class CityMapSystem {
-  constructor({ controllerManager, cameraSystem, trafficSystem, allBlocks = [], onTeleport, onToggle }) {
+  controllerManager: MapControllers;
+  cameraSystem: MapCamera;
+  trafficSystem: MapTraffic | null | undefined;
+  allBlocks: readonly MapBlock[];
+  onTeleport: ((x: number, z: number) => void) | undefined;
+  onToggle: ((open: boolean) => void) | undefined;
+  miniCanvas: HTMLCanvasElement | null;
+  miniCtx: CanvasRenderingContext2D | null;
+  elMiniStreet: HTMLElement | null;
+  miniStreetText: string;
+  miniScale: number; // radar px per metre, easing towards the altitude's
+  miniCache: MiniCache | null;
+  modal: HTMLElement | null;
+  fullCanvas: HTMLCanvasElement | null;
+  fullCanvasWrap: HTMLElement | null;
+  fullCtx: CanvasRenderingContext2D | null;
+  fullDpr: number;
+  fullStatic: HTMLCanvasElement | null;
+  fullStaticKey: string;
+  elHoverInfo: HTMLElement | null;
+  elPlayerInfo: HTMLElement | null;
+  elSearchInput: HTMLInputElement | null;
+  isFullMapOpen: boolean;
+  viewCenterX: number; // m
+  viewCenterZ: number;
+  viewZoom: number; // CSS px per metre
+  isPanning: boolean;
+  panPointerId: number | null;
+  panStart: { x: number; y: number; cx: number; cz: number }; // client px, and the view's centre then (m)
+  dragMoved: boolean;
+  hoverWorld: PointXZ | null;
+  searchHighlight: string;
+  searchPath: Path2D | null;
+  searchBounds?: Bounds;
+  textWidths: Map<string, number>; // px, by font, spacing & text
+  blipSource?: (() => Blips) | null;
+  playerInfoText?: string;
+
+  constructor({ controllerManager, cameraSystem, trafficSystem, allBlocks = [], onTeleport, onToggle }: CityMapOptions) {
     this.controllerManager = controllerManager;
     this.cameraSystem = cameraSystem;
     this.trafficSystem = trafficSystem;
@@ -386,7 +555,7 @@ class CityMapSystem {
     this.onTeleport = onTeleport;
     this.onToggle = onToggle;
 
-    this.miniCanvas = document.getElementById('minimap-canvas');
+    this.miniCanvas = document.getElementById('minimap-canvas') as HTMLCanvasElement | null;
     this.miniCtx = this.miniCanvas ? this.miniCanvas.getContext('2d') : null;
     this.elMiniStreet = document.getElementById('minimap-street-label');
     this.miniStreetText = '';
@@ -398,7 +567,7 @@ class CityMapSystem {
     // (the map is drawn true north up, so its compass, index.html, points straight up)
 
     this.modal = document.getElementById('fullmap-modal');
-    this.fullCanvas = document.getElementById('fullmap-canvas');
+    this.fullCanvas = document.getElementById('fullmap-canvas') as HTMLCanvasElement | null;
     this.fullCanvasWrap = document.getElementById('fullmap-canvas-wrap');
     this.fullCtx = this.fullCanvas ? this.fullCanvas.getContext('2d') : null;
     this.fullDpr = 1;
@@ -406,7 +575,7 @@ class CityMapSystem {
     this.fullStaticKey = '';
     this.elHoverInfo = document.getElementById('fullmap-hover-info');
     this.elPlayerInfo = document.getElementById('fullmap-player-info');
-    this.elSearchInput = document.getElementById('fullmap-search');
+    this.elSearchInput = document.getElementById('fullmap-search') as HTMLInputElement | null;
     if (this.elSearchInput) this.elSearchInput.placeholder = `Search ${ROAD_NAME_COUNT} streets & landmarks…`;
 
     this.isFullMapOpen = false;
@@ -425,8 +594,8 @@ class CityMapSystem {
     this.textWidths = new Map();
 
     // Street names measured before the web font arrived would be spaced for the fallback font: measure & draw again
-    if (document.fonts) {
-      document.fonts.ready.then(() => {
+    if ('fonts' in document) {
+      void document.fonts.ready.then(() => {
         this.textWidths.clear();
         this.miniCache = null;
         this.fullStaticKey = '';
@@ -436,7 +605,7 @@ class CityMapSystem {
     this.initEvents();
   }
 
-  initEvents() {
+  initEvents(): void {
     const closeBtn = document.getElementById('close-fullmap-btn');
     const miniCard = document.getElementById('minimap-card');
     const zoomInBtn = document.getElementById('map-zoom-in');
@@ -445,10 +614,10 @@ class CityMapSystem {
     const fullCityBtn = document.getElementById('map-view-all');
 
     if (miniCard) {
-      miniCard.addEventListener('click', () => this.toggleFullMap(true));
+      miniCard.addEventListener('click', () => { this.toggleFullMap(true); });
     }
     if (closeBtn) {
-      closeBtn.addEventListener('click', () => this.toggleFullMap(false));
+      closeBtn.addEventListener('click', () => { this.toggleFullMap(false); });
     }
 
     if (zoomInBtn) {
@@ -484,8 +653,9 @@ class CityMapSystem {
       });
     }
 
-    if (this.elSearchInput) {
-      this.elSearchInput.addEventListener('input', () => this.search(this.elSearchInput.value));
+    const searchInput = this.elSearchInput;
+    if (searchInput) {
+      searchInput.addEventListener('input', () => { this.search(searchInput.value); });
     }
 
     window.addEventListener('keydown', (e) => {
@@ -496,13 +666,14 @@ class CityMapSystem {
       }
     });
 
-    if (this.fullCanvas) {
-      this.fullCanvas.style.touchAction = 'none';
-      this.fullCanvas.addEventListener('pointerdown', (e) => {
+    const fullCanvas = this.fullCanvas;
+    if (fullCanvas) {
+      fullCanvas.style.touchAction = 'none';
+      fullCanvas.addEventListener('pointerdown', (e) => {
         if (e.button !== 0 || !this.isFullMapOpen || this.panPointerId !== null) return;
         e.preventDefault();
         this.panPointerId = e.pointerId;
-        this.fullCanvas.setPointerCapture(e.pointerId);
+        fullCanvas.setPointerCapture(e.pointerId);
         this.isPanning = true;
         this.dragMoved = false;
         this.panStart.x = e.clientX;
@@ -512,7 +683,7 @@ class CityMapSystem {
         if (this.fullCanvasWrap) this.fullCanvasWrap.classList.add('is-panning');
       });
 
-      this.fullCanvas.addEventListener('pointermove', (e) => {
+      fullCanvas.addEventListener('pointermove', (e) => {
         if (!this.isFullMapOpen || !this.fullCanvas) return;
         if (this.isPanning ? e.pointerId !== this.panPointerId : e.pointerType !== 'mouse') return;
         const rect = this.fullCanvas.getBoundingClientRect();
@@ -540,7 +711,7 @@ class CityMapSystem {
         }
       });
 
-      this.fullCanvas.addEventListener('pointerup', (e) => {
+      fullCanvas.addEventListener('pointerup', (e) => {
         if (e.pointerId !== this.panPointerId) return;
         const clicked = !this.dragMoved && Math.hypot(e.clientX - this.panStart.x, e.clientY - this.panStart.y) <= 5;
         this.cancelPan();
@@ -557,20 +728,20 @@ class CityMapSystem {
           }
         }
       });
-      for (const type of ['pointercancel', 'lostpointercapture']) {
-        this.fullCanvas.addEventListener(type, (e) => {
+      for (const type of ['pointercancel', 'lostpointercapture'] as const) {
+        fullCanvas.addEventListener(type, (e) => {
           if (e.pointerId === this.panPointerId) this.cancelPan();
         });
       }
-      window.addEventListener('blur', () => this.cancelPan());
+      window.addEventListener('blur', () => { this.cancelPan(); });
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) this.cancelPan();
       });
 
       // Wheel zoom about the cursor (the place under it stays put)
-      this.fullCanvas.addEventListener('wheel', (e) => {
+      fullCanvas.addEventListener('wheel', (e) => {
         e.preventDefault();
-        const rect = this.fullCanvas.getBoundingClientRect();
+        const rect = fullCanvas.getBoundingClientRect();
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
         const before = this.screenToWorld(mx, my, rect.width, rect.height);
@@ -588,8 +759,8 @@ class CityMapSystem {
    * Street / landmark search: highlights every stretch of the matching streets and frames them (or flies to the
    * matching landmark)
    */
-  search(text) {
-    const q = String(text || '').trim().toLowerCase();
+  search(text: string): void {
+    const q = (text || '').trim().toLowerCase();
     this.searchHighlight = q;
     this.searchPath = null;
     if (q.length > 0) {
@@ -597,7 +768,7 @@ class CityMapSystem {
       const roads = ROAD_LABELS.filter((l) => l.lower.includes(q) || l.raw.includes(q));
       if (roads.length) {
         this.searchPath = new Path2D();
-        const b = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
+        const b: Bounds = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
         for (const l of roads) {
           addLine(this.searchPath, l.road.pts);
           b.minX = Math.min(b.minX, l.minX);
@@ -611,7 +782,7 @@ class CityMapSystem {
         this.viewCenterX = lmMatch.x;
         this.viewCenterZ = lmMatch.z;
         this.viewZoom = Math.max(this.viewZoom, 0.9);
-      } else if (roads.length) {
+      } else if (roads.length && this.searchBounds) {
         const b = this.searchBounds;
         const { w, h } = this.fullSize();
         this.viewCenterX = (b.minX + b.maxX) * 0.5;
@@ -623,23 +794,23 @@ class CityMapSystem {
     this.renderFullMap();
   }
 
-  cancelPan() {
+  cancelPan(): void {
     const id = this.panPointerId;
     this.panPointerId = null;
     this.isPanning = false;
     if (this.fullCanvasWrap) this.fullCanvasWrap.classList.remove('is-panning');
-    if (id !== null && this.fullCanvas && this.fullCanvas.hasPointerCapture(id)) this.fullCanvas.releasePointerCapture(id);
+    if (id !== null && this.fullCanvas?.hasPointerCapture(id)) this.fullCanvas.releasePointerCapture(id);
   }
 
-  toggleFullMap(open) {
-    this.isFullMapOpen = Boolean(open);
+  toggleFullMap(open: boolean): void {
+    this.isFullMapOpen = open;
     if (!this.isFullMapOpen) this.cancelPan();
     if (this.onToggle) this.onToggle(this.isFullMapOpen);
     if (!this.modal) return;
     this.modal.classList.toggle('hidden', !this.isFullMapOpen);
     if (this.isFullMapOpen) {
       // the HUD's popovers live in the top layer, above the map
-      for (const pop of document.querySelectorAll('.popover[popover]')) {
+      for (const pop of document.querySelectorAll<HTMLElement>('.popover[popover]')) {
         if (typeof pop.hidePopover === 'function' && pop.matches(':popover-open')) pop.hidePopover();
       }
       const ent = this.controllerManager.getActiveEntity();
@@ -650,7 +821,7 @@ class CityMapSystem {
     }
   }
 
-  resizeFullCanvas() {
+  resizeFullCanvas(): void {
     if (!this.fullCanvas) return;
     // Layout size (the opening animation's transforms don't change it), at most ~6 megapixels however large the screen
     const w = this.fullCanvas.clientWidth || window.innerWidth;
@@ -662,25 +833,25 @@ class CityMapSystem {
   }
 
   // Full map size in CSS pixels
-  fullSize() {
+  fullSize(): { w: number; h: number } {
     const dpr = this.fullDpr || 1;
     if (!this.fullCanvas) return { w: 1200, h: 800 };
     return { w: this.fullCanvas.width / dpr, h: this.fullCanvas.height / dpr };
   }
 
-  screenToWorld(sx, sy, width, height) {
+  screenToWorld(sx: number, sy: number, width: number, height: number): PointXZ {
     const d = screenToWorldDelta(sx - width * 0.5, sy - height * 0.5, this.viewZoom);
     return { x: this.viewCenterX + d.x, z: this.viewCenterZ + d.z };
   }
 
   // Teleports land in the city: inside the outline's extent at that z
-  clampToCity(p) {
+  clampToCity(p: PointXZ): PointXZ {
     const z = Math.max(ISLAND_BOUNDS.minZ + 25, Math.min(ISLAND_BOUNDS.maxZ - 25, p.z));
     const shore = getIslandBoundsAtZ(z);
     return { x: Math.max(shore.westX + 12, Math.min(shore.eastX - 12, p.x)), z };
   }
 
-  textWidth(ctx, text) {
+  textWidth(ctx: CanvasRenderingContext2D, text: string): number {
     const key = `${ctx.font}|${ctx.letterSpacing || ''}|${text}`;
     let w = this.textWidths.get(key);
     if (w === undefined) {
@@ -694,10 +865,10 @@ class CityMapSystem {
    * The ground: the city outline, parkland, blocks, building footprints, the main streets at low zoom, highways and
    * the search highlight (world transform of view v)
    */
-  drawWorld(ctx, v, isMinimap) {
+  drawWorld(ctx: CanvasRenderingContext2D, v: MapView, isMinimap: boolean): void {
     const L = mapLayers();
     const s = v.s;
-    const px = (n) => n / s; // screen pixels -> metres (line widths)
+    const px = (n: number) => n / s; // screen pixels -> metres (line widths)
     v.world(ctx);
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
@@ -711,38 +882,38 @@ class CityMapSystem {
 
     // 2. Parkland, blocks (curb islands) and park blocks
     ctx.fillStyle = MAP.park;
-    L.parkLand.each(v, (p) => ctx.fill(p));
+    L.parkLand.each(v, (p) => { ctx.fill(p); });
     ctx.fillStyle = MAP.block;
-    L.blocks.each(v, (p) => ctx.fill(p));
+    L.blocks.each(v, (p) => { ctx.fill(p); });
     if (s >= 0.22) {
       ctx.strokeStyle = MAP.blockEdge;
       ctx.lineWidth = px(Math.min(1.2, 0.5 + s));
-      L.blocks.each(v, (p) => ctx.stroke(p));
+      L.blocks.each(v, (p) => { ctx.stroke(p); });
     }
     ctx.fillStyle = MAP.park;
-    L.parkBlocks.each(v, (p) => ctx.fill(p));
+    L.parkBlocks.each(v, (p) => { ctx.fill(p); });
     if (s >= 0.1) {
       ctx.strokeStyle = MAP.parkEdge;
       ctx.lineWidth = px(1);
-      L.parkBlocks.each(v, (p) => ctx.stroke(p));
+      L.parkBlocks.each(v, (p) => { ctx.stroke(p); });
     }
 
     // 2b. Water: reservoirs & ponds, then the rivers, arroyos & drains (their real widths, never under a pixel or two)
     ctx.fillStyle = MAP.water;
-    L.water.each(v, (p) => ctx.fill(p));
+    L.water.each(v, (p) => { ctx.fill(p); });
     ctx.strokeStyle = MAP.water;
-    for (const [layer, width, minPx] of [[L.rivers, 10, 2.6], [L.streams, 3.8, 1.3], [L.drains, 2, 0.8]]) {
+    for (const [layer, width, minPx] of [[L.rivers, 10, 2.6], [L.streams, 3.8, 1.3], [L.drains, 2, 0.8]] as const) {
       ctx.lineWidth = Math.max(width, px(minPx));
-      layer.each(v, (p) => ctx.stroke(p));
+      layer.each(v, (p) => { ctx.stroke(p); });
     }
 
     // 2c. The airport
     ctx.fillStyle = ctx.strokeStyle = MAP.airfield;
-    L.aprons.each(v, (p) => ctx.fill(p));
+    L.aprons.each(v, (p) => { ctx.fill(p); });
     ctx.lineCap = 'butt';
-    for (const [layer, width] of [[L.taxiways, 18], [L.runways, 45]]) {
+    for (const [layer, width] of [[L.taxiways, 18], [L.runways, 45]] as const) {
       ctx.lineWidth = Math.max(width, px(width > 20 ? 3 : 1.2));
-      layer.each(v, (p) => ctx.stroke(p));
+      layer.each(v, (p) => { ctx.stroke(p); });
     }
     ctx.lineCap = 'round';
 
@@ -752,12 +923,12 @@ class CityMapSystem {
       if (fp) {
         for (let i = 0; i < 3; i++) {
           ctx.fillStyle = MAP.buildings[i];
-          fp.tones[i].each(v, (p) => ctx.fill(p));
+          fp.tones[i].each(v, (p) => { ctx.fill(p); });
         }
         if (s >= 0.6) {
           ctx.strokeStyle = MAP.buildingEdge;
           ctx.lineWidth = px(0.8);
-          for (let i = 0; i < 3; i++) fp.tones[i].each(v, (p) => ctx.stroke(p));
+          for (let i = 0; i < 3; i++) fp.tones[i].each(v, (p) => { ctx.stroke(p); });
         }
       }
     }
@@ -766,7 +937,7 @@ class CityMapSystem {
     if (s < 0.16) {
       ctx.strokeStyle = MAP.mainRoads;
       ctx.lineWidth = px(s < 0.05 ? 0.7 : 1.1);
-      L.mainRoads.each(v, (p) => ctx.stroke(p));
+      L.mainRoads.each(v, (p) => { ctx.stroke(p); });
     }
 
     // 5. Highways
@@ -786,7 +957,7 @@ class CityMapSystem {
    * Street names along the streets (screen transform of view v): the best anchor of each street that fits its name,
    * one label per street per `sameNameGap` pixels, none overlapping another (or the boxes already in `placed`)
    */
-  drawRoadLabels(ctx, v, { fontPx = 10, maxLabels = 400, sameNameGap = 260, placed = [], majorOnly = false } = {}) {
+  drawRoadLabels(ctx: CanvasRenderingContext2D, v: MapView, { fontPx = 10, maxLabels = 400, sameNameGap = 260, placed = [], majorOnly = false }: RoadLabelOptions = {}): void {
     const s = v.s;
     const q = this.searchHighlight;
     ctx.font = `600 ${fontPx}px ${FONT}`;
@@ -795,7 +966,7 @@ class CityMapSystem {
     const maxX = v.maxX - inset;
     const minZ = v.minZ + inset;
     const maxZ = v.maxZ - inset;
-    const cands = [];
+    const cands: { l: RoadLabel; a: LabelAnchor; width: number; hit: boolean; score: number }[] = [];
     for (const l of ROAD_LABELS) {
       if (l.maxX < minX || l.minX > maxX || l.maxZ < minZ || l.minZ > maxZ) continue;
       const hit = q.length > 0 && (l.lower.includes(q) || l.raw.includes(q));
@@ -815,14 +986,14 @@ class CityMapSystem {
     ctx.lineJoin = 'round';
     ctx.lineWidth = 3;
     ctx.strokeStyle = MAP.halo;
-    const byName = new Map();
+    const byName = new Map<string, [x: number, y: number][]>();
     let n = 0;
     for (const c of cands) {
       if (n >= maxLabels) break;
       const X = v.toX(c.a.x, c.a.z);
       const Y = v.toY(c.a.x, c.a.z);
       const same = byName.get(c.l.text);
-      if (same && same.some(([x, y]) => Math.hypot(x - X, y - Y) < sameNameGap)) continue;
+      if (same?.some(([x, y]) => Math.hypot(x - X, y - Y) < sameNameGap)) continue;
       const hw = c.width * 0.5 + 3;
       const hh = fontPx * 0.5 + 2;
       const ang = uprightAngle(c.a.ang);
@@ -830,7 +1001,7 @@ class CityMapSystem {
       const sa = Math.abs(Math.sin(ang));
       const bx = hw * ca + hh * sa;
       const by = hw * sa + hh * ca;
-      const box = [X - bx, Y - by, X + bx, Y + by];
+      const box: LabelBox = [X - bx, Y - by, X + bx, Y + by];
       if (overlaps(placed, box)) continue;
       placed.push(box);
       if (same) same.push([X, Y]);
@@ -847,12 +1018,12 @@ class CityMapSystem {
     ctx.textBaseline = 'alphabetic';
   }
 
-  // Where the radar's crime blips come from (crime.js blips())
-  setBlipSource(fn) {
+  // Where the radar's crime blips come from (crime.ts blips())
+  setBlipSource(fn: (() => Blips) | null): void {
     this.blipSource = typeof fn === 'function' ? fn : null;
   }
 
-  update() {
+  update(): void {
     // The full map covers the whole screen, radar included
     if (this.isFullMapOpen) {
       this.renderFullMap();
@@ -864,7 +1035,7 @@ class CityMapSystem {
   // =========================================================================
   // 1. GTA 6-STYLE LIVE RADAR MINIMAP (BOTTOM-LEFT HUD)
   // =========================================================================
-  renderMinimap() {
+  renderMinimap(): void {
     if (!this.miniCtx || !this.miniCanvas) return;
     // Nothing to draw while the radar is hidden (narrow screens, clean view)
     if (!this.miniCanvas.offsetParent || document.body.classList.contains('hud-minimized')) return;
@@ -904,16 +1075,18 @@ class CityMapSystem {
     const version = fp ? fp.version : 0;
     let c = this.miniCache;
     // (the player's offset from the cache's centre as drawn: turned with the map, in metres)
-    const off = (cc) => ({ x: (px - cc.cx) * Math.cos(MAP_ROT) - (pz - cc.cz) * Math.sin(MAP_ROT), y: (px - cc.cx) * Math.sin(MAP_ROT) + (pz - cc.cz) * Math.cos(MAP_ROT) });
-    let o = c && off(c);
-    if (!c || c.version !== version || Math.abs(scale / c.s - 1) > 0.12 ||
+    const off = (cc: MiniCache) => ({ x: (px - cc.cx) * Math.cos(MAP_ROT) - (pz - cc.cz) * Math.sin(MAP_ROT), y: (px - cc.cx) * Math.sin(MAP_ROT) + (pz - cc.cz) * Math.cos(MAP_ROT) });
+    let o = c ? off(c) : null;
+    if (!c || !o || c.version !== version || Math.abs(scale / c.s - 1) > 0.12 ||
       Math.abs(o.x) > w / c.s - w / (2 * scale) - 8 / scale ||
       Math.abs(o.y) > h / c.s - h / (2 * scale) - 8 / scale) {
       if (!c) {
-        c = this.miniCache = { canvas: document.createElement('canvas') };
-        c.canvas.width = bw * 2;
-        c.canvas.height = bh * 2;
-        c.ctx = c.canvas.getContext('2d');
+        const canvas = document.createElement('canvas');
+        canvas.width = bw * 2;
+        canvas.height = bh * 2;
+        const cacheCtx = canvas.getContext('2d');
+        if (!cacheCtx) return;
+        c = this.miniCache = { canvas, ctx: cacheCtx, cx: px, cz: pz, s: scale, version };
       }
       c.cx = px;
       c.cz = pz;
@@ -941,10 +1114,11 @@ class CityMapSystem {
     v.screen(ctx);
 
     // Live moving traffic blips on radar
-    if (this.trafficSystem && this.trafficSystem.cars) {
+    const cars = this.trafficSystem?.cars;
+    if (cars) {
       ctx.fillStyle = 'rgba(226, 232, 240, 0.34)';
-      for (let i = 0; i < this.trafficSystem.cars.length; i += 2) {
-        const car = this.trafficSystem.cars[i];
+      for (let i = 0; i < cars.length; i += 2) {
+        const car = cars[i];
         const cx = v.toX(car.x, car.z);
         const cy = v.toY(car.x, car.z);
         if (Math.abs(cx) < w * 0.5 && Math.abs(cy) < h * 0.5) {
@@ -969,14 +1143,16 @@ class CityMapSystem {
       }
     }
 
-    // The police, gangs, thieves and pickups (crime.js blips: kind, x, z, ...), clamped to the radar's edge
+    // The police, gangs, thieves and pickups (crime.ts blips: kind, x, z, ...), clamped to the radar's edge
     if (this.blipSource) {
       const blips = this.blipSource();
       for (let i = 0; i < blips.length; i += 3) {
         const style = BLIP_STYLES[blips[i]];
-        if (!style) continue;
-        const bx = Math.max(-w * 0.46, Math.min(w * 0.46, v.toX(blips[i + 1], blips[i + 2])));
-        const by = Math.max(-h * 0.46, Math.min(h * 0.46, v.toY(blips[i + 1], blips[i + 2])));
+        const x = blips[i + 1];
+        const z = blips[i + 2];
+        if (!style || typeof x !== 'number' || typeof z !== 'number') continue;
+        const bx = Math.max(-w * 0.46, Math.min(w * 0.46, v.toX(x, z)));
+        const by = Math.max(-h * 0.46, Math.min(h * 0.46, v.toY(x, z)));
         ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
         ctx.beginPath();
         ctx.arc(bx, by, style[1] + 1.4, 0, Math.PI * 2);
@@ -1017,7 +1193,7 @@ class CityMapSystem {
   // =========================================================================
   // 2. FULL INTERACTIVE CITY STREET MAP MODAL ([M])
   // =========================================================================
-  renderFullMap() {
+  renderFullMap(): void {
     if (!this.fullCtx || !this.fullCanvas || !this.isFullMapOpen) return;
     const ctx = this.fullCtx;
     const dpr = this.fullDpr || 1;
@@ -1036,7 +1212,7 @@ class CityMapSystem {
     // Ground layers, names & landmark pins: re-rendered only when the view, the search or the buildings change
     const fp = footprintLayers(this.allBlocks);
     const key = `${v.cx}|${v.cz}|${v.s}|${this.fullCanvas.width}|${this.fullCanvas.height}|${this.searchHighlight}|${fp ? fp.version : 0}`;
-    if (!this.fullStatic) this.fullStatic = document.createElement('canvas');
+    this.fullStatic ??= document.createElement('canvas');
     if (key !== this.fullStaticKey) {
       this.fullStaticKey = key;
       const sc = this.fullStatic;
@@ -1044,7 +1220,8 @@ class CityMapSystem {
         sc.width = this.fullCanvas.width;
         sc.height = this.fullCanvas.height;
       }
-      this.renderFullMapStatic(sc.getContext('2d'), v);
+      const staticCtx = sc.getContext('2d');
+      if (staticCtx) this.renderFullMapStatic(staticCtx, v);
     }
 
     ctx.save();
@@ -1074,7 +1251,7 @@ class CityMapSystem {
     ctx.restore();
   }
 
-  renderFullMapStatic(ctx, v) {
+  renderFullMapStatic(ctx: CanvasRenderingContext2D, v: MapView): void {
     const { w, h, s } = v;
     ctx.save();
     // 1. The valley floor
@@ -1089,14 +1266,14 @@ class CityMapSystem {
 
     // 3. Iconic Landmark Pins & Collision-Free Labels (placed first: their boxes keep the other names clear)
     ctx.font = `700 11px ${FONT}`;
-    const placed = [];
-    const pins = [];
+    const placed: LabelBox[] = [];
+    const pins: { lm: CityLandmark; lx: number; ly: number; showLabel: boolean }[] = [];
     for (const lm of CITY_LANDMARKS) {
       const lx = v.toX(lm.x, lm.z);
       const ly = v.toY(lm.x, lm.z);
       if (Math.abs(lx) > w * 0.48 || Math.abs(ly) > h * 0.48) continue;
       const labelW = this.textWidth(ctx, lm.short) + 6;
-      const box = [lx + 6, ly - 8, lx + 8 + labelW, ly + 7];
+      const box: LabelBox = [lx + 6, ly - 8, lx + 8 + labelW, ly + 7];
       const showLabel = !overlaps(placed, box);
       placed.push([lx - 6, ly - 6, lx + 6, ly + 6]);
       if (showLabel) placed.push(box);
@@ -1115,7 +1292,7 @@ class CityMapSystem {
       ctx.fillStyle = 'rgba(168, 178, 192, 0.46)';
       if (tracking) ctx.letterSpacing = '1.8px';
       const half = this.textWidth(ctx, label) * 0.5 + 4;
-      const box = [dx - half, dy - 8, dx + half, dy + 8];
+      const box: LabelBox = [dx - half, dy - 8, dx + half, dy + 8];
       if (overlaps(placed, box)) continue;
       placed.push(box);
       ctx.fillText(label, dx, dy);
@@ -1135,7 +1312,7 @@ class CityMapSystem {
       const ang = uprightAngle(r.angle);
       const c = Math.abs(Math.cos(ang)), sn = Math.abs(Math.sin(ang));
       const bx = half * c + 7 * sn, by = half * sn + 7 * c;
-      const box = [dx - bx, dy - by, dx + bx, dy + by];
+      const box: LabelBox = [dx - bx, dy - by, dx + bx, dy + by];
       if (overlaps(placed, box)) continue;
       placed.push(box);
       ctx.save();
@@ -1179,7 +1356,7 @@ class CityMapSystem {
     ctx.restore();
   }
 
-  drawScaleBar(ctx, v) {
+  drawScaleBar(ctx: CanvasRenderingContext2D, v: MapView): void {
     const target = 120 / v.s; // metres in ~120 px
     const pow = Math.pow(10, Math.floor(Math.log10(target)));
     const step = [1, 2, 5, 10].map((m) => m * pow).filter((m) => m <= target).pop() || pow;

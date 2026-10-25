@@ -1,19 +1,29 @@
-// server/aoi.js
+// server/aoi.ts
 // Area of interest: a uniform grid over the world's x/z plane so each player is only sent the others near them.
 // A query touches the cells overlapping a square around the point and then filters by true distance.
 
+/** A point on the x/z plane, in the same units as the grid's cellSize */
+export interface PlanePoint {
+  x: number;
+  z: number;
+}
+
 class SpatialGrid {
+  cellSize: number;
+  cells: Map<string, Set<number>>;
+  where: Map<number, string>;
+
   constructor(cellSize = 250) {
     this.cellSize = cellSize;
     this.cells = new Map(); // "cx,cz" → Set of ids
     this.where = new Map(); // id → its cell key
   }
 
-  keyAt(x, z) {
+  keyAt(x: number, z: number): string {
     return `${Math.floor(x / this.cellSize)},${Math.floor(z / this.cellSize)}`;
   }
 
-  update(id, x, z) {
+  update(id: number, x: number, z: number): void {
     const key = this.keyAt(x, z);
     const old = this.where.get(id);
     if (old === key) return;
@@ -24,14 +34,14 @@ class SpatialGrid {
     this.where.set(id, key);
   }
 
-  remove(id) {
+  remove(id: number): void {
     const old = this.where.get(id);
     if (old === undefined) return;
     this.removeFromCell(id, old);
     this.where.delete(id);
   }
 
-  removeFromCell(id, key) {
+  removeFromCell(id: number, key: string): void {
     const cell = this.cells.get(key);
     if (!cell) return;
     cell.delete(id);
@@ -39,7 +49,7 @@ class SpatialGrid {
   }
 
   // Ids in every cell overlapping the square of half-size radius around (x, z): a superset of those within radius
-  candidates(x, z, radius, out = []) {
+  candidates(x: number, z: number, radius: number, out: number[] = []): number[] {
     const c = this.cellSize;
     const x0 = Math.floor((x - radius) / c);
     const x1 = Math.floor((x + radius) / c);
@@ -56,11 +66,11 @@ class SpatialGrid {
 }
 
 // The (at most) max players nearest to self within radius, nearest first. positions: id → { x, z }
-function nearestInView(grid, positions, selfId, radius, max) {
+function nearestInView(grid: SpatialGrid, positions: ReadonlyMap<number, PlanePoint>, selfId: number, radius: number, max: number): number[] {
   const self = positions.get(selfId);
   if (!self) return [];
   const r2 = radius * radius;
-  const found = [];
+  const found: { id: number; d2: number }[] = [];
   for (const id of grid.candidates(self.x, self.z, radius)) {
     if (id === selfId) continue;
     const p = positions.get(id);

@@ -1,18 +1,77 @@
+// js/audio/audio-synthesis.ts
 // Shared procedural audio and continuously running, mono vehicle voices. Spatial placement and overall mixing
 // belong to the caller; every source and processing node created by a voice is released by dispose().
 
-const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+/** The engines with a combustion loop of their own: a four, a six, a diesel six and a single-cylinder moto */
+export type CombustionKind = 'sedan' | 'suv' | 'bus' | 'moto';
+/** Every running voice createMotorVoice() makes */
+export type MotorKind = CombustionKind | 'helicopter' | 'cyclist' | 'siren';
+
+/** One engine's exhaust & mechanical loops, baked at two reference revs (rpm) and blended between them */
+export interface CombustionSound {
+  exhaust: AudioBuffer;
+  highExhaust: AudioBuffer;
+  mechanical: AudioBuffer;
+  referenceRPM: number;
+  highReferenceRPM: number;
+}
+
+/** The loops and waves every voice shares, synthesised once per context (createSynthResources) */
+export interface SynthResources {
+  /** Two seconds of looping, gently low-passed white noise */
+  noise: AudioBuffer;
+  /** The streets' short stereo reflections, for the shared convolver */
+  impulse: AudioBuffer;
+  combustion: Record<CombustionKind, CombustionSound>;
+  rotor: AudioBuffer;
+  /** The blades' wash envelope, 0..1, in step with `rotor` */
+  rotorEnvelope: AudioBuffer;
+  turbine: AudioBuffer;
+  ratchet: AudioBuffer;
+  chain: AudioBuffer;
+  sirenWave: PeriodicWave;
+  sirenSweep: PeriodicWave;
+  /** Counts the voices made, so each starts its loops at a phase of its own */
+  voiceSerial: number;
+}
+
+/** A motor voice's controls, read at audio's control rate */
+export interface MotorVoiceParams {
+  /** m/s */
+  speed: number;
+  /** Throttle / collective, 0..1 */
+  load: number;
+  /** The pitch ratio of the source's approach, 1 at rest */
+  doppler: number;
+  /** Picks the voice's small, steady variation in pitch */
+  seed: number;
+  /** m/s, up positive (the helicopter's descent thickens its slap) */
+  verticalSpeed: number;
+  /** The engine's own revs when they are known (the player's car), else 0 */
+  rpm: number;
+}
+
+export interface MotorVoice {
+  update(params?: Partial<MotorVoiceParams>, now?: number): void;
+  dispose(): void;
+}
+
+/** A sampled parameter: set to `value` from `now` (s, the context's clock) */
+type SmoothedParameter = (value: number, now: number) => void;
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
 // Movement and tone controls only need one value per audio block. Set every parameter on these nodes:
 // even an unused a-rate parameter can make the browser recalculate spatial/filter math for every sample.
 // Oscillator modulation and gain envelopes keep their default audio rate.
-export function setControlRate(...parameters) {
+// (an older Safari has no listener parameters, nor automationRate at all)
+export function setControlRate(...parameters: (AudioParam | undefined)[]) {
   for (const parameter of parameters) {
-    if (parameter?.automationRate !== undefined) parameter.automationRate = 'k-rate';
+    if (parameter && 'automationRate' in parameter) parameter.automationRate = 'k-rate';
   }
 }
 
-function randomSequence(seed) {
+function randomSequence(seed: number) {
   let state = seed >>> 0;
   return () => {
     state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
@@ -20,10 +79,10 @@ function randomSequence(seed) {
   };
 }
 
-function normalizeLoop(buffer, rms, ceiling = 0.9) {
+function normalizeLoop(buffer: AudioBuffer, rms: number, ceiling = 0.9) {
   const data = buffer.getChannelData(0);
   let mean = 0;
-  for (let i = 0; i < data.length; i++) mean += data[i];
+  for (const value of data) mean += value;
   mean /= data.length;
   let energy = 0, peak = 0;
   for (let i = 0; i < data.length; i++) {
@@ -36,7 +95,7 @@ function normalizeLoop(buffer, rms, ceiling = 0.9) {
   return buffer;
 }
 
-function combustionBuffers(context, cylinders, diesel, seed) {
+function combustionBuffers(context: BaseAudioContext, cylinders: number, diesel: boolean, seed: number): CombustionSound {
   const rate = context.sampleRate;
   const referenceRPM = 1200;
   const highReferenceRPM = diesel ? 2400 : 3600;
@@ -48,7 +107,7 @@ function combustionBuffers(context, cylinders, diesel, seed) {
   const resonance = (diesel ? 93 : cylinders === 6 ? 118 : 145) * (0.97 + random() * 0.06);
   const duration = Math.round(rate * (diesel ? 0.062 : 0.048));
 
-  function exhaustBuffer(rpm, clatter) {
+  function exhaustBuffer(rpm: number, clatter?: Float32Array) {
     const length = Math.round(cycles * 120 / rpm * rate);
     const buffer = context.createBuffer(1, length, rate);
     const pressure = buffer.getChannelData(0);
@@ -94,7 +153,7 @@ function combustionBuffers(context, cylinders, diesel, seed) {
   };
 }
 
-function rotorBuffers(context) {
+function rotorBuffers(context: BaseAudioContext) {
   const rate = context.sampleRate;
   const revolutions = 16, blades = 4, revolutionsPerSecond = 5.2;
   const length = Math.round(rate * revolutions / revolutionsPerSecond);
@@ -130,7 +189,7 @@ function rotorBuffers(context) {
   return { rotor: normalizeLoop(rotor, 0.29), envelope };
 }
 
-function turbineBuffer(context) {
+function turbineBuffer(context: BaseAudioContext) {
   const rate = context.sampleRate;
   const buffer = context.createBuffer(1, Math.round(rate * 2), rate);
   const data = buffer.getChannelData(0), random = randomSequence(0x74757262);
@@ -150,7 +209,7 @@ function turbineBuffer(context) {
   return normalizeLoop(buffer, 0.22, 0.8);
 }
 
-function ratchetBuffer(context) {
+function ratchetBuffer(context: BaseAudioContext) {
   const rate = context.sampleRate;
   const length = Math.round(rate * 2);
   const buffer = context.createBuffer(1, length, rate);
@@ -173,7 +232,7 @@ function ratchetBuffer(context) {
   return normalizeLoop(buffer, 0.15, 0.85);
 }
 
-function chainBuffer(context) {
+function chainBuffer(context: BaseAudioContext) {
   const rate = context.sampleRate;
   const buffer = context.createBuffer(1, rate, rate); // One crank revolution at 60 rpm.
   const data = buffer.getChannelData(0);
@@ -198,7 +257,7 @@ function chainBuffer(context) {
   return normalizeLoop(buffer, 0.16, 0.8);
 }
 
-function sirenSweepWave(context) {
+function sirenSweepWave(context: BaseAudioContext) {
   const real = new Float32Array(25), imaginary = new Float32Array(25);
   // Electronic wail/yelp circuits use a nearly triangular control voltage, with softened turning points.
   for (let harmonic = 1; harmonic < real.length; harmonic++) {
@@ -214,7 +273,7 @@ function sirenSweepWave(context) {
   return context.createPeriodicWave(real, imaginary);
 }
 
-export function createSynthResources(context) {
+export function createSynthResources(context: BaseAudioContext): SynthResources {
   const sampleRate = context.sampleRate;
   const noise = context.createBuffer(1, Math.round(sampleRate * 2), sampleRate);
   const samples = noise.getChannelData(0);
@@ -226,14 +285,14 @@ export function createSynthResources(context) {
   const coefficient = Math.exp(-2 * Math.PI * 7000 / sampleRate);
   for (let pass = 0; pass < 2; pass++) {
     let previous = 0;
-    for (let i = 0; i < samples.length; i++) previous += (samples[i] - previous) * (1 - coefficient);
+    for (const sample of samples) previous += (sample - previous) * (1 - coefficient);
     for (let i = 0; i < samples.length; i++) {
       previous += (samples[i] - previous) * (1 - coefficient);
       samples[i] = previous;
     }
   }
   let mean = 0;
-  for (let i = 0; i < samples.length; i++) mean += samples[i];
+  for (const sample of samples) mean += sample;
   mean /= samples.length;
   let peak = 0;
   let energy = 0;
@@ -268,7 +327,7 @@ export function createSynthResources(context) {
     }
   }
 
-  const wave = (harmonics) => context.createPeriodicWave(new Float32Array(harmonics.length), new Float32Array(harmonics));
+  const wave = (harmonics: number[]) => context.createPeriodicWave(new Float32Array(harmonics.length), new Float32Array(harmonics));
   const helicopter = rotorBuffers(context);
   return {
     noise,
@@ -292,7 +351,7 @@ export function createSynthResources(context) {
 
 // Keep only meaningful target changes. Replacing future events bounds the scheduling horizon; setTargetAtTime
 // starts from the value reached by the preceding ramp, including when an update interrupts that ramp.
-function smoothParameter(parameter, timeConstant = 0.07, epsilon = 0.0001, snapInitial = false) {
+function smoothParameter(parameter: AudioParam, timeConstant = 0.07, epsilon = 0.0001, snapInitial = false): SmoothedParameter {
   let target = NaN;
   return (value, now) => {
     if (Math.abs(value - target) < epsilon) return;
@@ -303,23 +362,23 @@ function smoothParameter(parameter, timeConstant = 0.07, epsilon = 0.0001, snapI
   };
 }
 
-export function createMotorVoice(context, resources, kind, output) {
+export function createMotorVoice(context: BaseAudioContext, resources: SynthResources, kind: MotorKind, output: AudioNode): MotorVoice {
   if (!['sedan', 'suv', 'bus', 'moto', 'helicopter', 'cyclist', 'siren'].includes(kind)) {
     throw new RangeError(`Unknown motor voice: ${kind}`);
   }
-  const nodes = [];
-  const sources = [];
+  const nodes: AudioNode[] = [];
+  const sources: (AudioBufferSourceNode | OscillatorNode)[] = [];
   const serial = resources.voiceSerial = (resources.voiceSerial || 0) + 1;
   let disposed = false;
   let lastSeed = NaN;
   let variation = 0.5;
-  const own = (node) => { nodes.push(node); return node; };
+  const own = <T extends AudioNode>(node: T) => { nodes.push(node); return node; };
   const gain = (value = 0) => {
     const node = own(context.createGain());
     node.gain.value = value;
     return node;
   };
-  const filter = (type, frequency, q = 0.7) => {
+  const filter = (type: BiquadFilterType, frequency: number, q = 0.7) => {
     const node = own(context.createBiquadFilter());
     setControlRate(node.frequency, node.detune, node.Q, node.gain);
     node.type = type;
@@ -327,9 +386,10 @@ export function createMotorVoice(context, resources, kind, output) {
     node.Q.value = q;
     return node;
   };
-  const oscillator = (type, frequency) => {
+  const oscillator = (type: OscillatorType | PeriodicWave, frequency: number) => {
     const node = own(context.createOscillator());
-    if (typeof type === 'string') node.type = type;
+    // (the DOM's PeriodicWave is an empty interface, which a string would match: TS can't narrow it away)
+    if (typeof type === 'string') node.type = type as OscillatorType;
     else node.setPeriodicWave(type);
     node.frequency.value = frequency;
     sources.push(node);
@@ -346,7 +406,8 @@ export function createMotorVoice(context, resources, kind, output) {
   mix.channelCount = 1;
   mix.channelCountMode = 'explicit';
   mix.connect(output);
-  let render;
+  // (speed m/s, load 0..1, doppler ratio, now s, verticalSpeed m/s, engineRPM: 0 when unknown)
+  let render: (speed: number, load: number, doppler: number, now: number, verticalSpeed: number, engineRPM: number) => void;
 
   if (kind === 'sedan' || kind === 'suv' || kind === 'bus' || kind === 'moto') {
     const bus = kind === 'bus';
@@ -387,7 +448,7 @@ export function createMotorVoice(context, resources, kind, output) {
     const roadLevel = smoothParameter(roadGain.gain, 0.18);
     const roadFrequency = smoothParameter(roadLowpass.frequency, 0.18, 1);
     const noiseRate = smoothParameter(road.playbackRate, 0.12, 0.001);
-    render = (speed, load, doppler, now, verticalSpeed, engineRPM) => {
+    render = (speed, load, doppler, now, _verticalSpeed, engineRPM) => {
       const first = previousTime < 0;
       const dt = first ? 0.1 : clamp(now - previousTime, 0, 0.5);
       previousTime = now;
@@ -548,7 +609,7 @@ export function createMotorVoice(context, resources, kind, output) {
     const envelopeLevel = smoothParameter(envelopeDepth.gain, 0.10);
     const sirenCutoff = smoothParameter(hornFilter.frequency, 0.12, 1);
     const hornFrequency = smoothParameter(hornBody.frequency, 0.12, 1);
-    render = (speed, load, doppler, now) => {
+    render = (_speed, _load, doppler, now) => {
       const pitch = (0.98 + variation * 0.04) * doppler;
       sirenFrequency(1125 * pitch, now);
       sweepRange(425 * pitch, now);
@@ -585,7 +646,7 @@ export function createMotorVoice(context, resources, kind, output) {
   const startTime = context.currentTime;
   mix.gain.setTargetAtTime(1, startTime, 0.04);
   for (const source of sources) {
-    if (source.buffer) source.start(startTime, ((serial * 0.61803398875) % 1) * source.buffer.duration);
+    if ('buffer' in source && source.buffer) source.start(startTime, ((serial * 0.61803398875) % 1) * source.buffer.duration);
     else source.start(startTime);
   }
 

@@ -1,8 +1,8 @@
 import * as THREE from 'three/webgpu';
 import { createBloodPoolMaterial } from '../render/tsl-materials.ts';
 
-// js/sim/blood.js
-// Pools of blood under the people hit hard or killed (main.js, as their ragdolls settle, sim/ragdolls.js): one instanced
+// js/sim/blood.ts
+// Pools of blood under the people hit hard or killed (main.ts, as their ragdolls settle, sim/ragdolls.ts): one instanced
 // mesh of flat quads lying on the ground's slope, each spreading over a few seconds (fast at first, as blood does, then
 // slowing) to a size set by how bad the hit was, its outline its own (bloodSeed). The oldest is taken for a new one once
 // all POOLS are down. Nothing is allocated per pool.
@@ -14,9 +14,30 @@ const LIFT = 0.025; // m over the ground (with the material's polygon offset: ov
 const dummy = new THREE.Object3D();
 const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
 
+// The height of the ground (or the deck or walk) a body lies on at (x, z), under fromY (m)
+type GroundAt = (x: number, z: number, fromY: number) => number;
+// A pool: where it lies (m) and how (rad: tilted to the slope, turned yaw), its full size across (m), its age (s)
+interface BloodPool {
+  x: number;
+  y: number;
+  z: number;
+  pitch: number;
+  roll: number;
+  yaw: number;
+  size: number;
+  age: number;
+  live: boolean;
+}
+
 class BloodPools {
+  groundAt: GroundAt;
+  mesh: THREE.InstancedMesh<THREE.PlaneGeometry, THREE.Material>;
+  pools: BloodPool[];
+  cursor: number;
+  growing: number;
+
   /** `groundAt(x, z, fromY)`: the height of the ground (or the deck or walk) a body lies on there */
-  constructor(scene, groundAt) {
+  constructor(scene: THREE.Object3D, groundAt: GroundAt) {
     this.groundAt = groundAt;
     const geo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     geo.setAttribute('bloodSeed', new THREE.InstancedBufferAttribute(new Float32Array(POOLS), 1));
@@ -35,11 +56,11 @@ class BloodPools {
   }
 
   /** A pool spreading at (x, z) on the ground under `fromY`, up to `size` m across (~1-2.5 for one body) */
-  add(x, z, fromY, size) {
+  add(x: number, z: number, fromY: number, size: number): void {
     const i = this.cursor;
     this.cursor = (i + 1) % POOLS;
     const p = this.pools[i];
-    const g = (px, pz) => this.groundAt(px, pz, fromY);
+    const g = (px: number, pz: number) => this.groundAt(px, pz, fromY);
     // on the slope under it
     p.y = g(x, z);
     p.pitch = -Math.atan2(g(x, z + 0.6) - g(x, z - 0.6), 1.2);
@@ -50,7 +71,7 @@ class BloodPools {
     this.place(i);
   }
 
-  place(i) {
+  place(i: number): void {
     const p = this.pools[i];
     const t = Math.min(1, p.age / SPREAD);
     const s = p.size * (0.15 + 0.85 * (1 - (1 - t) * (1 - t) * (1 - t))); // (quick at first, slowing)
@@ -64,7 +85,7 @@ class BloodPools {
   }
 
   // Per frame: the pools still spreading grow
-  update(dt) {
+  update(dt: number): void {
     for (let i = 0; i < POOLS; i++) {
       const p = this.pools[i];
       if (!p.live || p.age >= SPREAD) continue;
@@ -74,4 +95,5 @@ class BloodPools {
   }
 }
 
+export type { GroundAt, BloodPool };
 export { BloodPools };

@@ -1,7 +1,9 @@
-// js/models/cars/electric.js
+// js/models/cars/electric.ts
 // Battery-electric cars: Tesla & BYD. The motor's top rpm stands for the redline; one fixed gear. Fields: README.md
 
-export const CARS = [
+import type { CarModel } from './index.ts';
+
+export const CARS: CarModel[] = [
   {
     id: 'byd-dolphin-mini', name: 'BYD Dolphin Mini', body: 'hatch', class: 'economy', electric: true,
     size: [3.78, 1.72, 1.58], mass: 1290, drive: 'fwd', power: [55, 4000], torque: [135, 0], redline: 12000,

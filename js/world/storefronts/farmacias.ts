@@ -1,4 +1,6 @@
 // Pharmacy chains, each under its parody name: glazed fronts under a band in the chain's colours.
+import type { StorefrontSpec } from './index.ts';
+
 export default [
   {
     id: 'farmacias-guanatos',
@@ -28,4 +30,4 @@ export default [
     sign: { bg: '#0077c8', fg: '#ffffff', border: '#ffd100' },
     facade: { band: '#0077c8', stripe: '#ffd100', glazing: true }
   }
-];
+] satisfies StorefrontSpec[];

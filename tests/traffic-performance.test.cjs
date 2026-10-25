@@ -4,7 +4,10 @@ const { join } = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const source = readFileSync(join(__dirname, '../js/sim/traffic.ts'), 'utf8');
+const { stripTypes } = require('./helpers/module.cjs');
+
+// (the JavaScript the bundle ships: the types blanked out, every line and column kept)
+const source = stripTypes(readFileSync(join(__dirname, '../js/sim/traffic.ts'), 'utf8'));
 function productionFunction(name, context) {
   const match = source.match(new RegExp(`  function ${name}\\([^]*?\\n  \\}`));
   assert.ok(match, `${name} is present`);

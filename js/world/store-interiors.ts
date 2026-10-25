@@ -1,15 +1,17 @@
 import * as THREE from 'three/webgpu';
-import { color, float, vec2, vec3, mix, step, smoothstep, fract, floor, abs, max, positionGeometry, positionWorld, normalGeometry, sin, dot } from 'three/tsl';
+import { color, float, vec3, mix, step, smoothstep, fract, floor, abs, max, positionGeometry, positionWorld, normalGeometry, sin, dot } from 'three/tsl';
 import { cityUniforms } from '../render/tsl-materials.ts';
 import { drapeGeometry } from './drape.ts';
 import { townHeight } from './ground.ts';
+import type { Collider } from './buildings.ts';
+import type { LotReserve } from './landmark-models.ts';
 
-// js/world/store-interiors.js
-// The big chain stores you can walk into (the halls buildings.js draws for Gualmart, Bodega Ahorrera, Sorianda, Casa
+// js/world/store-interiors.ts
+// The big chain stores you can walk into (the halls buildings.ts draws for Gualmart, Bodega Ahorrera, Sorianda, Casa
 // Rey, Chedrauy, Samy's...): a door in the middle of the glazed front; inside, a lobby, a row of checkouts, aisles of
 // gondola shelving run from the lobby to the back, and the fridges along the back wall, under a white ceiling of light
 // panels. The walls, shelves & counters collide from the start (STORE colliders replace the hall's one box); what you
-// see inside is built when you come near a store and let go when you leave. The tills can be robbed (main.js).
+// see inside is built when you come near a store and let go when you leave. The tills can be robbed (main.ts).
 //
 // Layout in each store's own frame: `a` metres along the front from its middle, `b` metres in from the front wall.
 
@@ -25,17 +27,75 @@ const CROSS = 3.2; // m, a cross aisle
 const BUILD_NEAR = 160; // m: inside is built nearer than this and let go farther than LET_GO
 const LET_GO = 260;
 
+type Vec2 = [number, number];
+
+/**
+ * A walk-in store's hall (buildings.ts): its centre (m), its size along its local u & v (m), its turn (rad), the side
+ * its front is on (0: −u, 1: +u, 2: −v, 3: +v), its floor's and roof's heights (m), the chain's name and band colour
+ */
+export interface StoreHall {
+  cx: number;
+  cz: number;
+  w: number;
+  d: number;
+  th: number;
+  front: number;
+  base: number;
+  top: number;
+  name: string;
+  band?: string;
+}
+
+/** The store's own frame: F the front's outward normal in the hall's local (u, v), R along the front; half its front's
+ *  length and half its depth (m); the hall's turn as cos / sin */
+export interface StoreFrame {
+  F: Vec2;
+  R: Vec2;
+  halfFront: number;
+  halfDepth: number;
+  cs: number;
+  sn: number;
+}
+
+/** A box standing in a store: centre (a, b), la along the front, lb in depth and h high (m) */
+export interface StoreBox {
+  kind: 'wall' | 'counter' | 'gondola' | 'fridge';
+  a: number;
+  b: number;
+  la: number;
+  lb: number;
+  h: number;
+}
+
+export interface StoreLayout {
+  boxes: StoreBox[];
+  /** the cashier's end of each counter, towards the lobby */
+  tills: { a: number; b: number }[];
+  frame: StoreFrame;
+  /** the front's length & the depth (m) */
+  W: number;
+  D: number;
+}
+
+/** A till to rob (main.ts), in the world: when it refills (s since the epoch; 0: full) */
+export interface StoreTill {
+  x: number;
+  z: number;
+  store: StoreHall;
+  refill: number;
+}
+
 // Is this hall a store you can walk into? A big chain's (storefronts/*.js `big`) on a hall big enough to be one (some
 // small boxes carry a chain's sign by a loose match of a place's name)
-function isEnterableStore(chain, w, d) {
-  return !!(chain && chain.big && Math.min(w, d) >= 30 && w * d >= 2000);
+function isEnterableStore(chain: { big?: boolean } | null | undefined, w: number, d: number) {
+  return !!(chain?.big && Math.min(w, d) >= 30 && w * d >= 2000);
 }
 
 // The store's own frame: F the front's outward normal in the hall's local (u, v), R along the front; half its front's
 // length and half its depth
-function storeFrame(s) {
-  const F = [s.front === 0 ? -1 : s.front === 1 ? 1 : 0, s.front === 2 ? -1 : s.front === 3 ? 1 : 0];
-  const R = [-F[1], F[0]];
+function storeFrame(s: Pick<StoreHall, 'front' | 'w' | 'd' | 'th'>): StoreFrame {
+  const F: Vec2 = [s.front === 0 ? -1 : s.front === 1 ? 1 : 0, s.front === 2 ? -1 : s.front === 3 ? 1 : 0];
+  const R: Vec2 = [-F[1], F[0]];
   const hx = s.w / 2, hz = s.d / 2;
   const halfFront = Math.abs(R[0]) * hx + Math.abs(R[1]) * hz;
   const halfDepth = Math.abs(F[0]) * hx + Math.abs(F[1]) * hz;
@@ -44,11 +104,11 @@ function storeFrame(s) {
 }
 
 // (a, b) in the store's frame → world (x, z); and a box laid along R by `la`, along F by `lb` → its local half-sizes
-function toWorld(s, f, a, b) {
+function toWorld(s: Pick<StoreHall, 'cx' | 'cz'>, f: StoreFrame, a: number, b: number): Vec2 {
   const u = f.R[0] * a + f.F[0] * (f.halfDepth - b), v = f.R[1] * a + f.F[1] * (f.halfDepth - b);
   return [s.cx + u * f.cs + v * f.sn, s.cz - u * f.sn + v * f.cs];
 }
-function halfSizes(f, la, lb) {
+function halfSizes(f: StoreFrame, la: number, lb: number): Vec2 {
   return [(Math.abs(f.R[0]) * la + Math.abs(f.F[0]) * lb) / 2, (Math.abs(f.R[1]) * la + Math.abs(f.F[1]) * lb) / 2];
 }
 
@@ -56,10 +116,10 @@ function halfSizes(f, la, lb) {
  * What stands in a store, in its frame: boxes { kind: 'wall' | 'counter' | 'gondola' | 'fridge', a, b (centre), la
  * (along the front), lb (in depth), h } and the tills { a, b } (the cashier's end of each counter, towards the lobby)
  */
-function storeLayout(s) {
+function storeLayout(s: StoreHall): StoreLayout {
   const f = storeFrame(s);
   const W = f.halfFront * 2, D = f.halfDepth * 2;
-  const boxes = [], tills = [];
+  const boxes: StoreBox[] = [], tills: StoreLayout['tills'] = [];
   const wallH = s.top - s.base;
   // the walls, the front's split by the door
   const side = (W - DOOR) / 2;
@@ -94,18 +154,18 @@ function storeLayout(s) {
 }
 
 // A store's hall as a lot to keep clear (of the houses overlapping it, of trees): { contains(x, z) }, `margin` m in
-function storeReserve(s, margin = 0) {
+function storeReserve(s: Pick<StoreHall, 'cx' | 'cz' | 'w' | 'd' | 'th'>, margin = 0): LotReserve {
   const cs = Math.cos(s.th), sn = Math.sin(s.th);
   return {
-    contains(x, z) {
+    contains(x: number, z: number) {
       const dx = x - s.cx, dz = z - s.cz;
       return Math.abs(cs * dx - sn * dz) < s.w / 2 + margin && Math.abs(sn * dx + cs * dz) < s.d / 2 + margin;
     }
   };
 }
 
-// The colliders of a store's walls, counters, shelves & fridges (oriented with the hall, as buildings.js's)
-function storeColliders(s, layout = storeLayout(s)) {
+// The colliders of a store's walls, counters, shelves & fridges (oriented with the hall, as buildings.ts's)
+function storeColliders(s: StoreHall, layout = storeLayout(s)): Collider[] {
   const f = layout.frame;
   return layout.boxes.map((bx) => {
     const [x, z] = toWorld(s, f, bx.a, bx.b);
@@ -133,7 +193,7 @@ function createGondolaMaterial() {
   const pack = floor(positionWorld.xz.mul(4.0));
   const h = fract(sin(dot(vec3(pack.x, pack.y, level), vec3(12.9898, 78.233, 37.719))).mul(43758.5453));
   const palette = [0xd8232a, 0xf5a623, 0x2b62b8, 0x1f9a3c, 0xf2f2ee, 0x7a3fa0, 0xe86a1a, 0x20a8c8];
-  let product = color(palette[0]);
+  let product: THREE.Node<'color'> | THREE.Node<'vec3'> = color(palette[0]);
   for (let i = 1; i < palette.length; i++) product = mix(product, color(palette[i]), step(i / palette.length, h));
   const shelf = smoothstep(0.08, 0.04, inLevel); // the metal shelf at each level's foot
   const gap = smoothstep(0.88, 0.95, inLevel); // the dark space over the packs
@@ -174,7 +234,7 @@ function createFloorMaterial() {
   mat.emissiveNode = c.mul(0.12);
   return mat;
 }
-function createWallMaterial(band) {
+function createWallMaterial(band: string) {
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.8, side: THREE.BackSide });
   const y = positionGeometry.y.add(0.5);
   const c = mix(color(0xf1f0eb), color(band), step(0.3, y).mul(step(y, 0.38)));
@@ -189,14 +249,15 @@ function createPanelMaterial() {
 }
 
 const unitBox = new THREE.BoxGeometry(1, 1, 1);
+const isMesh = (o: THREE.Object3D): o is THREE.Mesh => o instanceof THREE.Mesh;
 const unitPlane = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2); // facing up
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 
-function buildStores(scene, stores) {
+function buildStores(scene: THREE.Object3D, stores: StoreHall[]) {
   const layouts = stores.map((s) => storeLayout(s));
   const colliders = stores.flatMap((s, i) => storeColliders(s, layouts[i]));
-  // the tills, world positions, for the robberies (main.js): { x, z, store, empty (s since the epoch it refills) }
-  const tills = stores.flatMap((s, i) => layouts[i].tills.map((t) => {
+  // the tills, world positions, for the robberies (main.ts): { x, z, store, refill (s since the epoch it refills) }
+  const tills = stores.flatMap((s, i) => layouts[i].tills.map((t): StoreTill => {
     const [x, z] = toWorld(s, layouts[i].frame, t.a, t.b);
     return { x, z, store: s, refill: 0 };
   }));
@@ -204,10 +265,11 @@ function buildStores(scene, stores) {
   group.name = 'StoreInteriors';
   scene.add(group);
   const mats = { gondola: createGondolaMaterial(), counter: createCounterMaterial(), fridge: createFridgeMaterial(), floor: createFloorMaterial(), panel: createPanelMaterial() };
-  const wallMats = new Map();
-  const wallMat = (band) => {
-    if (!wallMats.has(band)) wallMats.set(band, createWallMaterial(band));
-    return wallMats.get(band);
+  const wallMats = new Map<string, THREE.MeshStandardNodeMaterial>();
+  const wallMat = (band: string) => {
+    let mat = wallMats.get(band);
+    if (!mat) wallMats.set(band, (mat = createWallMaterial(band)));
+    return mat;
   };
   // one of each, parked far under the ground, so their pipelines compile with the rest at load (no hitch on entering)
   const parked = new THREE.Group();
@@ -216,7 +278,7 @@ function buildStores(scene, stores) {
   group.add(parked);
 
   // the inside of store i: its floor, walls & ceiling, the boxes, the light panels
-  function buildInside(i) {
+  function buildInside(i: number) {
     const s = stores[i], L = layouts[i], f = L.frame;
     const inside = new THREE.Group();
     const floorY = 0.225; // over the town's floor, as the player stands inside a block (city-config sidewalkHeight)
@@ -236,7 +298,7 @@ function buildStores(scene, stores) {
     shell.scale.set(s.w - 2 * WALL - 0.05, ceilY - ground, s.d - 2 * WALL - 0.05);
     inside.add(shell);
     // the boxes by kind, each an instanced mesh standing on the ground under its centre
-    for (const kind of ['counter', 'gondola', 'fridge']) {
+    for (const kind of ['counter', 'gondola', 'fridge'] as const) {
       const list = L.boxes.filter((b) => b.kind === kind);
       if (!list.length) continue;
       const mesh = new THREE.InstancedMesh(unitBox, mats[kind], list.length);
@@ -250,7 +312,7 @@ function buildStores(scene, stores) {
       inside.add(mesh);
     }
     // light panels in rows over the aisles, just under the ceiling
-    const panels = [];
+    const panels: Vec2[] = [];
     for (let a = -f.halfFront + 6; a <= f.halfFront - 6; a += 6) for (let b = 4; b <= L.D - 4; b += 5) panels.push([a, b]);
     const lights = new THREE.InstancedMesh(unitBox, mats.panel, panels.length);
     panels.forEach(([a, b], k) => {
@@ -263,7 +325,7 @@ function buildStores(scene, stores) {
     return inside;
   }
 
-  const built = new Map(); // store index -> its inside
+  const built = new Map<number, THREE.Group>(); // store index -> its inside
   let lastX = Infinity, lastZ = Infinity;
   return {
     group,
@@ -272,19 +334,20 @@ function buildStores(scene, stores) {
     stores,
     reserves: stores.map((s) => storeReserve(s)),
     // Build the inside of the stores near (x, z), let go of those far away (checked every 20 m moved)
-    update(x, z) {
+    update(x: number, z: number) {
       if (Math.hypot(x - lastX, z - lastZ) < 20) return;
       lastX = x;
       lastZ = z;
       stores.forEach((s, i) => {
         const d = Math.hypot(s.cx - x, s.cz - z);
         if (d < BUILD_NEAR && !built.has(i)) built.set(i, buildInside(i));
-        else if (d > LET_GO && built.has(i)) {
+        else if (d > LET_GO) {
           const inside = built.get(i);
+          if (!inside) return;
           group.remove(inside);
           inside.traverse((o) => {
-            if (o.isInstancedMesh) o.dispose();
-            else if (o.isMesh && o.geometry !== unitBox) o.geometry.dispose();
+            if (o instanceof THREE.InstancedMesh) o.dispose();
+            else if (isMesh(o) && o.geometry !== unitBox) o.geometry.dispose();
           });
           built.delete(i);
         }

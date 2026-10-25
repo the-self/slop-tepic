@@ -2,10 +2,10 @@
 
 Players connect over WebSocket and are placed in a room for their **region** (a metro area or state that shares one map, such as `nayarit` or `valle-de-mexico`). Each room holds up to `ROOM_CAPACITY` players. When a region's rooms are full, the next player opens a mirror room (`nayarit#2`), and empty rooms close.
 
-The wire protocol ([`shared/protocol.js`](../shared/protocol.js)) is binary, in the spirit of RuneScape's. Every frame starts with a 1-byte opcode, and positions travel as integer centimetres.
+The wire protocol ([`shared/protocol.ts`](../shared/protocol.ts)) is binary, in the spirit of RuneScape's. Every frame starts with a 1-byte opcode, and positions travel as integer centimetres.
 
 - **One frame per tick:** each server tick (10 Hz) sends every client a single `TICK` frame.
-- **Area of interest:** that frame covers only the `VIEW_MAX` nearest players within `VIEW_RADIUS`, using a 250 m grid ([`aoi.js`](aoi.js)).
+- **Area of interest:** that frame covers only the `VIEW_MAX` nearest players within `VIEW_RADIUS`, using a 250 m grid ([`aoi.ts`](aoi.ts)).
 - **Only changes:** within the frame, only the poses that changed since that client last heard them are sent. Parked players cost nothing.
 
 | Message | Size |
@@ -21,6 +21,8 @@ cd server
 npm install
 npm start
 ```
+
+The server is TypeScript that Node runs as is, stripping the types (Node ≥ 22.18; no build step).
 
 Then open the game with `?multiplayer=1` from `localhost`. It connects to `ws://localhost:8787` on its own. Open a second tab with `&mp-name=Beto` to see each other.
 
@@ -46,10 +48,10 @@ Then open the game with `?multiplayer=1` from `localhost`. It connects to `ws://
 
 ```bash
 npm test
-BOTS=1000 SPREAD=20000 node bench.js
+BOTS=1000 SPREAD=20000 node bench.ts
 ```
 
-`bench.js` drives simulated players against an in-process server. Bots and server share one Node process, so real numbers are better. On an Apple-silicon laptop:
+`bench.ts` drives simulated players against an in-process server. Bots and server share one Node process, so real numbers are better. On an Apple-silicon laptop:
 
 | Bots | Area | Tick (budget 100 ms) | Per client |
 |---|---|---|---|

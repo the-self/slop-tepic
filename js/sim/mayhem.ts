@@ -1,10 +1,104 @@
 import * as THREE from 'three/webgpu';
 
-// js/sim/mayhem.js
+// js/sim/mayhem.ts
 // Knock-downs for the player's car and bicycle: who is hit (pedestrians, cyclists, motorcyclists; thrown as ragdolls,
-// sim/ragdolls.js), and street furniture (lamp posts, hydrants) tipping over. Pure helpers (tested in
+// sim/ragdolls.ts), and street furniture (lamp posts, hydrants) tipping over. Pure helpers (tested in
 // tests/mayhem.test.cjs) plus the props' breaker, which hides a prop's static instances and animates a stand-in falling
 // in its place.
+
+// boxHit()'s contact: its direction away from the player's centre (unit), and where it is in the player's box (m along
+// its length and across it)
+interface BoxContact {
+  nx: number;
+  nz: number;
+  along: number;
+  across: number;
+}
+// What slide() moves: a position (m) and horizontal velocity (m/s)
+interface Sliding {
+  px: number;
+  pz: number;
+  vx: number;
+  vz: number;
+}
+// Whether a wall stands at (x, z)
+type SolidQuery = (x: number, z: number) => boolean;
+// A pole falling (angle rad: 0 upright .. ~π/2 lying; angVel rad/s; rest: s lying still)
+interface Topple {
+  angle: number;
+  angVel: number;
+  rest: number;
+  bounced: boolean;
+}
+type PropKind = 'cobra' | 'post' | 'hydrant';
+// A static InstancedMesh (or one of the chunks scene-culling.ts split it into, recorded in userData.chunked: `where`
+// gives each instance's chunk and slot, -1 for none)
+interface HideableMesh {
+  instanceMatrix: {
+    array: { fill(value: number, start?: number, end?: number): unknown };
+    addUpdateRange?(start: number, count: number): void;
+    needsUpdate: boolean;
+  };
+  userData?: { chunked?: { chunks: readonly (HideableMesh | undefined)[]; where: ArrayLike<number> } };
+}
+// One of a prop's instances in the static InstancedMeshes (street-details.ts)
+interface PropPart {
+  mesh: THREE.InstancedMesh;
+  index: number;
+}
+// A prop the player can knock over: where it stands (m; yaw rad), `ground` the height its stand-in stands at, `base` the
+// ground's height under it; `light` (a street lamp's) goes out with it
+interface BreakableProp {
+  kind: PropKind;
+  x: number;
+  z: number;
+  yaw: number;
+  ground: number;
+  base: number;
+  parts: PropPart[];
+  light?: { broken: boolean } | null;
+  broken?: boolean;
+}
+// A part of a kind's stand-in, in the prop's own frame (base at the origin, +x towards the street)
+interface PropLook {
+  geometry: THREE.BufferGeometry;
+  material: THREE.Material;
+  matrix?: THREE.Matrix4;
+}
+type PropLooks = Partial<Record<PropKind, PropLook[]>>;
+// The collision told to the listener (main.ts: the audio and the crash damage); one object, reused
+interface PropImpact {
+  a: BreakableProp | null;
+  b: THREE.InstancedMesh | BreakableProp | null;
+  kind: 'prop';
+  x: number;
+  y: number;
+  z: number;
+  nx: number;
+  ny: number;
+  nz: number;
+  speed: number;
+}
+// The player's car, bicycle or moto, as the breaker reads it (speed m/s along heading, rad; vx, vz m/s besides)
+interface KnockingEntity {
+  position: { x: number; y: number; z: number };
+  heading?: number;
+  speed: number;
+  vx?: number;
+  vz?: number;
+}
+// A knocked prop's stand-in: falling over (fall), or a hydrant thrown (fly: y m over the ground, base where it stood)
+interface Debris {
+  root: THREE.Group;
+  tilt: THREE.Group;
+  kind: PropKind;
+  age: number;
+  fall: Topple;
+  tall: number;
+  fly: (Sliding & { vy: number; y: number; base: number }) | null;
+  jet: THREE.Mesh | null;
+  done?: boolean;
+}
 
 const GRAVITY = 9.8;
 
@@ -12,7 +106,7 @@ const GRAVITY = 9.8;
  * Does a body of radius `r` at (x, z) touch the player's box (centre px, pz, facing `heading`, half width hw, half
  * length hl)? Returns the contact's direction away from the player's centre, or null.
  */
-function boxHit(px, pz, heading, hw, hl, x, z, r) {
+function boxHit(px: number, pz: number, heading: number, hw: number, hl: number, x: number, z: number, r: number): BoxContact | null {
   const dx = x - px;
   const dz = z - pz;
   const sn = Math.sin(heading);
@@ -30,7 +124,7 @@ function boxHit(px, pz, heading, hw, hl, x, z, r) {
  * the contact (nx, nz: from the player towards the rider) faster than `minSpeed`, or slides one along the other well
  * faster than that: brushing past a rider at about their own speed only eases them apart.
  */
-function riderKnocked(mode, rvx, rvz, nx, nz, minSpeed) {
+function riderKnocked(mode: string, rvx: number, rvz: number, nx: number, nz: number, minSpeed: number): boolean {
   if (mode !== 'car' && mode !== 'cyclist') return false;
   const closing = rvx * nx + rvz * nz;
   const slide = Math.hypot(rvx - closing * nx, rvz - closing * nz);
@@ -38,7 +132,7 @@ function riderKnocked(mode, rvx, rvz, nx, nz, minSpeed) {
 }
 
 // Moves o.px, o.pz by (dx, dz) unless that enters a wall, in which case its horizontal velocity bounces back softly
-function slide(o, dx, dz, solidAt) {
+function slide(o: Sliding, dx: number, dz: number, solidAt: SolidQuery | null | undefined): boolean {
   if (solidAt && (dx || dz) && solidAt(o.px + dx, o.pz + dz)) {
     o.vx *= -0.25;
     o.vz *= -0.25;
@@ -54,11 +148,11 @@ function slide(o, dx, dz, solidAt) {
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** Pole falling over about its base: angle 0 upright .. ~π/2 lying, pushed by an impact of speed v */
-function startTopple(speed, rand = Math.random) {
+function startTopple(speed: number, rand: () => number = Math.random): Topple {
   return { angle: 0, angVel: 0.6 + Math.min(4.5, speed * 0.22) * (0.85 + rand() * 0.3), rest: 0, bounced: false };
 }
 
-function stepTopple(f, dt, lying = Math.PI / 2 - 0.04, tall = 6) {
+function stepTopple(f: Topple, dt: number, lying = Math.PI / 2 - 0.04, tall = 6): number {
   // gravity's torque on a rod pivoting at its foot: θ'' = (3g / 2L) sin θ
   f.angVel += ((3 * GRAVITY) / (2 * tall)) * Math.sin(Math.max(0.02, f.angle)) * dt;
   f.angle += f.angVel * dt;
@@ -78,12 +172,24 @@ function stepTopple(f, dt, lying = Math.PI / 2 - 0.04, tall = 6) {
 /**
  * The street furniture the player can knock over. `props`: [{ kind: 'cobra' | 'post' | 'hydrant', x, z, yaw, ground (the
  * height its stand-in stands at), base (the ground's height under it), parts:
- * [{ mesh, index }], light? }], the parts being the prop's instances in the static InstancedMeshes (see street-details.js;
- * scene-culling.js may have split them into chunks, recorded in mesh.userData.chunked). `looks` gives each kind's
+ * [{ mesh, index }], light? }], the parts being the prop's instances in the static InstancedMeshes (see street-details.ts;
+ * scene-culling.ts may have split them into chunks, recorded in mesh.userData.chunked). `looks` gives each kind's
  * stand-in: { [kind]: [{ geometry, material }] } in the prop's own frame (base at the origin, +x towards the street).
  */
 class PropBreaker {
-  constructor(scene, props, looks) {
+  props: BreakableProp[];
+  looks: PropLooks;
+  cells: Map<number, BreakableProp[]>;
+  debris: Debris[];
+  listener: ((e: PropImpact) => void) | null;
+  solidAt: SolidQuery | null;
+  groundAt?: ((x: number, z: number) => number) | null;
+  event: PropImpact;
+  group: THREE.Group;
+  jetGeo: THREE.CylinderGeometry;
+  jetMat: THREE.MeshStandardNodeMaterial;
+
+  constructor(scene: THREE.Object3D, props: BreakableProp[], looks: PropLooks) {
     this.props = props;
     this.looks = looks;
     this.cells = new Map();
@@ -105,26 +211,26 @@ class PropBreaker {
     this.jetMat = jetMat;
   }
 
-  key(ix, iz) {
+  key(ix: number, iz: number): number {
     return ix * 100003 + iz;
   }
 
-  setCollisionListener(fn) {
+  setCollisionListener(fn: ((e: PropImpact) => void) | null): void {
     this.listener = typeof fn === 'function' ? fn : null;
   }
 
   // Where walls stand, for props knocked flying: (x, z) => boolean
-  setSolidQuery(fn) {
+  setSolidQuery(fn: SolidQuery | null): void {
     this.solidAt = typeof fn === 'function' ? fn : null;
   }
 
-  // The ground's height at (x, z) (ground.js), for the player's height over it and the props thrown across it
-  setGroundQuery(fn) {
+  // The ground's height at (x, z) (ground.ts), for the player's height over it and the props thrown across it
+  setGroundQuery(fn: ((x: number, z: number) => number) | null): void {
     this.groundAt = typeof fn === 'function' ? fn : null;
   }
 
   /** Knocks over whatever the player's car or bicycle runs into this frame */
-  update(dt, entity, mode) {
+  update(dt: number, entity: KnockingEntity | null | undefined, mode: string): void {
     const over = entity ? entity.position.y - (this.groundAt ? this.groundAt(entity.position.x, entity.position.z) : 0) : 0;
     if (entity && (mode === 'car' || mode === 'cyclist' || mode === 'moto') && over < 1.5) {
       const heading = entity.heading || 0;
@@ -154,13 +260,13 @@ class PropBreaker {
     this.animate(dt);
   }
 
-  knock(p, vx, vz, speed, hit) {
+  knock(p: BreakableProp, vx: number, vz: number, speed: number, hit: BoxContact): void {
     p.broken = true;
     if (p.light) p.light.broken = true;
     for (const part of p.parts) hideInstance(part.mesh, part.index);
     // the stand-in falls the way the player was going
     const dir = Math.atan2(vx, vz);
-    const look = this.looks[p.kind] || [];
+    const look = this.looks[p.kind] ?? [];
     const root = new THREE.Group();
     root.position.set(p.x, p.ground || 0, p.z);
     const tilt = new THREE.Group();
@@ -175,7 +281,7 @@ class PropBreaker {
       m.castShadow = true;
       body.add(m);
     }
-    const d = {
+    const d: Debris = {
       root, tilt, kind: p.kind, age: 0,
       fall: startTopple(speed),
       tall: p.kind === 'cobra' ? 8.4 : p.kind === 'post' ? 3.9 : 0.9,
@@ -196,7 +302,7 @@ class PropBreaker {
     if (this.listener) {
       const e = this.event;
       e.a = p;
-      e.b = p.parts[0]?.mesh || p;
+      e.b = p.parts.at(0)?.mesh ?? p;
       e.x = p.x; e.y = 1.0 + (p.base || 0); e.z = p.z;
       e.nx = -hit.nx; e.nz = -hit.nz;
       e.speed = Math.min(speed, p.kind === 'hydrant' ? 6 : 12);
@@ -204,7 +310,7 @@ class PropBreaker {
     }
   }
 
-  animate(dt) {
+  animate(dt: number): void {
     let settled = 0;
     for (const d of this.debris) {
       d.age += dt;
@@ -245,11 +351,11 @@ class PropBreaker {
   }
 }
 
-// Hides instance `index` of a static InstancedMesh, wherever scene-culling.js moved it (mesh.userData.chunked)
-function hideInstance(mesh, index) {
-  let target = mesh;
+// Hides instance `index` of a static InstancedMesh, wherever scene-culling.ts moved it (mesh.userData.chunked)
+function hideInstance(mesh: HideableMesh, index: number): void {
+  let target: HideableMesh | undefined = mesh;
   let j = index;
-  const ch = mesh.userData && mesh.userData.chunked;
+  const ch = mesh.userData?.chunked;
   if (ch) {
     target = ch.chunks[ch.where[index * 2]];
     j = ch.where[index * 2 + 1];
@@ -261,4 +367,5 @@ function hideInstance(mesh, index) {
   attr.needsUpdate = true;
 }
 
+export type { BoxContact, Sliding, SolidQuery, Topple, PropKind, HideableMesh, PropPart, BreakableProp, PropLook, PropLooks, PropImpact, KnockingEntity, Debris };
 export { boxHit, riderKnocked, slide, startTopple, stepTopple, hideInstance, PropBreaker };

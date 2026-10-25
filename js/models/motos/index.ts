@@ -1,8 +1,10 @@
-// js/models/motos/index.js
+// js/models/motos/index.ts
 // Motorcycles, with the same fields as the car models (../cars/README.md; body 'moto', mass with its rider). Italika,
 // Mexico's best-selling make, is what most of Tepic rides; the player's moto is the FT150 parked near the start.
 
-const MOTO_MODELS = [
+import type { CarModel } from '../cars/index.ts';
+
+const MOTO_MODELS: CarModel[] = [
   {
     id: 'italika-ft150', name: 'Italika FT150', body: 'moto', class: 'moto',
     size: [1.98, 0.76, 1.08], mass: 195, drive: 'rwd', power: [8.2, 8000], torque: [11.2, 6000], redline: 9500,
@@ -19,7 +21,11 @@ const MOTO_MODELS = [
     gears: 6, top: 150, rarity: 0, paints: [0x1a1c20, 0x2a5aa8, 0xe06a1b]
   }
 ];
-const MOTO_MODEL_BY_ID = Object.fromEntries(MOTO_MODELS.map((m) => [m.id, m]));
-const PLAYER_MOTO = MOTO_MODEL_BY_ID['italika-ft150'];
+const MOTO_MODEL_BY_ID: Partial<Record<string, CarModel>> = Object.fromEntries(MOTO_MODELS.map((m) => [m.id, m]));
+const PLAYER_MOTO = (() => {
+  const m = MOTO_MODEL_BY_ID['italika-ft150'];
+  if (!m) throw new Error("No moto model 'italika-ft150'");
+  return m;
+})();
 
 export { MOTO_MODELS, MOTO_MODEL_BY_ID, PLAYER_MOTO };

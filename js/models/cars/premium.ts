@@ -1,7 +1,9 @@
-// js/models/cars/premium.js
+// js/models/cars/premium.ts
 // German premium sedans & coupés (BMW is built in San Luis Potosí, Audi in San José Chiapa). Fields: README.md
 
-export const CARS = [
+import type { CarModel } from './index.ts';
+
+export const CARS: CarModel[] = [
   {
     id: 'bmw-330i', name: 'BMW 330i', body: 'sedan', class: 'premium',
     size: [4.71, 1.83, 1.44], mass: 1570, drive: 'rwd', power: [190, 5000], torque: [400, 1550], redline: 7000,

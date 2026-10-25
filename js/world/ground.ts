@@ -1,48 +1,88 @@
-// js/world/ground.js
+// js/world/ground.ts
 // The ground everything stands on, as heights over the world's y = 0. Two grids from tools/build-tepic-geodata.mjs:
 // - GEO.terrain, the hills around the valley over its flat floor (zero under the town);
 // - GEO.ground, the town's own slopes (its blurred elevation over the datum, the town's lowest point), which ?slopes=0
 //   leaves out (the flat city, as it was built before).
-// The rivers & arroyos (GEO.waterways, waterways.js) are cut into it: their channels carve the ground everyone stands
-// on, but not the floor the city's layers are laid on (the road deck opens over them instead, river-channels.js).
-// Everything the city builds at y = 0 is raised by the ground under it (liftAt), its flat layers laid on it (drape.js).
+// The rivers & arroyos (GEO.waterways, waterways.ts) are cut into it: their channels carve the ground everyone stands
+// on, but not the floor the city's layers are laid on (the road deck opens over them instead, river-channels.ts).
+// Everything the city builds at y = 0 is raised by the ground under it (liftAt), its flat layers laid on it (drape.ts).
 // No three.js here, so node --test imports it directly.
 import { GEO } from './city-geodata.js';
 import { createWaterways } from './waterways.ts';
 import { decodeHeights, gridSampler, clipToLattice } from './lattice.ts';
+import type { Ground, HeightGrid, Road, RoadGraph, Waterway } from './city-geodata.js';
+import type { HeightFn, Lattice } from './lattice.ts';
+
+/** What createGround reads of the city data (GEO, or a test's grids). */
+export interface GroundSource {
+  terrain?: HeightGrid | null;
+  ground?: Ground | null;
+  waterways?: Waterway[] | null;
+  roads?: Road[] | null;
+}
+/** The town's grid with slopes, its heights decoded (m over the datum), for the shaders. */
+export type TownGrid = Omit<Ground, 'data'> & { data: undefined; heights: Float32Array };
+/** Height (m) of the ground at (x, z), under a bridge for a body coming from `fromY` down in a channel. */
+export type GroundHeightFn = (x: number, z: number, fromY?: number) => number;
+export type GroundModel = ReturnType<typeof createGround>;
+
+/** A piece of bridge deck: from (ax, az) lifted la m over the ground to (bx, bz) lifted lb, half its width (m). */
+export interface DeckSegment {
+  ax: number;
+  az: number;
+  bx: number;
+  bz: number;
+  la: number;
+  lb: number;
+  half: number;
+}
+/** A raised junction: a disc of deck of radius r (m), lift m over the ground. */
+export interface DeckJunction {
+  x: number;
+  z: number;
+  r: number;
+  lift: number;
+}
+export interface Decks {
+  segments: DeckSegment[];
+  junctions: DeckJunction[];
+  deckLift: (x: number, z: number, over?: number, step?: number) => number;
+}
 
 const SINK = 0.08; // the flat parts of the hills' mesh sit just under the streets & meadows
 
-function createGround(geo, { slopes = false } = {}) {
+function createGround(geo: GroundSource, { slopes = false }: { slopes?: boolean } = {}) {
   const hillHeights = geo.terrain ? decodeHeights(geo.terrain) : null;
   /** Height (m) of the hills over the valley floor at (x, z): 0 in town and beyond the data */
-  const terrainHeight = hillHeights ? gridSampler(geo.terrain, hillHeights, 0) : () => 0;
+  const terrainHeight: HeightFn = hillHeights && geo.terrain ? gridSampler(geo.terrain, hillHeights, 0) : () => 0;
   /** The hills' ground for anything standing on them (0 in town) */
-  const hillGround = (x, z) => {
+  const hillGround = (x: number, z: number) => {
     const h = terrainHeight(x, z);
     return h > SINK ? h - SINK : 0;
   };
 
-  const townHeights = slopes && geo.ground ? decodeHeights(geo.ground) : null;
-  const town = townHeights ? gridSampler(geo.ground, townHeights, geo.ground.floor) : null;
+  const townGround = slopes && geo.ground ? geo.ground : null;
+  const townHeights = townGround ? decodeHeights(townGround) : null;
+  const town = townHeights && townGround ? gridSampler(townGround, townHeights, townGround.floor) : null;
   /** Height (m) of the town's floor at (x, z): its slopes, or 0 in the flat city (?slopes=0) */
-  const townHeight = town || (() => 0);
+  const townHeight: HeightFn = town ?? (() => 0);
   /** Height (m) of the land at (x, z): the town's floor and the hills over it, the channels left out */
-  const landHeight = town ? (x, z) => town(x, z) + hillGround(x, z) : hillGround;
+  const landHeight: HeightFn = town ? (x: number, z: number) => town(x, z) + hillGround(x, z) : hillGround;
   // the channels, sunk into the town's floor where the hills leave it bare, and bridged by the streets
-  const waterways = geo.waterways && geo.waterways.length
-    ? createWaterways(geo.waterways, { floor: townHeight, hills: terrainHeight, roads: (geo.roads || []).map((r) => ({ w: r[1], pts: r[5] })) })
+  const waterways = geo.waterways?.length
+    ? createWaterways(geo.waterways, { floor: townHeight, hills: terrainHeight, roads: (geo.roads ?? []).map((r) => ({ w: r[1], pts: r[5] })) })
     : null;
   /**
    * Height (m) of the ground at (x, z): the land and the channels cut into it (under a bridge for a body coming from
    * `fromY` down in the channel, else on it)
    */
-  const groundHeight = waterways ? (x, z, fromY) => landHeight(x, z) + waterways.offset(x, z, fromY) : landHeight;
+  const groundHeight: GroundHeightFn = waterways
+    ? (x: number, z: number, fromY?: number) => landHeight(x, z) + waterways.offset(x, z, fromY) : landHeight;
   /**
    * The ground's gradient at (x, z) into out: [rise per metre east (+x), rise per metre south (+z)], central differences
    * over a metre (the grids' triangles are 25-75 m, so this is their plane's tilt but for a metre at their edges)
    */
-  const groundSlope = (x, z, out = [0, 0]) => {
+  const groundSlope = (x: number, z: number, out: number[] = [0, 0]) => {
     out[0] = (groundHeight(x + 0.5, z) - groundHeight(x - 0.5, z));
     out[1] = (groundHeight(x, z + 0.5) - groundHeight(x, z - 0.5));
     return out;
@@ -52,7 +92,7 @@ function createGround(geo, { slopes = false } = {}) {
     slopes: Boolean(town),
     datum: geo.ground ? geo.ground.datum : null,
     // the town's grid { x0, z0, cell, w, h, floor, heights } with slopes (for the shaders), else null
-    townGrid: townHeights ? { ...geo.ground, data: undefined, heights: townHeights } : null,
+    townGrid: townHeights && townGround ? { ...townGround, data: undefined, heights: townHeights } : null,
     hillHeights,
     terrainHeight,
     hillGround,
@@ -70,30 +110,30 @@ const ground = createGround(GEO, { slopes: SLOPES });
 const { townGrid, hillHeights, terrainHeight, hillGround, townHeight, landHeight, waterways, groundHeight, groundSlope } = ground;
 // The lattice of both grids' triangles: the town's, whose cells halve the hills' 75 m ones on their own lines (see the
 // geodata builder), so its triangles lie each in one of theirs
-const LATTICE = GEO.ground ? { x0: GEO.ground.x0, z0: GEO.ground.z0, cell: GEO.ground.cell }
+const LATTICE: Lattice | null = GEO.ground ? { x0: GEO.ground.x0, z0: GEO.ground.z0, cell: GEO.ground.cell }
   : GEO.terrain ? { x0: GEO.terrain.x0, z0: GEO.terrain.z0, cell: GEO.terrain.cell } : null;
 /**
  * How far up to set something the city builds at y = 0 (a lamppost, a tree, a house's floor) standing at (x, z): the
  * ground, or 0 in the flat city (?slopes=0)
  */
-const liftAt = SLOPES ? groundHeight : () => 0;
+const liftAt: GroundHeightFn = SLOPES ? groundHeight : () => 0;
 
 /**
  * The decks of the bridges & their ramps (geodata roadGraph links' `lifts`: m over the ground at each vertex, piecewise
  * linear between them), as segments in 32 m cells: { ax, az, bx, bz, la, lb, half }
  */
-function createDecks(geo) {
+function createDecks(geo: { roadGraph?: RoadGraph | null }): Decks {
   const RG = geo.roadGraph;
-  const segments = [];
-  const junctions = []; // raised junctions: { x, z, r, lift } discs of deck joining the links that meet there
+  const segments: DeckSegment[] = [];
+  const junctions: DeckJunction[] = []; // raised junctions: { x, z, r, lift } discs of deck joining the links that meet there
   if (RG) {
     const N = RG.nodes;
-    const ends = new Map(); // node -> [links meeting there, their lift there, the widest half width]
+    const ends = new Map<number, [number, number, number]>(); // node -> [links meeting there, their lift there, the widest half width]
     for (const link of RG.links) {
       for (const [n, k] of [[link[0], 0], [link[1], -1]]) {
-        const e = ends.get(n) || [0, 0, 0];
+        const e = ends.get(n) ?? [0, 0, 0];
         e[0]++;
-        if (link[7]) e[1] = Math.max(e[1], link[7].at(k) / 10);
+        if (link[7]) e[1] = Math.max(e[1], (link[7].at(k) ?? 0) / 10);
         e[2] = Math.max(e[2], link[3] / 2 + 0.4);
         ends.set(n, e);
       }
@@ -104,7 +144,7 @@ function createDecks(geo) {
     for (const link of RG.links) {
       const lifts = link[7];
       if (!lifts) continue;
-      const pts = [[N[link[0] * 2], N[link[0] * 2 + 1]]];
+      const pts: [number, number][] = [[N[link[0] * 2], N[link[0] * 2 + 1]]];
       for (let k = 0; k < link[6].length; k += 2) pts.push([link[6][k], link[6][k + 1]]);
       pts.push([N[link[1] * 2], N[link[1] * 2 + 1]]);
       for (let i = 0; i + 1 < pts.length; i++) {
@@ -115,7 +155,7 @@ function createDecks(geo) {
     }
   }
   const CELL = 32;
-  const cells = new Map();
+  const cells = new Map<number, DeckSegment[]>();
   // (a junction's disc as a segment of no length: every point within its radius)
   for (const j of junctions) segments.push({ ax: j.x, az: j.z, bx: j.x, bz: j.z, la: j.lift, lb: j.lift, half: j.r });
   for (const sg of segments) {
@@ -133,7 +173,7 @@ function createDecks(geo) {
    * The lift (m over the ground) of the highest deck at (x, z) that a body `over` m over the ground there can step or
    * drive onto (up to `step` m above it: up a ramp, never up onto a span overhead), or 0
    */
-  const deckLift = (x, z, over = Infinity, step = 1.2) => {
+  const deckLift = (x: number, z: number, over = Infinity, step = 1.2) => {
     const list = cells.get(Math.floor(x / CELL) * 100003 + Math.floor(z / CELL));
     if (!list) return 0;
     let best = 0, past = 0;
@@ -171,7 +211,7 @@ const { deckLift } = decks;
  * The surface under a body at (x, z) whose feet (or wheels) are at height y: the ground, or a bridge's deck it is on or
  * reaches up a ramp; with y left out the ground alone
  */
-const surfaceHeight = (x, z, y = undefined) => {
+const surfaceHeight = (x: number, z: number, y?: number): number => {
   const g = groundHeight(x, z, y); // (down in a river channel under a street, for a body already down there)
   return y === undefined ? g : g + deckLift(x, z, y - g);
 };

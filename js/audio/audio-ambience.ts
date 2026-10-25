@@ -1,12 +1,50 @@
-// js/audio/audio-ambience.js
+// js/audio/audio-ambience.ts
 // The city's sounds that keep going where they are: the music of the antros and the house parties (cumbia, banda
 // sinaloense, reggaetón), the taco stands' planchas sizzling, a fire's crackle & roar, a crowd's murmur. Each is a
 // loop synthesised once, the first time it is wanted (no audio files), and played through the spatial emitter of
-// whatever source it belongs to (audio-system.js, its `loops` pool), muffled by the walls in between like any other.
+// whatever source it belongs to (audio-system.ts, its `loops` pool), muffled by the walls in between like any other.
+
+/** The loops there are: three kinds of music, a plancha, a fire and a crowd */
+export type AmbienceKind = 'cumbia' | 'banda' | 'reggaeton' | 'sizzle' | 'fire' | 'crowd';
+
+/**
+ * A sound that stays where it is this frame, handed to CityAudioSystem.setAmbience() (the street food, nightlife,
+ * interiors and fires all make them): its place (m) and level, and the object it belongs to, whose voice it keeps
+ */
+export interface AmbientSource {
+  kind: AmbienceKind;
+  /** Whose sound it is: the same object frame after frame keeps the same voice playing */
+  id: object;
+  x: number;
+  y: number;
+  z: number;
+  /** 0..1, 1 by default */
+  gain?: number;
+  /** m beyond which it isn't heard (120 by default) */
+  range?: number;
+  /** Where in the loop it starts */
+  seed?: number;
+  /** The audio writes its distance² to the listener here (m²), to pick the nearest */
+  d2?: number;
+}
+
+/** The loops, each synthesised the first time it is wanted */
+export interface AmbienceResources {
+  buffer(kind: AmbienceKind): AudioBuffer | null;
+}
+
+export interface LoopVoice {
+  /** `gain` 0..1 (1 by default) */
+  update(params?: { gain?: number }, now?: number): void;
+  dispose(): void;
+}
+
+/** A waveform over a 0..1 phase, `t` s into its note */
+type Wave = (phase: number, t: number) => number;
 
 const TAU = Math.PI * 2;
 
-function random(seed) {
+function random(seed: number) {
   let s = (seed * 2654435761) >>> 0 || 1;
   return () => {
     s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
@@ -16,7 +54,7 @@ function random(seed) {
 
 // Stereo-less loop of `seconds`, filled by `render(out, rate)`, normalised to `peak` with its ends crossfaded so it
 // loops without a click
-function loopBuffer(ctx, seconds, render, peak = 0.7) {
+function loopBuffer(ctx: BaseAudioContext, seconds: number, render: (out: Float32Array, rate: number) => void, peak = 0.7) {
   const rate = ctx.sampleRate;
   const n = Math.round(seconds * rate);
   const buffer = ctx.createBuffer(1, n, rate);
@@ -34,7 +72,7 @@ function loopBuffer(ctx, seconds, render, peak = 0.7) {
 }
 
 // Adds a note to `out`: from `t0` s for `dur` s at `freq` Hz, `wave(phase)` (0..1 phase) under an attack/decay envelope
-function note(out, rate, t0, dur, freq, gain, wave, attack = 0.005, release = 0.05) {
+function note(out: Float32Array, rate: number, t0: number, dur: number, freq: number, gain: number, wave: Wave, attack = 0.005, release = 0.05) {
   const i0 = Math.max(0, Math.floor(t0 * rate));
   const i1 = Math.min(out.length, Math.floor((t0 + dur + release) * rate));
   let phase = 0;
@@ -48,13 +86,13 @@ function note(out, rate, t0, dur, freq, gain, wave, attack = 0.005, release = 0.
   }
 }
 
-const sine = (p) => Math.sin(p * TAU);
-const saw = (p) => 2 * p - 1;
-const square = (p) => (p < 0.5 ? 1 : -1);
-const midi = (m) => 440 * Math.pow(2, (m - 69) / 12);
+const sine = (p: number) => Math.sin(p * TAU);
+const saw = (p: number) => 2 * p - 1;
+const square = (p: number) => (p < 0.5 ? 1 : -1);
+const midi = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
 
 // Drums: a kick (a falling sine), a snare / clap (noise & a tone), a hi-hat or the güiro's scrape (bright noise)
-function kick(out, rate, t0, gain = 1) {
+function kick(out: Float32Array, rate: number, t0: number, gain = 1) {
   const n = Math.floor(0.35 * rate), i0 = Math.floor(t0 * rate);
   let phase = 0;
   for (let i = 0; i < n && i0 + i < out.length; i++) {
@@ -63,7 +101,7 @@ function kick(out, rate, t0, gain = 1) {
     out[i0 + i] += Math.sin(phase * TAU) * Math.exp(-t * 9) * gain;
   }
 }
-function noiseHit(out, rate, t0, dur, gain, rnd, bright = 0.6, tone = 0) {
+function noiseHit(out: Float32Array, rate: number, t0: number, dur: number, gain: number, rnd: () => number, bright = 0.6, tone = 0) {
   const n = Math.floor(dur * rate), i0 = Math.floor(t0 * rate);
   let lp = 0;
   for (let i = 0; i < n && i0 + i < out.length; i++) {
@@ -77,12 +115,12 @@ function noiseHit(out, rate, t0, dur, gain, rnd, bright = 0.6, tone = 0) {
 
 // CUMBIA (sonidera, ~100 bpm): the güiro scraping every beat, a bass on the root & fifth, the accordion's chords and a
 // line over them, a cowbell; I-V in C, 8 bars
-function cumbia(ctx) {
+function cumbia(ctx: BaseAudioContext) {
   const bpm = 100, beat = 60 / bpm, bars = 8;
   return loopBuffer(ctx, bars * 4 * beat, (out, rate) => {
     const rnd = random(11);
     const chords = [[48, 52, 55], [43, 47, 50], [43, 47, 50], [48, 52, 55]]; // C G G C
-    const accordion = (p, t) => (saw(p) * 0.6 + square((p * 2) % 1) * 0.25) * (1 + 0.04 * Math.sin(t * 34));
+    const accordion: Wave = (p, t) => (saw(p) * 0.6 + square((p * 2) % 1) * 0.25) * (1 + 0.04 * Math.sin(t * 34));
     const scale = [72, 74, 76, 79, 81, 84];
     for (let bar = 0; bar < bars; bar++) {
       const ch = chords[bar % 4];
@@ -110,14 +148,14 @@ function cumbia(ctx) {
 
 // BANDA (sinaloense, ~120 bpm in 2/4): the tuba's oom on the beat, the brass's pah on the off-beat, the tambora,
 // a clarinet's run; I-V7 in B♭, 8 bars of 4 beats
-function banda(ctx) {
+function banda(ctx: BaseAudioContext) {
   const bpm = 125, beat = 60 / bpm, bars = 8;
   return loopBuffer(ctx, bars * 4 * beat, (out, rate) => {
     const rnd = random(23);
     const chords = [[46, 50, 53], [41, 45, 48, 51], [41, 45, 48, 51], [46, 50, 53]];
-    const tuba = (p) => sine(p) * 0.8 + sine((p * 2) % 1) * 0.3;
-    const brass = (p, t) => saw(p) * Math.min(1, t * 30) * 0.8;
-    const clarinet = (p) => square(p) * 0.4 + sine(p) * 0.4;
+    const tuba: Wave = (p) => sine(p) * 0.8 + sine((p * 2) % 1) * 0.3;
+    const brass: Wave = (p, t) => saw(p) * Math.min(1, t * 30) * 0.8;
+    const clarinet: Wave = (p) => square(p) * 0.4 + sine(p) * 0.4;
     for (let bar = 0; bar < bars; bar++) {
       const ch = chords[bar % 4];
       for (let b = 0; b < 4; b++) {
@@ -137,12 +175,12 @@ function banda(ctx) {
 
 // REGGAETÓN (~92 bpm): the dembow (kick on the beat, the snare's 3-3-2), a sub bass, a minor pad, an open hi-hat;
 // Am F C G, 8 bars
-function reggaeton(ctx) {
+function reggaeton(ctx: BaseAudioContext) {
   const bpm = 92, beat = 60 / bpm, bars = 8, six = beat / 4;
   return loopBuffer(ctx, bars * 4 * beat, (out, rate) => {
     const rnd = random(37);
     const chords = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
-    const pad = (p, t) => (saw(p) * 0.5 + saw((p * 1.003) % 1) * 0.5) * Math.min(1, t * 6);
+    const pad: Wave = (p, t) => (saw(p) * 0.5 + saw((p * 1.003) % 1) * 0.5) * Math.min(1, t * 6);
     for (let bar = 0; bar < bars; bar++) {
       const ch = chords[bar % 4];
       const t0 = bar * 4 * beat;
@@ -158,7 +196,7 @@ function reggaeton(ctx) {
 }
 
 // A plancha's sizzle: dense, bright crackle over a hiss, its fat spitting
-function sizzle(ctx) {
+function sizzle(ctx: BaseAudioContext) {
   return loopBuffer(ctx, 4, (out, rate) => {
     const rnd = random(5);
     let lp = 0;
@@ -172,7 +210,7 @@ function sizzle(ctx) {
 }
 
 // A fire: the low roar of the flames and the wood's (or the car's) cracks and pops
-function fire(ctx) {
+function fire(ctx: BaseAudioContext) {
   return loopBuffer(ctx, 5, (out, rate) => {
     const rnd = random(9);
     let lp = 0, lp2 = 0;
@@ -187,7 +225,7 @@ function fire(ctx) {
 }
 
 // A crowd talking: overlapping voices' formants, wandering, under a murmur
-function crowd(ctx) {
+function crowd(ctx: BaseAudioContext) {
   return loopBuffer(ctx, 6, (out, rate) => {
     const rnd = random(17);
     for (let v = 0; v < 9; v++) {
@@ -203,14 +241,15 @@ function crowd(ctx) {
   }, 0.5);
 }
 
-const MAKERS = { cumbia, banda, reggaeton, sizzle, fire, crowd };
+const MAKERS: Partial<Record<string, (ctx: BaseAudioContext) => AudioBuffer>> = { cumbia, banda, reggaeton, sizzle, fire, crowd };
 
-function createAmbienceResources(ctx) {
-  const buffers = new Map();
+function createAmbienceResources(ctx: BaseAudioContext): AmbienceResources {
+  const buffers = new Map<AmbienceKind, AudioBuffer | null>();
   return {
     buffer(kind) {
-      if (!buffers.has(kind)) buffers.set(kind, MAKERS[kind] ? MAKERS[kind](ctx) : null);
-      return buffers.get(kind);
+      const make = MAKERS[kind];
+      if (!buffers.has(kind)) buffers.set(kind, make ? make(ctx) : null);
+      return buffers.get(kind) ?? null;
     }
   };
 }
@@ -219,12 +258,12 @@ function createAmbienceResources(ctx) {
  * A loop of `kind` (a MAKERS key) into `output` (an emitter's input), started at a point of its own so two parties
  * playing the same loop don't play in step. update({ gain }) sets its level.
  */
-function createLoopVoice(ctx, resources, kind, output, seed = 0) {
+function createLoopVoice(ctx: BaseAudioContext, resources: AmbienceResources, kind: AmbienceKind, output: AudioNode, seed = 0): LoopVoice {
   const buffer = resources.buffer(kind);
   const gain = ctx.createGain();
   gain.gain.value = 0;
   gain.connect(output);
-  let source = null;
+  let source: AudioBufferSourceNode | null = null;
   if (buffer) {
     source = ctx.createBufferSource();
     source.buffer = buffer;

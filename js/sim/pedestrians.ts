@@ -23,11 +23,12 @@ import {
   step,
   smoothstep
 } from 'three/tsl';
+import type { Node, StorageBufferNode } from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-// js/sim/pedestrians.js
-// Skinned, procedurally animated New Yorkers: the sidewalk crowds (traffic.js), the player's pedestrian and the
-// cyclist's rider (controllers.js).
+// js/sim/pedestrians.ts
+// Skinned, procedurally animated New Yorkers: the sidewalk crowds (traffic.ts), the player's pedestrian and the
+// cyclist's rider (controllers.ts).
 // - One continuous lofted body (torso & neck, trouser legs, sleeves, hands, head, hair, shoes) skinned to a 15-bone
 //   skeleton, with bind-pose morphs for build (girth), female proportions and hair volume & length; a near and a far
 //   level of detail.
@@ -74,7 +75,7 @@ const FOREARM = 0.255;
 const ARM_BIND_ABDUCTION = 0.14;
 const PELVIS_Y = 0.96;
 const HIP_Y = ANKLE_H + SHIN + THIGH;
-const SIDES = [1, -1]; // left (+X), right (-X)
+const SIDES = [1, -1] as const; // left (+X), right (-X)
 const LIMB = {
   upperArm: [BONE.UPPER_ARM_L, BONE.UPPER_ARM_R],
   forearm: [BONE.FOREARM_L, BONE.FOREARM_R],
@@ -84,15 +85,15 @@ const LIMB = {
   toe: [BONE.TOE_L, BONE.TOE_R]
 };
 
-function shoulderJoint(female) {
+function shoulderJoint(female: boolean): [x: number, y: number, z: number] {
   return female ? [0.165, 1.415, -0.015] : [0.185, 1.43, -0.015];
 }
 
-function bindJoints(female) {
+function bindJoints(female: boolean): THREE.Vector3[] {
   const sh = shoulderJoint(female);
   const ax = Math.sin(ARM_BIND_ABDUCTION) * UPPER_ARM;
   const ay = -Math.cos(ARM_BIND_ABDUCTION) * UPPER_ARM;
-  const j = [];
+  const j: THREE.Vector3[] = [];
   j[BONE.PELVIS] = new THREE.Vector3(0, PELVIS_Y, 0);
   j[BONE.CHEST] = new THREE.Vector3(0, 1.12, -0.01);
   j[BONE.HEAD] = new THREE.Vector3(0, 1.52, -0.012);
@@ -113,10 +114,28 @@ const BIND = [bindJoints(false), bindJoints(true)];
 // ============================================================================
 const PART = { BODY: 0, LEG: 1, SHOE: 2, ARM: 3, HAND: 4, HEAD: 5, HAIR: 6, LONG_HAIR: 7 };
 
+/** Two bones a vertex is skinned to and the weight of the second */
+type SkinWeights = [boneA: number, boneB: number, weightB: number];
+/** A ring of a loft: the male base and the morph targets (female, more hair volume, long hair), the bones it follows
+ *  and the axis girth pushes out from (none: girth leaves it be) */
+interface LoftRow {
+  pts: THREE.Vector3[];
+  ptsF?: THREE.Vector3[];
+  ptsH?: THREE.Vector3[];
+  ptsL?: THREE.Vector3[];
+  skin: SkinWeights;
+  axis: THREE.Vector3 | null;
+}
+interface LoftOptions {
+  capStart?: boolean;
+  capEnd?: boolean;
+  flattenBelow?: number;
+}
+
 // Superellipse ring around a vertical axis (x across, z to the front `rzF` or back `rzB`); `bump(a)` pushes points out
-function ringY(y, rx, rzF, rzB, cz, n, ex = 2, bump = null, cx = 0) {
+function ringY(y: number, rx: number, rzF: number, rzB: number, cz: number, n: number, ex = 2, bump: ((a: number) => number) | null = null, cx = 0): THREE.Vector3[] {
   const e = 2 / ex;
-  const out = [];
+  const out: THREE.Vector3[] = [];
   for (let i = 0; i < n; i++) {
     const a = (i / n) * Math.PI * 2;
     const c = Math.cos(a);
@@ -138,13 +157,13 @@ const _down = new THREE.Vector3(0, -1, 0);
 const _yAxis = new THREE.Vector3(0, 1, 0);
 // Ring around a limb axis `dir` (rows run along it): x stays roughly across the body, z to the front; `twist` turns
 // the ring about the axis
-function limbRing(center, dir, rx, rz, n, ex = 2, twist = 0) {
+function limbRing(center: THREE.Vector3, dir: THREE.Vector3, rx: number, rz: number, n: number, ex = 2, twist = 0): THREE.Vector3[] {
   const q = new THREE.Quaternion().setFromUnitVectors(_down, dir);
   return ringY(0, rx, rz, rz, 0, n, ex).map((p) => p.applyAxisAngle(_yAxis, twist).applyQuaternion(q).add(center));
 }
 
 // Gaussian bump around angle a0 (wrapping)
-function lobe(a, a0, width) {
+function lobe(a: number, a0: number, width: number): number {
   let d = a - a0;
   d -= Math.round(d / (Math.PI * 2)) * Math.PI * 2;
   return Math.exp(-(d * d) / (width * width));
@@ -153,14 +172,14 @@ function lobe(a, a0, width) {
 // Closed loft through rings of equal size (rows of the surface), with optional flat caps (centroid fans). Returns
 // positions, uvs (u along the rows, v around), indices and the row each vertex belongs to; rings with the same layout
 // give vertex-for-vertex matching positions, which the morph targets rely on.
-function loftRings(sections, capStart, capEnd) {
+function loftRings(sections: THREE.Vector3[][], capStart: boolean, capEnd: boolean) {
   const rows = sections.length;
   const columns = sections[0].length;
   const per = columns + 1;
-  const positions = [];
-  const uvs = [];
-  const indices = [];
-  const rowOf = [];
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const rowOf: number[] = [];
   const rowU = [0];
   for (let i = 1; i < rows; i++) {
     let d = 0;
@@ -185,7 +204,7 @@ function loftRings(sections, capStart, capEnd) {
       indices.push(a, b, d, b, c, d);
     }
   }
-  const cap = (row, flip) => {
+  const cap = (row: number, flip: boolean) => {
     const start = positions.length / 3;
     const centre = new THREE.Vector3();
     for (let j = 0; j < columns; j++) {
@@ -214,6 +233,8 @@ function loftRings(sections, capStart, capEnd) {
 }
 
 class BodyBuilder {
+  geometries: THREE.BufferGeometry[];
+
   constructor() {
     this.geometries = [];
   }
@@ -221,9 +242,9 @@ class BodyBuilder {
   // rows: { pts, ptsF (female), ptsH (more hair volume), ptsL (long hair), skin: [boneA, boneB, weightB], axis }
   // flattenBelow: normals of vertices lower than this face less downwards (the crotch of the trousers reads as cloth,
   // not as a dark gap between the legs)
-  loft(rows, part, { capStart = false, capEnd = false, flattenBelow = -1 } = {}) {
+  loft(rows: LoftRow[], part: number, { capStart = false, capEnd = false, flattenBelow = -1 }: LoftOptions = {}): void {
     const lo = loftRings(rows.map((r) => r.pts), capStart, capEnd);
-    const variant = (key) => (rows.some((r) => r[key]) ? loftRings(rows.map((r) => r[key] || r.pts), capStart, capEnd).positions : null);
+    const variant = (key: 'ptsF' | 'ptsH' | 'ptsL') => (rows.some((r) => r[key]) ? loftRings(rows.map((r) => r[key] ?? r.pts), capStart, capEnd).positions : null);
     const fem = variant('ptsF');
     const vol = variant('ptsH');
     const long = variant('ptsL');
@@ -231,7 +252,7 @@ class BodyBuilder {
     const geo = new THREE.BufferGeometry();
     geo.setIndex(lo.indices);
     // normals of the shape as seen: the long hair's hanging down, not its bind pose folded away inside the head
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(long || lo.positions, 3));
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(long ?? lo.positions, 3));
     geo.computeVertexNormals();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(lo.positions, 3));
     // weld the normals along the seam of every ring
@@ -257,7 +278,7 @@ class BodyBuilder {
     const extra = new Float32Array(count * 3);
     const femaleDelta = new Float32Array(count * 3);
     const hairDelta = new Float32Array(count * 3);
-    const hair = vol || long;
+    const hair = vol ?? long;
     for (let v = 0; v < count; v++) {
       const row = rows[lo.rowOf[v]];
       skin[v * 4] = row.skin[0];
@@ -281,7 +302,7 @@ class BodyBuilder {
     this.geometries.push(geo);
   }
 
-  build() {
+  build(): THREE.BufferGeometry {
     const geo = mergeGeometries(this.geometries);
     geo.computeBoundingSphere();
     return geo;
@@ -329,7 +350,7 @@ const TORSO = {
   ]
 };
 
-function torsoSkin(y) {
+function torsoSkin(y: number): SkinWeights {
   if (y > 1.6) return [BONE.CHEST, BONE.HEAD, 1];
   if (y > 1.56) return [BONE.CHEST, BONE.HEAD, 0.65];
   if (y > 1.52) return [BONE.CHEST, BONE.HEAD, 0.2];
@@ -377,7 +398,7 @@ const LEG = {
   ]
 };
 
-function legSkin(y, k) {
+function legSkin(y: number, k: number): SkinWeights {
   const thigh = LIMB.thigh[k];
   const shin = LIMB.shin[k];
   const foot = LIMB.foot[k];
@@ -425,7 +446,7 @@ const HAND = [
 ];
 const HAND_TWIST = 0.45; // relaxed hands: palms turned from facing the thighs towards the back
 
-function armSkin(d, k) {
+function armSkin(d: number, k: number): SkinWeights {
   const ua = LIMB.upperArm[k];
   const fa = LIMB.forearm[k];
   if (d < -0.03) return [BONE.CHEST, ua, 0.32];
@@ -469,7 +490,7 @@ const HEAD = {
 };
 
 // Nose, brow, cheekbones, chin & ears pushed out of the head's rings
-function headBump(y) {
+function headBump(y: number): (a: number) => number {
   const front = Math.PI / 2;
   return (a) => {
     let b = 0;
@@ -484,7 +505,7 @@ function headBump(y) {
 }
 
 // Head profile at any height (for the hair shell)
-function headAt(table, y) {
+function headAt(table: number[][], y: number): number[] {
   if (y >= table[0][0]) return table[0];
   for (let i = 0; i < table.length - 1; i++) {
     const a = table[i];
@@ -497,12 +518,12 @@ function headAt(table, y) {
   return table[table.length - 1];
 }
 
-const hairlineY = (a) => 1.62 + 0.055 * Math.sin(a) - 0.005 * Math.cos(2 * a);
+const hairlineY = (a: number) => 1.62 + 0.055 * Math.sin(a) - 0.005 * Math.cos(2 * a);
 
 // Hair shell over the scalp, from the crown to the hairline, `t` thick (thinning to a soft edge at the hairline)
-function hairShellRing(table, f, t, n) {
+function hairShellRing(table: number[][], f: number, t: number, n: number): THREE.Vector3[] {
   const crown = table[0][0];
-  const out = [];
+  const out: THREE.Vector3[] = [];
   for (let i = 0; i < n; i++) {
     const a = (i / n) * Math.PI * 2;
     const y = crown + (hairlineY(a) - crown) * f;
@@ -540,8 +561,8 @@ const SHOE = [
   [0.208, 0.022, -0.056, -0.075, 1]
 ];
 
-function shoeRing(cx, z, hw, top, sole, n) {
-  const out = [];
+function shoeRing(cx: number, z: number, hw: number, top: number, sole: number, n: number): THREE.Vector3[] {
+  const out: THREE.Vector3[] = [];
   const mid = sole + (top - sole) * 0.38;
   for (let i = 0; i < n; i++) {
     const a = (i / n) * Math.PI * 2;
@@ -554,7 +575,7 @@ function shoeRing(cx, z, hw, top, sole, n) {
   return out;
 }
 
-function shoeSkin(z, k) {
+function shoeSkin(z: number, k: number): SkinWeights {
   const foot = LIMB.foot[k];
   const toe = LIMB.toe[k];
   if (z < 0.07) return [foot, foot, 0];
@@ -563,17 +584,18 @@ function shoeSkin(z, k) {
   return [toe, toe, 0];
 }
 
-const _geometryCache = new Map();
+const _geometryCache = new Map<number, THREE.BufferGeometry>();
 
 /**
  * The skinned person: detail 1 near (~2000 vertices), 0 far (~600 vertices). Attributes: position & normal (male bind
  * pose), skin (two bones & the weight of the second, part id), extra (girth direction, u along the loft) and the
  * femaleDelta & hairDelta morph targets.
  */
-function buildPersonGeometry(detail = 1) {
-  if (_geometryCache.has(detail)) return _geometryCache.get(detail);
+function buildPersonGeometry(detail = 1): THREE.BufferGeometry {
+  const cached = _geometryCache.get(detail);
+  if (cached) return cached;
   const hi = detail > 0;
-  const keep = (row, flagIndex) => hi || row[flagIndex] === 1;
+  const keep = (row: number[], flagIndex: number) => hi || row[flagIndex] === 1;
   const B = new BodyBuilder();
   const nTorso = hi ? 16 : 8;
   const nLeg = hi ? 12 : 6;
@@ -583,8 +605,8 @@ function buildPersonGeometry(detail = 1) {
   const nShoe = hi ? 12 : 6;
 
   // Torso & neck: a soft-cornered chest (superellipse), with a hint of bust on the female target
-  const bust = (a) => 0.011 * (lobe(a, Math.PI / 2 - 0.5, 0.38) + lobe(a, Math.PI / 2 + 0.5, 0.38));
-  const torsoRows = [];
+  const bust = (a: number) => 0.011 * (lobe(a, Math.PI / 2 - 0.5, 0.38) + lobe(a, Math.PI / 2 + 0.5, 0.38));
+  const torsoRows: LoftRow[] = [];
   TORSO.m.forEach((m, i) => {
     if (!keep(m, 5)) return;
     const f = TORSO.f[i];
@@ -601,7 +623,7 @@ function buildPersonGeometry(detail = 1) {
 
   // Trouser legs
   SIDES.forEach((side, k) => {
-    const rows = [];
+    const rows: LoftRow[] = [];
     LEG.m.forEach((m, i) => {
       if (!keep(m, 5)) return;
       const f = LEG.f[i];
@@ -623,8 +645,8 @@ function buildPersonGeometry(detail = 1) {
     const shF = new THREE.Vector3(...shoulderJoint(true));
     shM.x *= side;
     shF.x *= side;
-    const at = (sh, d, ox, oz) => sh.clone().addScaledVector(dir, d).add(new THREE.Vector3(side * ox, 0, oz));
-    const sleeve = [];
+    const at = (sh: THREE.Vector3, d: number, ox: number, oz: number) => sh.clone().addScaledVector(dir, d).add(new THREE.Vector3(side * ox, 0, oz));
+    const sleeve: LoftRow[] = [];
     for (const r of ARM) {
       if (!keep(r, 5)) continue;
       const [d, rx, rz, ox, oz] = r;
@@ -638,7 +660,7 @@ function buildPersonGeometry(detail = 1) {
     }
     B.loft(sleeve, PART.ARM, { capStart: true, capEnd: true });
 
-    const hand = [];
+    const hand: LoftRow[] = [];
     const twist = -side * HAND_TWIST;
     for (const r of HAND) {
       if (!keep(r, 4)) continue;
@@ -658,7 +680,7 @@ function buildPersonGeometry(detail = 1) {
         [0.565, 0.026, 0.011],
         [0.605, 0.038, 0.0105],
         [0.64, 0.044, 0.008]
-      ].map(([d, oz, r]) => {
+      ].map(([d, oz, r]): LoftRow => {
         const off = new THREE.Vector3(side * -0.006, 0, oz).applyAxisAngle(_yAxis, twist);
         return {
           pts: limbRing(shM.clone().addScaledVector(dir, d).add(off), dir, r, r, 6),
@@ -672,7 +694,7 @@ function buildPersonGeometry(detail = 1) {
   });
 
   // Head (nose, brow, cheekbones, chin & ears sculpted into the rings)
-  const headRows = [];
+  const headRows: LoftRow[] = [];
   HEAD.m.forEach((m, i) => {
     if (!keep(m, 5)) return;
     const f = HEAD.f[i];
@@ -686,7 +708,7 @@ function buildPersonGeometry(detail = 1) {
   B.loft(headRows, PART.HEAD, { capStart: true, capEnd: true });
 
   // Hair shell (volume morph) & long hair (length morph, folded away inside the head when short)
-  const shell = (hi ? [0.04, 0.22, 0.45, 0.68, 0.86, 1] : [0.04, 0.45, 1]).map((f) => ({
+  const shell = (hi ? [0.04, 0.22, 0.45, 0.68, 0.86, 1] : [0.04, 0.45, 1]).map((f): LoftRow => ({
     pts: hairShellRing(HEAD.m, f, 0.006, nHead),
     ptsF: hairShellRing(HEAD.f, f, 0.006, nHead),
     ptsH: hairShellRing(HEAD.m, f, 0.022, nHead),
@@ -695,7 +717,7 @@ function buildPersonGeometry(detail = 1) {
   }));
   B.loft(shell, PART.HAIR, { capStart: true });
   const nLong = hi ? 14 : 6;
-  const longRows = (hi ? LONG_HAIR : LONG_HAIR.filter((r, i) => i % 2 === 0)).map(([y, rx, rzF, rzB, cz]) => ({
+  const longRows = (hi ? LONG_HAIR : LONG_HAIR.filter((_r, i) => i % 2 === 0)).map(([y, rx, rzF, rzB, cz]): LoftRow => ({
     pts: ringY(1.64, 0.02, 0.02, 0.02, -0.03, nLong),
     ptsL: ringY(y, rx, rzF, rzB, cz, nLong, 2.2),
     skin: y > 1.56 ? [BONE.HEAD, BONE.HEAD, 0] : y > 1.47 ? [BONE.HEAD, BONE.CHEST, 0.4] : [BONE.HEAD, BONE.CHEST, 0.8],
@@ -705,7 +727,7 @@ function buildPersonGeometry(detail = 1) {
 
   // Shoes, heel to toe (the toes bend at the ball of the foot)
   SIDES.forEach((side, k) => {
-    const rows = SHOE.filter((r) => keep(r, 4)).map(([z, hw, top, sole]) => ({
+    const rows = SHOE.filter((r) => keep(r, 4)).map(([z, hw, top, sole]): LoftRow => ({
       pts: shoeRing(side * HIP_X, z, hw, top, sole, nShoe),
       ptsF: shoeRing(side * HIP_X, z * 0.93, hw * 0.88, top * 0.92, sole, nShoe),
       skin: shoeSkin(z, k),
@@ -729,28 +751,33 @@ const LEG_COLORS = [0x22242c, 0x35485b, 0x51473d, 0x7c7160, 0x252526];
 const LEG_COLORS_F = [0x1c1c22, 0x2f4a6e, 0x46413b, 0xcfc8bb, 0x5a2a2e];
 const SKIN_COLORS = [0xc68863, 0xa96f4c, 0x8a5535, 0x6b3d24, 0xd9a077];
 const HAIR_COLORS = [0x1a1512, 0x3a2a1a, 0x584022, 0x6e6862, 0x2a2624, 0x8f6d43, 0x5e3020];
-// Outfits worn by whoever's seed is OUTFIT_SEED times the outfit or more (crime.js): 1 police (navy uniform),
+// Outfits worn by whoever's seed is OUTFIT_SEED times the outfit or more (crime.ts): 1 police (navy uniform),
 // 2 Los Rojos (red), 3 Los Verdes (green over khaki), 4 a thief (black hoodie), 5 the cartel (black over olive drab),
-// 6 the bomberos (sand turnout gear, fires.js). Index 0 (everyone else) is unused.
+// 6 the bomberos (sand turnout gear, fires.ts). Index 0 (everyone else) is unused.
 const OUTFIT_SEED = 1000;
-const OUTFIT = { police: 1, rojos: 2, verdes: 3, thief: 4, narco: 5, bombero: 6 };
+const OUTFIT = { police: 1, rojos: 2, verdes: 3, thief: 4, narco: 5, bombero: 6 } as const;
+/** An outfit's index (OUTFIT) */
+type Outfit = (typeof OUTFIT)[keyof typeof OUTFIT];
+
 const OUTFIT_COATS = [0, 0x1b2a4c, 0xb0161d, 0x1f7a35, 0x1c1c1f, 0x141518, 0xb9963e];
 const OUTFIT_SHIRTS = [0, 0x26365a, 0x1a1a1a, 0xe8e6e0, 0x2a2a2d, 0x3a3d2c, 0x2b2b2b];
 const OUTFIT_LEGS = [0, 0x161c2b, 0x2f3d5c, 0xa48b5f, 0x3b3b3e, 0x4b4c35, 0xb08c38];
 
 // Branchless TSL palette selector from an array of hex colors and a [0..1) hash value
-function pickColorFromPalette(hexArray, tNode) {
+function pickColorFromPalette(hexArray: readonly number[], tNode: Node<'float'>): Node<'vec3'> {
   const n = hexArray.length;
   const scaled = tNode.mul(n);
-  let acc = color(hexArray[0]);
-  for (let i = 1; i < n; i++) {
+  // (the first step taken out of the loop: three's types give a mix of colours as a vec3, not the first colour alone;
+  // every palette has two colours or more)
+  let acc = mix(color(hexArray[0]), color(hexArray[1]), step(float(1), scaled));
+  for (let i = 2; i < n; i++) {
     acc = mix(acc, color(hexArray[i]), step(float(i), scaled));
   }
   return acc;
 }
 
 // v rotated by unit quaternion q
-const qrot = (q, v) => v.add(cross(q.xyz, cross(q.xyz, v).add(v.mul(q.w))).mul(2.0));
+const qrot = (q: Node<'vec4'>, v: Node<'vec3'>) => v.add(cross(q.xyz, cross(q.xyz, v).add(v.mul(q.w))).mul(2.0));
 
 /**
  * Material for one crowd mesh. `pose` is its storage buffer (STRIDE vec4s per instance). The vertex stage morphs the
@@ -758,7 +785,7 @@ const qrot = (q, v) => v.add(cross(q.xyz, cross(q.xyz, v).add(v.mul(q.w))).mul(2
  * skin tone, hair & hairline, eyes, brows & mouth, a tailored jacket (lapels, shirt V) or casual coat (zip, hem,
  * collar), cuffs, trousers, sneakers or leather shoes with soles & laces.
  */
-function createPersonMaterial(pose) {
+function createPersonMaterial(pose: StorageBufferNode<'vec4'>): THREE.MeshStandardNodeMaterial {
   const mat = new THREE.MeshStandardNodeMaterial({ metalness: 0 });
   const base = int(instanceIndex).mul(STRIDE);
   const info = pose.element(base.add(STRIDE - 1)); // seed, female, girth, hair
@@ -785,8 +812,8 @@ function createPersonMaterial(pose) {
   })();
 
   const vInfo = varying(info, 'vPersonInfo');
-  const isPart = (partId, id) => step(abs(partId.sub(id)), 0.25);
-  const lane = (salt) => fract(sin(vInfo.x.add(salt).mul(12.9898)).mul(43758.5453));
+  const isPart = (partId: Node<'float'>, id: number) => step(abs(partId.sub(id)), 0.25);
+  const lane = (salt: number) => fract(sin(vInfo.x.add(salt).mul(12.9898)).mul(43758.5453));
   const partOf = () => attribute('skin', 'vec4').w;
 
   mat.colorNode = Fn(() => {
@@ -797,7 +824,7 @@ function createPersonMaterial(pose) {
 
     const skinCol = pickColorFromPalette(SKIN_COLORS, lane(17.0)).toVar();
     const hairCol = pickColorFromPalette(HAIR_COLORS, lane(3.0)).toVar();
-    // (an outfit, crime.js: picked by its index, not by chance)
+    // (an outfit, crime.ts: picked by its index, not by chance)
     const outfit = floor(vInfo.x.mul(1 / OUTFIT_SEED));
     const dressed = step(0.5, outfit);
     const wear = outfit.add(0.5).div(OUTFIT_COATS.length);
@@ -912,14 +939,31 @@ function createPersonMaterial(pose) {
 // ============================================================================
 // 4. CROWD: ONE INSTANCED, SKINNED DRAW PER LEVEL OF DETAIL
 // ============================================================================
+/** One level of detail of a crowd: its pose buffer, its mesh, how many people it draws this frame and at most */
+interface CrowdLod {
+  pose: StorageBufferNode<'vec4'>;
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardNodeMaterial>;
+  count: number;
+  max: number;
+}
+interface PersonCrowdOptions {
+  /** m: people farther than this use the far level of detail */
+  farDistance?: number;
+  castShadow?: boolean;
+}
+
 class PersonCrowd {
+  farDistance: number;
+  lods: CrowdLod[];
+  meshes: THREE.Mesh[];
+
   /**
-   * @param {number} maxCount - most people drawn at once
-   * @param {{ farDistance?: number, castShadow?: boolean }} options - beyond farDistance (m) people use the far LOD
+   * @param maxCount - most people drawn at once
+   * @param options - beyond farDistance (m) people use the far LOD
    */
-  constructor(maxCount, { farDistance = 34, castShadow = true } = {}) {
+  constructor(maxCount: number, { farDistance = 34, castShadow = true }: PersonCrowdOptions = {}) {
     this.farDistance = farDistance;
-    this.lods = [1, 0].map((detail) => {
+    this.lods = [1, 0].map((detail): CrowdLod => {
       const pose = attributeArray(maxCount * STRIDE, 'vec4').toReadOnly();
       const mesh = new THREE.Mesh(buildPersonGeometry(detail), createPersonMaterial(pose));
       mesh.name = detail ? 'PeopleNear' : 'PeopleFar';
@@ -932,18 +976,18 @@ class PersonCrowd {
     this.meshes = this.lods.map((l) => l.mesh);
   }
 
-  begin() {
+  begin(): void {
     for (const l of this.lods) l.count = 0;
   }
 
-  add(rig, distance = 0) {
+  add(rig: PersonRig, distance = 0): void {
     const l = this.lods[distance > this.farDistance ? 1 : 0];
     if (l.count >= l.max) return;
     l.pose.value.array.set(rig.pose, l.count * STRIDE * 4);
     l.count++;
   }
 
-  end() {
+  end(): void {
     for (const l of this.lods) {
       l.mesh.count = l.count;
       if (l.count === 0) continue;
@@ -974,13 +1018,13 @@ const GAIT = {
 const HEEL = new THREE.Vector3(0, -ANKLE_H, -0.07); // heel contact, from the ankle
 const TOE_JOINT = new THREE.Vector3(0, 0.02 - ANKLE_H, 0.135);
 
-const wrap = (a) => a - Math.round(a / (Math.PI * 2)) * Math.PI * 2;
-const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
-const smooth = (e0, e1, x) => {
+const wrap = (a: number) => a - Math.round(a / (Math.PI * 2)) * Math.PI * 2;
+const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
+const smooth = (e0: number, e1: number, x: number) => {
   const t = clamp01((x - e0) / (e1 - e0));
   return t * t * (3 - 2 * t);
 };
-const lerp = (a, b, t) => a + (b - a) * t;
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 const _q = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
@@ -1009,11 +1053,44 @@ const _rootPos = new THREE.Vector3();
 const AX = new THREE.Vector3(1, 0, 0);
 const AY = new THREE.Vector3(0, 1, 0);
 const AZ = new THREE.Vector3(0, 0, 1);
-const qX = (out, a) => out.setFromAxisAngle(AX, a);
-const qY = (out, a) => out.setFromAxisAngle(AY, a);
-const qZ = (out, a) => out.setFromAxisAngle(AZ, a);
+const qX = (out: THREE.Quaternion, a: number) => out.setFromAxisAngle(AX, a);
+const qY = (out: THREE.Quaternion, a: number) => out.setFromAxisAngle(AY, a);
+const qZ = (out: THREE.Quaternion, a: number) => out.setFromAxisAngle(AZ, a);
 
-function makeFoot(side) {
+/** A foot of a PersonRig (m, radians; world space) */
+interface Foot {
+  /** 1 left, -1 right */
+  side: number;
+  swing: boolean;
+  px: number;
+  py: number;
+  pz: number;
+  yaw: number;
+  ax: number;
+  ay: number;
+  az: number;
+  pitch: number;
+  toe: number;
+  contact: number;
+  w: number;
+  lx: number;
+  ly: number;
+  lz: number;
+  lyaw: number;
+  lpitch: number;
+  ltoe: number;
+  lground: number;
+  tx: number;
+  ty: number;
+  tz: number;
+  tyaw: number;
+  /** its heading during a swing, turning from lift-off to landing */
+  swingYaw: number;
+  /** 0..1 over the stance (sin), 0 swinging: how much of the body's landing it takes */
+  stance: number;
+}
+
+function makeFoot(side: number): Foot {
   return {
     side,
     swing: false,
@@ -1023,16 +1100,93 @@ function makeFoot(side) {
     ax: 0, ay: 0, az: 0, pitch: 0, toe: 0, contact: 1,
     // lift-off state and landing target during a swing
     w: 0, lx: 0, ly: 0, lz: 0, lyaw: 0, lpitch: 0, ltoe: 0, lground: 0,
-    tx: 0, ty: 0, tz: 0, tyaw: 0
+    tx: 0, ty: 0, tz: 0, tyaw: 0,
+    // (set by every update: until the first, the foot stands planted)
+    swingYaw: 0, stance: 0
   };
 }
 
+/** The walking surface's height (m) at (x, z), as whoever moves the rig (`owner`) sees it */
+type PersonGround<O> = (owner: O, x: number, z: number) => number;
+
+/** How a PersonRig looks and walks */
+interface PersonLooks {
+  /** dresses them (OUTFIT_SEED times an OUTFIT or more: that outfit) */
+  seed?: number;
+  /** height / 1.75 m */
+  scale?: number;
+  female?: boolean;
+  /** build, ~0.9-1.15 */
+  girth?: number;
+  /** 0 short .. 0.5 voluminous .. 1 long */
+  hair?: number;
+  /** gait personality, ~1 */
+  armSwing?: number;
+  stride?: number;
+}
+
+/** A bicycle or motorcycle's frame for ride(): seat, bars & bottom bracket (m, in the frame's space, +Z forward), the
+ *  grips' half spread, the crank's length (0: feet on the pegs) and the feet's half spread */
+interface RideFrame {
+  seat: { readonly y: number; readonly z: number };
+  bars: { readonly y: number; readonly z: number };
+  gripHalf?: number;
+  bracket: { readonly y: number; readonly z: number };
+  crankLength?: number;
+  footHalf?: number;
+}
+
 class PersonRig {
-  /**
-   * @param {object} o - seed (dresses them), scale (height / 1.75 m), female, girth (build, ~0.9-1.15),
-   *   hair (0 short .. 0.5 voluminous .. 1 long), armSwing & stride (gait personality, ~1)
-   */
-  constructor({ seed = 0, scale = 1, female = false, girth = 1, hair = 0.2, armSwing = 1, stride = 1 } = {}) {
+  seed: number;
+  /** height / 1.75 m */
+  s: number;
+  female: 0 | 1;
+  girth: number;
+  hair: number;
+  armSwing: number;
+  stride: number;
+  /** the bind pose's joints (m) */
+  bind: THREE.Vector3[];
+  placed: boolean;
+  /** ground position (m) and heading (rad, 0 facing +Z) */
+  x: number;
+  z: number;
+  yaw: number;
+  /** smoothed velocity and speed (m/s) */
+  vx: number;
+  vz: number;
+  speed: number;
+  /** how much of the walking motion shows (0 standing .. 1 walking), and of running */
+  gait: number;
+  run: number;
+  /** 0..1 through the gait cycle */
+  phase: number;
+  pelvisY: number;
+  sway: number;
+  air: number;
+  /** s */
+  time: number;
+  feet: [left: Foot, right: Foot];
+  /** aiming a gun: 0 arms at the sides .. 1 held out towards aimYaw (rad) */
+  aim: number;
+  aimYaw: number;
+  aimBoth: boolean;
+  handPosition: THREE.Vector3;
+  /** the bones' (quaternion, translation & scale) and the looks, as the crowd's pose buffer takes them */
+  pose: Float32Array;
+  /** the pelvis's turn, roll & tilt (rad), and how far the left foot is ahead of the right (per metre of height) */
+  pelvisYaw: number;
+  pelvisRoll: number;
+  pelvisTilt: number;
+  spreadF: number;
+  /** diagnostics (m): the most a leg fell short of its ankle target, and while planted */
+  reachError?: number;
+  stanceReachError?: number;
+  /** riding: the head's position and rotation (world space) */
+  headPosition?: THREE.Vector3;
+  headQuaternion?: THREE.Quaternion;
+
+  constructor({ seed = 0, scale = 1, female = false, girth = 1, hair = 0.2, armSwing = 1, stride = 1 }: PersonLooks = {}) {
     this.seed = seed;
     this.s = scale;
     this.female = female ? 1 : 0;
@@ -1056,7 +1210,7 @@ class PersonRig {
     this.air = 0;
     this.time = seed * 7.3;
     this.feet = [makeFoot(1), makeFoot(-1)];
-    // Aiming a gun (crime.js): 0 arms at the sides .. 1 the right arm (both with aimBoth) held out towards aimYaw;
+    // Aiming a gun (crime.ts): 0 arms at the sides .. 1 the right arm (both with aimBoth) held out towards aimYaw;
     // handPosition is where the right hand holds the grip
     this.aim = 0;
     this.aimYaw = 0;
@@ -1064,14 +1218,18 @@ class PersonRig {
     this.handPosition = new THREE.Vector3();
     this.pose = new Float32Array(STRIDE * 4);
     this.pose.set([seed, this.female, girth, hair], (STRIDE - 1) * 4);
+    // (until the first update moves them: standing straight)
+    this.pelvisYaw = this.pelvisRoll = 0;
+    this.pelvisTilt = 0.035;
+    this.spreadF = 0;
   }
 
-  get legLength() {
+  get legLength(): number {
     return (THIGH + SHIN) * this.s;
   }
 
   // Standing still at (x, z) facing yaw, feet side by side on the ground
-  reset(x, z, yaw, ground, owner = null) {
+  reset<O>(x: number, z: number, yaw: number, ground: PersonGround<O>, owner: O): void {
     const s = this.s;
     this.x = x;
     this.z = z;
@@ -1095,13 +1253,13 @@ class PersonRig {
     this.solve();
   }
 
-  restPoint(foot, x, z, yaw, out) {
+  restPoint(foot: Foot, x: number, z: number, yaw: number, out: THREE.Vector3): THREE.Vector3 {
     const d = foot.side * GAIT.spread * this.s;
     return out.set(x + Math.cos(yaw) * d, 0, z - Math.sin(yaw) * d);
   }
 
   // Ankle of a foot planted at (px, py, pz) heading foot.yaw, pitched by `pitch` about `pivot` (heel or toe joint)
-  footAnkle(foot, pitch, pivot) {
+  footAnkle(foot: Foot, pitch: number, pivot: THREE.Vector3): void {
     const s = this.s;
     const sn = Math.sin(foot.yaw);
     const cs = Math.cos(foot.yaw);
@@ -1122,7 +1280,7 @@ class PersonRig {
    * surface's height anywhere around. `air` lifts the body off the ground (jumps). Set `updatePose` false for hidden
    * pedestrians: their gait and planted feet still advance, while bone transforms wait until they are drawn.
    */
-  update(dt, x, z, heading, ground, owner = null, air = 0, updatePose = true) {
+  update<O>(dt: number, x: number, z: number, heading: number, ground: PersonGround<O>, owner: O, air = 0, updatePose = true): void {
     if (!this.placed || Math.hypot(x - this.x, z - this.z) > 3) {
       this.reset(x, z, heading, ground, owner);
       return;
@@ -1325,18 +1483,18 @@ class PersonRig {
     if (updatePose) this.solve();
   }
 
-  setPelvisRotation() {
+  setPelvisRotation(): void {
     qY(_qPelvis, this.yaw + this.pelvisYaw);
     _qPelvis.multiply(qZ(_q, this.pelvisRoll)).multiply(qX(_q, this.pelvisTilt));
   }
 
   // Hip joint relative to the pelvis joint (out.y < 0: the hips are below it)
-  hipOffset(i, out) {
+  hipOffset(i: number, out: THREE.Vector3): THREE.Vector3 {
     const j = this.bind;
     return out.copy(j[LIMB.thigh[i]]).sub(j[BONE.PELVIS]).multiplyScalar(this.s).applyQuaternion(_qPelvis);
   }
 
-  writeBone(b, q, p) {
+  writeBone(b: number, q: THREE.Quaternion, p: THREE.Vector3): void {
     const s = this.s;
     _v2.copy(this.bind[b]).applyQuaternion(q).multiplyScalar(s);
     const o = b * 8;
@@ -1352,7 +1510,7 @@ class PersonRig {
   }
 
   // Bone rotation whose +Y points `up` (from the child joint to this one) and +Z towards `front`
-  basis(up, front, out) {
+  basis(up: THREE.Vector3, front: THREE.Vector3, out: THREE.Quaternion): THREE.Quaternion {
     _by.copy(up).normalize();
     _bz.copy(front).addScaledVector(_by, -front.dot(_by));
     if (_bz.lengthSq() < 1e-8) _bz.set(0, 0, 1).addScaledVector(_by, -_by.z);
@@ -1363,7 +1521,7 @@ class PersonRig {
   }
 
   // Two-bone leg IK from the hip to the ankle target, knee towards the foot's heading
-  solveLeg(i, hip, ankleTarget, footYaw) {
+  solveLeg(i: number, hip: THREE.Vector3, ankleTarget: THREE.Vector3, footYaw: number): THREE.Vector3 {
     const s = this.s;
     const l1 = THIGH * s;
     const l2 = SHIN * s;
@@ -1388,17 +1546,12 @@ class PersonRig {
   }
 
   // Bones of the whole body from the feet, pelvis and gait state (world space)
-  solve() {
+  solve(): void {
     const s = this.s;
     const j = this.bind;
     const g = this.gait;
     const run = this.run;
     const yaw = this.yaw;
-    if (this.pelvisYaw === undefined) {
-      this.pelvisYaw = this.pelvisRoll = 0;
-      this.pelvisTilt = 0.035;
-      this.spreadF = 0;
-    }
     this.setPelvisRotation();
     _pelvis.set(this.x + Math.cos(yaw) * this.sway, this.pelvisY, this.z - Math.sin(yaw) * this.sway);
     this.writeBone(BONE.PELVIS, _qPelvis, _pelvis);
@@ -1466,14 +1619,14 @@ class PersonRig {
    * Riding a bicycle: `root` (Object3D) is the bike frame (pose in its parent's space, e.g. the scene), `crank` the
    * pedal crank angle. Seat, bars and bottom bracket in the frame's space (metres, +Z forward).
    */
-  ride(root, crank, { seat, bars, gripHalf = 0.22, bracket, crankLength = 0.17, footHalf = 0.1 }) {
+  ride(root: THREE.Object3D, crank: number, { seat, bars, gripHalf = 0.22, bracket, crankLength = 0.17, footHalf = 0.1 }: RideFrame): void {
     const s = this.s;
     const j = this.bind;
     this.gait = 0;
     this.run = 0;
     root.updateWorldMatrix(true, false);
     root.matrixWorld.decompose(_rootPos, _qRoot, _v);
-    const toWorld = (local) => local.applyQuaternion(_qRoot).add(_rootPos);
+    const toWorld = (local: THREE.Vector3) => local.applyQuaternion(_qRoot).add(_rootPos);
 
     // Pelvis on the saddle, leaning forward; chest further forward, head up looking ahead
     qX(_qPelvis, 0.42).premultiply(_qRoot);
@@ -1486,8 +1639,8 @@ class PersonRig {
     _qa.copy(_qRoot).multiply(qX(_q, -0.12));
     _v.copy(j[BONE.HEAD]).sub(j[BONE.CHEST]).multiplyScalar(s).applyQuaternion(_qChest).add(_chest);
     this.writeBone(BONE.HEAD, _qa, _v);
-    this.headPosition = (this.headPosition || new THREE.Vector3()).copy(_v);
-    this.headQuaternion = (this.headQuaternion || new THREE.Quaternion()).copy(_qa);
+    this.headPosition = (this.headPosition ?? new THREE.Vector3()).copy(_v);
+    this.headQuaternion = (this.headQuaternion ?? new THREE.Quaternion()).copy(_qa);
 
     // Hands on the grips (two-bone arm IK, elbows out & down), feet on the pedals (leg IK, knees over the feet)
     _fwd.set(0, 0, 1).applyQuaternion(_qRoot);
@@ -1537,4 +1690,5 @@ class PersonRig {
   }
 }
 
+export type { Outfit, PersonLooks, PersonGround, RideFrame, Foot, CrowdLod, PersonCrowdOptions, SkinWeights, LoftRow };
 export { BONE as PERSON_BONES, OUTFIT, OUTFIT_SEED, buildPersonGeometry, createPersonMaterial, PersonCrowd, PersonRig };

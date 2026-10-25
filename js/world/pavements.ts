@@ -2,9 +2,10 @@ import * as THREE from 'three/webgpu';
 import { PAVEMENTS } from './pavement-data.ts';
 import { createPavementMaterial } from '../render/tsl-materials.ts';
 import { drapeGeometry } from './drape.ts';
+import type { TileStreamer } from './streaming.ts';
 
-// js/world/pavements.js
-// The streets of Tepic that are not asphalt (pavement-data.js, from OpenStreetMap's surface tags and the colonias known
+// js/world/pavements.ts
+// The streets of Tepic that are not asphalt (pavement-data.ts, from OpenStreetMap's surface tags and the colonias known
 // to be cobbled): the empedrado of river stones, the adoquín, the earth streets and the poured concrete, laid curb to
 // curb over the roadway as a strip per segment of the street's centreline, each run on half its width past its ends so
 // the bends close (the pattern is in world space: overlapping strips match). Laid on the town's slopes like the road
@@ -12,11 +13,11 @@ import { drapeGeometry } from './drape.ts';
 
 const LIFT = 0.005; // over the asphalt (the paint is at 0.012)
 
-// With `streamer` (streaming.js) the strips go to it as a layer, laid tile by tile around the camera
-function buildPavements(scene, streamer = null) {
-  const position = [];
-  const pave = [];
-  const index = [];
+// With `streamer` (streaming.ts) the strips go to it as a layer, laid tile by tile around the camera
+function buildPavements(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addLayer'> | null = null): THREE.Mesh | null {
+  const position: number[] = [];
+  const pave: number[] = [];
+  const index: number[] = [];
   for (const [kind, width, pts] of PAVEMENTS) {
     const h = width * 0.5;
     // (each kind a hair apart: where two kinds meet they don't fight)

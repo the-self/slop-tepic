@@ -1,7 +1,9 @@
-// js/models/cars/stellantis.js
+// js/models/cars/stellantis.ts
 // RAM, Dodge & Jeep (built in Saltillo & Toluca). Fields: README.md
 
-export const CARS = [
+import type { CarModel } from './index.ts';
+
+export const CARS: CarModel[] = [
   {
     id: 'ram-700', name: 'RAM 700', body: 'pickup', class: 'economy',
     size: [4.48, 1.73, 1.58], mass: 1150, drive: 'fwd', power: [73, 6250], torque: [134, 3500], redline: 6500,

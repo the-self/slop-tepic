@@ -1,13 +1,262 @@
+// js/audio/audio-sources.ts
+// What the city's audio hears each control tick: the nearest motors, sirens, people and WALK signals around the
+// listener, read off the player's controllers, the traffic, the highway, the police and the street's signals.
 import { signalPhase, walkSignal } from '../world/city-config.ts';
+import type { AcousticCollider, Point3 } from './audio-acoustics.ts';
+import type { MotorKind } from './audio-synthesis.ts';
+
+// ---- What the audio reads of the simulation. These describe only the fields used here, so the real systems
+// (player/controllers.ts, sim/traffic.ts, sim/highway-traffic, sim/crime.ts, world/street-details.ts) fit them as they are.
+
+/** A pair of pedestrians stopped to talk: both point back at it while the meeting lasts */
+export interface Conversation {
+  a: Talker;
+  b: Talker;
+}
+
+export interface Talker {
+  conversation?: Conversation | null;
+}
+
+/** A walking rig's gait: speed (m/s), the stride's phase (0..1, a foot plants as it wraps) and its feet's places (m) */
+export interface AudioRig {
+  speed: number;
+  seed: number;
+  phase: number;
+  feet: readonly { px: number; py: number; pz: number }[];
+}
+
+interface AudioEntityBase {
+  position: Point3;
+  mesh: { visible: boolean };
+  /** (a player's entity is never in a conversation) */
+  conversation?: undefined;
+}
+
+/** The player on foot */
+export interface AudioPersonEntity extends AudioEntityBase {
+  type: 'person';
+  rig: AudioRig;
+  /** m/s, up positive */
+  verticalVel: number;
+}
+
+/** The player's car, bicycle, moto or helicopter */
+export interface AudioVehicleEntity extends AudioEntityBase {
+  type: 'car' | 'cyclist' | 'moto' | 'helicopter';
+  /** m/s, signed (reversing is negative) */
+  speed: number;
+  /** rad */
+  heading: number;
+  /** The helicopter's climb, m/s */
+  verticalSpeed?: number;
+  spec?: { electric?: boolean } | null;
+  /** The car's drivetrain (player/drivetrain.ts): its throttle 0..1 and revs */
+  drive?: { load: number; rpm: number } | null;
+}
+
+export type AudioEntity = AudioPersonEntity | AudioVehicleEntity;
+
+/** The keys the player drives with (player/controllers.ts `keys`) */
+export interface DriveKeys {
+  forward: boolean;
+  backward: boolean;
+  up: boolean;
+  down: boolean;
+  boost: boolean;
+}
+
+/** A crash between two things (`a`, `b`: the entities, cars or props) at (x, y, z) m, closing at `speed` m/s */
+export interface CollisionImpact {
+  a: unknown;
+  b: unknown;
+  x: number;
+  y: number;
+  z: number;
+  speed: number;
+}
+
+/** A system that reports its collisions to one listener */
+export interface CollisionSource {
+  setCollisionListener?(listener: ((impact: CollisionImpact) => void) | null): void;
+}
+
+/** The player's controllers (player/controllers.ts ControllerManager), as the audio reads them */
+export interface AudioControllers extends CollisionSource {
+  entities: Readonly<Record<string, AudioEntity>>;
+  keys: DriveKeys;
+  /** 'person' | 'car' | 'cyclist' | 'helicopter' | 'moto' */
+  activeMode: string;
+  getActiveEntity(): AudioEntity;
+  /** The ground's height (m) under (x, z) for a mode */
+  getGroundHeight(x: number, z: number, mode: string): number;
+  /** The town's floor (m) under (x, z), which the helicopter's altitudes are reckoned from */
+  floorHeight(x: number, z: number): number;
+  nearColliders(x: number, z: number, r: number): Iterable<AcousticCollider>;
+}
+
+/** A car, bus or moto of the street traffic (sim/traffic.ts) */
+export interface AudioStreetVehicle {
+  x: number;
+  z: number;
+  /** The ground's height under it, m */
+  hy?: number;
+  /** m/s */
+  speed: number;
+  /** m/s² */
+  acc: number;
+  driver: { a: number };
+  yaw: number;
+  yawOffset: number;
+  edge: { to: { signal?: unknown }; axisIndex: number } | null;
+  /** s waited */
+  wait: number;
+  /** m to the car ahead, and its speed (m/s) */
+  gap: number;
+  leaderSpeed: number;
+  conn?: unknown;
+  yielding?: boolean;
+  isPolice?: boolean;
+  bus?: boolean;
+  moto?: boolean;
+  heavy?: boolean;
+}
+
+/** A pedestrian of the street traffic, on its sidewalk segment from (ax, az) along (ux, uz) for `len` m */
+export interface AudioPedestrian extends Talker {
+  placed: boolean;
+  x: number;
+  z: number;
+  ax: number;
+  az: number;
+  ux: number;
+  uz: number;
+  len: number;
+  /** m/s */
+  v: number;
+  node?: unknown;
+  rig: AudioRig;
+}
+
+export interface AudioTraffic extends CollisionSource {
+  cars: readonly AudioStreetVehicle[];
+  buses: readonly AudioStreetVehicle[];
+  motos?: readonly AudioStreetVehicle[];
+  peds: readonly AudioPedestrian[];
+}
+
+/** A car on the highway (m, m/s, m/s², rad) */
+export interface AudioHighwayCar {
+  placed: boolean;
+  x: number;
+  y: number;
+  z: number;
+  v: number;
+  acc: number;
+  yaw: number;
+  kind?: string;
+}
+
+/** A patrol car (or a gang's SUV) chasing the player (sim/crime.ts cruisers) */
+export interface AudioPursuer {
+  active: boolean;
+  wreck?: boolean;
+  police?: boolean;
+  x: number;
+  y: number;
+  z: number;
+  speed: number;
+  heading: number;
+}
+
+/** A WALK panel heard ticking (world/street-details.ts audioSignals) */
+export interface AudioSignalSite extends Point3 {
+  isAvenue: boolean;
+}
+
+/** The simulation the audio listens to */
+export interface AudioSimulation {
+  controllerManager: AudioControllers;
+  trafficSystem: AudioTraffic;
+  highwayTraffic: { cars: readonly AudioHighwayCar[] };
+  streetDetails: { audioSignals: readonly AudioSignalSite[] };
+  propBreaker?: CollisionSource | null;
+}
+
+// ---- What it collects: pooled records, rewritten every collect()
+
+/** An engine, a bicycle, a rotor or a siren to hear */
+export interface MotorSound extends Point3 {
+  /** The simulation object it is: its voice follows it */
+  id: object;
+  kind: MotorKind;
+  /** m/s */
+  speed: number;
+  /** 0..1 */
+  load: number;
+  /** m/s */
+  verticalSpeed: number;
+  /** The engine's revs when known, else 0 */
+  rpm: number;
+  /** rad */
+  heading: number;
+  police: boolean;
+  player: boolean;
+  seed: number;
+  /** Stuck behind a car that doesn't move on a green: its driver may honk */
+  blocked: boolean;
+  gain: number;
+  /** m */
+  range: number;
+}
+
+/** Someone walking: their feet's places (m) for the footsteps */
+export interface PersonSound extends Point3 {
+  /** The player's entity or the pedestrian */
+  id: object;
+  /** m/s */
+  speed: number;
+  grounded: boolean;
+  seed: number;
+  phase: number;
+  player: boolean;
+  conversation: Conversation | null;
+  leftX: number;
+  leftY: number;
+  leftZ: number;
+  rightX: number;
+  rightY: number;
+  rightZ: number;
+}
+
+/** A WALK panel: ticking fast on WALK, slow between */
+export interface SignalSound extends Point3 {
+  /** Its AudioSignalSite */
+  id: object;
+  walk: boolean;
+  seed: number;
+}
+
+/** One collect()'s result, nearest first; `traffic` (0..1) is how loud the traffic around is, `motion` the player's m/s */
+export interface AudioSnapshot {
+  motors: MotorSound[];
+  sirens: MotorSound[];
+  people: PersonSound[];
+  signals: SignalSound[];
+  traffic: number;
+  motion: number;
+}
+
+const NOBODY = {}; // (a pooled record's id until it is first written)
 
 const MOTOR_RANGE = 180;
 const SIREN_RANGE = 220;
 const PEOPLE_RANGE = 45;
 const SIGNAL_RANGE = 35;
-const unit = (value) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
-const seedAt = (index) => ((Math.imul(index + 1, 2654435761) >>> 0) / 4294967296);
+const unit = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+const seedAt = (index: number) => ((Math.imul(index + 1, 2654435761) >>> 0) / 4294967296);
 
-function driveLoad(keys, speed, cyclist) {
+function driveLoad(keys: DriveKeys, speed: number, cyclist: boolean) {
   // Match the controller's forward priority, and distinguish propulsion from braking.
   const throttle = unit(+keys.forward) || -unit(+keys.backward) * (cyclist ? 0.6 : 1);
   if ((cyclist && throttle <= 0) || speed * throttle < 0) return 0;
@@ -15,15 +264,15 @@ function driveLoad(keys, speed, cyclist) {
 }
 
 // (floor: the town's floor under it, which the controller's altitude limits are reckoned from)
-function helicopterVerticalSpeed(entity, floor = 0) {
-  const speed = Number.isFinite(entity.verticalSpeed) ? entity.verticalSpeed : 0;
+function helicopterVerticalSpeed(entity: AudioVehicleEntity, floor = 0) {
+  const speed = entity.verticalSpeed !== undefined && Number.isFinite(entity.verticalSpeed) ? entity.verticalSpeed : 0;
   // The controller clamps altitude without clearing its stored vertical velocity.
   const y = entity.position.y - floor;
   return (y <= 0.25 && speed < 0) || (y >= 380 && speed > 0) ? 0 : speed;
 }
 
 // (ground: the ground's height under it)
-function helicopterLoad(entity, keys, verticalSpeed, ground = 0) {
+function helicopterLoad(entity: AudioVehicleEntity, keys: DriveKeys, verticalSpeed: number, ground = 0) {
   const forward = unit(+keys.forward) || -unit(+keys.backward);
   const collective = unit(+keys.up) || -unit(+keys.down);
   const grounded = entity.position.y - ground <= 0.35 && verticalSpeed <= 0.03;
@@ -33,12 +282,13 @@ function helicopterLoad(entity, keys, verticalSpeed, ground = 0) {
     + 0.1 * Math.abs(forward) + 0.12 * unit(Math.abs(entity.speed) / 52));
 }
 
-function roadLoad(speed, acceleration, maxAcceleration) {
+function roadLoad(speed: number, acceleration: number, maxAcceleration: number) {
   // Constant speed still needs power against rolling resistance and air drag.
   return unit(acceleration / maxAcceleration + unit(speed / 2) * (0.12 + 0.28 * unit(speed / 30) ** 2));
 }
 
-function writeMotor(item, id, kind, x, y, z, speed, load, heading, police, player, seed, blocked, gain, range, verticalSpeed = 0, rpm = 0) {
+function writeMotor(item: MotorSound, id: object, kind: MotorKind, x: number, y: number, z: number, speed: number, load: number, heading: number,
+  police: boolean, player: boolean, seed: number, blocked: boolean, gain: number, range: number, verticalSpeed = 0, rpm = 0) {
   item.id = id;
   item.kind = kind;
   item.x = x;
@@ -58,14 +308,19 @@ function writeMotor(item, id, kind, x, y, z, speed, load, heading, police, playe
 }
 
 // Bounded insertion keeps only nearby candidates. Records and the public array are reused across collections.
-class NearestSources {
-  constructor(limit) {
-    this.pool = Array.from({ length: limit }, () => ({}));
+class NearestSources<T> {
+  pool: T[];
+  items: T[];
+  scores: Float64Array;
+
+  // (record: makes one pooled record, every field of which a collection writes before it is read)
+  constructor(limit: number, record: () => T) {
+    this.pool = Array.from({ length: limit }, record);
     this.items = [];
     this.scores = new Float64Array(limit);
   }
 
-  take(score) {
+  take(score: number) {
     let i = this.items.length;
     let item;
     if (i < this.pool.length) item = this.pool[i];
@@ -86,35 +341,64 @@ class NearestSources {
 
 // Read at audio's control rate (10 Hz), after simulation updates. Snapshots remain valid until the next collect().
 // IDs are the simulation objects, independent of pooled record order, so voices survive ranking changes/recycling.
+const motorRecord = (): MotorSound => ({
+  id: NOBODY, kind: 'sedan', x: 0, y: 0, z: 0, speed: 0, load: 0, verticalSpeed: 0, rpm: 0, heading: 0,
+  police: false, player: false, seed: 0, blocked: false, gain: 0, range: 0
+});
+const personRecord = (): PersonSound => ({
+  id: NOBODY, x: 0, y: 0, z: 0, speed: 0, grounded: false, seed: 0, phase: 0, player: false, conversation: null,
+  leftX: 0, leftY: 0, leftZ: 0, rightX: 0, rightY: 0, rightZ: 0
+});
+const signalRecord = (): SignalSound => ({ id: NOBODY, x: 0, y: 0, z: 0, walk: false, seed: 0 });
+
 class CityAudioSources {
-  constructor({ controllerManager, trafficSystem, highwayTraffic, streetDetails }) {
+  controllers: AudioControllers;
+  players: AudioEntity[];
+  cars: readonly AudioStreetVehicle[];
+  buses: readonly AudioStreetVehicle[];
+  motos: readonly AudioStreetVehicle[];
+  peds: readonly AudioPedestrian[];
+  highwayCars: readonly AudioHighwayCar[];
+  pursuers: readonly AudioPursuer[];
+  signalSites: readonly AudioSignalSite[];
+  motors: NearestSources<MotorSound>;
+  sirens: NearestSources<MotorSound>;
+  people: NearestSources<PersonSound>;
+  signals: NearestSources<SignalSound>;
+  snapshot: AudioSnapshot;
+  /** Where the listener was at the last collect(), m */
+  listener: Point3;
+
+  constructor({ controllerManager, trafficSystem, highwayTraffic, streetDetails }: AudioSimulation) {
     this.controllers = controllerManager;
     this.players = Object.values(controllerManager.entities);
     this.cars = trafficSystem.cars;
     this.buses = trafficSystem.buses;
-    this.motos = trafficSystem.motos || [];
+    this.motos = trafficSystem.motos ?? [];
     this.peds = trafficSystem.peds;
     this.highwayCars = highwayTraffic.cars;
     this.pursuers = []; // the patrol cars chasing the player (crime.js): sirens & engines
     this.signalSites = streetDetails.audioSignals;
-    this.motors = new NearestSources(10);
-    this.sirens = new NearestSources(2);
-    this.people = new NearestSources(6);
-    this.signals = new NearestSources(2);
+    this.motors = new NearestSources(10, motorRecord);
+    this.sirens = new NearestSources(2, motorRecord);
+    this.people = new NearestSources(6, personRecord);
+    this.signals = new NearestSources(2, signalRecord);
     this.snapshot = {
       motors: this.motors.items, sirens: this.sirens.items,
       people: this.people.items, signals: this.signals.items, traffic: 0, motion: 0
     };
+    this.listener = { x: 0, y: 0, z: 0 }; // (collect() hands it the real one)
   }
 
-  distanceSq(x, y, z) {
+  distanceSq(x: number, y: number, z: number) {
     const dx = x - this.listener.x;
     const dy = y - this.listener.y;
     const dz = z - this.listener.z;
     return dx * dx + dy * dy + dz * dz;
   }
 
-  motor(id, kind, x, y, z, speed, load, heading, police, player, seed, blocked, gain = 1, range = kind === 'helicopter' ? 500 : 160, verticalSpeed = 0, rpm = 0) {
+  motor(id: object, kind: MotorKind, x: number, y: number, z: number, speed: number, load: number, heading: number, police: boolean, player: boolean,
+    seed: number, blocked: boolean, gain = 1, range = kind === 'helicopter' ? 500 : 160, verticalSpeed = 0, rpm = 0) {
     const d2 = this.distanceSq(x, y, z);
     if (!Number.isFinite(d2)) return;
     if (police && d2 <= SIREN_RANGE * SIREN_RANGE) {
@@ -128,7 +412,7 @@ class CityAudioSources {
     writeMotor(item, id, kind, x, y, z, speed, load, heading, police, player, seed, blocked, gain, range, verticalSpeed, rpm);
   }
 
-  person(id, x, y, z, speed, grounded, rig, player = false, priority = player) {
+  person(id: AudioEntity | AudioPedestrian, x: number, y: number, z: number, speed: number, grounded: boolean, rig: AudioRig, player = false, priority = player) {
     const d2 = this.distanceSq(x, y, z);
     if (!Number.isFinite(d2) || d2 > PEOPLE_RANGE * PEOPLE_RANGE) return;
     const item = this.people.take(priority ? -1 : d2);
@@ -142,13 +426,13 @@ class CityAudioSources {
     item.seed = rig.seed;
     item.phase = rig.phase;
     item.player = player;
-    item.conversation = player ? null : id.conversation || null;
+    item.conversation = player ? null : id.conversation ?? null;
     const left = rig.feet[0], right = rig.feet[1];
     item.leftX = left.px; item.leftY = left.py; item.leftZ = left.pz;
     item.rightX = right.px; item.rightY = right.py; item.rightZ = right.pz;
   }
 
-  streetVehicles(vehicles, elapsed, seedOffset) {
+  streetVehicles(vehicles: readonly AudioStreetVehicle[], elapsed: number, seedOffset: number) {
     for (let i = 0; i < vehicles.length; i++) {
       const v = vehicles[i];
       if (!v.edge) continue;
@@ -167,11 +451,11 @@ class CityAudioSources {
   }
 
   // The town's floor under an entity (the helicopter's altitudes are reckoned from it)
-  floorUnder(entity) {
+  floorUnder(entity: AudioEntity) {
     return this.controllers.floorHeight(entity.position.x, entity.position.z);
   }
 
-  collect(listenerPosition, elapsed) {
+  collect(listenerPosition: Point3, elapsed: number) {
     this.listener = listenerPosition;
     this.motors.items.length = this.sirens.items.length = this.people.items.length = this.signals.items.length = 0;
     this.snapshot.traffic = 0;
@@ -182,7 +466,7 @@ class CityAudioSources {
 
     for (let i = 0; i < this.players.length; i++) {
       const entity = this.players[i];
-      if (entity.mesh.visible === false || entity.position.y < -0.05) continue;
+      if (!entity.mesh.visible || entity.position.y < -0.05) continue;
       const { x, y, z } = entity.position;
       const player = entity === active;
       if (entity.type === 'person') {
@@ -197,7 +481,7 @@ class CityAudioSources {
         const verticalSpeed = player && helicopter ? helicopterVerticalSpeed(entity, this.floorUnder(entity)) : 0;
         // the player's car: its engine's own revs & throttle (drivetrain.js), gear changes and all; an electric car has
         // no engine to hear, only a faint drive and its tyres
-        const electric = Boolean(entity.spec && entity.spec.electric);
+        const electric = Boolean(entity.spec?.electric);
         const engine = player && entity.drive && !electric ? entity.drive : null;
         const load = player ? helicopter ? helicopterLoad(entity, keys, verticalSpeed, this.controllers.getGroundHeight(x, z, 'helicopter'))
           : engine ? engine.load : driveLoad(keys, entity.speed, kind === 'cyclist') : 0;
@@ -228,8 +512,7 @@ class CityAudioSources {
     }
     this.snapshot.traffic = unit(this.snapshot.traffic / 16);
 
-    for (let i = 0; i < this.peds.length; i++) {
-      const ped = this.peds[i];
+    for (const ped of this.peds) {
       if (!ped.placed) continue;
       const t = (ped.x - ped.ax) * ped.ux + (ped.z - ped.az) * ped.uz;
       const y = (ped.node && t > 2 && t < ped.len - 2 ? 0.012 : 0.22) + this.controllers.getGroundHeight(ped.x, ped.z, 'car');

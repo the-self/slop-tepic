@@ -1,4 +1,6 @@
 // SORIANDA: the big supermarket (Soriana). Long white front, a red band along the top with the name.
+import type { StorefrontSpec } from './index.ts';
+
 export default {
   id: 'sorianda',
   match: /\bsoriana\b/i,
@@ -6,4 +8,4 @@ export default {
   sign: { bg: '#e31837', fg: '#ffffff', border: '#ffffff' },
   facade: { band: '#e31837', stripe: '#f2f2f0', glazing: true },
   big: true
-};
+} satisfies StorefrontSpec;

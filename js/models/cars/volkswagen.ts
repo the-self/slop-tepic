@@ -1,7 +1,9 @@
-// js/models/cars/volkswagen.js
+// js/models/cars/volkswagen.ts
 // Volkswagen (built in Puebla). Fields: README.md
 
-export const CARS = [
+import type { CarModel } from './index.ts';
+
+export const CARS: CarModel[] = [
   {
     id: 'volkswagen-vento', name: 'Volkswagen Vento', body: 'sedan', class: 'economy',
     size: [4.39, 1.70, 1.47], mass: 1170, drive: 'fwd', power: [81, 5250], torque: [155, 3800], redline: 6200,

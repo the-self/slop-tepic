@@ -29,9 +29,13 @@ import {
 } from 'three/tsl';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BODY_SHAPES } from '../models/bodies.ts';
+import type {
+  BodySpec, LoftSpec, Curve, EndRoundings, BodySection, CabinSection, CarLayout, BodyDims
+} from '../models/bodies.ts';
+import type { Node } from 'three/webgpu';
 
-// js/actors/actor-models.js
-// Realistic 3D Lofted Vehicle Geometry + TSL Materials (the skinned, animated people are in pedestrians.js)
+// js/actors/actor-models.ts
+// Realistic 3D Lofted Vehicle Geometry + TSL Materials (the skinned, animated people are in pedestrians.ts)
 // Ported and adapted from Three.js webgpu_generator_city:
 // - LoftGeometry.js (skinning 3D cross-section rings with arc-length UVs, smooth seam normals & Newell caps)
 // - CarGenerator.js (lofted sedan/taxi/SUV/NYPD bodies with circular wheel arches, curved cabin windscreens,
@@ -44,9 +48,10 @@ const _down = new THREE.Vector3(0, -1, 0);
 // 1. LOFT GEOMETRY (Ported from three/addons/geometries/LoftGeometry.js)
 // ============================================================================
 class LoftGeometry extends THREE.BufferGeometry {
-  constructor(sections = [], options = {}) {
+  override readonly type = 'LoftGeometry';
+
+  constructor(sections: THREE.Vector3[][] = [], options: { closed?: boolean; capStart?: boolean; capEnd?: boolean } = {}) {
     super();
-    this.type = 'LoftGeometry';
 
     const { closed = true, capStart = false, capEnd = false } = options;
     const rows = sections.length;
@@ -57,9 +62,9 @@ class LoftGeometry extends THREE.BufferGeometry {
     }
 
     const pointsPerRow = closed ? columns + 1 : columns;
-    const indices = [];
-    const vertices = [];
-    const uvs = [];
+    const indices: number[] = [];
+    const vertices: number[] = [];
+    const uvs: number[] = [];
 
     const rowU = [0];
     for (let i = 1; i < rows; i++) {
@@ -100,7 +105,7 @@ class LoftGeometry extends THREE.BufferGeometry {
       }
     }
 
-    function generateCap(sectionIndex) {
+    function generateCap(sectionIndex: number) {
       const section = sections[sectionIndex];
       const centroid = new THREE.Vector3();
       const normal = new THREE.Vector3();
@@ -127,14 +132,14 @@ class LoftGeometry extends THREE.BufferGeometry {
       const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
       tangent.crossVectors(bitangent, normal);
 
-      const contour = [];
+      const contour: THREE.Vector2[] = [];
       const points = section.slice();
       for (let i = 0; i < columns; i++) {
         _vector.subVectors(points[i], centroid);
         contour.push(new THREE.Vector2(_vector.dot(tangent), _vector.dot(bitangent)));
       }
 
-      if (THREE.ShapeUtils.isClockWise(contour) === true) {
+      if (THREE.ShapeUtils.isClockWise(contour)) {
         contour.reverse();
         points.reverse();
       }
@@ -155,21 +160,20 @@ class LoftGeometry extends THREE.BufferGeometry {
         vertices.push(point.x, point.y, point.z);
         uvs.push((contour[i].x - minV.x) / width, (contour[i].y - minV.y) / height);
       }
-      for (let i = 0; i < faces.length; i++) {
-        const face = faces[i];
+      for (const face of faces) {
         indices.push(indexOffset + face[0], indexOffset + face[1], indexOffset + face[2]);
       }
     }
 
-    if (capStart === true) generateCap(0);
-    if (capEnd === true) generateCap(rows - 1);
+    if (capStart) generateCap(0);
+    if (capEnd) generateCap(rows - 1);
 
     this.setIndex(indices);
     this.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
     this.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     this.computeVertexNormals();
 
-    if (closed === true) {
+    if (closed) {
       const normals = this.getAttribute('normal');
       for (let i = 0; i < rows; i++) {
         const a = i * pointsPerRow;
@@ -186,9 +190,9 @@ class LoftGeometry extends THREE.BufferGeometry {
   }
 }
 
-function part(geometry, id) {
+function part(geometry: THREE.BufferGeometry, id: number): THREE.BufferGeometry {
   const g = geometry.index ? geometry : mergeVertices(geometry);
-  if (!g.attributes.uv) {
+  if (!('uv' in g.attributes)) {
     g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
   }
   g.setAttribute('partId', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count).fill(id), 1));
@@ -205,6 +209,7 @@ function part(geometry, id) {
 // with rounded rails). All the detail (glass, seals, pillars, lamps, grilles, plates, door seams, NYPD & taxi liveries,
 // brake lights & turn signals) is painted by one TSL material from object-space position & normal, so each body type
 // stays a single instanced draw call.
+// (each vertex's `partId`: what the car material paints it as)
 const CAR_PARTS = {
   BODY: 0,
   WINDOW: 1,
@@ -219,7 +224,7 @@ const CAR_PARTS = {
 
 // Design tables. Curves are [z, value] control points (z = +front); nose / tail entries are [length, tip value,
 // superellipse exponent] roundings of the same quantities into the tips.
-const BODY_SPECS = {
+const BODY_SPECS: Record<string, BodySpec> = {
   sedan: {
     name: 'sedan',
     zFront: 2.25,
@@ -460,7 +465,7 @@ const BODY_SPECS = {
   }
 };
 BODY_SPECS.taxi = Object.assign({}, BODY_SPECS.sedan, { name: 'taxi', sign: true });
-// The car models' other body shapes (js/models/bodies.js), each a set of changes to the sedan or the SUV
+// The car models' other body shapes (js/models/bodies.ts), each a set of changes to the sedan or the SUV
 for (const [name, shape] of Object.entries(BODY_SHAPES)) {
   const { base, ...changes } = shape;
   BODY_SPECS[name] = Object.assign({}, BODY_SPECS[base], changes, { name });
@@ -471,17 +476,17 @@ for (const spec of Object.values(BODY_SPECS)) {
   spec.lampX = [spec.headlight[0], spec.taillight[0]];
 }
 
-const lerp = (a, b, t) => a + (b - a) * t;
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 // Monotone cubic (Fritsch-Carlson) interpolation through [x, y] control points: smooth, never overshoots
-function smoothCurve(points) {
+function smoothCurve(points: Curve): (x: number) => number {
   const pts = points.slice().sort((a, b) => a[0] - b[0]);
   const n = pts.length;
   if (n === 1) return () => pts[0][1];
   const xs = pts.map((p) => p[0]);
   const ys = pts.map((p) => p[1]);
-  const h = [];
-  const d = [];
+  const h: number[] = [];
+  const d: number[] = [];
   for (let i = 0; i < n - 1; i++) {
     h.push(xs[i + 1] - xs[i]);
     d.push((ys[i + 1] - ys[i]) / h[i]);
@@ -497,7 +502,7 @@ function smoothCurve(points) {
     }
   }
   m.push(d[n - 2]);
-  return (x) => {
+  return (x: number) => {
     if (x <= xs[0]) return ys[0];
     if (x >= xs[n - 1]) return ys[n - 1];
     let i = 0;
@@ -510,7 +515,7 @@ function smoothCurve(points) {
 }
 
 // 1 along the body, falling to 0 at the tip along a superelliptic quarter (vertical tangent at the tip)
-function endFactor(z, zTip, length, exponent = 2) {
+function endFactor(z: number, zTip: number, length: number, exponent = 2) {
   const u = zTip > 0 ? (z - (zTip - length)) / length : (zTip + length - z) / length;
   if (u <= 0) return 1;
   if (u >= 1) return 0;
@@ -521,7 +526,7 @@ function endFactor(z, zTip, length, exponent = 2) {
  * Evaluates a body spec's curves into the cross-section parameters along the vehicle (memoized on the spec):
  *   body(z) -> { W: half-width, yB: sill, yS: shoulder (widest), yE / xE: top edge, yT: crown, xB: sill half-width }
  */
-function bodyProfile(spec) {
+function bodyProfile(spec: LoftSpec): (z: number) => BodySection {
   if (spec._body) return spec._body;
   const W0 = smoothCurve(spec.halfWidth);
   const B0 = smoothCurve(spec.sill);
@@ -532,15 +537,15 @@ function bodyProfile(spec) {
   const archR = spec.wheelRadius + spec.archGap;
   const axles = [spec.wheelZ, -spec.wheelZ];
 
-  const rounded = (z, value, key) => {
+  const rounded = (z: number, value: number, key: keyof EndRoundings) => {
     const nose = spec.nose[key];
     const tail = spec.tail[key];
-    if (nose && z > 0) value = nose[1] + (value - nose[1]) * endFactor(z, spec.zFront, nose[0], nose[2]);
-    if (tail && z < 0) value = tail[1] + (value - tail[1]) * endFactor(z, spec.zRear, tail[0], tail[2]);
+    if (z > 0) value = nose[1] + (value - nose[1]) * endFactor(z, spec.zFront, nose[0], nose[2]);
+    if (z < 0) value = tail[1] + (value - tail[1]) * endFactor(z, spec.zRear, tail[0], tail[2]);
     return value;
   };
 
-  const body = (z) => {
+  const body = (z: number): BodySection => {
     let flare = 0;
     for (const axle of axles) {
       const d = (z - axle) / (archR + 0.4);
@@ -566,14 +571,14 @@ function bodyProfile(spec) {
  * A car's body profile plus its glasshouse (memoized on the spec):
  *   cabin(z) -> { beltX, beltY: side glass base, railX, railY: top of the side glass, h: roof / glass crown height }
  */
-function carLayout(spec) {
+function carLayout(spec: BodySpec): CarLayout {
   if (spec._layout) return spec._layout;
   const body = bodyProfile(spec);
   const archR = spec.wheelRadius + spec.archGap;
   const cab = spec.cabin;
   const roofY = smoothCurve(cab.roofY);
   const H = cab.roofEdge + cab.roofCrown;
-  const belt = (z) => {
+  const belt = (z: number) => {
     const s = body(z);
     return { x: s.xE - cab.inset, y: s.yE - 0.004 };
   };
@@ -587,7 +592,7 @@ function carLayout(spec) {
   const hCowl = Math.max(0.006, body(cab.cowl).yT - bc.y - 0.008);
   const hDeck = Math.max(0.006, body(cab.deck).yT - bd.y - 0.008);
 
-  const cabin = (z) => {
+  const cabin = (z: number): CabinSection => {
     const b = belt(z);
     let railX;
     let railY;
@@ -612,7 +617,7 @@ function carLayout(spec) {
   };
 
   // Height of the glasshouse's top surface (roof / windshield crown) at |x| for a cabin section
-  const cabinTop = (c, x) => {
+  const cabinTop = (c: CabinSection, x: number) => {
     const n = cab.roofRound;
     const ratio = Math.min(1, Math.abs(x) / Math.max(c.railX, 1e-4));
     const th = Math.acos(Math.pow(ratio, n / 2));
@@ -624,8 +629,8 @@ function carLayout(spec) {
 }
 
 // Section winding used by every car loft in this file: left (-x) bottom, up & over the top, right (+x) bottom
-function mirrorSection(right, center, z) {
-  const pts = [];
+function mirrorSection(right: [x: number, y: number][], center: [x: number, y: number] | null, z: number) {
+  const pts: THREE.Vector3[] = [];
   for (const [x, y] of right) pts.push(new THREE.Vector3(-x, y, z));
   if (center) pts.push(new THREE.Vector3(center[0], center[1], z));
   for (let i = right.length - 1; i >= 0; i--) pts.push(new THREE.Vector3(right[i][0], right[i][1], z));
@@ -638,12 +643,12 @@ const BODY_UPPER_ROUND = 3.2;
 // Right half of a body cross-section: superelliptic lower corner (sill -> widest point), superelliptic upper corner
 // (widest point -> top edge) and a parabolic crown. Specs may sharpen the corners (lowerRound / upperRound) and sample
 // the upper corner more densely (upperSamples).
-function bodyHalfProfile(s, detail, spec = {}) {
+function bodyHalfProfile(s: BodySection, detail: number, spec: Pick<LoftSpec, 'lowerRound' | 'upperRound' | 'upperSamples'> = {}) {
   const n1 = spec.lowerRound || BODY_LOWER_ROUND;
   const n2 = spec.upperRound || BODY_UPPER_ROUND;
-  const right = [];
+  const right: [x: number, y: number][] = [];
   const low = detail ? [0, 0.32, 0.64, 1] : [0, 1];
-  const up = detail ? spec.upperSamples || [0.38, 0.72, 1] : [1];
+  const up = detail ? spec.upperSamples ?? [0.38, 0.72, 1] : [1];
   const top = detail ? [0.66, 0.33] : [0.5];
   for (const a of low) {
     const th = (a * Math.PI) / 2;
@@ -657,9 +662,9 @@ function bodyHalfProfile(s, detail, spec = {}) {
   return right;
 }
 
-function bodyStations(spec, detail) {
-  const zs = [];
-  const add = (z) => zs.push(Math.min(spec.zFront, Math.max(spec.zRear, z)));
+function bodyStations(spec: LoftSpec, detail: number) {
+  const zs: number[] = [];
+  const add = (z: number) => zs.push(Math.min(spec.zFront, Math.max(spec.zRear, z)));
   const step = detail ? spec.stationStep || 0.28 : 0.75;
   for (let z = spec.zRear; z < spec.zFront; z += step) add(z);
   add(spec.zFront);
@@ -682,7 +687,7 @@ function bodyStations(spec, detail) {
   }
   zs.sort((a, b) => b - a);
   const eps = detail ? 0.004 : 0.04;
-  const out = [];
+  const out: number[] = [];
   for (const z of zs) {
     if (!out.length || out[out.length - 1] - z > eps) out.push(z);
   }
@@ -691,7 +696,7 @@ function bodyStations(spec, detail) {
   return out;
 }
 
-function buildBodyLoft(spec, detail = 1) {
+function buildBodyLoft(spec: LoftSpec, detail = 1) {
   const body = bodyProfile(spec);
   const sections = bodyStations(spec, detail).map((z) => {
     const s = body(z);
@@ -700,12 +705,12 @@ function buildBodyLoft(spec, detail = 1) {
   return new LoftGeometry(sections, { capStart: true, capEnd: true });
 }
 
-function buildCarBody(spec, detail = 1) {
+function buildCarBody(spec: LoftSpec, detail = 1) {
   return part(buildBodyLoft(spec, detail), CAR_PARTS.BODY);
 }
 
-function cabinSection(c, detail, roundness) {
-  const right = [[c.beltX, c.beltY]];
+function cabinSection(c: CabinSection, detail: number, roundness: number) {
+  const right: [x: number, y: number][] = [[c.beltX, c.beltY]];
   if (detail) {
     for (const s of [1 / 3, 2 / 3]) {
       right.push([lerp(c.beltX, c.railX, s) + c.bulge * 4 * s * (1 - s), lerp(c.beltY, c.railY, s)]);
@@ -719,16 +724,16 @@ function cabinSection(c, detail, roundness) {
   return mirrorSection(right, [0, c.railY + c.h], c.z);
 }
 
-function cabinStations(spec, detail) {
+function cabinStations(spec: BodySpec, detail: number) {
   const cab = spec.cabin;
-  const zs = [];
+  const zs: number[] = [];
   for (const t of detail ? [0, 0.1, 0.24, 0.42, 0.62, 0.82] : [0, 0.5]) zs.push(lerp(cab.cowl, cab.roofFront, t));
   for (const t of detail ? [0, 0.25, 0.5, 0.75] : [0, 0.5]) zs.push(lerp(cab.roofFront, cab.roofRear, t));
   for (const t of detail ? [1, 0.8, 0.6, 0.4, 0.22, 0.1, 0] : [1, 0.5, 0]) zs.push(lerp(cab.deck, cab.roofRear, t));
   return zs;
 }
 
-function buildCarCabin(spec, detail = 1) {
+function buildCarCabin(spec: BodySpec, detail = 1) {
   const L = carLayout(spec);
   const sections = cabinStations(spec, detail).map((z) => cabinSection(L.cabin(z), detail, spec.cabin.roofRound));
   return part(new LoftGeometry(sections, { closed: false }), CAR_PARTS.WINDOW);
@@ -737,11 +742,11 @@ function buildCarCabin(spec, detail = 1) {
 /**
  * Half-width of a body's outer skin at height y of the cross-section at z (for decals & signs that hug the sides)
  */
-function carBodyHalfWidthAt(spec, z, y) {
+function carBodyHalfWidthAt(spec: LoftSpec, z: number, y: number): number {
   const s = bodyProfile(spec)(z);
   const n1 = spec.lowerRound || BODY_LOWER_ROUND;
   const n2 = spec.upperRound || BODY_UPPER_ROUND;
-  const pts = [];
+  const pts: [x: number, y: number][] = [];
   for (let i = 0; i <= 16; i++) {
     const th = ((i / 16) * Math.PI) / 2;
     pts.push([s.xB + (s.W - s.xB) * Math.pow(Math.sin(th), 2 / n1), s.yS - (s.yS - s.yB) * Math.pow(Math.cos(th), 2 / n1)]);
@@ -764,10 +769,12 @@ function carBodyHalfWidthAt(spec, z, y) {
  * A thin grid patch lying `offset` m off the body side (side = +1: +x) over z0..z1, y0..y1. UVs read from the
  * front of the car to the back on both sides (u = 0 at the front on the +x side, at the back on the -x side).
  */
-function buildCarSidePatch(spec, side, z0, z1, y0, y1, offset = 0.003, nz = 10, ny = 6) {
-  const positions = [];
-  const uvs = [];
-  const indices = [];
+function buildCarSidePatch(
+  spec: LoftSpec, side: number, z0: number, z1: number, y0: number, y1: number, offset = 0.003, nz = 10, ny = 6
+): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
   for (let j = 0; j <= ny; j++) {
     const v = j / ny;
     const y = lerp(y0, y1, v);
@@ -794,7 +801,7 @@ function buildCarSidePatch(spec, side, z0, z1, y0, y1, offset = 0.003, nz = 10, 
   return g;
 }
 
-function roundedRectShape(hw, hh, r) {
+function roundedRectShape(hw: number, hh: number, r: number) {
   const s = new THREE.Shape();
   s.moveTo(-hw + r, -hh);
   s.lineTo(hw - r, -hh);
@@ -809,7 +816,7 @@ function roundedRectShape(hw, hh, r) {
 }
 
 // Rounded box extruded along z, centred on the origin
-function roundedBox(hw, hh, depth, r, bevel = 0.012) {
+function roundedBox(hw: number, hh: number, depth: number, r: number, bevel = 0.012) {
   const g = new THREE.ExtrudeGeometry(roundedRectShape(hw - bevel, hh - bevel, Math.max(0.002, r - bevel)), {
     depth: Math.max(0.001, depth - 2 * bevel),
     bevelEnabled: true,
@@ -825,7 +832,7 @@ function roundedBox(hw, hh, depth, r, bevel = 0.012) {
  * Builds a single wheel assembly (LatheGeometry tyre + recessed alloy lip + dished hub)
  * centered at the origin (for steerable/spinning player wheels) or translated to (x, r, z).
  */
-function buildWheelParts(spec, side, translateToAxle = false, z = 0) {
+function buildWheelParts(spec: LoftSpec, side: number, translateToAxle = false, z = 0) {
   const r = spec.wheelRadius;
   const rim = r * 0.64;
   const width = r * 0.68;
@@ -880,7 +887,7 @@ function buildWheelParts(spec, side, translateToAxle = false, z = 0) {
 }
 
 // Dark arch liner behind a wheel, so the arch never shows through to the other side of the car
-function buildWheelWell(spec, side, z) {
+function buildWheelWell(spec: LoftSpec, side: number, z: number) {
   const r = spec.wheelRadius;
   const width = r * 0.68;
   const wellOuter = new THREE.CircleGeometry(spec.wheelRadius + spec.archGap + 0.01, 10, 0, Math.PI)
@@ -892,15 +899,15 @@ function buildWheelWell(spec, side, z) {
   return part(mergeGeometries([wellOuter, wellInner]), CAR_PARTS.TRIM);
 }
 
-function buildSteerableWheelGeo(spec, side) {
+function buildSteerableWheelGeo(spec: LoftSpec, side: number): THREE.BufferGeometry {
   return mergeGeometries(buildWheelParts(spec, side, false));
 }
 
-function buildMirrors(spec) {
+function buildMirrors(spec: BodySpec) {
   const L = carLayout(spec);
   const z = spec.cabin.cowl - 0.17;
   const c = L.cabin(z);
-  const list = [];
+  const list: THREE.BufferGeometry[] = [];
   for (const side of [-1, 1]) {
     const housing = roundedBox(0.1, 0.06, 0.085, 0.035, 0.014)
       .rotateY(side * 0.12)
@@ -913,10 +920,10 @@ function buildMirrors(spec) {
   return list;
 }
 
-function buildRoofRails(spec) {
+function buildRoofRails(spec: BodySpec) {
   const L = carLayout(spec);
   const cab = spec.cabin;
-  const list = [];
+  const list: THREE.BufferGeometry[] = [];
   for (const side of [-1, 1]) {
     const sections = [0.04, 0.1, 0.9, 0.96].map((t, i) => {
       const z = lerp(cab.roofFront, cab.roofRear, t);
@@ -936,7 +943,7 @@ function buildRoofRails(spec) {
 }
 
 // NYC medallion roof light: a lit, gently tapered box on a black mount
-function taxiSignPlacement(spec) {
+function taxiSignPlacement(spec: BodySpec) {
   const L = carLayout(spec);
   const cab = spec.cabin;
   const z = lerp(cab.roofFront, cab.roofRear, 0.45);
@@ -944,7 +951,7 @@ function taxiSignPlacement(spec) {
   return { z, y: c.railY + c.h };
 }
 
-function buildTaxiSign(spec) {
+function buildTaxiSign(spec: BodySpec) {
   const { z, y } = taxiSignPlacement(spec);
   const shape = new THREE.Shape();
   const hw0 = 0.3;
@@ -972,11 +979,11 @@ function buildTaxiSign(spec) {
 
 // Wrap the bumper strips around the nose and tail. Six rectangular sections cost just 44 triangles each;
 // the inner faces sit in the body, while the outer faces stand 2.5 cm proud of the tips.
-function buildBumpers(spec) {
+function buildBumpers(spec: BodySpec) {
   return spec.bumpers.map(([y, h], end) => {
     const direction = end === 0 ? 1 : -1;
     const tip = end === 0 ? spec.zFront : spec.zRear;
-    const sections = [];
+    const sections: THREE.Vector3[][] = [];
     for (const side of [-1, 1]) {
       for (const setback of side < 0 ? [0.3, 0.07, 0] : [0, 0.07, 0.3]) {
         const z = tip - direction * setback;
@@ -999,7 +1006,7 @@ function buildBumpers(spec) {
 
 // A body shape's overall length, width (over the wheel arches) and height (to the roof), m: what a car model's real
 // size is stretched from
-function bodyDims(spec) {
+function bodyDims(spec: BodySpec): BodyDims {
   if (spec._dims) return spec._dims;
   const width = 2 * (Math.max(...spec.halfWidth.map((p) => p[1])) + spec.archFlare);
   const height = Math.max(...spec.cabin.roofY.map((p) => p[1])) + spec.cabin.roofCrown;
@@ -1007,7 +1014,7 @@ function bodyDims(spec) {
   return spec._dims;
 }
 
-function buildCarGeometry(spec, includeWheels = true) {
+function buildCarGeometry(spec: BodySpec, includeWheels = true): THREE.BufferGeometry {
   const parts = [buildCarBody(spec, 1), buildCarCabin(spec, 1), ...buildMirrors(spec), ...buildBumpers(spec)];
   for (const side of [-1, 1]) {
     for (const z of [-spec.wheelZ, spec.wheelZ]) {
@@ -1023,7 +1030,7 @@ function buildCarGeometry(spec, includeWheels = true) {
 // A ~250-triangle stand-in for distant cars (a few pixels tall): the same body & glasshouse lofted from a handful of
 // coarse sections, dark wheel blocks and the taxi's roof sign. Same attributes (partId, uv, normal) as the full
 // model, so it renders with the same material and per-instance paint.
-function buildCarProxyGeometry(spec) {
+function buildCarProxyGeometry(spec: BodySpec): THREE.BufferGeometry {
   const parts = [buildCarBody(spec, 0), buildCarCabin(spec, 0)];
   const r = spec.wheelRadius;
   for (const side of [-1, 1]) {
@@ -1039,7 +1046,7 @@ function buildCarProxyGeometry(spec) {
 }
 
 // NYPD roof light bar (red on the -x half, blue on the +x half) for a body spec's roof, lit by createLightbarMaterial
-function buildLightbarGeometry(spec = BODY_SPECS.sedan) {
+function buildLightbarGeometry(spec: BodySpec = BODY_SPECS.sedan): THREE.BufferGeometry {
   const L = carLayout(spec);
   const cab = spec.cabin;
   const z = lerp(cab.roofFront, cab.roofRear, 0.32);
@@ -1053,10 +1060,10 @@ function buildLightbarGeometry(spec = BODY_SPECS.sedan) {
   return mergeGeometries(parts);
 }
 
-let _lightbarMat = null;
+let _lightbarMat: THREE.MeshStandardNodeMaterial | null = null;
 
 // Light bar lenses: red & blue halves flashing in alternation (double strobes), each car on its own phase
-function createLightbarMaterial() {
+function createLightbarMaterial(): THREE.MeshStandardNodeMaterial {
   if (_lightbarMat) return _lightbarMat;
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.18, metalness: 0.1 });
   const lightbar = () => {
@@ -1086,7 +1093,7 @@ function createLightbarMaterial() {
 }
 
 // Filter-width anti-aliased 2D rounded rectangle SDF (ported from CarGenerator.js)
-const roundedRect = Fn(([point, halfSize, radiusNode]) => {
+const roundedRect = Fn(([point, halfSize, radiusNode]: [Node<'vec2'>, Node<'vec2'>, Node<'float'>]) => {
   const pt = vec2(point).toVar();
   const hs = vec2(halfSize).toVar();
   const rad = float(radiusNode).toVar();
@@ -1097,24 +1104,28 @@ const roundedRect = Fn(([point, halfSize, radiusNode]) => {
 });
 
 // IQ polynomial smooth maximum: rounds the corners of max()-combined half-plane distances
-const smax = (a, b, k) => {
+const smax = (a: Node<'float'>, b: Node<'float'>, k: number) => {
   const h = max(float(k).sub(abs(a.sub(b))), 0.0).div(k);
   return max(a, b).add(h.mul(h).mul(k * 0.25));
 };
 
 // Signed distance (approximate outside, exact inside) to a convex polygon given as outward half-planes [nx, ny, c]
-const polygonDistance = (px, py, planes, k) => {
-  let d = null;
+const polygonDistance = (px: Node<'float'>, py: Node<'float'>, planes: Plane[], k: number): Node<'float'> => {
+  let d: Node<'float'> | null = null;
   for (const [nx, ny, c] of planes) {
     const e = px.mul(nx).add(py.mul(ny)).sub(c);
     d = d === null ? e : smax(d, e, k);
   }
+  if (!d) throw new Error('polygonDistance: no half-planes');
   return d;
 };
 
+/** An outward half-plane: its unit normal (nx, ny) and offset c (nx x + ny y = c on its edge) */
+type Plane = [nx: number, ny: number, c: number];
+
 // Outward half-planes of a counter-clockwise polygon, each edge moved in by its margin
-function polygonPlanes(points, margins) {
-  const planes = [];
+function polygonPlanes(points: [x: number, y: number][], margins: number[]): Plane[] {
+  const planes: Plane[] = [];
   for (let i = 0; i < points.length; i++) {
     const [ax, ay] = points[i];
     const [bx, by] = points[(i + 1) % points.length];
@@ -1126,13 +1137,13 @@ function polygonPlanes(points, margins) {
   return planes;
 }
 
-const coverage = (d) => {
+const coverage = (d: Node<'float'>) => {
   const w = max(fwidth(d), 0.0008);
   return smoothstep(w, w.negate(), d);
 };
 
-const _carMaterialCache = new Map();
-let _carPlateTexture;
+const _carMaterialCache = new Map<string, THREE.MeshStandardNodeMaterial>();
+let _carPlateTexture: THREE.CanvasTexture | undefined;
 
 // One small generated atlas serves every rear plate, with mipmaps for distant traffic.
 function carPlateTexture() {
@@ -1141,13 +1152,14 @@ function carPlateTexture() {
   canvas.width = 128;
   canvas.height = 256;
   const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('No 2D canvas for the plates');
   ctx.fillStyle = '#f2b718';
   ctx.fillRect(0, 0, 128, 256);
   ctx.fillStyle = '#17212c';
   ctx.font = 'bold 25px monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ['4KM 728', '7TR 319', '2BJ 506', '6XL 842'].forEach((label, row) => ctx.fillText(label, 64, row * 64 + 33));
+  ['4KM 728', '7TR 319', '2BJ 506', '6XL 842'].forEach((label, row) => { ctx.fillText(label, 64, row * 64 + 33); });
   _carPlateTexture = new THREE.CanvasTexture(canvas);
   _carPlateTexture.colorSpace = THREE.SRGBColorSpace;
   return _carPlateTexture;
@@ -1158,24 +1170,25 @@ function carPlateTexture() {
  * Instanced traffic reads the per-instance `paintColor` (vec3) and `carState` (vec4: brake, left (+x) & right (-x)
  * turn signal, livery: 1 = NYPD) attributes; with a fixed `fixedColorHex` (the player's taxi, wheels) the state is the
  * `material.userData.carState` uniform instead. With `crumple` (the city's traffic) carState's w also carries how crushed
- * the car is (traffic.js renderCar: livery + 2 × (front + 16 rear + 256 left (+x) + 4096 right (-x)), each in 15ths:
+ * the car is (traffic.ts renderCar: livery + 2 × (front + 16 rear + 256 left (+x) + 4096 right (-x)), each in 15ths:
  * one more vertex buffer would be past WebGPU's 8), and the body is pushed in there and dulled.
  * Every mask is built once and shared by the colour, roughness, metalness & emissive graphs (TSL turns nodes used
  * more than once into temporaries), so the fragment shader evaluates each SDF a single time.
  */
-function createLoftedCarMaterial(spec, fixedColorHex = null, { crumple = false } = {}) {
+function createLoftedCarMaterial(spec: BodySpec, fixedColorHex: number | null = null, { crumple = false } = {}): THREE.MeshStandardNodeMaterial {
   const cacheKey = `${spec.name}_${fixedColorHex ?? 'instanced'}${crumple ? '_crumple' : ''}`;
-  if (_carMaterialCache.has(cacheKey)) {
-    return _carMaterialCache.get(cacheKey);
+  const cached = _carMaterialCache.get(cacheKey);
+  if (cached) {
+    return cached;
   }
 
   const L = carLayout(spec);
   const cab = spec.cabin;
   const fixed = fixedColorHex !== null;
   const stateUniform = fixed ? uniform(new THREE.Vector4(0, 0, 0, 0)) : null;
-  const state = fixed ? stateUniform : attribute('carState', 'vec4');
+  const state = stateUniform ?? attribute('carState', 'vec4');
   const livery = crumple ? mod(state.w, 2.0) : state.w;
-  const paint = fixed ? color(fixedColorHex) : attribute('paintColor', 'vec3');
+  const paint = fixedColorHex !== null ? color(fixedColorHex) : attribute('paintColor', 'vec3');
 
   const axleZ = float(spec.wheelZ);
   const wheelR = float(spec.wheelRadius);
@@ -1188,13 +1201,13 @@ function createLoftedCarMaterial(spec, fixedColorHex = null, { crumple = false }
   const rf = L.rail.front;
   const rm = L.rail.mid;
   const rr = L.rail.rear;
-  const sidePoly = [[cab.cowl, bc.y], [cab.roofFront, rf.y], [L.rail.roofMid, rm.y], [cab.roofRear, rr.y], [cab.deck, bd.y]];
+  const sidePoly: [z: number, y: number][] = [[cab.cowl, bc.y], [cab.roofFront, rf.y], [L.rail.roofMid, rm.y], [cab.roofRear, rr.y], [cab.deck, bd.y]];
   const sideGlassPlanes = polygonPlanes(sidePoly, [0.05, 0.03, 0.03, 0.065, 0.02]);
   const sideSealPlanes = polygonPlanes(sidePoly, [0.034, 0.016, 0.016, 0.05, 0.004]);
-  const frontPoly = [[-1, cab.cowl], [-1, cab.roofFront], [rf.x, cab.roofFront], [bc.x, cab.cowl]];
+  const frontPoly: [x: number, z: number][] = [[-1, cab.cowl], [-1, cab.roofFront], [rf.x, cab.roofFront], [bc.x, cab.cowl]];
   const frontGlassPlanes = polygonPlanes(frontPoly, [0, 0.045, 0.06, 0.05]);
   const frontSealPlanes = polygonPlanes(frontPoly, [0, 0.03, 0.045, 0.035]);
-  const rearPoly = [[-1, cab.roofRear], [-1, cab.deck], [bd.x, cab.deck], [rr.x, cab.roofRear]];
+  const rearPoly: [x: number, z: number][] = [[-1, cab.roofRear], [-1, cab.deck], [bd.x, cab.deck], [rr.x, cab.roofRear]];
   const rearGlassPlanes = polygonPlanes(rearPoly, [0, 0.045, 0.065, 0.05]);
   const rearSealPlanes = polygonPlanes(rearPoly, [0, 0.03, 0.05, 0.035]);
   const [hlX, hlY, hlW, hlH] = spec.headlight;
@@ -1212,7 +1225,7 @@ function createLoftedCarMaterial(spec, fixedColorHex = null, { crumple = false }
   const p = attribute('position', 'vec3');
   const n = attribute('normal', 'vec3');
   const partId = attribute('partId', 'float');
-  const isPart = (id) => step(abs(partId.sub(id)), 0.25);
+  const isPart = (id: number) => step(abs(partId.sub(id)), 0.25);
   const isBody = isPart(CAR_PARTS.BODY);
   const isWindow = isPart(CAR_PARTS.WINDOW);
   const isTyre = isPart(CAR_PARTS.TYRE);
@@ -1322,7 +1335,7 @@ function createLoftedCarMaterial(spec, fixedColorHex = null, { crumple = false }
 
   // 5-spoke alloys (branchless 5-ray star SDF) with rim ring & hub, lug ribs on the tyre tread
   const wDir = wheelVec.div(max(wheelDist, 0.0001));
-  let spokes = float(0.0);
+  let spokes: Node<'float'> = float(0.0);
   for (let k = 0; k < 5; k++) {
     const ang = (k * Math.PI * 2) / 5;
     const cs = Math.cos(ang);
@@ -1376,7 +1389,7 @@ function createLoftedCarMaterial(spec, fixedColorHex = null, { crumple = false }
   const archLip = smoothstep(archR + 0.05, archR - 0.005, wheelDist).mul(smoothstep(0.6, 0.9, ax));
   const ao = smoothstep(0.2, 0.62, p.y).mul(0.22).add(0.78).mul(one.sub(archLip.mul(0.55)));
   const onDoors = isSide.mul(smoothstep(sillY + 0.04, sillY + 0.07, p.y)).mul(smoothstep(0.0, -0.015, p.y.sub(belt)));
-  let seams = float(0.0);
+  let seams: Node<'float'> = float(0.0);
   for (const zd of spec.doors) seams = max(seams, smoothstep(0.009, 0.003, abs(p.z.sub(zd))));
   for (const zh of spec.handles) {
     seams = max(seams, roundedRect(vec2(p.z.sub(zh), p.y.sub(belt.sub(0.095))), vec2(0.06, 0.011), 0.008));
@@ -1425,10 +1438,10 @@ function createLoftedCarMaterial(spec, fixedColorHex = null, { crumple = false }
 
   // a crushed car's paint dulled and dirtied (scraped, dusty, oil-smoked) with its worst damage
   const crushed = crumple ? state.w.mul(0.5).floor() : null;
-  const crush = (k) => mod(crushed.div(k).floor(), 16.0).div(15.0);
-  const damage = crumple ? { x: crush(1), y: crush(16), z: crush(256), w: crush(4096) } : null;
-  const worst = crumple ? max(max(damage.x, damage.y), max(damage.z, damage.w)) : null;
-  let col = crumple ? mix(body, body.mul(0.42).add(color(0x26221e).mul(0.2)), worst.mul(0.7)) : body;
+  const crush = (c: Node<'float'>, k: number) => mod(c.div(k).floor(), 16.0).div(15.0);
+  const damage = crushed ? { x: crush(crushed, 1), y: crush(crushed, 16), z: crush(crushed, 256), w: crush(crushed, 4096) } : null;
+  const worst = damage ? max(max(damage.x, damage.y), max(damage.z, damage.w)) : null;
+  let col = worst ? mix(body, body.mul(0.42).add(color(0x26221e).mul(0.2)), worst.mul(0.7)) : body;
   col = mix(col, windowCol, isWindow);
   col = mix(col, mirrorCol, isMirror);
   col = mix(col, signCol, isSign);
@@ -1466,11 +1479,11 @@ function createLoftedCarMaterial(spec, fixedColorHex = null, { crumple = false }
 
   const mat = new THREE.MeshStandardNodeMaterial();
   if (fixed) mat.userData.carState = stateUniform;
-  if (crumple) {
+  if (damage) {
     // The crush: the end or side that was hit pushed in, most at its bumper or door skin and nothing ~0.9 m in, the
     // bonnet or boot folding down with it, wrinkled so it reads as bent sheet metal rather than a shorter car. The
     // wheels stay where they are (they are not part of the body)
-    const hw = Math.max(...(spec.halfWidth || [[0, 0.9]]).map((h) => h[1]));
+    const hw = Math.max(...spec.halfWidth.map((h) => h[1]));
     const zf = float(spec.zFront), zr = float(spec.zRear), w = float(hw);
     const wrinkle = sin(p.y.mul(17.0).add(p.x.mul(9.0)).add(p.z.mul(5.0))).mul(0.3).add(0.85);
     const shell = one.sub(isTyre).sub(isAlloy);
@@ -1484,10 +1497,10 @@ function createLoftedCarMaterial(spec, fixedColorHex = null, { crumple = false }
     // Applied before the instance matrix, in the car's own frame. (Not as positionNode: three.js assigns that after
     // instancing, so a positionNode built from the bare vertex drew every car's body at the origin, leaving the
     // separately instanced wheels driving round on their own.)
-    const setupPosition = mat.setupPosition;
-    mat.setupPosition = function (builder) {
+    const setupPosition = mat.setupPosition.bind(mat);
+    mat.setupPosition = (builder) => {
       positionLocal.assign(crushedPosition);
-      return setupPosition.call(this, builder);
+      return setupPosition(builder);
     };
   }
   mat.colorNode = col;
@@ -1500,16 +1513,17 @@ function createLoftedCarMaterial(spec, fixedColorHex = null, { crumple = false }
 }
 
 // ============================================================================
-// 3. TUBE SECTIONS ALONG A POLYLINE (the helicopter's skids; the people are built in pedestrians.js)
+// 3. TUBE SECTIONS ALONG A POLYLINE (the helicopter's skids; the people are built in pedestrians.ts)
 // ============================================================================
-function ring(center, rx, rz, segments = 6, phase = 0) {
+function ring(center: THREE.Vector3, rx: number, rz: number, segments = 6, phase = 0) {
   return Array.from({ length: segments }, (_, i) => {
     const a = (i / segments) * Math.PI * 2 + phase;
     return new THREE.Vector3(center.x + Math.cos(a) * rx, center.y, center.z + Math.sin(a) * rz);
   });
 }
 
-function limbSections(joints, segments = 6, phase = 0) {
+/** Joints: [centre, radius across x, radius across z] (m) */
+function limbSections(joints: [center: THREE.Vector3, rx: number, rz: number][], segments = 6, phase = 0) {
   const rotation = new THREE.Quaternion();
   return joints.map(([center, rx, rz], i) => {
     const before = joints[Math.max(0, i - 1)][0];
@@ -1534,7 +1548,16 @@ const BUS_PARTS = {
   POD: 2
 };
 
-const BUS_SPEC = {
+/** The bus's loft, plus its windows and doors (m) */
+export interface BusSpec extends LoftSpec {
+  headlight: [x: number, y: number];
+  rake: number; // how far the top of the windshield leans back
+  window: [y0: number, y1: number]; // side window band
+  frontDoor: [z0: number, z1: number]; // curb-side (-x) doors
+  rearDoor: [z0: number, z1: number];
+}
+
+const BUS_SPEC: BusSpec = {
   name: 'bus',
   headlight: [0.79, 0.8], // midpoint of each pair of white lamps; excludes the outer amber indicator
   zFront: 5.78,
@@ -1564,7 +1587,7 @@ const BUS_SPEC = {
 };
 
 // The windshield rake: the upper front leans back by up to BUS_SPEC.rake, fading out along the first metre
-function busRake(y, z) {
+function busRake(y: number, z: number) {
   const s = BUS_SPEC;
   const along = Math.min(1, Math.max(0, (z - (s.zFront - 1.0)) / 1.0));
   const up = Math.min(1, Math.max(0, (y - 1.0) / 1.75));
@@ -1638,13 +1661,13 @@ function buildBusSignGeometry() {
 }
 
 // The bus liveries as a palette for createLoftedBusMaterial: a column per livery, [body, trim] (hex), linear colour
-function busLiveryTexture(liveries) {
+function busLiveryTexture(liveries: [body: number, trim: number][]): THREE.DataTexture {
   const data = new Float32Array(liveries.length * 2 * 4);
   const c = new THREE.Color();
-  liveries.forEach((pair, i) => pair.forEach((hex, row) => {
+  liveries.forEach((pair, i) => { pair.forEach((hex, row) => {
     c.setHex(hex);
     data.set([c.r, c.g, c.b, 1], (row * liveries.length + i) * 4);
-  }));
+  }); });
   const tex = new THREE.DataTexture(data, liveries.length, 2, THREE.RGBAFormat, THREE.FloatType);
   tex.magFilter = tex.minFilter = THREE.NearestFilter;
   tex.needsUpdate = true;
@@ -1653,11 +1676,12 @@ function busLiveryTexture(liveries) {
 
 // One row per route of white lettering edged in black on clear (the buses' glass), ROUTE_SIGN_ROWS tall
 const ROUTE_SIGN_ROW = 64;
-function routeSignTexture(names) {
+function routeSignTexture(names: string[]): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
   canvas.height = ROUTE_SIGN_ROW * Math.max(1, names.length);
   const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('No 2D canvas for the route signs');
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
@@ -1688,7 +1712,7 @@ function routeSignTexture(names) {
  * - 'glass': the lettering itself, cut out of the clear (a bus's windows)
  * - 'box': a combi's roof sign, white with the lettering in navy, lit from inside at night
  */
-function createRouteSignMaterial(tex, rows, kind) {
+function createRouteSignMaterial(tex: THREE.Texture, rows: number, kind: 'glass' | 'box'): THREE.MeshStandardNodeMaterial {
   const row = attribute('signRow', 'float');
   const t = texture(tex, vec2(uv().x, uv().y.add(float(rows - 1).sub(row)).div(rows)));
   const mat = new THREE.MeshStandardNodeMaterial();
@@ -1735,7 +1759,7 @@ function buildCombiSignGeometry() {
 }
 
 // Bus wheel: tall tyre with a deep steel disc, 10 lug nuts and a hub cap on both outer and inner faces (spins about x, centred on the origin)
-function buildBusWheelGeo(side) {
+function buildBusWheelGeo(side: number): THREE.BufferGeometry {
   const r = BUS_SPEC.wheelRadius;
   const w = 0.3;
   const tyre = new THREE.LatheGeometry(
@@ -1775,16 +1799,16 @@ function buildBusWheelGeo(side) {
   return mergeGeometries(parts);
 }
 
-let _busWheelMat = null;
+let _busWheelMat: THREE.MeshStandardNodeMaterial | null = null;
 
-function createBusWheelMaterial() {
+function createBusWheelMaterial(): THREE.MeshStandardNodeMaterial {
   if (_busWheelMat) return _busWheelMat;
   const p = attribute('position', 'vec3');
   const partId = attribute('partId', 'float');
   const isTyre = step(abs(partId.sub(CAR_PARTS.TYRE)), 0.25);
   const radial = length(vec2(p.z, p.y));
   const angle = vec2(p.z, p.y).div(max(radial, 0.0001));
-  let lugs = float(0.0);
+  let lugs: Node<'float'> = float(0.0);
   for (let k = 0; k < 10; k++) {
     const a = (k * Math.PI * 2) / 10;
     lugs = max(lugs, smoothstep(0.024, 0.014, length(vec2(p.z, p.y).sub(vec2(Math.cos(a) * 0.205, Math.sin(a) * 0.205)))));
@@ -1803,7 +1827,7 @@ function createBusWheelMaterial() {
   return mat;
 }
 
-let _busLoftedMat = null;
+let _busLoftedMat: THREE.MeshStandardNodeMaterial | null = null;
 
 /**
  * Creates the TSL procedural material for Tepic's camiones (the lofted bus body):
@@ -1815,7 +1839,7 @@ let _busLoftedMat = null;
  * - Headlamps, turn signals (per-instance `busState`: brake, left (+x), right (-x)), tail / brake light columns,
  *   NY plates; black trims & light-grey roof pods
  */
-function createLoftedBusMaterial(liveries = null) {
+function createLoftedBusMaterial(liveries: THREE.DataTexture | null = null): THREE.MeshStandardNodeMaterial {
   if (_busLoftedMat) return _busLoftedMat;
   const s = BUS_SPEC;
   const p = attribute('position', 'vec3');
@@ -1824,7 +1848,7 @@ function createLoftedBusMaterial(liveries = null) {
   const state = attribute('busState', 'vec4');
   // (each livery's colours from its column of the palette: the body in the bottom row, the trim in the top; a new
   // instanced attribute would take the body past WebGPU's 8 vertex buffers)
-  const liveryAt = (v) => (liveries ? texture(liveries, vec2(state.w.add(0.5).div(liveries.image.width), v)).rgb : color(0xf0f4f8));
+  const liveryAt = (v: number) => (liveries ? texture(liveries, vec2(state.w.add(0.5).div(liveries.image.width), v)).rgb : color(0xf0f4f8));
   const paint = liveryAt(0.25);
   const trim = liveryAt(0.75);
   const isBody = step(abs(partId.sub(BUS_PARTS.BODY)), 0.25);
@@ -1855,7 +1879,7 @@ function createLoftedBusMaterial(liveries = null) {
   const mullion = smoothstep(0.03, 0.045, abs(fract(p.z.mul(0.8).add(0.35)).sub(0.5).mul(1.25)));
   const sideSeal = roundedRect(vec2(p.z.add(0.5), p.y.sub(winMid)), vec2(4.86, winHalf + 0.04), 0.1).mul(side);
   const driverWin = roundedRect(vec2(p.z.sub(4.86), p.y.sub(winMid + 0.04)), vec2(0.5, winHalf + 0.04), 0.1).mul(side).mul(one.sub(curb));
-  const door = (z0, z1) => {
+  const door = (z0: number, z1: number) => {
     const zc = (z0 + z1) / 2;
     const hw = (z1 - z0) / 2;
     const frame = roundedRect(vec2(p.z.sub(zc), p.y.sub(1.44)), vec2(hw, 1.0), 0.05);
@@ -1937,7 +1961,7 @@ const HELI_PARTS = {
  * with flattened belly floor, rounded lower chines, wide panoramic cabin flanks,
  * tumblehome upper glass/shoulder, and crowned roof/tailboom.
  */
-function heliFuselageSection(z, halfW, botY, topY, bellyFlat = 0.68, shoulderRatio = 0.52) {
+function heliFuselageSection(z: number, halfW: number, botY: number, topY: number, bellyFlat = 0.68, shoulderRatio = 0.52) {
   const h = Math.max(0.08, topY - botY);
   const chineY = botY + h * 0.16;
   const shoulderY = botY + h * shoulderRatio;
@@ -1962,7 +1986,7 @@ function heliFuselageSection(z, halfW, botY, topY, bellyFlat = 0.68, shoulderRat
 /**
  * Helper to create an 8-point symmetric airfoil / cowling cross-section.
  */
-function heliAirfoilSection(xCenter, yCenter, zCenter, halfThickX, halfHeightY, chordZ) {
+function heliAirfoilSection(xCenter: number, yCenter: number, zCenter: number, halfThickX: number, _halfHeightY: number, chordZ: number) {
   // Airfoil lying along Z (for vertical fin) or X (for horizontal stabilizer)
   return [
     new THREE.Vector3(xCenter, yCenter, zCenter + chordZ * 0.5),
@@ -1974,12 +1998,12 @@ function heliAirfoilSection(xCenter, yCenter, zCenter, halfThickX, halfHeightY, 
   ];
 }
 
-function buildHelicopterBodyGeometry() {
-  const parts = [];
+function buildHelicopterBodyGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
 
   // 1. Continuous 3D Lofted Monocoque Fuselage-to-Tailboom (15 stations from z = +2.82 nose to z = -5.85 tail)
   // [z, halfW, botY, topY, bellyFlat, shoulderRatio]
-  const fuselageProfile = [
+  const fuselageProfile: [z: number, halfW: number, botY: number, topY: number, bellyFlat: number, shoulderRatio: number][] = [
     [2.82, 0.16, 0.88, 1.02, 0.50, 0.50], // Aerodynamic nose tip
     [2.62, 0.54, 0.72, 1.18, 0.62, 0.48], // Lower nose chin window
     [2.20, 0.88, 0.58, 1.48, 0.72, 0.46], // Lower windshield base
@@ -1999,7 +2023,7 @@ function buildHelicopterBodyGeometry() {
   parts.push(part(new LoftGeometry(fuselageSections, { capStart: true, capEnd: true }), HELI_PARTS.FUSELAGE));
 
   // 2. Sculpted Twin-Turbine Upper Engine Cowling & Mast Doghouse (lofted from z = +0.55 to -2.25)
-  const cowlingProfile = [
+  const cowlingProfile: [z: number, halfW: number, botY: number, topY: number, bellyFlat: number, shoulderRatio: number][] = [
     [0.55, 0.32, 1.94, 2.12, 0.85, 0.45],
     [0.10, 0.56, 1.96, 2.38, 0.85, 0.48],
     [-0.55, 0.62, 1.94, 2.44, 0.85, 0.50],
@@ -2069,7 +2093,7 @@ function buildHelicopterBodyGeometry() {
   for (const side of [-1, 1]) {
     const sx = side * 1.12;
     // Skid runner tube from upturned front tip (z = +2.15, y = 0.28) along ground (y = 0.07) to rear tip (z = -1.75)
-    const skidJoints = [
+    const skidJoints: [center: THREE.Vector3, rx: number, ry: number][] = [
       [new THREE.Vector3(sx, 0.28, 2.15), 0.036, 0.036],
       [new THREE.Vector3(sx, 0.12, 1.88), 0.045, 0.045],
       [new THREE.Vector3(sx, 0.07, 1.45), 0.048, 0.048],
@@ -2092,7 +2116,7 @@ function buildHelicopterBodyGeometry() {
 
   // Front & Rear Arched Skid Cross-Tubes hugging the fuselage belly
   for (const cz of [1.05, -0.82]) {
-    const crossPoints = [
+    const crossPoints: [center: THREE.Vector3, rx: number, rz: number][] = [
       [new THREE.Vector3(-1.12, 0.09, cz), 0.042, 0.042],
       [new THREE.Vector3(-0.92, 0.42, cz), 0.044, 0.044],
       [new THREE.Vector3(-0.62, 0.56, cz), 0.046, 0.046],
@@ -2116,8 +2140,8 @@ function buildHelicopterBodyGeometry() {
 /**
  * Builds the 4-Bladed Main Rotor Hub, Swashplate, and Tapered Airfoil Rotor Blades.
  */
-function buildHelicopterMainRotorGeometry() {
-  const parts = [];
+function buildHelicopterMainRotorGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
 
   // Rotor mast, swashplate collar & aerodynamic hub dome
   const mast = new THREE.CylinderGeometry(0.11, 0.14, 0.52, 14).translate(0, -0.18, 0);
@@ -2150,8 +2174,8 @@ function buildHelicopterMainRotorGeometry() {
 /**
  * Builds the 4-Bladed Tail Rotor Assembly.
  */
-function buildHelicopterTailRotorGeometry() {
-  const parts = [];
+function buildHelicopterTailRotorGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
   const hub = new THREE.CylinderGeometry(0.09, 0.09, 0.18, 12)
     .rotateZ(Math.PI * 0.5);
   parts.push(part(hub, HELI_PARTS.EXHAUST));
@@ -2166,7 +2190,7 @@ function buildHelicopterTailRotorGeometry() {
   return mergeGeometries(parts);
 }
 
-let _heliLoftedMat = null;
+let _heliLoftedMat: THREE.MeshStandardNodeMaterial | null = null;
 
 /**
  * Creates the TSL procedural material for the 3D Lofted Sightseeing Helicopter:
@@ -2176,7 +2200,7 @@ let _heliLoftedMat = null;
  *   Deep Midnight Navy belly/tailboom, and a sweeping Metallic Gold & Crimson accent stripe).
  * - Renders slatted turbine air intakes on the engine cowling and high-visibility yellow tips on rotor blades.
  */
-function createLoftedHelicopterMaterial() {
+function createLoftedHelicopterMaterial(): THREE.MeshStandardNodeMaterial {
   if (_heliLoftedMat) return _heliLoftedMat;
 
   const mat = new THREE.MeshStandardNodeMaterial();

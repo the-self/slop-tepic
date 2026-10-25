@@ -62,8 +62,14 @@ import {
   mx_worley_noise_vec2
 } from 'three/tsl';
 import { townGrid } from '../world/ground.ts';
+import type {
+  Node,
+  NodeBuilder,
+  LightingModelDirectInput,
+  MeshStandardNodeMaterialParameters
+} from 'three/webgpu';
 
-// js/render/tsl-materials.js
+// js/render/tsl-materials.ts
 // Photorealistic TSL (Three.js Shading Language) procedural shaders for Three.js r186 WebGPURenderer
 // Incorporating techniques from three.js webgpu_generator_city.html:
 // - Mikkelsen Surface-Gradient Hardware Derivative Bump Mapping (bumpNormal)
@@ -82,22 +88,23 @@ const cityUniforms = {
   uInteriorGlow: uniform(0.78),
   uRoadWetness: uniform(0.38),
   uCanyonBounce: uniform(0.52),
-  // How dry the grass is, 0 green (the rains, June-October) .. 1 straw (April-May): lot-greenery.js grassDryness of
-  // the month shown, set by main.js
+  // How dry the grass is, 0 green (the rains, June-October) .. 1 straw (April-May): lot-greenery.ts grassDryness of
+  // the month shown, set by main.ts
   uDryness: uniform(0.1),
-  // The town's hour (0-24) and a running clock (s), set by main.js: who is home with the light on, which shops have
+  // The town's hour (0-24) and a running clock (s), set by main.ts: who is home with the light on, which shops have
   // their shutters up, the people moving about in the rooms (createMexicanHouseMaterial)
   uHour: uniform(14),
   uClock: uniform(0)
 };
+export type CityUniforms = typeof cityUniforms;
 
 // Fast deterministic 2D -> 1D hash in TSL
-const hash2D = Fn(([p]) => {
+const hash2D = Fn(([p]: [Node<'vec2'>]) => {
   return fract(sin(dot(p, vec2(127.1, 311.7))).mul(43758.5453));
 });
 
 // Smooth 2D value noise in TSL
-const noise2D = Fn(([p]) => {
+const noise2D = Fn(([p]: [Node<'vec2'>]) => {
   const pv = vec2(p).toVar();
   const i = floor(pv).toVar();
   const f = fract(pv).toVar();
@@ -113,7 +120,7 @@ const noise2D = Fn(([p]) => {
  * Mikkelsen's Surface-Gradient Hardware Derivative Bump Mapping (ported from CityGeneratorUtils.js)
  * Wrapped in Fn() so `height` is evaluated once into a scalar parameter before dFdx/dFdy!
  */
-const bumpNormal = Fn(([height]) => {
+const bumpNormal = Fn(([height]: [Node<'float'>]) => {
   const h = float(height).toVar();
   const dpdx = positionView.dFdx();
   const dpdy = positionView.dFdy();
@@ -128,7 +135,7 @@ const bumpNormal = Fn(([height]) => {
  * Filter-Width Anti-Aliased Filled Band (ported from CityGenerator.js)
  * Wrapped in Fn() so NodeBuilder emits a single WGSL function instead of inlining fwidth trees.
  */
-const lineAA = Fn(([coord, halfWidth]) => {
+const lineAA = Fn(([coord, halfWidth]: [Node<'float'>, Node<'float'>]) => {
   const c = float(coord).toVar();
   const hw = float(halfWidth).toVar();
   const aa = fwidth(c).max(0.0001).toVar();
@@ -140,7 +147,7 @@ const lineAA = Fn(([coord, halfWidth]) => {
 /**
  * Filter-Width Anti-Aliased Repeating Grid Line (ported from CityGenerator.js & SidewalkGenerator.js)
  */
-const gridLine = Fn(([coord, period, halfWidth]) => {
+const gridLine = Fn(([coord, period, halfWidth]: [Node<'float'>, Node<'float'>, Node<'float'>]) => {
   const p = float(period).toVar();
   const g = float(coord).div(p).toVar();
   const d = float(0.5).sub(abs(fract(g).sub(0.5))).toVar();
@@ -156,21 +163,21 @@ const gridLine = Fn(([coord, period, halfWidth]) => {
  * Exact anti-aliasing that settles to the mean coverage (b - a) once a period shrinks below a pixel, so facade grids
  * don't shimmer or moiré at distance & grazing angles. Pass the in-cell coordinate (fract) for precision.
  */
-const filteredPulse = Fn(([x, a, b, w]) => {
+const filteredPulse = Fn(([x, a, b, w]: [Node<'float'>, Node<'float'>, Node<'float'>, Node<'float'>]) => {
   const p = float(x).toVar();
   const lo = float(a).toVar();
   const hi = float(b).toVar();
   const hw = max(float(w), 0.0001).mul(0.5).toVar();
-  const integral = (t) => floor(t).mul(hi.sub(lo)).add(clamp(fract(t), lo, hi).sub(lo));
+  const integral = (t: Node<'float'>) => floor(t).mul(hi.sub(lo)).add(clamp(fract(t), lo, hi).sub(lo));
   return integral(p.add(hw)).sub(integral(p.sub(hw))).div(hw.mul(2.0));
 });
 
 /**
- * The height of the town's floor under a world (x, z), for shading by the height over the ground: ground.js's grid as a
+ * The height of the town's floor under a world (x, z), for shading by the height over the ground: ground.ts's grid as a
  * half-float texture (to ~0.2 m), its four nodes around (x, z) read as they are and blended on the same triangles the
  * ground is (each cell split from its +x corner to its +z corner), the floor beyond it; 0 in the flat city (?slopes=0)
  */
-const townFloorNode = (() => {
+const townFloorNode: (xz: Node<'vec2'>) => Node<'float'> = (() => {
   if (!townGrid) return () => float(0.0);
   const { x0, z0, cell, w, h, heights } = townGrid;
   const half = new Uint16Array(w * h);
@@ -180,11 +187,11 @@ const townFloorNode = (() => {
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.needsUpdate = true;
   const size = vec2(w, h);
-  return (xz) => {
+  return (xz: Node<'vec2'>) => {
     const f = xz.sub(vec2(x0, z0)).div(cell); // in cells from the grid's first node
     const ij = floor(f);
     const t = f.sub(ij);
-    const node = (di, dj) => texture(tex, ij.add(vec2(di + 0.5, dj + 0.5)).div(size)).r;
+    const node = (di: number, dj: number) => texture(tex, ij.add(vec2(di + 0.5, dj + 0.5)).div(size)).r;
     const h00 = node(0, 0), h10 = node(1, 0), h01 = node(0, 1), h11 = node(1, 1);
     const near = h00.add(h10.sub(h00).mul(t.x)).add(h01.sub(h00).mul(t.y));
     const far = h11.add(h01.sub(h11).mul(float(1.0).sub(t.x))).add(h10.sub(h11).mul(float(1.0).sub(t.y)));
@@ -207,8 +214,8 @@ const canyonSkyAONode = Fn(() => {
 });
 
 // Material caches to prevent duplicate WebGPU WGSL shader compilation across blocks & landmarks
-const _curtainWallCache = new Map();
-const _preWarCache = new Map();
+const _curtainWallCache = new Map<string, THREE.MeshStandardNodeMaterial>();
+const _preWarCache = new Map<string, THREE.MeshStandardNodeMaterial>();
 
 // Camera-independent facade frame: the view/world normal round trip can change the dominant axis on 45-degree
 // walls. Resolve near-ties in the vertex shader and keep that choice flat across each face.
@@ -232,7 +239,12 @@ const facadeAlongZ = varying(
  *   a lit room's tint), drapes at their mean coverage & lamps fade out, so distant towers don't twinkle in motion.
  * - Returns `vec4(roomColor, litEmit)`.
  */
-const evaluateApartmentInterior = Fn(([uCoord, vCoord, winUV, cellId, winWNode, floorHNode, seedNode, warmthNode, litProbNode, fwNode]) => {
+const evaluateApartmentInterior = Fn((
+  [uCoord, vCoord, winUV, cellId, winWNode, floorHNode, seedNode, warmthNode, litProbNode, fwNode]: [
+    Node<'float'>, Node<'float'>, Node<'vec2'>, Node<'vec2'>, Node<'float'>, Node<'float'>, Node<'float'>, Node<'float'>,
+    Node<'float'>, Node<'vec2'>
+  ]
+) => {
   const u = float(uCoord).toVar();
   const v = float(vCoord).toVar();
   const wUV = vec2(winUV).toVar();
@@ -413,28 +425,28 @@ const WALL_KINDS = { bigSide: -2, bigFront: -1, shop: 0, entry: 1, rear: 2, lotL
  * (folded into `solid`); `wallS`, `wallW`, `wallH`, `fromTop` & `boxSeed` place things on the wall (painted signs).
  * Plain JS (not Fn) so it inlines into each node graph exactly like hand-written code.
  */
-function facadeCell(windowWidth, floorHeight, boxLocal, cornerPier = 0) {
+function facadeCell(windowWidth: Node<'float'>, floorHeight: Node<'float'>, boxLocal: boolean, cornerPier = 0) {
   // Box-local walls are told apart by the box's own normals (createFacadeBoxes instances may be turned about +y to
   // follow a non-grid street); world-space walls by the world normal
   const nWall = boxLocal ? normalGeometry : facadeWorldNormal;
   const nW = abs(nWall);
   const isRoof = step(0.75, nW.y);
   const alongZ = boxLocal ? step(nW.z, nW.x) : facadeAlongZ;
-  let uCoord = mix(positionWorld.x, positionWorld.z, alongZ);
-  let bayWidth = float(windowWidth);
-  let gridU = uCoord.div(bayWidth);
-  let inPier = float(0.0);
-  let kind = float(WALL_KINDS.shop);
-  let tone = float(0.5);
-  let bayIdx = float(0.0); // bay index along the wall (0 at its corner; -1 / bays inside the corner piers)
-  let bays = float(1.0);
+  let uCoord: Node<'float'> = mix(positionWorld.x, positionWorld.z, alongZ);
+  let bayWidth: Node<'float'> = float(windowWidth);
+  let gridU: Node<'float'> = uCoord.div(bayWidth);
+  let inPier: Node<'float'> = float(0.0);
+  let kind: Node<'float'> = float(WALL_KINDS.shop);
+  let tone: Node<'float'> = float(0.5);
+  let bayIdx: Node<'float'> = float(0.0); // bay index along the wall (0 at its corner; -1 / bays inside the corner piers)
+  let bays: Node<'float'> = float(1.0);
   // Box-local wall frame: metres along the wall (from its left end, seen facing it), its width & height, metres
   // below the box's top
-  let wallS = float(0.0);
-  let wallW = float(1.0);
-  let wallH = float(1.0);
-  let fromTop = float(0.0);
-  let boxSeed = float(0.0);
+  let wallS: Node<'float'> = float(0.0);
+  let wallW: Node<'float'> = float(1.0);
+  let wallH: Node<'float'> = float(1.0);
+  let fromTop: Node<'float'> = float(0.0);
+  let boxSeed: Node<'float'> = float(0.0);
 
   if (boxLocal) {
     const box = attribute('box', 'vec4'); // width, height, depth, seed (+ the building's tone in its fraction)
@@ -493,8 +505,8 @@ function facadeCell(windowWidth, floorHeight, boxLocal, cornerPier = 0) {
   const door = floor0.mul(isEntry).mul(wall).mul(step(abs(bayIdx.sub(min(floor(tone.mul(bays)), bays.sub(1.0)))), 0.5));
   // A box that isn't a whole number of storeys (landmark tiers) ends in a solid parapet instead of slicing a row of
   // windows, and starts with one above the roof it stands on; every wall is capped by a coping at its top
-  let partial = float(0.0);
-  let coping = float(0.0);
+  let partial: Node<'float'> = float(0.0);
+  let coping: Node<'float'> = float(0.0);
   if (boxLocal) {
     const top = vCoord.add(fromTop);
     const floorBase = floor(gridV).mul(floorHeight);
@@ -511,9 +523,9 @@ function facadeCell(windowWidth, floorHeight, boxLocal, cornerPier = 0) {
 
 /**
  * UV into a sign atlas of `cols` x `rows` equal slots (slot 0 at the top left, row by row), for the face's own uv: the
- * slot is a per-instance float node (the shop signs in buildings.js, the street name blades in street-details.js)
+ * slot is a per-instance float node (the shop signs in buildings.ts, the street name blades in street-details.ts)
  */
-function atlasSlotUV(slot, cols, rows) {
+function atlasSlotUV(slot: Node<'float'>, cols: number, rows: number): Node<'vec2'> {
   const col = slot.mod(cols);
   const row = slot.sub(col).div(cols);
   return vec2(col.add(uv().x).div(cols), float(1.0).sub(row.add(float(1.0).sub(uv().y)).div(rows)));
@@ -528,14 +540,24 @@ function atlasSlotUV(slot, cols, rows) {
  * stripe and a red band. Big boxes (WALL_KINDS.bigFront / bigSide) are halls in pale metal cladding with a glazed
  * front under a dark canopy and a white membrane roof. Lit windows & open stores glow at night.
  */
-let _mexicanHouseMat = null;
+let _mexicanHouseMat: THREE.MeshStandardNodeMaterial | null = null;
+/** A chain store front's colours: its band and its stripe */
+export interface ChainFacade {
+  band: THREE.ColorRepresentation;
+  stripe: THREE.ColorRepresentation;
+}
+export interface MexicanHouseOptions {
+  floorHeight?: number; // m
+  chains?: ChainFacade[];
+  boxLocal?: boolean; // (always: the material is box-local)
+}
 // `chains`: [{ band, stripe }] colours of each chain store front (js/world/storefronts), picked by the wall kind
 // WALL_KINDS.chainStore + its index
-function createMexicanHouseMaterial({ floorHeight = 3.0, chains = [] } = {}) {
+function createMexicanHouseMaterial({ floorHeight = 3.0, chains = [] }: MexicanHouseOptions = {}): THREE.MeshStandardNodeMaterial {
   if (_mexicanHouseMat) return _mexicanHouseMat;
   const chainList = chains.length ? chains : [{ band: '#d8232a', stripe: '#f5a623' }];
-  const chainBands = uniformArray(chainList.map((c) => new THREE.Color(c.band)), 'color');
-  const chainStripes = uniformArray(chainList.map((c) => new THREE.Color(c.stripe)), 'color');
+  const chainBands = uniformArray<'color'>(chainList.map((c) => new THREE.Color(c.band)), 'color');
+  const chainStripes = uniformArray<'color'>(chainList.map((c) => new THREE.Color(c.stripe)), 'color');
   const mat = new THREE.MeshStandardNodeMaterial({ metalness: 0.0, roughness: 0.86 });
   const box = attribute('box', 'vec4'); // width, height, depth, seed + tone
   const faces = attribute('faces', 'vec4'); // WALL_KINDS of the -x, +x, -z & +z walls
@@ -572,16 +594,16 @@ function createMexicanHouseMaterial({ floorHeight = 3.0, chains = [] } = {}) {
     const rawBlock = isBack.mul(step(wallSeed, 0.42));
 
     // the house's paint: its own where known (paint.w = 1), else the palette's by tone
-    let paint = color(PALETTE[0]);
+    let paint: Node<'vec3'> | Node<'color'> = color(PALETTE[0]);
     const idx = floor(tone.mul(PALETTE.length));
     for (let i = 1; i < PALETTE.length; i++) paint = mix(paint, color(PALETTE[i]), step(i - 0.5, idx));
-    // the centro's colonial houses (buildings.js, within ~620 m of the Plaza Principal): limewash in the strong colours
+    // the centro's colonial houses (buildings.ts, within ~620 m of the Plaza Principal): limewash in the strong colours
     // of the centro (magenta, orange, ochre, terracotta, cream...), windows & doors framed in cantera, a darker
     // guardapolvo along the foot, a moulded cornice under the parapet, doors onto iron balconies upstairs
     const ownPaint = attribute('paint', 'vec4');
     const colonial = step(1.5, ownPaint.w);
     const COLONIAL = [0xc4304a, 0xe0703a, 0xd9a13d, 0xefe2c4, 0xa9452f, 0xe8c45a, 0xd65f7a, 0xf3ece0, 0x6f9bb2, 0xc9573c];
-    let colonialPaint = color(COLONIAL[0]);
+    let colonialPaint: Node<'vec3'> | Node<'color'> = color(COLONIAL[0]);
     const cIdx = floor(tone.mul(COLONIAL.length));
     for (let i = 1; i < COLONIAL.length; i++) colonialPaint = mix(colonialPaint, color(COLONIAL[i]), step(i - 0.5, cIdx));
     paint = mix(paint, colonialPaint, colonial);
@@ -802,7 +824,23 @@ function createMexicanHouseMaterial({ floorHeight = 3.0, chains = [] } = {}) {
  * - Fast 3D Apartment/Upper-Level Interior Mapping (2D Glazing on Ground-Floor Shops)
  * - Urban Canyon Global Illumination (`aoNode` + warm bounce)
  */
-function createCurtainWallMaterial(opts = {}) {
+/** A curtain-wall facade: colours (hex), bay width & storey height (m), mullion & spandrel fractions, the share of lit
+ * rooms (0..1), their warmth (0 cool .. 1 warm), the glass's reflectivity, a seed */
+export interface CurtainWallOptions {
+  glassTint?: number;
+  frameTint?: number;
+  windowWidth?: number;
+  floorHeight?: number;
+  mullionThickness?: number;
+  spandrelRatio?: number;
+  litProbability?: number;
+  warmth?: number;
+  reflectivity?: number;
+  seed?: number;
+  boxLocal?: boolean;
+}
+
+function createCurtainWallMaterial(opts: CurtainWallOptions = {}): THREE.MeshStandardNodeMaterial {
   const {
     glassTint = 0x162c42,
     frameTint = 0x26323e,
@@ -818,8 +856,9 @@ function createCurtainWallMaterial(opts = {}) {
   } = opts;
 
   const cacheKey = `${glassTint}_${frameTint}_${windowWidth}_${floorHeight}_${litProbability}_${warmth}_${reflectivity}_${seed}_${boxLocal}`;
-  if (_curtainWallCache.has(cacheKey)) {
-    return _curtainWallCache.get(cacheKey);
+  const cached = _curtainWallCache.get(cacheKey);
+  if (cached) {
+    return cached;
   }
 
   const mat = new THREE.MeshStandardNodeMaterial({
@@ -998,7 +1037,27 @@ function createCurtainWallMaterial(opts = {}) {
  * - Grimy Soda-Lime Window Glazing (pooled sill dirt + vertical rain streaks)
  * - Urban Canyon Global Illumination (`aoNode` + warm terracotta bounce)
  */
-function createPreWarBuildingMaterial(opts = {}) {
+/** A masonry facade: colours (hex), bay width & storey height (m), the window's share of its bay (x, y), the share of lit
+ * rooms (0..1) & their warmth, the crown's glow (from m up), a seed, box-local walls with corner piers (m), stucco */
+export interface PreWarOptions {
+  stoneColor?: number;
+  trimColor?: number;
+  windowGlassColor?: number;
+  windowWidth?: number;
+  floorHeight?: number;
+  windowRatioX?: number;
+  windowRatioY?: number;
+  litProbability?: number;
+  warmth?: number;
+  crownGlowHeight?: number;
+  crownGlowColor?: number;
+  seed?: number;
+  boxLocal?: boolean;
+  cornerPier?: number;
+  stucco?: boolean;
+}
+
+function createPreWarBuildingMaterial(opts: PreWarOptions = {}): THREE.MeshStandardNodeMaterial {
   const {
     stoneColor = 0xd8ceb8,
     trimColor = 0x9e937f,
@@ -1018,8 +1077,9 @@ function createPreWarBuildingMaterial(opts = {}) {
   } = opts;
 
   const cacheKey = `${stoneColor}_${trimColor}_${windowWidth}_${floorHeight}_${litProbability}_${warmth}_${crownGlowHeight}_${seed}_${boxLocal}_${cornerPier}_${stucco}`;
-  if (_preWarCache.has(cacheKey)) {
-    return _preWarCache.get(cacheKey);
+  const cached = _preWarCache.get(cacheKey);
+  if (cached) {
+    return cached;
   }
 
   const mat = new THREE.MeshStandardNodeMaterial({
@@ -1186,7 +1246,7 @@ function createPreWarBuildingMaterial(opts = {}) {
       const ink = mix(mix(color(0x6b2a20), color(0xddd2b6), step(0.5, pal)), color(0xd5c086), step(0.8, pal));
       const border = float(1.0).sub(filteredPulse(su, 0.02, 0.98, signFw.x).mul(filteredPulse(sv, 0.045, 0.955, signFw.y)));
       // Block letters: a vertical at the left (or middle) and maybe the right, bars at the top / middle / bottom
-      const lettering = (v0, v1, line) => {
+      const lettering = (v0: number, v1: number, line: number) => {
         const glyphW = signH.mul((v1 - v0) * 0.64);
         const n = floor(signW.mul(0.86).div(glyphW));
         const gx = su.mul(signW).sub(signW.sub(n.mul(glyphW)).mul(0.5)).div(glyphW);
@@ -1389,7 +1449,7 @@ function createPreWarBuildingMaterial(opts = {}) {
  * (size + a spread seed carrying the building's tone in its fraction) that lays each wall out in whole window bays,
  * and `faces`: the WALL_KINDS of the box's -x, +x, -z & +z walls (storefront fronts all round when omitted).
  */
-// The iron of a colonial balcony's railing (buildings.js): black-green bars every 11 cm between a top & bottom rail,
+// The iron of a colonial balcony's railing (buildings.ts): black-green bars every 11 cm between a top & bottom rail,
 // a scroll band under the handrail; the rest open (alpha-tested)
 function createBalconyRailMaterial() {
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.45, metalness: 0.6, side: THREE.DoubleSide });
@@ -1409,12 +1469,30 @@ function createBalconyRailMaterial() {
   return mat;
 }
 
-function createFacadeBoxes(material, boxes) {
+/**
+ * A facade box (buildings.ts): its centre (m), size (w along x, h, d along z), turn about +y (rad), the WALL_KINDS of
+ * its -x, +x, -z & +z walls, the building's tone (0..1), its own paint (null: the palette's) and a colonial house
+ */
+export interface FacadeBoxSpec {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+  h: number;
+  d: number;
+  ry?: number;
+  faces?: readonly number[];
+  tone?: number;
+  paint?: THREE.ColorRepresentation | null;
+  colonial?: boolean;
+}
+
+function createFacadeBoxes(material: THREE.Material, boxes: readonly FacadeBoxSpec[]): THREE.InstancedMesh {
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   const box = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
   const faces = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
-  // a building's own paint, where it is known (the centro's overrides, js/world/building-overrides.js): rgb, and in w 1
-  // (0: the palette's, by tone), plus 2 for a colonial house of the centro (buildings.js: cantera, balconies...)
+  // a building's own paint, where it is known (the centro's overrides, js/world/building-overrides.ts): rgb, and in w 1
+  // (0: the palette's, by tone), plus 2 for a colonial house of the centro (buildings.ts: cantera, balconies...)
   const paint = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
   geometry.setAttribute('box', box);
   geometry.setAttribute('faces', faces);
@@ -1443,13 +1521,14 @@ function createFacadeBoxes(material, boxes) {
   return mesh;
 }
 
-const _carPaintCache = new Map();
+const _carPaintCache = new Map<number, THREE.MeshStandardNodeMaterial>();
 
 /**
  * GTA 6-Style Metallic Clearcoat Vehicle Paint TSL Material
  */
 function createCarPaintMaterial(baseHex = 0xffc218) {
-  if (_carPaintCache.has(baseHex)) return _carPaintCache.get(baseHex);
+  const cached = _carPaintCache.get(baseHex);
+  if (cached) return cached;
   const mat = new THREE.MeshStandardNodeMaterial({
     metalness: 0.56,
     roughness: 0.11
@@ -1475,29 +1554,35 @@ function createCarPaintMaterial(baseHex = 0xffc218) {
 // the light, a leaf glows with the light it lets through. It takes the direct light's colour, so shadows (the crown's
 // own included) dim it like the sunlit side. Materials set `translucencyNode` (vec3, 0 where nothing shines through).
 class FoliageLightingModel extends THREE.PhysicalLightingModel {
-  direct(lightData, builder) {
-    const { lightDirection, lightColor, reflectedLight } = lightData;
-    const translucency = builder.material.translucencyNode;
+  override direct(lightData: LightingModelDirectInput, builder: NodeBuilder): void {
+    // (all vec3s: @types/three leaves the light data's nodes untyped)
+    const lightDirection = lightData.lightDirection as Node<'vec3'>;
+    const lightColor = lightData.lightColor as Node<'vec3'>;
+    const directDiffuse = lightData.reflectedLight.directDiffuse as Node<'vec3'>;
+    const material = builder.material;
+    const translucency = material instanceof TreeNodeMaterial ? material.translucencyNode : null;
     if (translucency) {
       const scatter = normalize(lightDirection.add(normalView.mul(0.3)));
       const through = pow(clamp(dot(positionViewDirection, scatter.negate()), 0.0, 1.0), 3.0);
-      reflectedLight.directDiffuse.addAssign(lightColor.mul(translucency).mul(through));
+      directDiffuse.addAssign(lightColor.mul(translucency).mul(through));
     }
     super.direct(lightData, builder);
   }
 }
 
 class TreeNodeMaterial extends THREE.MeshStandardNodeMaterial {
-  static get type() {
+  declare translucencyNode: Node<'vec3'> | null;
+
+  static override get type(): string {
     return 'TreeNodeMaterial';
   }
 
-  constructor(parameters) {
+  constructor(parameters?: MeshStandardNodeMaterialParameters) {
     super(parameters);
     this.translucencyNode = null;
   }
 
-  setupLightingModel() {
+  override setupLightingModel(): FoliageLightingModel {
     return new FoliageLightingModel();
   }
 }
@@ -1506,7 +1591,7 @@ class TreeNodeMaterial extends THREE.MeshStandardNodeMaterial {
 const TREE_WIND = vec2(0.86, 0.51);
 
 /**
- * Instanced street & park tree material (js/world/trees.js): bark tubes and alpha-tested leaf cards in ONE draw per mesh.
+ * Instanced street & park tree material (js/world/trees.ts): bark tubes and alpha-tested leaf cards in ONE draw per mesh.
  * Geometry attributes:
  * - uv: leaf-atlas coordinates on the cards; on the bark (metres round the stem, metres along it)
  * - normal: on the cards, crown-shell normals (out from the crown centre, blended with the card face), so a crown
@@ -1525,7 +1610,7 @@ const TREE_WIND = vec2(0.86, 0.51);
  * pass (alpha-tested in the shadow maps: dappled shadows). Wind: gusts rolling across the city sway the crowns
  * (shadows follow), branches bob and leaves flutter.
  */
-function createTreeMaterial(leafAtlas) {
+function createTreeMaterial(leafAtlas: THREE.Texture): TreeNodeMaterial {
   // The alpha test is given as nodes (alphaTestNode on the scene pass, maskShadowNode in the shadow maps) rather than
   // `alphaTest`: the shadow passes copy each caster's `alphaTest` onto one shared shadow material, and every switch
   // between 0 and > 0 bumps its version, which made three.js re-hash the node graphs of all the casters' shadow render
@@ -1622,7 +1707,7 @@ function createTreeMaterial(leafAtlas) {
 
 // Pointy-top hexagon cell of p (in hex units): x = distance to the cell edge (0 at the joint .. 0.5 at the centre),
 // yz = cell id
-const hexCell = Fn(([p]) => {
+const hexCell = Fn(([p]: [Node<'vec2'>]) => {
   const pv = vec2(p).toVar();
   const r = vec2(1.0, 1.7320508);
   const h = vec2(0.5, 0.8660254);
@@ -1635,7 +1720,7 @@ const hexCell = Fn(([p]) => {
 });
 
 // Joint mask (1 in the joints) of the park / plaza paving style at world xz
-const pavingJoints = Fn(([style, wx, wz]) => {
+const pavingJoints = Fn(([style, wx, wz]: [Node<'float'>, Node<'float'>, Node<'float'>]) => {
   const hex = hexCell(vec2(wx, wz).div(0.21));
   const hexAA = fwidth(hex.x).max(0.0001);
   const hexJoint = smoothstep(hexAA.add(0.035), float(0.035).sub(hexAA), hex.x);
@@ -1764,7 +1849,7 @@ function createTreeGrateMaterial() {
 }
 
 // Post-rain puddle field (organic standing rainwater pools) shared by every road surface channel
-function roadPuddleField(wx, wz) {
+function roadPuddleField(wx: Node<'float'>, wz: Node<'float'>): Node<'float'> {
   const nMacro = noise2D(vec2(wx.mul(0.095), wz.mul(0.075)));
   const nMid = noise2D(vec2(wx.mul(0.25).add(19.4), wz.mul(0.22).add(11.8)));
   const nDetail = noise2D(vec2(wx.mul(0.68).sub(7.3), wz.mul(0.68).add(29.1)));
@@ -1778,7 +1863,7 @@ function roadPuddleField(wx, wz) {
  * Water collects in the field's highest (lowest-lying) spots first, so pools appear, grow & merge as wetness rises;
  * `drainage` raises the water line for better-drained surfaces such as the crowned sidewalk flags.
  */
-function roadWetMasks(field, drainage = 0.0) {
+function roadWetMasks(field: Node<'float'>, drainage = 0.0): Node<'vec3'> {
   const w = cityUniforms.uRoadWetness;
   const level = mix(float(0.86), float(0.56), clamp(w.sub(0.1).div(0.55), 0.0, 1.0)).add(drainage);
   const damp = smoothstep(level.sub(0.09), level.sub(0.015), field);
@@ -1793,11 +1878,11 @@ function roadWetMasks(field, drainage = 0.0) {
  * cityUniforms.uRoadWetness drives damp stains, a glossy wet film & standing puddles (roadWetMasks): bone dry at
  * midday, a few small pools at golden hour, slick & mirroring the lights at night. Water's Fresnel rides on metalness
  * (as for the rivers), so puddles reflect the street through SSR at grazing angles yet only darken seen from above.
- * Lane markings are separate geometry built from the road network (js/world/road-paint.js).
+ * Lane markings are separate geometry built from the road network (js/world/road-paint.ts).
  */
 // A pothole at world (wx, wz): one 9 m cell in eight holds one, 0.35-0.95 m across, ragged (noise on its radius).
 // Returns vec2(inside 0..1, crumbled rim 0..1)
-const roadPothole = Fn(([wx, wz]) => {
+const roadPothole = Fn(([wx, wz]: [Node<'float'>, Node<'float'>]) => {
   const p = vec2(wx, wz);
   const cell = floor(p.div(9.0));
   const centre = cell.add(vec2(hash2D(cell.add(41.3)), hash2D(cell.add(77.9))).mul(0.7).add(0.15)).mul(9.0);
@@ -1810,7 +1895,7 @@ const roadPothole = Fn(([wx, wz]) => {
 });
 
 // A bacheo patch at world (wx, wz): one 23 m cell in four, a rectangle 1-3.5 x 0.8-2.2 m of newer, darker asphalt
-const roadPatch = Fn(([wx, wz]) => {
+const roadPatch = Fn(([wx, wz]: [Node<'float'>, Node<'float'>]) => {
   const p = vec2(wx, wz);
   const cell = floor(p.div(23.0));
   const centre = cell.add(vec2(hash2D(cell.add(9.4)), hash2D(cell.add(18.2))).mul(0.6).add(0.2)).mul(23.0);
@@ -1821,7 +1906,7 @@ const roadPatch = Fn(([wx, wz]) => {
 });
 
 /**
- * The streets that are not asphalt (js/world/pavements.js, from OpenStreetMap's surface tags): attribute `pave` picks
+ * The streets that are not asphalt (js/world/pavements.ts, from OpenStreetMap's surface tags): attribute `pave` picks
  * the kind, in world space so the overlapping strips of a street join seamlessly:
  * - 0 empedrado: rounded river stones (Worley cells) set in earth, a few weeds in the joints
  * - 1 adoquín: 20 x 10 cm setts in running bond
@@ -1830,7 +1915,7 @@ const roadPatch = Fn(([wx, wz]) => {
  * Fine detail settles to its mean colour once it shrinks under a pixel.
  */
 /**
- * The airfield (airport.js), by the per-vertex `field`: 0 the apron's concrete slabs, 1 the runway's asphalt and its
+ * The airfield (airport.ts), by the per-vertex `field`: 0 the apron's concrete slabs, 1 the runway's asphalt and its
  * white markings, 2 a taxiway's asphalt and its yellow centreline, 3 a helipad's concrete. `along` is metres from the
  * strip's start, `across` metres from its centreline, `half` its half-width and `span` its length, so the runway paints
  * its markings to ICAO Annex 14: edge lines, the dashed centreline (30 m dashes, 20 m gaps), threshold piano keys,
@@ -1843,9 +1928,9 @@ function createAirfieldMaterial() {
   const across = abs(attribute('across', 'float'));
   const half = attribute('half', 'float');
   const span = attribute('span', 'float');
-  const isField = (k) => step(k - 0.5, field).mul(step(field, k + 0.5));
+  const isField = (k: number) => step(k - 0.5, field).mul(step(field, k + 0.5));
   const p = positionWorld.xz;
-  const band = (v, lo, hi) => step(lo, v).mul(step(v, hi));
+  const band = (v: Node<'float'>, lo: Node<'float'> | number, hi: Node<'float'> | number) => step(lo, v).mul(step(v, hi));
 
   // concrete: 7.5 m slabs, joints, a little staining
   const slabs = max(gridLine(p.x, 7.5, 0.02), gridLine(p.y, 7.5, 0.02));
@@ -1869,7 +1954,7 @@ function createAirfieldMaterial() {
 
   const base = mix(mix(concrete, asphalt, max(isField(1), isField(2))), concrete.mul(0.92), isField(3));
   mat.colorNode = mix(mix(base, color(0xe9e8e2), white), color(0xd9a925), yellow);
-  // wet: the pavement darkens and goes glossy (the roads' film, lighting.js)
+  // wet: the pavement darkens and goes glossy (the roads' film, lighting.ts)
   mat.roughnessNode = mix(float(0.88), float(0.62), max(white, yellow)).sub(cityUniforms.uRoadWetness.mul(0.45)).max(0.12);
   mat.aoNode = canyonSkyAONode();
   return mat;
@@ -1878,7 +1963,7 @@ function createAirfieldMaterial() {
 function createPavementMaterial() {
   const mat = new THREE.MeshStandardNodeMaterial({ metalness: 0.0, roughness: 0.9 });
   const kind = attribute('pave', 'float');
-  const isKind = (k) => step(k - 0.5, kind).mul(step(kind, k + 0.5));
+  const isKind = (k: number) => step(k - 0.5, kind).mul(step(kind, k + 0.5));
   const p = positionWorld.xz;
   const pixelSize = length(fwidth(p));
   const fine = smoothstep(0.06, 0.02, pixelSize);
@@ -2005,9 +2090,6 @@ function createRoadSurfaceMaterial() {
   })();
 
   mat.emissiveNode = Fn(() => {
-    const wx = positionWorld.x;
-    const wz = positionWorld.z;
-
     const roadFresnel = pow(clamp(float(1.0).sub(abs(viewDir.y)), 0.0, 1.0), 2.3);
 
     const skyMirror = mix(cityUniforms.uSkyHorizonColor, cityUniforms.uSkyTopColor, 0.40).mul(0.10);
@@ -2022,7 +2104,7 @@ function createRoadSurfaceMaterial() {
 }
 
 /**
- * Road markings built from the road network (js/world/road-paint.js): vertex-coloured strips whose `paint` attribute
+ * Road markings built from the road network (js/world/road-paint.ts): vertex-coloured strips whose `paint` attribute
  * holds (metres along the strip, pattern period, duty cycle) and `side` the offset from the strip's centre line.
  * Strips thinner than ~1.5 px are widened on screen and faded to match (phone-wire AA) and dashes are box-filtered,
  * so distant markings fade out smoothly instead of breaking up and flickering. Worn, and dark & glossy in puddles.
@@ -2055,7 +2137,7 @@ function createRoadPaintMaterial() {
   const t = paint.x.div(paint.y);
   const footprint = max(fwidth(t), 0.0001);
   const duty = paint.z;
-  const onSoFar = (x) => floor(x).mul(duty).add(clamp(fract(x).sub(float(1.0).sub(duty).mul(0.5)), 0.0, duty));
+  const onSoFar = (x: Node<'float'>) => floor(x).mul(duty).add(clamp(fract(x).sub(float(1.0).sub(duty).mul(0.5)), 0.0, duty));
   const dashes = onSoFar(t.add(footprint.mul(0.5))).sub(onSoFar(t.sub(footprint.mul(0.5)))).div(footprint);
 
   const xz = positionWorld.xz;
@@ -2072,7 +2154,7 @@ function createRoadPaintMaterial() {
 }
 
 /**
- * Overhead wires (js/world/street-details.js: the CFE's lines and the cables to the houses): ribbons whose two edges
+ * Overhead wires (js/world/street-details.ts: the CFE's lines and the cables to the houses): ribbons whose two edges
  * share the centreline's points, `wire` = (unit tangent, signed half-width in metres). The vertex shader turns each
  * ribbon to face the camera and widens it to at least ~1.5 px, fading it to match (phone-wire AA, as the road paint),
  * so a 2 cm cable stays a steady hairline at any distance; it fades out by WIRE_FADE m (the cells beyond are hidden).
@@ -2231,7 +2313,7 @@ function createCurbMaterial() {
 }
 
 /**
- * Cast Concrete for the overpasses' decks, walls & piers (js/world/bridges.js): board-formed tone that varies by the
+ * Cast Concrete for the overpasses' decks, walls & piers (js/world/bridges.ts): board-formed tone that varies by the
  * pour, faint 1.2 m form-tie lines on the walls, and run-off streaks darkening down from the deck's edge, wetter in rain
  */
 function createBridgeConcreteMaterial() {
@@ -2255,7 +2337,7 @@ function createBridgeConcreteMaterial() {
 }
 
 /**
- * Bare Earth under the overpasses' spans (js/world/bridges.js): packed dry dirt with gravel, darker in patches where
+ * Bare Earth under the overpasses' spans (js/world/bridges.ts): packed dry dirt with gravel, darker in patches where
  * the run-off from the deck's drains has soaked it, so the town's asphalt doesn't run on under a bridge
  */
 function createUnderpassEarthMaterial() {
@@ -2288,7 +2370,7 @@ function createTrackBedMaterial() {
     // sleepers: on for 0.26 m of each 0.6 m, 2.6 m long across the line (exact box filter of the on/off pattern)
     const t = track.x.div(0.6);
     const fw = max(fwidth(t), 0.0001);
-    const on = (x) => floor(x).mul(0.43).add(clamp(fract(x), 0.0, 0.43));
+    const on = (x: Node<'float'>) => floor(x).mul(0.43).add(clamp(fract(x), 0.0, 0.43));
     const sleepers = on(t.add(fw.mul(0.5))).sub(on(t.sub(fw.mul(0.5)))).div(fw);
     const across = smoothstep(1.3, 1.25, abs(track.y)).mul(step(0.0, normalWorldGeometry.y.sub(0.9)));
     const sleeper = mix(color(0x5e5a54), color(0x6f6b64), noise2D(p.xz.mul(2.0))); // weathered concrete
@@ -2348,8 +2430,8 @@ function createParkLawnMaterial(isMeadow = false) {
 }
 
 /**
- * The open ground inside the house blocks (city-grid.js, lot-greenery.js): what the satellite shows between Tepic's
- * houses. The `open` attribute is the block's share of open ground (lot-greenery.js openness): an empty block is a
+ * The open ground inside the house blocks (city-grid.ts, lot-greenery.ts): what the satellite shows between Tepic's
+ * houses. The `open` attribute is the block's share of open ground (lot-greenery.ts openness): an empty block is a
  * vacant lot or a field, rough grass & weeds in clumps worn to the red-brown earth along paths and in bare patches; a
  * built-up one's yards are patios, concrete & tile with grass and potted green between. The grass greens in the rains
  * and goes straw-yellow in the dry season (cityUniforms.uDryness). Detail finer than a pixel fades to its average,
@@ -2403,7 +2485,7 @@ function createLotGroundMaterial() {
 }
 
 /**
- * A sports pitch of OpenStreetMap (city-grid.js): a football field's mown grass in stripes along its length with its
+ * A sports pitch of OpenStreetMap (city-grid.ts): a football field's mown grass in stripes along its length with its
  * white lines, or (`court` > 0.5) a concrete court painted green & red with a basketball court's lines. uv run 0..1
  * along & across; the `dims` attribute is its length & width (m) and whether it is a court. The lines scale with the
  * field (a fútbol rápido pitch is a third of a stadium's), the goal mouths & centre spot are worn to the earth.
@@ -2423,7 +2505,7 @@ function createPitchMaterial() {
     const outline = max(lineAA(au.sub(hl), lw).mul(step(av, hw.add(lw))), lineAA(av.sub(hw), lw).mul(step(au, hl.add(lw))));
     const halfway = lineAA(u, lw).mul(step(av, hw));
     const circle = lineAA(length(vec2(u, v)).sub(r), lw);
-    const box = (d, w) => max(lineAA(au.sub(hl.sub(d)), lw).mul(step(av, w)), lineAA(av.sub(w), lw).mul(step(hl.sub(d), au)).mul(step(au, hl)));
+    const box = (d: Node<'float'>, w: Node<'float'>) => max(lineAA(au.sub(hl.sub(d)), lw).mul(step(av, w)), lineAA(av.sub(w), lw).mul(step(hl.sub(d), au)).mul(step(au, hl)));
     const spots = smoothstep(lw.mul(2.5), lw.mul(1.5), length(vec2(au.sub(hl.sub(k.mul(11.0))), v))).max(smoothstep(lw.mul(2.5), lw.mul(1.5), length(vec2(u, v))));
     const football = max(max(max(outline, halfway), max(circle, box(boxD, boxW))), max(box(goalD, goalW), spots));
     // basketball: outline, centre line & circle, the keys & three-point arcs at each end
@@ -2453,7 +2535,7 @@ function createPitchMaterial() {
 }
 
 /**
- * A flood's water over the streets (floods.js): brown with the mud it carries, darker where it is deep, a mirror
+ * A flood's water over the streets (floods.ts): brown with the mud it carries, darker where it is deep, a mirror
  * between the rain's ripples; its shallow edge only darkens & wets the ground under it. The `depth` attribute is the
  * water's depth (m).
  */
@@ -2486,7 +2568,7 @@ function createFloodWaterMaterial() {
 }
 
 /**
- * The Libramiento's ciclovía (city-grid.js, medians.js): a two-way bike path 3.2 m wide in red-ochre concrete, its
+ * The Libramiento's ciclovía (city-grid.ts, medians.ts): a two-way bike path 3.2 m wide in red-ochre concrete, its
  * edges lined white, a dashed white line down the middle and a bicycle painted in each lane every 40 m. uv: u 0..1
  * across, v metres along.
  */
@@ -2506,7 +2588,7 @@ function createCyclewayMaterial() {
     const lane = sign(a); // -1 one way, +1 the other
     const bs = fract(s.div(40.0)).sub(0.5).mul(40.0).mul(lane); // m from the bicycle's centre, along its lane's way
     const bx = abs(a).sub(0.72); // m across from the lane's middle
-    const wheel = (off) => lineAA(length(vec2(bs.sub(off), bx)).sub(0.26), 0.035);
+    const wheel = (off: number) => lineAA(length(vec2(bs.sub(off), bx)).sub(0.26), 0.035);
     const frame = lineAA(bx, 0.035).mul(step(abs(bs), 0.3)).max(lineAA(bx.sub(bs.add(0.3).mul(0.6)), 0.03).mul(step(-0.3, bs)).mul(step(bs, 0.1)));
     const bike = max(max(wheel(-0.42), wheel(0.42)), frame).mul(step(abs(bs), 1.0));
     return mix(c, color(0xf0eee6), max(max(edge, centre), bike).mul(0.9));
@@ -2515,7 +2597,7 @@ function createCyclewayMaterial() {
 }
 
 /**
- * The banks & bed of the river channels (js/world/river-channels.js): coursed stone walls, darker & mossy towards the
+ * The banks & bed of the river channels (js/world/river-channels.ts): coursed stone walls, darker & mossy towards the
  * water, down to a bed of silt. The `wet` attribute runs 0 at the banks' tops to 1 on the bed; uv are metres along the
  * channel & across it.
  */
@@ -2580,7 +2662,7 @@ const _transparentEffectMRT = mrt({
 });
 
 /**
- * A pool of blood on the ground (sim/blood.js; an instanced flat quad grown to its size): dark wet red spreading from
+ * A pool of blood on the ground (sim/blood.ts; an instanced flat quad grown to its size): dark wet red spreading from
  * the quad's middle to an uneven rim (three ripples round it, phased by the instance's `bloodSeed`), darkest and
  * glossiest where it is deep, thinning out at the rim; over the road or the walk like the paint, their G-buffer kept
  */
@@ -2609,7 +2691,7 @@ function createBloodPoolMaterial() {
 /**
  * Soft Rounded-Rectangle Under-Vehicle Contact Shadow (Ambient Occlusion) TSL Material
  */
-// Smoke puffs (the player's car, controllers.js): soft balls, thick where they face the camera and fading to nothing
+// Smoke puffs (the player's car, controllers.ts): soft balls, thick where they face the camera and fading to nothing
 // at their rims, so a sphere reads as a cloud; their grey comes from the instance colour
 function createSmokeMaterial() {
   const mat = new THREE.MeshStandardNodeMaterial({ transparent: true, depthWrite: false, roughness: 1, metalness: 0 });

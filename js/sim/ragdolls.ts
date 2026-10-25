@@ -1,16 +1,135 @@
-// js/sim/ragdolls.js
-// People knocked down, run over, shot or thrown from a car as ragdolls in Jolt Physics (the world player/car-physics.js
-// runs): eleven capsules over the 15-bone rig of pedestrians.js (pelvis, chest, head, upper arms & forearms, thighs &
+// js/sim/ragdolls.ts
+// People knocked down, run over, shot or thrown from a car as ragdolls in Jolt Physics (the world player/car-physics.ts
+// runs): eleven capsules over the 15-bone rig of pedestrians.ts (pelvis, chest, head, upper arms & forearms, thighs &
 // shins, the feet riding on the shins) joined as a body is: the spine, neck, shoulders and hips swing within cones and
 // twist a little, elbows and knees bend one way only, every joint with some friction. Thrown at a person's own pose and
 // speed, they meet the car (over its bonnet, into its glass), the walls and the ground, and settle as they fall; once
 // still they freeze (their bodies leave the world) and keep their last pose until the game lets them go.
 //
-// Each part moves its bones with it: a bone's transform (pedestrians.js pose: world vertex = q·bind·s + t) is the
+// Each part moves its bones with it: a bone's transform (pedestrians.ts pose: world vertex = q·bind·s + t) is the
 // part's rotation and move since the throw applied to the bone's transform at the throw, so every bone of the mesh
 // follows the physics. Plain numbers and Jolt only, no three.js (node --test runs the pure parts).
 
-// pedestrians.js BONE (PERSON_BONES)
+import type Jolt from 'jolt-physics';
+
+// [x, y, z] in m, and quaternions as [x, y, z, w]
+type Vec3 = number[];
+type Quat = number[];
+interface Point3 {
+  x: number;
+  y: number;
+  z: number;
+}
+// A person's bind joints, by bone (pedestrians.ts)
+type BindJoints = readonly Point3[];
+// What a ragdoll needs of a PersonRig (pedestrians.ts): its pose (8 floats a bone: quaternion, translation, scale),
+// bind joints and scale (height / 1.75 m)
+interface RagdollRig {
+  pose: Float32Array;
+  bind: BindJoints;
+  s: number;
+}
+
+// A part of the body (PARTS): the bone it is, its parent part (-1: the root), its share of the body's mass, its
+// capsule's radius (m at 1.75 m tall), the bind-pose segment it spans, and its joint to its parent: its anchor (bind),
+// 'cone' (swing & twist: swing cones and twist in rad) or 'hinge' (bend limits in rad)
+interface PartSpec {
+  bone: number;
+  parent: number | 'upper' | 'thigh'; // (a forearm's is the upper arm before it, a shin's the thigh)
+  mass: number;
+  r: number;
+  seg: (J: BindJoints) => (Point3 | Vec3)[];
+  at?: (J: BindJoints) => Point3;
+  joint?: 'cone' | 'hinge';
+  swing?: [number, number];
+  twist?: number;
+  bend?: [number, number];
+}
+interface Part extends PartSpec {
+  parent: number;
+}
+// A part posed (partLayout): its body's rotation & position (world), its capsule (half height & radius, m; its axis's
+// rotation from +y in the body's frame), its mass (kg) and its joint to its parent
+interface PartLayout {
+  rotation: Quat;
+  position: Vec3;
+  halfHeight: number;
+  radius: number;
+  axis: Quat;
+  mass: number;
+  parent: number;
+  joint?: PartJoint;
+}
+// anchor (world); twist: the bone's direction, side & front: the person's, in the world
+interface PartJoint {
+  kind: 'cone' | 'hinge';
+  anchor: Vec3;
+  twist: Vec3;
+  side: Vec3;
+  front: Vec3;
+  swing: [number, number] | undefined;
+  twistLimit: number | undefined;
+  bend: [number, number] | undefined;
+}
+
+// The Jolt world player/car-physics.ts shares, as the ragdolls use it
+interface RagdollPhysics {
+  world: {
+    Jolt: typeof Jolt;
+    system: Jolt.PhysicsSystem;
+    bodies: Jolt.BodyInterface;
+    layers: { ragdoll: number };
+    // a static body of ground n samples cell m apart a side round (cx, cz), sampled from fromY; or `body` reshaped
+    groundField(body: Jolt.Body | null, cx: number, cz: number, fromY: number, n: number, cell: number): Jolt.Body;
+    dropBody(body: Jolt.Body): void;
+  };
+  addSystem(sys: { before?(dt: number): void; after?(dt: number): void }): void;
+}
+// How someone is thrown: velocity (m/s), spin (rad/s) and how badly they bleed (0..1, bleedOf)
+interface ThrowOptions {
+  vx?: number;
+  vy?: number;
+  vz?: number;
+  spin?: number;
+  bleed?: number;
+}
+// A ragdoll: px, py, pz (the pelvis, m), rest (s it has lain still), settled; parts, joints & ground are null once it
+// is frozen
+interface RagdollHandle {
+  rig: RagdollRig;
+  base: Float32Array;
+  parts: Jolt.Body[] | null;
+  joints: Jolt.Constraint[] | null;
+  ground: Jolt.Body | null;
+  gx: number;
+  gz: number;
+  gy: number;
+  rot0: Quat[];
+  pos0: Vec3[];
+  rot: Quat[];
+  pos: Vec3[];
+  delta: Quat[];
+  px: number;
+  py: number;
+  pz: number;
+  age: number;
+  still: number;
+  rest: number;
+  speed: number; // m/s, its fastest part's
+  settled: boolean;
+  bleed: number;
+  down?: boolean; // (traffic.ts: it has been told it lies on the ground)
+}
+interface Ragdolls {
+  onSettle: ((h: RagdollHandle) => void) | null;
+  spawn(rig: RagdollRig, o?: ThrowOptions): RagdollHandle;
+  release(h: RagdollHandle | null | undefined): void;
+  before(): void;
+  after(dt: number): void;
+  count(): number;
+}
+
+// pedestrians.ts BONE (PERSON_BONES)
 const B = {
   PELVIS: 0, CHEST: 1, HEAD: 2, UPPER_ARM_L: 3, FOREARM_L: 4, UPPER_ARM_R: 5, FOREARM_R: 6,
   THIGH_L: 7, SHIN_L: 8, FOOT_L: 9, TOE_L: 10, THIGH_R: 11, SHIN_R: 12, FOOT_R: 13, TOE_R: 14
@@ -21,20 +140,20 @@ const BONES = 15;
 // share of the body's mass, its capsule's radius (m at 1.75 m tall) and the bind-pose segment it spans (from the bind
 // joints J), and the joint's anchor (bind). Swing cones (rad): about the person's side (forward & back) & front (out
 // to the side), and the twist about the bone
-const PARTS = [
+const PART_SPECS: PartSpec[] = [
   { bone: B.PELVIS, parent: -1, mass: 0.15, r: 0.12, seg: (J) => [[J[B.THIGH_L].x + 0.02, 0.95, 0], [J[B.THIGH_R].x - 0.02, 0.95, 0]] },
   { bone: B.CHEST, parent: 0, mass: 0.28, r: 0.15, seg: (J) => [[0, J[B.CHEST].y + 0.05, J[B.CHEST].z], [0, 1.38, -0.01]],
     at: (J) => J[B.CHEST], joint: 'cone', swing: [0.45, 0.3], twist: 0.35 },
   { bone: B.HEAD, parent: 1, mass: 0.07, r: 0.1, seg: (J) => [[0, J[B.HEAD].y + 0.08, J[B.HEAD].z], [0, J[B.HEAD].y + 0.17, J[B.HEAD].z + 0.01]],
     at: (J) => J[B.HEAD], joint: 'cone', swing: [0.6, 0.45], twist: 0.8 },
-  ...[[B.UPPER_ARM_L, B.FOREARM_L], [B.UPPER_ARM_R, B.FOREARM_R]].flatMap(([upper, fore]) => [
+  ...[[B.UPPER_ARM_L, B.FOREARM_L], [B.UPPER_ARM_R, B.FOREARM_R]].flatMap(([upper, fore]): PartSpec[] => [
     { bone: upper, parent: 1, mass: 0.028, r: 0.05, seg: (J) => [J[upper], J[fore]], at: (J) => J[upper],
       joint: 'cone', swing: [1.5, 1.3], twist: 0.8 },
     // (forearm & hand: on along the arm 0.33 m)
     { bone: fore, parent: 'upper', mass: 0.022, r: 0.045, seg: (J) => [J[fore], along(J[upper], J[fore], 0.33)], at: (J) => J[fore],
       joint: 'hinge', bend: [-2.4, 0.05] } // (the hand comes up in front: about the person's side, negative)
   ]),
-  ...[[B.THIGH_L, B.SHIN_L, B.FOOT_L], [B.THIGH_R, B.SHIN_R, B.FOOT_R]].flatMap(([thigh, shin, foot]) => [
+  ...[[B.THIGH_L, B.SHIN_L, B.FOOT_L], [B.THIGH_R, B.SHIN_R, B.FOOT_R]].flatMap(([thigh, shin, foot]): PartSpec[] => [
     { bone: thigh, parent: 0, mass: 0.1, r: 0.075, seg: (J) => [J[thigh], J[shin]], at: (J) => J[thigh],
       joint: 'cone', swing: [1.3, 0.55], twist: 0.4 },
     { bone: shin, parent: 'thigh', mass: 0.06, r: 0.055, seg: (J) => [J[shin], J[foot]], at: (J) => J[shin],
@@ -42,7 +161,7 @@ const PARTS = [
   ])
 ];
 // (a forearm's parent is the upper arm just before it, a shin's the thigh)
-PARTS.forEach((p, i) => { if (typeof p.parent === 'string') p.parent = i - 1; });
+const PARTS: readonly Part[] = PART_SPECS.map((p, i) => ({ ...p, parent: typeof p.parent === 'string' ? i - 1 : p.parent }));
 // the part each bone rides on (the feet and toes on the shins)
 const PART_OF_BONE = new Int8Array(BONES).fill(-1);
 PARTS.forEach((p, i) => { PART_OF_BONE[p.bone] = i; });
@@ -61,14 +180,14 @@ const GROUND_SAMPLES = 32; // the ground under each: 32 samples 1 m apart, sampl
 const GROUND_CELL = 1;
 const GROUND_RECENTRE = 8;
 
-function along(a, b, length) {
+function along(a: Point3, b: Point3, length: number): Point3 {
   const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
   const k = length / (Math.hypot(dx, dy, dz) || 1);
   return { x: b.x + dx * k, y: b.y + dy * k, z: b.z + dz * k };
 }
 
 // ---- Quaternions as [x, y, z, w] (pure) ------------------------------------------------------------------------
-function qmul(a, b, out = [0, 0, 0, 1]) {
+function qmul(a: Quat, b: Quat, out: Quat = [0, 0, 0, 1]): Quat {
   const [ax, ay, az, aw] = a, [bx, by, bz, bw] = b;
   out[0] = aw * bx + ax * bw + ay * bz - az * by;
   out[1] = aw * by - ax * bz + ay * bw + az * bx;
@@ -76,8 +195,8 @@ function qmul(a, b, out = [0, 0, 0, 1]) {
   out[3] = aw * bw - ax * bx - ay * by - az * bz;
   return out;
 }
-const qconj = (q, out = [0, 0, 0, 1]) => { out[0] = -q[0]; out[1] = -q[1]; out[2] = -q[2]; out[3] = q[3]; return out; };
-function qrot(q, v, out = [0, 0, 0]) {
+const qconj = (q: Quat, out: Quat = [0, 0, 0, 1]): Quat => { out[0] = -q[0]; out[1] = -q[1]; out[2] = -q[2]; out[3] = q[3]; return out; };
+function qrot(q: Quat, v: Vec3, out: Vec3 = [0, 0, 0]): Vec3 {
   const [x, y, z, w] = q, [vx, vy, vz] = v;
   const cx = y * vz - z * vy, cy = z * vx - x * vz, cz = x * vy - y * vx;
   out[0] = vx + 2 * (w * cx + y * cz - z * cy);
@@ -86,7 +205,7 @@ function qrot(q, v, out = [0, 0, 0]) {
   return out;
 }
 // The rotation taking unit vector a to unit vector b
-function qbetween(a, b) {
+function qbetween(a: Vec3, b: Vec3): Quat {
   const d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   if (d < -0.999999) return [1, 0, 0, 0]; // (half a turn about any axis square to a: a is y here, so x)
   const q = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0], 1 + d];
@@ -99,7 +218,7 @@ function qbetween(a, b) {
  * shot, a bicycle or a moto: what the player's car does its body works out itself, against theirs): along the hit, a
  * little outwards, and up, more the faster it came
  */
-function throwVelocity(vx, vz, nx, nz) {
+function throwVelocity(vx: number, vz: number, nx: number, nz: number): { vx: number; vy: number; vz: number } {
   const speed = Math.hypot(vx, vz);
   return {
     vx: vx * 0.85 + nx * (1.2 + speed * 0.12),
@@ -109,7 +228,7 @@ function throwVelocity(vx, vz, nx, nz) {
 }
 
 /** Pure: how badly (0..1) someone hit at `speed` m/s bleeds where they come to rest: nothing from a knock */
-function bleedOf(speed) {
+function bleedOf(speed: number): number {
   return speed > 6 ? Math.min(1, speed / 22) : 0;
 }
 
@@ -119,14 +238,14 @@ function bleedOf(speed) {
  * world), its capsule (half height & radius, and its axis's rotation from +y in the body's frame), its mass, and its
  * joint to its parent (anchor in the world; the bone's direction & the person's side, in the world).
  */
-function partLayout(J, pose, s) {
+function partLayout(J: BindJoints, pose: ArrayLike<number>, s: number): PartLayout[] {
   // a bind-space point of `bone` in the world
-  const world = (bone, p) => {
+  const world = (bone: number, p: Vec3): Vec3 => {
     const o = bone * 8, q = [pose[o], pose[o + 1], pose[o + 2], pose[o + 3]], k = pose[o + 7] || s;
     const v = qrot(q, [p[0] * k, p[1] * k, p[2] * k]);
     return [v[0] + pose[o + 4], v[1] + pose[o + 5], v[2] + pose[o + 6]];
   };
-  const pt = (p) => (Array.isArray(p) ? p : [p.x, p.y, p.z]);
+  const pt = (p: Point3 | Vec3): Vec3 => (Array.isArray(p) ? p : [p.x, p.y, p.z]);
   return PARTS.map((part) => {
     const o = part.bone * 8, q = [pose[o], pose[o + 1], pose[o + 2], pose[o + 3]];
     const k = pose[o + 7] || s;
@@ -136,11 +255,11 @@ function partLayout(J, pose, s) {
     const dir = d.map((v) => v / (Math.hypot(...d) || 1));
     const r = part.r * k;
     const centre = world(part.bone, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]);
-    const layout = {
+    const layout: PartLayout = {
       rotation: q, position: centre, halfHeight: Math.max(0.01, len / 2 - r), radius: r,
       axis: qbetween([0, 1, 0], dir), mass: part.mass * MASS * k * k * k, parent: part.parent
     };
-    if (part.parent >= 0) {
+    if (part.parent >= 0 && part.joint && part.at) {
       layout.joint = {
         kind: part.joint, anchor: world(part.bone, pt(part.at(J))),
         twist: qrot(q, dir), side: qrot(q, [1, 0, 0]), front: qrot(q, [0, 0, 1]),
@@ -157,7 +276,8 @@ function partLayout(J, pose, s) {
  * (one quaternion a part) is scratch space, so nothing is allocated per frame.
  */
 const _q = [0, 0, 0, 1], _v = [0, 0, 0], _out = [0, 0, 0, 1], _t = [0, 0, 0], _inv = [0, 0, 0, 1];
-function poseFromParts(pose, base, rot0, pos0, rot, pos, delta = rot.map(() => [0, 0, 0, 1])) {
+function poseFromParts(pose: Float32Array, base: ArrayLike<number>, rot0: readonly Quat[], pos0: readonly Vec3[], rot: readonly Quat[],
+  pos: readonly Vec3[], delta: Quat[] = rot.map(() => [0, 0, 0, 1])): void {
   for (let i = 0; i < rot.length; i++) qmul(rot[i], qconj(rot0[i], _inv), delta[i]);
   const q = _q, v = _v, out = _out, t = _t;
   for (let b = 0; b < BONES; b++) {
@@ -173,12 +293,12 @@ function poseFromParts(pose, base, rot0, pos0, rot, pos, delta = rot.map(() => [
 }
 
 /**
- * The ragdolls in the world of `physics` (player/car-physics.js createCarPhysics). spawn(rig, { vx, vy, vz, bleed })
+ * The ragdolls in the world of `physics` (player/car-physics.ts createCarPhysics). spawn(rig, { vx, vy, vz, bleed })
  * throws a PersonRig from its pose as it stands (its pose array then follows the physics); the handle it returns has
  * px, py, pz (the pelvis), rest (s it has lain still) and settled; release(handle) lets it go. `onSettle(handle)` is
- * called as one comes to rest (main.js: a pool of blood under someone hit hard).
+ * called as one comes to rest (main.ts: a pool of blood under someone hit hard).
  */
-function createRagdolls(physics) {
+function createRagdolls(physics: RagdollPhysics): Ragdolls {
   const { Jolt, system, bodies, layers } = physics.world;
   const filter = new Jolt.GroupFilterTable(PARTS.length);
   filter.AddRef(); // (ours for good: the bodies' references alone would free it with the last of them)
@@ -188,17 +308,17 @@ function createRagdolls(physics) {
   for (const arm of [3, 4, 5, 6]) filter.DisableCollision(arm, 0);
   const tmpV = new Jolt.Vec3(0, 0, 0), tmpV2 = new Jolt.Vec3(0, 0, 0), tmpR = new Jolt.RVec3(0, 0, 0);
   const tmpQ = new Jolt.Quat(0, 0, 0, 1);
-  const vec = (a, v = tmpV) => { v.Set(a[0], a[1], a[2]); return v; };
-  const rvec = (a) => { tmpR.Set(a[0], a[1], a[2]); return tmpR; };
-  const quat = (q) => { tmpQ.Set(q[0], q[1], q[2], q[3]); return tmpQ; };
-  const handles = new Set();
+  const vec = (a: Vec3, v = tmpV) => { v.Set(a[0], a[1], a[2]); return v; };
+  const rvec = (a: Vec3) => { tmpR.Set(a[0], a[1], a[2]); return tmpR; };
+  const quat = (q: Quat) => { tmpQ.Set(q[0], q[1], q[2], q[3]); return tmpQ; };
+  const handles = new Set<RagdollHandle>();
   let group = 0;
-  const api = { onSettle: null };
+  const api: Ragdolls = { onSettle: null, spawn, release, before, after, count };
 
   // Takes its bodies out of the world, its pose kept; one come to rest on the ground (not one stopped short, mid-air)
   // is told to onSettle
-  function freeze(h) {
-    if (!h.parts) return;
+  function freeze(h: RagdollHandle): void {
+    if (!h.parts || !h.joints) return;
     for (const c of h.joints) system.RemoveConstraint(c);
     for (const body of h.parts) physics.world.dropBody(body);
     if (h.ground) physics.world.dropBody(h.ground);
@@ -209,10 +329,10 @@ function createRagdolls(physics) {
     }
   }
 
-  api.spawn = function spawn(rig, { vx = 0, vy = 0, vz = 0, spin = 2, bleed = 0 } = {}) {
+  function spawn(rig: RagdollRig, { vx = 0, vy = 0, vz = 0, spin = 2, bleed = 0 }: ThrowOptions = {}): RagdollHandle {
     // one too many: the slowest freezes where it lies; none slow (a blast's crowd in the air), they all go on up to a
     // harder limit, where the stillest freezes even so
-    let active = 0, slowest = null;
+    let active = 0, slowest: RagdollHandle | null = null;
     for (const h of handles) {
       if (!h.parts) continue;
       active++;
@@ -247,12 +367,13 @@ function createRagdolls(physics) {
       bodies.SetLinearAndAngularVelocity(body.GetID(), vec([vx, vy, vz]), vec([sideX / sl * w, (Math.random() - 0.5) * spin, sideZ / sl * w], tmpV2));
       return body;
     });
-    const joints = [];
+    const joints: Jolt.Constraint[] = [];
     layout.forEach((l, i) => {
       if (!l.joint) return;
       const j = l.joint;
       let settings;
       if (j.kind === 'hinge') {
+        if (!j.bend) return;
         settings = new Jolt.HingeConstraintSettings();
         settings.mSpace = Jolt.EConstraintSpace_WorldSpace;
         settings.mPoint1 = rvec(j.anchor);
@@ -265,6 +386,7 @@ function createRagdolls(physics) {
         settings.mLimitsMax = j.bend[1];
         settings.mMaxFrictionTorque = 2 * l.mass;
       } else {
+        if (!j.swing || j.twistLimit === undefined) return;
         settings = new Jolt.SwingTwistConstraintSettings();
         settings.mSpace = Jolt.EConstraintSpace_WorldSpace;
         settings.mPosition1 = rvec(j.anchor);
@@ -285,7 +407,7 @@ function createRagdolls(physics) {
       joints.push(c);
     });
     const p = layout[0].position;
-    const h = {
+    const h: RagdollHandle = {
       rig, base, parts, joints, ground: null, gx: NaN, gz: NaN, gy: NaN,
       rot0: layout.map((l) => l.rotation), pos0: layout.map((l) => l.position),
       rot: layout.map(() => [0, 0, 0, 1]), pos: layout.map(() => [0, 0, 0]), delta: layout.map(() => [0, 0, 0, 1]),
@@ -293,27 +415,27 @@ function createRagdolls(physics) {
     };
     handles.add(h);
     return h;
-  };
+  }
 
-  api.release = function release(h) {
+  function release(h: RagdollHandle | null | undefined): void {
     if (!h || !handles.has(h)) return;
     h.settled = true; // (no onSettle for one let go)
     freeze(h);
     handles.delete(h);
-  };
+  }
 
   // Before each step: the ground under each one moving, at its level
-  api.before = function before() {
+  function before(): void {
     for (const h of handles) {
       if (!h.parts) continue;
       if (Math.hypot(h.px - h.gx, h.pz - h.gz) < GROUND_RECENTRE && Math.abs(h.py - h.gy) < 3) continue;
       h.ground = physics.world.groundField(h.ground, h.px, h.pz, h.py + 0.5, GROUND_SAMPLES, GROUND_CELL);
       h.gx = h.px; h.gz = h.pz; h.gy = h.py;
     }
-  };
+  }
 
   // After each step: the bones follow the parts; still ones freeze
-  api.after = function after(dt) {
+  function after(dt: number): void {
     for (const h of handles) {
       if (!h.parts) {
         h.rest += dt;
@@ -337,11 +459,14 @@ function createRagdolls(physics) {
       // still; or long after, only crawling along the ground; or very long after, whatever it is doing
       if (h.still > SETTLE_TIME || (h.age > MAX_LIFE && fastest <= SLOW) || h.age > MAX_LIFE_HARD) freeze(h);
     }
-  };
+  }
 
-  api.count = () => [...handles].filter((h) => h.parts).length;
+  function count(): number {
+    return [...handles].filter((h) => h.parts).length;
+  }
   physics.addSystem(api);
   return api;
 }
 
+export type { Vec3, Quat, Point3, BindJoints, RagdollRig, PartSpec, Part, PartLayout, PartJoint, RagdollPhysics, ThrowOptions, RagdollHandle, Ragdolls };
 export { createRagdolls, throwVelocity, bleedOf, partLayout, poseFromParts, PARTS, PART_OF_BONE, qmul, qrot };

@@ -3,15 +3,16 @@ import { GEO } from './city-geodata.js';
 import { groundHeight, landHeight, decks } from './ground.ts';
 import { drapeGeometry } from './drape.ts';
 import { createRoadSurfaceMaterial, createBridgeConcreteMaterial, createTrackBedMaterial, createUnderpassEarthMaterial } from '../render/tsl-materials.ts';
+import type { Collider } from './buildings.ts';
 
-// js/world/bridges.js
+// js/world/bridges.ts
 // The overpasses, their ramps and the railway, drawn from the lifts the geodata builder solved for every road link and
 // rail line (tools/build-tepic-geodata.mjs, 3B: dm over the ground at each vertex, piecewise linear between them) — the
-// same heights the traffic drives (road-network.js edgeLift) and the player stands on (ground.js deckLift).
+// same heights the traffic drives (road-network.ts edgeLift) and the player stands on (ground.ts deckLift).
 // A deck is asphalt over concrete: its walls run down to the ground while it is low (a ramp's embankment), and once it
 // is OPEN m up it is a slab on piers, which stand off whatever road or track passes under it. Parapets line a deck from
 // PARAPET m up, and the at-grade bridges over the streams. Under a span the ground is bare earth (the town's asphalt,
-// city-grid.js, runs everywhere but its blocks), but for the road or track it passes over. The railway is a ballast bed with sleepers and two rails,
+// city-grid.ts, runs everywhere but its blocks), but for the road or track it passes over. The railway is a ballast bed with sleepers and two rails,
 // set flush into the road where it crosses one at grade.
 // Everything is built flat (y = lift over the ground) and laid on the town's slopes like the other ground layers.
 
@@ -28,16 +29,67 @@ const JUNCTION_GAP = 9; // m: parapets stop short of a junction on a deck so tra
 const EARTH_Y = 0.05; // the earth under a span, over the asphalt (0) and the meadows (0.03)
 const EARTH_PATCH = 2; // m: it is laid in patches about this big, each left out where a road passes under it
 
+/** A point in the world [x, y, z] (m), or a direction */
+type P3 = [number, number, number];
+/** A point on the ground [x, z] (m), or a direction on it */
+type P2 = [number, number];
+
+/** A triangle soup being built (see soup) */
+interface Soup {
+  position: number[];
+  normal: number[];
+  track: number[] | null;
+  quad(a: P3, b: P3, c: P3, d: P3, n: P3, t?: [P2, P2, P2, P2] | null): void;
+  geometry(): THREE.BufferGeometry | null;
+}
+
+/** A piece of a road or rail line from (ax, az) lifted la m over the ground to (bx, bz) lifted lb, half its width (m) */
+interface UnderSegment {
+  ax: number;
+  az: number;
+  bx: number;
+  bz: number;
+  la: number;
+  lb: number;
+  half: number;
+  owner: BridgeLine;
+  kind: 'road' | 'rail';
+}
+
+/** A road link or rail line as a polyline (m) with its lift over the ground at each point (m) */
+interface LineBase {
+  id: number;
+  pts: P2[];
+  lifts: number[];
+  half: number;
+  /** An OSM bridge */
+  bridge: boolean;
+  segs: UnderSegment[];
+}
+interface RoadLine extends LineBase {
+  rail?: undefined;
+  /** Its end nodes in the road graph */
+  a: number;
+  b: number;
+}
+interface RailLine extends LineBase {
+  rail: true;
+}
+type BridgeLine = RoadLine | RailLine;
+
+/** Is something (but `owner`) under (x, z) within its half width + pad, below `below` m over the ground? */
+type UnderQuery = (x: number, z: number, pad: number, below: number, owner: BridgeLine, kind?: 'road' | 'rail' | null) => boolean;
+
 // Non-indexed triangle soup (position, normal, optional track coordinates)
-function soup(withTrack = false) {
-  const position = [], normal = [], track = withTrack ? [] : null;
+function soup(withTrack = false): Soup {
+  const position: number[] = [], normal: number[] = [], track: number[] | null = withTrack ? [] : null;
   return {
     position, normal, track,
     // quad a-b-c-d (corners in order around it) facing n, wound to face that way; t: [u, v] per corner
     quad(a, b, c, d, n, t = null) {
       const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
       const facing = (uy * vz - uz * vy) * n[0] + (uz * vx - ux * vz) * n[1] + (ux * vy - uy * vx) * n[2];
-      const order = facing >= 0 ? [[a, 0], [b, 1], [c, 2], [a, 0], [c, 2], [d, 3]] : [[a, 0], [c, 2], [b, 1], [a, 0], [d, 3], [c, 2]];
+      const order: [P3, number][] = facing >= 0 ? [[a, 0], [b, 1], [c, 2], [a, 0], [c, 2], [d, 3]] : [[a, 0], [c, 2], [b, 1], [a, 0], [d, 3], [c, 2]];
       for (const [p, k] of order) {
         position.push(p[0], p[1], p[2]);
         normal.push(n[0], n[1], n[2]);
@@ -56,9 +108,9 @@ function soup(withTrack = false) {
 }
 
 // A box (centre, half sizes along/across/up, turned by its along direction ux, uz) as quads, without its bottom
-function addBox(s, cx, cy, cz, ux, uz, hl, hw, hh) {
+function addBox(s: Soup, cx: number, cy: number, cz: number, ux: number, uz: number, hl: number, hw: number, hh: number) {
   const rx = -uz, rz = ux; // across, to the left of along
-  const p = (a, w, h) => [cx + ux * a + rx * w, cy + h, cz + uz * a + rz * w];
+  const p = (a: number, w: number, h: number): P3 => [cx + ux * a + rx * w, cy + h, cz + uz * a + rz * w];
   s.quad(p(-hl, -hw, hh), p(-hl, hw, hh), p(hl, hw, hh), p(hl, -hw, hh), [0, 1, 0]);
   s.quad(p(hl, -hw, -hh), p(hl, -hw, hh), p(hl, hw, hh), p(hl, hw, -hh), [ux, 0, uz]);
   s.quad(p(-hl, hw, -hh), p(-hl, hw, hh), p(-hl, -hw, hh), p(-hl, -hw, -hh), [-ux, 0, -uz]);
@@ -67,16 +119,17 @@ function addBox(s, cx, cy, cz, ux, uz, hl, hw, hh) {
 }
 
 // The road links' and rail lines' centrelines in 32 m cells, for "does a road or the track pass here, at grade?"
-function createUnderQuery(roads, rails) {
+function createUnderQuery(roads: readonly { segs: UnderSegment[] }[], rails: readonly { segs: UnderSegment[] }[]): UnderQuery {
   const CELL = 32;
-  const cells = new Map();
-  const add = (sg) => {
+  const cells = new Map<number, UnderSegment[]>();
+  const add = (sg: UnderSegment) => {
     const r = sg.half;
     for (let ix = Math.floor((Math.min(sg.ax, sg.bx) - r) / CELL); ix <= Math.floor((Math.max(sg.ax, sg.bx) + r) / CELL); ix++) {
       for (let iz = Math.floor((Math.min(sg.az, sg.bz) - r) / CELL); iz <= Math.floor((Math.max(sg.az, sg.bz) + r) / CELL); iz++) {
         const k = ix * 100003 + iz;
-        if (!cells.has(k)) cells.set(k, []);
-        cells.get(k).push(sg);
+        let cell = cells.get(k);
+        if (!cell) cells.set(k, (cell = []));
+        cell.push(sg);
       }
     }
   };
@@ -99,49 +152,48 @@ function createUnderQuery(roads, rails) {
 }
 
 // A polyline's per-vertex offset to its left (unit across, stretched at bends so both sides keep their width; capped)
-function miters(pts) {
-  const out = [];
+function miters(pts: P2[]): P2[] {
+  const out: P2[] = [];
   for (let i = 0; i < pts.length; i++) {
     const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
     const p = pts[i];
     const d0 = i > 0 ? norm(p[0] - a[0], p[1] - a[1]) : null;
     const d1 = i + 1 < pts.length ? norm(b[0] - p[0], b[1] - p[1]) : null;
     const dx = (d0 ? d0[0] : 0) + (d1 ? d1[0] : 0), dz = (d0 ? d0[1] : 0) + (d1 ? d1[1] : 0);
-    const [tx, tz] = norm(dx, dz) || d0 || d1;
+    const [tx, tz] = norm(dx, dz) ?? d0 ?? d1 ?? [1, 0]; // (a lone point, or one between two empty segments: any way)
     const cos = d1 ? tx * d1[0] + tz * d1[1] : 1;
     const k = 1 / Math.max(0.5, cos);
     out.push([tz * k, -tx * k]);
   }
   return out;
 }
-function norm(x, z) {
+function norm(x: number, z: number): P2 | null {
   const l = Math.hypot(x, z);
   return l > 1e-9 ? [x / l, z / l] : null;
 }
 
-function buildBridges(scene) {
+function buildBridges(scene: THREE.Scene): { group: THREE.Group; colliders: Collider[] } {
   const group = new THREE.Group();
   group.name = 'Bridges';
-  const colliders = [];
+  const colliders: Collider[] = [];
   const RG = GEO.roadGraph;
-  if (!RG) return { group, colliders };
   const N = RG.nodes;
 
   // The roads (every link: what passes under a deck matters as much as the decks) and the rail lines, as polylines
   // with their lifts in metres
-  const degree = new Map();
-  const roads = RG.links.map((link, id) => {
-    const pts = [[N[link[0] * 2], N[link[0] * 2 + 1]]];
+  const degree = new Map<number, number>();
+  const roads = RG.links.map((link, id): RoadLine => {
+    const pts: P2[] = [[N[link[0] * 2], N[link[0] * 2 + 1]]];
     for (let k = 0; k < link[6].length; k += 2) pts.push([link[6][k], link[6][k + 1]]);
     pts.push([N[link[1] * 2], N[link[1] * 2 + 1]]);
     for (const n of [link[0], link[1]]) degree.set(n, (degree.get(n) || 0) + 1);
     const lifts = link[7] ? link[7].map((v) => v / 10) : pts.map(() => 0);
-    return { id, a: link[0], b: link[1], pts, lifts, half: link[3] / 2, bridge: link[8] === 1 };
+    return { id, a: link[0], b: link[1], pts, lifts, half: link[3] / 2, bridge: link[8] === 1, segs: [] }; // (segs: below)
   });
-  const rails = (GEO.rails || []).map(([flat, lifts, bridge], id) => {
-    const pts = [];
+  const rails = GEO.rails.map(([flat, lifts, bridge], id): RailLine => {
+    const pts: P2[] = [];
     for (let k = 0; k + 1 < flat.length; k += 2) pts.push([flat[k], flat[k + 1]]);
-    return { id: -1 - id, pts, lifts: lifts ? lifts.map((v) => v / 10) : pts.map(() => 0), half: 2.0, bridge: bridge === 1, rail: true };
+    return { id: -1 - id, pts, lifts: lifts ? lifts.map((v) => v / 10) : pts.map(() => 0), half: 2.0, bridge: bridge === 1, rail: true, segs: [] };
   });
   for (const line of [...roads, ...rails]) {
     line.segs = [];
@@ -159,7 +211,7 @@ function buildBridges(scene) {
   const earth = soup();
 
   // An oriented box collider from a to b (centre line), `off` to the left of it, half thickness ht, between heights
-  const wallCollider = (ax, az, bx, bz, off, ht, y0, y1) => {
+  const wallCollider = (ax: number, az: number, bx: number, bz: number, off: number, ht: number, y0: number, y1: number) => {
     const len = Math.hypot(bx - ax, bz - az);
     if (len < 0.2) return;
     const ux = (bx - ax) / len, uz = (bz - az) / len;
@@ -171,18 +223,20 @@ function buildBridges(scene) {
   };
 
   // Parapets along one side of a deck (side +1: left of the line, -1: right) from a to b, lifts la..lb
-  const parapet = (a, b, ma, mb, la, lb, half, side, cap0, cap1) => {
+  const parapet = (a: P2, b: P2, ma: P2, mb: P2, la: number, lb: number, half: number, side: number, cap0: boolean, cap1: boolean) => {
     const o0 = half * side, o1 = (half - PARAPET_T) * side;
-    const P = (p, m, o, y) => [p[0] + m[0] * o, y, p[1] + m[1] * o];
-    const outA = (y) => P(a, ma, o0, y), outB = (y) => P(b, mb, o0, y), inA = (y) => P(a, ma, o1, y), inB = (y) => P(b, mb, o1, y);
+    const P = (p: P2, m: P2, o: number, y: number): P3 => [p[0] + m[0] * o, y, p[1] + m[1] * o];
+    const outA = (y: number) => P(a, ma, o0, y), outB = (y: number) => P(b, mb, o0, y), inA = (y: number) => P(a, ma, o1, y), inB = (y: number) => P(b, mb, o1, y);
     const ha = la + PARAPET_H, hb = lb + PARAPET_H;
     const ux = b[0] - a[0], uz = b[1] - a[1];
-    const [nx, nz] = norm(uz * side, -ux * side) || [0, 1]; // outward
-    const q = (p0, p1, p2, p3, n) => concrete.quad(p0, p1, p2, p3, n);
+    const [nx, nz] = norm(uz * side, -ux * side) ?? [0, 1]; // outward
+    const q = (p0: P3, p1: P3, p2: P3, p3: P3, n: P3) => {
+      concrete.quad(p0, p1, p2, p3, n);
+    };
     q(outB(lb), outB(hb), outA(ha), outA(la), [nx, 0, nz]);
     q(inA(la), inA(ha), inB(hb), inB(lb), [-nx, 0, -nz]);
     q(inA(ha), outA(ha), outB(hb), inB(hb), [0, 1, 0]);
-    const [dx, dz] = norm(ux, uz) || [1, 0];
+    const [dx, dz] = norm(ux, uz) ?? [1, 0];
     if (cap0) q(outA(la), outA(ha), inA(ha), inA(la), [-dx, 0, -dz]);
     if (cap1) q(inB(lb), inB(hb), outB(hb), outB(lb), [dx, 0, dz]);
     const off = -(half - PARAPET_T / 2) * side; // (wallCollider's offsets run the other way to the miters')
@@ -199,15 +253,15 @@ function buildBridges(scene) {
 
   // A deck along a line: its top (asphalt for a road, left out for the railway, whose bed goes on top), walls, slab
   // underside, end walls where it opens up over the ground, piers under its spans and parapets
-  function deck(line) {
+  function deck(line: BridgeLine) {
     const { pts, lifts } = line;
     if (!lifts.some((l) => l > 0.05)) return;
     const half = line.half + 0.4;
     const m = miters(pts);
     // parapets stop short of junctions at either end (more than two links meeting at a node)
     const total = pts.reduce((s, p, i) => s + (i ? Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) : 0), 0);
-    const trim0 = !line.rail && (degree.get(line.a) || 0) > 2 ? JUNCTION_GAP : 0;
-    const trim1 = !line.rail && (degree.get(line.b) || 0) > 2 ? JUNCTION_GAP : 0;
+    const trim0 = !line.rail && (degree.get(line.a) ?? 0) > 2 ? JUNCTION_GAP : 0;
+    const trim1 = !line.rail && (degree.get(line.b) ?? 0) > 2 ? JUNCTION_GAP : 0;
     let walked = 0;
     let nextPier = PIER_EVERY / 2;
     let railing = false; // a parapet run is open
@@ -224,8 +278,8 @@ function buildBridges(scene) {
       for (let k = 0; k + 1 < cuts.length; k++) {
         const f0 = cuts[k], f1 = cuts[k + 1];
         if (f1 - f0 < 1e-4) continue;
-        const lerp = (f) => [A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f];
-        const mlerp = (f) => [m[i][0] + (m[i + 1][0] - m[i][0]) * f, m[i][1] + (m[i + 1][1] - m[i][1]) * f];
+        const lerp = (f: number): P2 => [A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f];
+        const mlerp = (f: number): P2 => [m[i][0] + (m[i + 1][0] - m[i][0]) * f, m[i][1] + (m[i + 1][1] - m[i][1]) * f];
         const a = lerp(f0), b = lerp(f1), ma = mlerp(f0), mb = mlerp(f1);
         const l0 = la + (lb - la) * f0, l1 = la + (lb - la) * f1;
         const mid = (l0 + l1) / 2;
@@ -235,8 +289,8 @@ function buildBridges(scene) {
           continue;
         }
         const ux = (b[0] - a[0]), uz = (b[1] - a[1]);
-        const [dx, dz] = norm(ux, uz) || [1, 0];
-        const P = (p, mm, o, y) => [p[0] + mm[0] * o, y, p[1] + mm[1] * o];
+        const [dx, dz] = norm(ux, uz) ?? [1, 0];
+        const P = (p: P2, mm: P2, o: number, y: number): P3 => [p[0] + mm[0] * o, y, p[1] + mm[1] * o];
         const open = mid >= OPEN;
         const bot0 = open ? l0 - SLAB : -0.3, bot1 = open ? l1 - SLAB : -0.3;
         // top: the road's asphalt, at the lift itself (flush with the asphalt at grade where a ramp starts)
@@ -250,7 +304,7 @@ function buildBridges(scene) {
           const n = Math.ceil(Math.hypot(ux, uz) / 6);
           for (let j = 0; j < n; j++) {
             const g0 = j / n, g1 = (j + 1) / n;
-            const c0 = [a[0] + ux * g0, a[1] + uz * g0], c1 = [a[0] + ux * g1, a[1] + uz * g1];
+            const c0: P2 = [a[0] + ux * g0, a[1] + uz * g0], c1: P2 = [a[0] + ux * g1, a[1] + uz * g1];
             const g = groundHeight((c0[0] + c1[0]) / 2, (c0[1] + c1[1]) / 2);
             const top = g + Math.min(l0 + (l1 - l0) * g0, l0 + (l1 - l0) * g1) - 0.05;
             for (const side of [1, -1]) wallCollider(c0[0], c0[1], c1[0], c1[1], -(half - 0.15) * side, 0.2, g - 0.3, top);
@@ -295,10 +349,10 @@ function buildBridges(scene) {
 
   // The ground under a span from a to b (lifts l0..l1): bare earth in patches, but where a road passes under (its own
   // asphalt, half a metre wider) or a river's channel opens (river-channels.js)
-  function underSpan(a, b, ma, mb, half, l0, l1, line) {
+  function underSpan(a: P2, b: P2, ma: P2, mb: P2, half: number, l0: number, l1: number, line: BridgeLine) {
     const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / EARTH_PATCH));
     const m = Math.max(1, Math.ceil((2 * half) / EARTH_PATCH));
-    const at = (f, o) => {
+    const at = (f: number, o: number): P3 => {
       const mx = ma[0] + (mb[0] - ma[0]) * f, mz = ma[1] + (mb[1] - ma[1]) * f;
       return [a[0] + (b[0] - a[0]) * f + mx * o, EARTH_Y, a[1] + (b[1] - a[1]) * f + mz * o];
     };
@@ -316,7 +370,7 @@ function buildBridges(scene) {
   }
 
   // A pier under a deck: a cap beam across it on one column (two under a wide deck), from the ground up to `top`
-  function pier(x, z, dx, dz, half, top) {
+  function pier(x: number, z: number, dx: number, dz: number, half: number, top: number) {
     const capH = Math.min(0.9, top * 0.25);
     const colTop = top - capH;
     const rx = -dz, rz = dx;
@@ -338,11 +392,11 @@ function buildBridges(scene) {
   for (const j of decks.junctions) {
     const SIDES = 16;
     const bot = j.lift >= OPEN ? j.lift - SLAB : -0.3;
-    const rim = (k) => [j.x + Math.cos((k / SIDES) * Math.PI * 2) * j.r, j.z + Math.sin((k / SIDES) * Math.PI * 2) * j.r];
+    const rim = (k: number): P2 => [j.x + Math.cos((k / SIDES) * Math.PI * 2) * j.r, j.z + Math.sin((k / SIDES) * Math.PI * 2) * j.r];
     for (let k = 0; k < SIDES; k++) {
       const a = rim(k), b = rim(k + 1);
       const mx = (a[0] + b[0]) / 2 - j.x, mz = (a[1] + b[1]) / 2 - j.z;
-      const [nx, nz] = norm(mx, mz);
+      const [nx, nz] = norm(mx, mz) ?? [1, 0]; // (a disc of no size: any way)
       asphalt.quad([j.x, j.lift, j.z], [a[0], j.lift, a[1]], [b[0], j.lift, b[1]], [j.x, j.lift, j.z], [0, 1, 0]);
       concrete.quad([a[0], bot, a[1]], [a[0], j.lift, a[1]], [b[0], j.lift, b[1]], [b[0], bot, b[1]], [nx, 0, nz]);
       if (j.lift >= OPEN) concrete.quad([j.x, bot, j.z], [a[0], bot, a[1]], [b[0], bot, b[1]], [j.x, bot, j.z], [0, -1, 0]);
@@ -354,16 +408,16 @@ function buildBridges(scene) {
     if (!line.bridge || line.lifts.some((l) => l > 0.05)) continue;
     const m = miters(line.pts);
     const total = line.pts.reduce((s, p, i) => s + (i ? Math.hypot(p[0] - line.pts[i - 1][0], p[1] - line.pts[i - 1][1]) : 0), 0);
-    const t0 = Math.min(total * 0.3, (degree.get(line.a) || 0) > 2 ? JUNCTION_GAP : 1);
-    const t1 = total - Math.min(total * 0.3, (degree.get(line.b) || 0) > 2 ? JUNCTION_GAP : 1);
+    const t0 = Math.min(total * 0.3, (degree.get(line.a) ?? 0) > 2 ? JUNCTION_GAP : 1);
+    const t1 = total - Math.min(total * 0.3, (degree.get(line.b) ?? 0) > 2 ? JUNCTION_GAP : 1);
     let walked = 0;
     for (let i = 0; i + 1 < line.pts.length; i++) {
       const A = line.pts[i], B = line.pts[i + 1];
       const len = Math.hypot(B[0] - A[0], B[1] - A[1]);
       const f0 = Math.max(0, (t0 - walked) / len), f1 = Math.min(1, (t1 - walked) / len);
       if (len > 0.01 && f1 > f0) {
-        const at = (f) => [A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f];
-        const mat = (f) => [m[i][0] + (m[i + 1][0] - m[i][0]) * f, m[i][1] + (m[i + 1][1] - m[i][1]) * f];
+        const at = (f: number): P2 => [A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f];
+        const mat = (f: number): P2 => [m[i][0] + (m[i + 1][0] - m[i][0]) * f, m[i][1] + (m[i + 1][1] - m[i][1]) * f];
         for (const side of [1, -1]) parapet(at(f0), at(f1), mat(f0), mat(f1), 0, 0, line.half + 0.4, side, walked + len * f0 <= t0 + 0.01, walked + len * f1 >= t1 - 0.01);
       }
       walked += len;
@@ -378,14 +432,14 @@ function buildBridges(scene) {
       const A = pts[i], B = pts[i + 1];
       const len = Math.hypot(B[0] - A[0], B[1] - A[1]);
       if (len < 0.01) continue;
-      const [dx, dz] = norm(B[0] - A[0], B[1] - A[1]);
+      const [dx, dz] = norm(B[0] - A[0], B[1] - A[1]) ?? [1, 0]; // (len >= 0.01: never null)
       const rx = -dz, rz = dx;
       // runs of the segment on the open ground or across a road at grade, sampled every metre
       const steps = Math.max(1, Math.ceil(len));
       let runStart = 0;
-      let inRoad = null;
-      const flush = (f0, f1, road) => {
-        const p = (f, o, y) => [A[0] + (B[0] - A[0]) * f + rx * o, y, A[1] + (B[1] - A[1]) * f + rz * o];
+      let inRoad: boolean | null = null;
+      const flush = (f0: number, f1: number, road: boolean) => {
+        const p = (f: number, o: number, y: number): P3 => [A[0] + (B[0] - A[0]) * f + rx * o, y, A[1] + (B[1] - A[1]) * f + rz * o];
         const l0 = lifts[i] + (lifts[i + 1] - lifts[i]) * f0, l1 = lifts[i] + (lifts[i + 1] - lifts[i]) * f1;
         const u0 = u + len * f0, u1 = u + len * f1;
         const top0 = l0 + (road ? 0 : BED_TOP), top1 = l1 + (road ? 0 : BED_TOP);
@@ -411,7 +465,7 @@ function buildBridges(scene) {
         const x = A[0] + (B[0] - A[0]) * f, z = A[1] + (B[1] - A[1]) * f;
         const lift = lifts[i] + (lifts[i + 1] - lifts[i]) * f;
         const road = s < steps && under(x, z, 1.2, lift + 0.5, line, 'road');
-        if (inRoad === null) inRoad = road;
+        inRoad ??= road;
         if (road !== inRoad || s === steps) {
           const end = s === steps ? 1 : s / steps;
           if (end > runStart) flush(runStart, end, inRoad);
@@ -423,7 +477,7 @@ function buildBridges(scene) {
     }
   }
 
-  const add = (s, material, name, cast) => {
+  const add = (s: Soup, material: THREE.Material, name: string, cast: boolean) => {
     const geo = s.geometry();
     if (!geo) return;
     const mesh = new THREE.Mesh(drapeGeometry(geo), material);

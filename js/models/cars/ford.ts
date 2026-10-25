@@ -1,7 +1,9 @@
-// js/models/cars/ford.js
+// js/models/cars/ford.ts
 // Ford (built in Hermosillo & Cuautitlán). Fields: README.md
 
-export const CARS = [
+import type { CarModel } from './index.ts';
+
+export const CARS: CarModel[] = [
   {
     id: 'ford-ranger', name: 'Ford Ranger', body: 'pickup', class: 'truck',
     size: [5.37, 1.92, 1.85], mass: 2050, drive: 'rwd', power: [122, 5500], torque: [226, 4500], redline: 6000,

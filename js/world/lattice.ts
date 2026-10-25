@@ -1,11 +1,60 @@
-// js/world/lattice.js
+// js/world/lattice.ts
 // The arithmetic of laying the city's flat layers on its ground, on plain arrays: the height grids (decoded and
 // sampled on the very triangles a mesh of them draws), triangles cut along the ground's lattice or to a rectangle,
 // and the faces that looked up turned to the slope they lie on. Nothing here touches three.js or the city's data, so
-// the tiles' worker (tile-worker.js) runs it off the main thread and node --test imports it directly.
+// the tiles' worker (tile-worker.ts) runs it off the main thread and node --test imports it directly.
+
+/** Numbers read by index: plain arrays and typed arrays alike. */
+export type Numbers = ArrayLike<number>;
+/** Numbers written by index. */
+export interface MutableNumbers {
+  [index: number]: number;
+  readonly length: number;
+}
+/** The float arrays the cuts return. */
+export type FloatArray = Float32Array<ArrayBuffer> | Float64Array<ArrayBuffer>;
+/** Float32Array or Float64Array, the type of the arrays a cut returns. */
+export type FloatArrayType<T extends FloatArray> = new (length: number) => T;
+/** A height (m) at (x, z). */
+export type HeightFn = (x: number, z: number) => number;
+/** The placement of a height grid: w x h samples `cell` m apart from (x0, z0), row by row. */
+export interface GridShape {
+  x0: number;
+  z0: number;
+  cell: number;
+  w: number;
+  h: number;
+}
+/** A ground lattice: the grid lines x = x0 + k·cell, z = z0 + k·cell (m) and the cells' diagonals. */
+export interface Lattice {
+  x0: number;
+  z0: number;
+  cell: number;
+}
+/** An axis-aligned rectangle in x & z (m). */
+export interface Rect {
+  x0: number;
+  x1: number;
+  z0: number;
+  z1: number;
+}
+/** A coordinate along (x, z) whose integer values (or a value k) are the lines cut on. */
+type LineFn = (x: number, z: number) => number;
+/** A convex piece: indices into the pool. */
+type Piece = number[];
+interface Pool {
+  data: Float64Array;
+  used: number;
+  stride: number;
+  grow(): void;
+  vertex(i: number): number;
+  between(a: number, b: number, t: number): number;
+  at(f: LineFn, v: number): number;
+  cut(poly: Piece, f: LineFn, k: number): [Piece, Piece];
+}
 
 // A grid's heights (dm, Int16 little-endian, base64) in metres
-function decodeHeights(grid) {
+function decodeHeights(grid: { data: string }): Float32Array<ArrayBuffer> {
   const bin = atob(grid.data);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -17,7 +66,7 @@ function decodeHeights(grid) {
 
 // Height on a grid at (x, z), on the very triangles a mesh of it draws (each cell split from its +x corner to its +z
 // corner), `outside` beyond it
-function gridSampler(grid, heights, outside) {
+function gridSampler(grid: GridShape, heights: Numbers, outside: number): HeightFn {
   const { x0, z0, cell, w, h } = grid;
   return (x, z) => {
     const fx = (x - x0) / cell, fz = (z - z0) / cell;
@@ -31,10 +80,10 @@ function gridSampler(grid, heights, outside) {
 
 // The vertices of the pieces being cut, all their attributes in one growing pool (a piece is a list of indices into
 // it), and the cut of a convex piece by a line
-function createPool(arrays, sizes) {
+function createPool(arrays: Numbers[], sizes: number[]): Pool {
   const stride = sizes.reduce((t, s) => t + s, 0);
   const EPS = 1e-7;
-  const pool = {
+  const pool: Pool = {
     data: new Float64Array(stride * 1024),
     used: 0,
     stride,
@@ -66,7 +115,7 @@ function createPool(arrays, sizes) {
     },
     // a convex piece cut by the line f = k: the part with f <= k and the part with f >= k (either may be empty)
     cut(poly, f, k) {
-      const below = [], above = [];
+      const below: Piece = [], above: Piece = [];
       for (let i = 0; i < poly.length; i++) {
         const a = poly[i], b = poly[(i + 1) % poly.length];
         const sa = pool.at(f, a) - k, sb = pool.at(f, b) - k;
@@ -86,7 +135,8 @@ function createPool(arrays, sizes) {
 
 // The output arrays (of type `Out`): the whole input triangles `whole` (vertex indices), then fans of the (convex)
 // pieces in their triangle's winding
-function emitPieces(arrays, sizes, whole, polys, pool, Out = Float32Array) {
+function emitPieces<T extends FloatArray>(arrays: Numbers[], sizes: number[], whole: number[], polys: Piece[], pool: Pool,
+  Out: FloatArrayType<T>): T[] {
   let n = whole.length;
   for (const p of polys) n += (p.length - 2) * 3;
   const out = sizes.map((size) => new Out(n * size));
@@ -98,7 +148,7 @@ function emitPieces(arrays, sizes, whole, polys, pool, Out = Float32Array) {
     }
     w++;
   }
-  const emit = (v) => {
+  const emit = (v: number) => {
     let o = v * pool.stride;
     for (let a = 0; a < out.length; a++) {
       const size = sizes[a];
@@ -123,25 +173,25 @@ function emitPieces(arrays, sizes, whole, polys, pool, Out = Float32Array) {
  * `arrays` are the vertex attributes ([0] the positions, x y z), `sizes` their item sizes, `index` the triangles (or
  * null: consecutive vertices). Every attribute is interpolated along the cuts. Returns new arrays, non-indexed.
  */
-function clipToLattice(arrays, sizes, index, lattice) {
+function clipToLattice(arrays: Numbers[], sizes: number[], index: Numbers | null, lattice: Lattice): Float32Array<ArrayBuffer>[] {
   const { x0, z0, cell } = lattice;
   const pos = arrays[0], ps = sizes[0];
   const tris = (index ? index.length : pos.length / ps) / 3;
-  const corner = (t, c) => (index ? index[t * 3 + c] : t * 3 + c);
+  const corner = (t: number, c: number) => (index ? index[t * 3 + c] : t * 3 + c);
   // the three families of lines, as a coordinate whose integer values are the lines
-  const families = [
-    (x, z) => (x - x0) / cell,
-    (x, z) => (z - z0) / cell,
+  const families: LineFn[] = [
+    (x) => (x - x0) / cell,
+    (_x, z) => (z - z0) / cell,
     (x, z) => (x - x0 + z - z0) / cell
   ];
   const EPS = 1e-7;
-  const firstLine = (lo) => Math.floor(lo + EPS) + 1; // the first line past lo
+  const firstLine = (lo: number) => Math.floor(lo + EPS) + 1; // the first line past lo
   const pool = createPool(arrays, sizes);
 
   // The triangles inside one ground triangle go through as they are (most of the small ones); the rest are cut,
   // family by family, into convex pieces
-  const whole = [];
-  let polys = [];
+  const whole: number[] = [];
+  let polys: Piece[] = [];
   for (let t = 0; t < tris; t++) {
     const i0 = corner(t, 0), i1 = corner(t, 1), i2 = corner(t, 2);
     let inside = true;
@@ -153,7 +203,7 @@ function clipToLattice(arrays, sizes, index, lattice) {
     else polys.push([pool.vertex(i0), pool.vertex(i1), pool.vertex(i2)]);
   }
   for (const f of families) {
-    const next = [];
+    const next: Piece[] = [];
     for (let poly of polys) {
       let lo = Infinity, hi = -Infinity;
       for (const v of poly) {
@@ -171,11 +221,11 @@ function clipToLattice(arrays, sizes, index, lattice) {
     }
     polys = next;
   }
-  return emitPieces(arrays, sizes, whole, polys, pool);
+  return emitPieces(arrays, sizes, whole, polys, pool, Float32Array);
 }
 
-const alongX = (x) => x;
-const alongZ = (x, z) => z;
+const alongX: LineFn = (x) => x;
+const alongZ: LineFn = (_x, z) => z;
 
 /**
  * The parts of triangles inside the rectangle { x0, x1, z0, z1 } (in x & z), cut on its edges; the triangles wholly
@@ -184,14 +234,18 @@ const alongZ = (x, z) => z;
  * vertices cut on an edge exactly on it, for a lattice cut to follow (Float32 would round them a fraction of a
  * millimetre off it, and the next cut would split slivers off along it).
  */
-function clipToRect(arrays, sizes, index, rect, tris = null, Out = Float32Array) {
+function clipToRect(arrays: Numbers[], sizes: number[], index: Numbers | null, rect: Rect, tris?: Numbers | null): Float32Array<ArrayBuffer>[];
+function clipToRect(arrays: Numbers[], sizes: number[], index: Numbers | null, rect: Rect, tris: Numbers | null,
+  Out: FloatArrayType<FloatArray>): FloatArray[];
+function clipToRect(arrays: Numbers[], sizes: number[], index: Numbers | null, rect: Rect, tris: Numbers | null = null,
+  Out: FloatArrayType<FloatArray> = Float32Array): FloatArray[] {
   const { x0, x1, z0, z1 } = rect;
   const pos = arrays[0], ps = sizes[0];
   const count = tris ? tris.length : (index ? index.length : pos.length / ps) / 3;
-  const corner = (t, c) => (index ? index[t * 3 + c] : t * 3 + c);
+  const corner = (t: number, c: number) => (index ? index[t * 3 + c] : t * 3 + c);
   const pool = createPool(arrays, sizes);
-  const whole = [];
-  const polys = [];
+  const whole: number[] = [];
+  const polys: Piece[] = [];
   for (let n = 0; n < count; n++) {
     const t = tris ? tris[n] : n;
     const i0 = corner(t, 0), i1 = corner(t, 1), i2 = corner(t, 2);
@@ -215,9 +269,9 @@ function clipToRect(arrays, sizes, index, rect, tris = null, Out = Float32Array)
 
 // The triangles of non-indexed positions facing up or sideways (by number): the undersides of the slabs lying on the
 // ground are never seen, and cut along the lattice they would cost as much as their tops
-function visibleTriangles(pos, index = null) {
+function visibleTriangles(pos: Numbers, index: Numbers | null = null): number[] {
   const n = (index ? index.length : pos.length / 3) / 3;
-  const keep = [];
+  const keep: number[] = [];
   for (let t = 0; t < n; t++) {
     const a = index ? index[t * 3] : t * 3, b = index ? index[t * 3 + 1] : t * 3 + 1, c = index ? index[t * 3 + 2] : t * 3 + 2;
     const ux = pos[b * 3] - pos[a * 3], uy = pos[b * 3 + 1] - pos[a * 3 + 1], uz = pos[b * 3 + 2] - pos[a * 3 + 2];
@@ -230,7 +284,7 @@ function visibleTriangles(pos, index = null) {
 }
 
 // The normals of a non-indexed geometry's up-facing triangles turned to their (draped) face normals
-function tiltUpNormals(pos, normal) {
+function tiltUpNormals(pos: Numbers, normal: MutableNumbers): void {
   for (let o = 0; o < pos.length; o += 9) {
     if (normal[o + 1] < 0.9 || normal[o + 4] < 0.9 || normal[o + 7] < 0.9) continue;
     const ux = pos[o + 3] - pos[o], uy = pos[o + 4] - pos[o + 1], uz = pos[o + 5] - pos[o + 2];
@@ -253,7 +307,8 @@ function tiltUpNormals(pos, normal) {
  * `height(x, z)`, and the up-facing faces' normals (the attribute at `normalAt`, if any) tilted with the slope under
  * them. Returns new arrays, non-indexed.
  */
-function layOnFloor(arrays, sizes, lattice, height, normalAt = -1, index = null) {
+function layOnFloor(arrays: Numbers[], sizes: number[], lattice: Lattice, height: HeightFn, normalAt = -1,
+  index: Numbers | null = null): Float32Array<ArrayBuffer>[] {
   const out = clipToLattice(arrays, sizes, index, lattice);
   const pos = out[0];
   for (let i = 0; i < pos.length; i += 3) pos[i + 1] += height(pos[i], pos[i + 2]);

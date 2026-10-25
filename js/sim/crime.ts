@@ -1,5 +1,13 @@
 import * as THREE from 'three/webgpu';
 import { PersonCrowd, PersonRig, OUTFIT, OUTFIT_SEED } from './pedestrians.ts';
+import type { RagdollHandle, Ragdolls, Point3 } from './ragdolls.ts';
+import type { Weapon, WeaponId, GroundBox } from './weapons.ts';
+import type { CrimeKind, StreetGun } from './crime-rules.ts';
+import type { Rocket } from './gunfire-fx.ts';
+import type { AimControl } from '../player/aim.ts';
+import type { CollisionImpact } from '../audio/audio-sources.ts';
+import type { PlayerMode, PersonEntity } from '../player/controllers.ts';
+import type { TrafficSystem, Ped, Vehicle } from './traffic.ts';
 import { boxHit } from './mayhem.ts';
 import { throwVelocity, bleedOf } from './ragdolls.ts';
 import { WEAPONS, Arsenal, pickTarget, rayCircle, rayBox, boxOverlap, roundBox, blastFalloff, hitChance, wrapAngle } from './weapons.ts';
@@ -10,20 +18,215 @@ import { WEAPON_MODELS, buildWeaponGeometry, createWeaponMaterial } from '../act
 import { createContactShadowMaterial } from '../render/tsl-materials.ts';
 import { isTypingInField } from '../world/city-config.ts';
 
-// js/sim/crime.js
-// The street's crime, GTA-style, played out over the traffic and the crowds (traffic.js):
-// - The player's guns (weapons.js: fists, pistol, SMG, bazooka): lock-on aim, hit-scan shots, rockets that explode,
-//   and what they do to people, cars and walls (gunfire-fx.js draws it).
-// - The wanted level (crime-rules.js): running people over, shooting, blowing things up or attacking the police bring
+// js/sim/crime.ts
+// The street's crime, GTA-style, played out over the traffic and the crowds (traffic.ts):
+// - The player's guns (weapons.ts: fists, pistol, SMG, bazooka): lock-on aim, hit-scan shots, rockets that explode,
+//   and what they do to people, cars and walls (gunfire-fx.ts draws it).
+// - The wanted level (crime-rules.ts): running people over, shooting, blowing things up or attacking the police bring
 //   one to five stars, lost by staying out of the police's sight. The police come on foot (to arrest, from two stars
 //   to shoot) and in patrol cars that chase the player along the road graph, ram its car and drop officers off.
 // - Two gangs on their turf, who shoot back (Los Rojos at anyone who comes close), and thieves who snatch the player's
 //   money and run.
 // - The player's health, armour and money, pickups, and being WASTED (killed) or BUSTED (arrested): back at the
-//   nearest teleport spot (main.js onRespawn).
+//   nearest teleport spot (main.ts onRespawn).
 // - Out on the town's edges a (made-up) cartel with rifles: shooting on sight, at war with the police wherever they
 //   meet, sending black trucks of reinforcements after whoever takes them on.
-// The people it adds are PersonRigs drawn in one crowd, dressed in their outfits (pedestrians.js OUTFIT).
+// The people it adds are PersonRigs drawn in one crowd, dressed in their outfits (pedestrians.ts OUTFIT).
+
+// ---- Types --------------------------------------------------------------------------------------------------------
+// What the player is going through: playing, or on the WASTED (killed) / BUSTED (arrested) screen
+type CrimeState = 'play' | 'wasted' | 'busted';
+type DownKind = Exclude<CrimeState, 'play'>;
+// Who is on foot: police, gang members (the cartel's among them), thieves
+type AgentKind = 'cop' | 'gang' | 'thief';
+// approach (a thief closing in), flee (with the money), idle (a gang on its corner), chase, leave
+type AgentState = 'approach' | 'flee' | 'idle' | 'chase' | 'leave';
+// A patrol car's side: the police, or the cartel's black trucks
+type Faction = 'police' | 'narco';
+type CruiserState = 'chase' | 'leave';
+// What lies about to be picked up: money, health, armour, or a gun
+type PickupKind = 'money' | 'health' | 'armor' | StreetGun | 'bazooka';
+// What a shot meets first (trace)
+type TraceKind = 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'vehicle';
+// The radar's blips, flat: kind ('cop' | 'thief' | 'rojos' | 'verdes' | 'narcos' | 'cruiser' | 'truck' | a
+// PickupKind, or fires.ts's 'fire'), x, z, kind, x, z, ...
+type Blips = (string | number)[];
+
+interface XZ {
+  x: number;
+  z: number;
+}
+// An NPC's gun: rate (shots/s, a burst's start for an SMG or a rifle), damage (hit points off the player's 100),
+// range (m), burst (rounds a pull)
+interface NpcGun {
+  rate: number;
+  damage: number;
+  range: number;
+  burst: number;
+}
+// One instanced draw of a kind of gun in NPCs' hands, and how many are drawn this frame
+interface NpcGunMesh {
+  mesh: THREE.InstancedMesh;
+  count: number;
+}
+
+// The player's vehicle or person as crime reads it (player/controllers.ts entities): speed (m/s) along heading (rad),
+// vx, vz (m/s) besides; a car's half width & length (m); the spins a blast or a ram gives a car
+interface CrimePlayer {
+  position: THREE.Vector3;
+  heading: number;
+  speed: number;
+  vx?: number;
+  vz?: number;
+  halfW?: number;
+  halfL?: number;
+  rollVel?: number;
+  heaveVel?: number;
+  angularVel?: number;
+}
+// What crime uses of player/controllers.ts's ThirdPersonControllerManager
+interface CrimeControllers {
+  activeMode: PlayerMode;
+  entities: { person: PersonEntity };
+  keys: { fire?: boolean | number };
+  getActiveEntity(): CrimePlayer;
+  getGroundHeight(x: number, z: number, mode?: PlayerMode, fromY?: number): number;
+  isSolidAt(x: number, z: number, height?: number, ground?: number): boolean;
+  groundTilt(x: number, z: number, heading: number, along: number, across: number, out: { pitch: number; roll: number }): unknown;
+  resetInput(): void;
+}
+// What crime uses of sim/traffic.ts's traffic: the road graph, its people & vehicles, and what shots, blasts and
+// patrol cars do to them (walking round its vehicles only where it can tell where they are)
+type CrimeTraffic = Pick<TrafficSystem, 'network' | 'peds' | 'cars' | 'buses' | 'setKnockListener' | 'panic' | 'rayHit' | 'shootPed'
+  | 'shootVehicle' | 'blast' | 'roadSpot' | 'sidewalkSpot' | 'sparks' | 'bumpBody' | 'knockBox'>
+  & Partial<Pick<TrafficSystem, 'vehicleBoxAt' | 'vehicleAt'>>;
+// The sounds crime plays (audio/audio-system.ts CityAudioSystem)
+interface CrimeAudio {
+  gunfire?(kind: string, x: number, y: number, z: number): void;
+  crash?(impact: CollisionImpact): void;
+}
+type CrimeAim = Pick<AimControl, 'active' | 'fire' | 'onTarget' | 'pitch'>;
+interface CrimeOptions {
+  scene: THREE.Object3D;
+  controllers: CrimeControllers;
+  traffic: CrimeTraffic;
+  groundHeight: (x: number, z: number) => number;
+  solidAt: (x: number, z: number) => boolean;
+  canvas?: HTMLElement | null;
+  audio?: CrimeAudio | null;
+  aim?: CrimeAim | null;
+  onRespawn?: ((kind: DownKind) => void) | null;
+}
+
+// Someone on foot: police, a gang member (gang: GANGS index, else -1) or a thief. hp of 100 (80: not police); fallen:
+// their ragdoll while down; t: s in this state; cooldown & burst: their gun's; home: a gang's corner; money: what a
+// thief took; arrest: s an officer has had hold of the player; los: a clear line to the player (checked every losT
+// s); stepT: s of a flinch; foe: the other side's one they are shooting at (rechecked every foeT s)
+interface Agent extends XZ {
+  kind: AgentKind;
+  gang: number;
+  rig: PersonRig;
+  heading: number;
+  speed: number;
+  hp: number;
+  fallen: RagdollHandle | null;
+  dead: boolean;
+  state: AgentState;
+  t: number;
+  weapon: StreetGun | null;
+  cooldown: number;
+  burst: number;
+  homeX: number;
+  homeZ: number;
+  money: number;
+  arrest: number;
+  idleYaw: number;
+  wanderT: number;
+  los: boolean;
+  losT: number;
+  stepT: number;
+  foe: Agent | null;
+  foeT: number;
+}
+// A patrol car or a cartel truck (m, rad, m/s): its meshes, its chase (path: the intersections of its route, pathI
+// the next; replan s to a new one; goal where the player was then), being stuck (checked every 2 s against check;
+// reverseT s backing out), wreck: s left burning; the hw, hl copies of its half sizes for boxOverlap
+interface Cruiser extends XZ {
+  active: boolean;
+  mesh: THREE.Group;
+  tiltPivot: THREE.Group;
+  bodyMesh: THREE.Mesh;
+  lightbar: THREE.Mesh;
+  paint: THREE.Material;
+  faction: Faction;
+  y: number;
+  heading: number;
+  speed: number;
+  vx: number;
+  vz: number;
+  halfW: number;
+  halfL: number;
+  hw: number;
+  hl: number;
+  mass: number; // kg
+  type: 'car';
+  police: boolean;
+  hp: number;
+  wreck: number;
+  state: CruiserState;
+  path: XZ[] | null;
+  pathI: number;
+  replan: number;
+  stuckT: number;
+  stuckCount: number;
+  checkX: number;
+  checkZ: number;
+  reverseT: number;
+  slowT: number;
+  startX: number;
+  startZ: number;
+  goalX: number;
+  goalZ: number;
+  passSide: number;
+  deployed: boolean;
+  life: number;
+  pitch: number;
+  roll: number;
+  lift: number; // m a blast threw it up
+  vy: number;
+  position: THREE.Vector3;
+}
+// A rocket in flight: where (m), its heading (dx, dz) and climb (dh along, dy up per m), t s since it was fired
+interface RocketFlight {
+  r: Rocket;
+  x: number;
+  y: number;
+  z: number;
+  dx: number;
+  dz: number;
+  dh?: number;
+  dy?: number;
+  t: number;
+}
+// amount: dollars, or health / armour points; life: s left lying there
+interface Pickup extends XZ {
+  kind: PickupKind;
+  y: number;
+  amount: number;
+  life: number;
+}
+// What the player locks on to: one of crime's people or patrol cars, or a passer-by
+interface LockTarget extends XZ {
+  y?: number;
+  mesh?: unknown;
+}
+type TraceTarget = Agent | Cruiser | Ped | Vehicle;
+// What a shot met (trace, reused): t m along it
+interface TraceHit {
+  t: number;
+  kind: TraceKind;
+  target: TraceTarget | null;
+}
 
 const MAX_AGENTS = 24; // people on foot: police, gang members, thieves
 const MAX_CRUISERS = 5;
@@ -35,21 +238,20 @@ const BODY_R = 0.34; // m: a person's radius, to shots and to each other
 const PERSON_H = 1.85;
 const CAR_H = 1.6;
 const BUS_H = 3.1;
-const inBody = (y, top) => y >= -0.05 && y <= top;
+const inBody = (y: number, top: number): boolean => y >= -0.05 && y <= top;
 const RUN = 5.4; // m/s: officers and gang members running
 const THIEF_RUN = 6.3; // a thief runs faster than the player walks (4.4) and slower than it sprints (8.2)
 const WALK = 1.4;
 const DOWN_TIME = 3.5; // s someone knocked down but alive lies before getting up
 const DEAD_TIME = 30; // s a body stays
 const DESPAWN = 200; // m from the player: gone
-const MUZZLE_Y = 1.38; // m: a gun held out at shoulder height
 const GRIP_REACH = 0.045; // m from the rig's wrist on to the middle of the grip in its hand
 const DRAW_TIME = 0.32; // s to put one weapon away and bring the next up (the arsenal's own 0.25 s holds its fire)
 const RESPAWN_TIME = 4.2; // s on the WASTED / BUSTED screen
 const COP_SIGHT = 45; // m an officer sees the player from (a patrol car: 70)
 const CRUISER_SIGHT = 70;
 const CRUISER = { halfW: 0.92, halfL: 2.3, mass: 1600, accel: 7.5, brake: 14, turn: 1.9 };
-const NPC_GUN = {
+const NPC_GUN: Readonly<Record<StreetGun, NpcGun>> = {
   pistol: { rate: 1.1, damage: 4, range: 45, burst: 1 },
   smg: { rate: 0.8, damage: 3, range: 38, burst: 4 },
   rifle: { rate: 0.7, damage: 4, range: 60, burst: 3 }
@@ -57,13 +259,13 @@ const NPC_GUN = {
 const FOE_DAMAGE = 3; // police and cartel shoot each other this many times harder than at the player: fights end
 const FOE_RANGE = 45; // m the police and the cartel take each other on from
 const SKILL = { cop: 0.5, gang: 0.35, narco: 0.45 };
-const PICKUP_COLORS = {
+const PICKUP_COLORS: Readonly<Record<PickupKind, readonly [number, number, number]>> = {
   money: [0.25, 3.2, 0.6], health: [3.2, 0.35, 0.35], armor: [0.4, 1.4, 3.4],
   pistol: [3, 2.4, 0.6], smg: [3, 1.4, 0.3], rifle: [2.6, 3, 0.4], bazooka: [3.2, 0.7, 0.2]
 };
 
-const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
-const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (x: number, a: number, b: number): number => (x < a ? a : x > b ? b : x);
+const rand = (a: number, b: number): number => a + Math.random() * (b - a);
 const dummy = new THREE.Object3D();
 const zero = new THREE.Matrix4().makeScale(0, 0, 0);
 const tint = new THREE.Color();
@@ -71,11 +273,13 @@ const tilt = { pitch: 0, roll: 0 };
 
 // A tiny binary heap of [cost, node] pairs, for the patrol cars' route search
 class Heap {
+  items: [number, number][];
+
   constructor() {
     this.items = [];
   }
 
-  push(cost, node) {
+  push(cost: number, node: number): void {
     const a = this.items;
     a.push([cost, node]);
     let i = a.length - 1;
@@ -87,11 +291,11 @@ class Heap {
     }
   }
 
-  pop() {
+  pop(): [number, number] {
     const a = this.items;
     const top = a[0];
     const last = a.pop();
-    if (a.length) {
+    if (last && a.length) {
       a[0] = last;
       let i = 0;
       for (;;) {
@@ -107,19 +311,91 @@ class Heap {
     return top;
   }
 
-  get size() {
+  get size(): number {
     return this.items.length;
   }
 }
 
 class CrimeSystem {
+  scene: THREE.Object3D;
+  aim: CrimeAim | null;
+  controllers: CrimeControllers;
+  traffic: CrimeTraffic;
+  groundAt: (x: number, z: number) => number;
+  solidAt: (x: number, z: number) => boolean;
+  audio: CrimeAudio | null;
+  onRespawn: ((kind: DownKind) => void) | null;
+  personGround: (owner: unknown, x: number, z: number) => number;
+  // (a burning wreck where a blast went off: fires.ts, from main.ts)
+  onExplosion?: (x: number, y: number, z: number, radius: number) => void;
+  ragdolls: Ragdolls | null;
+  playerFall: RagdollHandle | null = null; // the player's body, killed on foot
+
+  wanted: Wanted;
+  arsenal: Arsenal;
+  health: number; // 0..100
+  armor: number; // 0..100
+  money: number; // $
+  state: CrimeState;
+  stateTime: number; // s in the state
+  shake: number;
+  hurtFlash: number;
+  toasts: string[];
+  gangAnger: number[];
+  lastHit: XZ;
+  mouseFire: boolean;
+  aimHold: number;
+  drawn: WeaponId;
+  drawT: number;
+  lockTarget: LockTarget | null;
+  punchT: number;
+  aimPoint: Point3;
+  _camDir: THREE.Vector3;
+  _trace: TraceHit;
+  _muzzle?: Point3;
+  _aim?: XZ;
+  _size?: [number, number];
+  _playerBox?: GroundBox;
+  _blips?: Blips;
+
+  fx: GunfireFX;
+  crowd: PersonCrowd;
+  agents: Agent[];
+  cruisers: Cruiser[];
+  rockets: RocketFlight[];
+  pickups: Pickup[];
+  candidates: LockTarget[];
+  timers: { dispatch: number; gangs: number; thief: number; health: number; bazooka: number; trucks: number }; // s to the next
+  lastTurf?: number;
+
+  // the models (buildGuns, buildCruisers, buildPickups)
+  playerGuns: Record<string, THREE.Group> = {};
+  npcGuns: Partial<Record<StreetGun, NpcGunMesh>> = {};
+  burnt = new THREE.MeshStandardNodeMaterial({ color: 0x1d1b1a, roughness: 0.95, metalness: 0.1 });
+  pickupMesh = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.28, 0), new THREE.MeshBasicNodeMaterial(), MAX_PICKUPS);
+  // the road graph (buildRoadGraph): its intersections, each one's links [node, m], and the nodes in 80 m cells
+  nodes: XZ[] = [];
+  links: [number, number][][] = [];
+  nodeCells = new Map<string, number[]>();
+
+  // the frame's (update): the camera, the player's entity & mode, where it is (m) and how fast it goes (m/s)
+  camera: THREE.Camera | null = null;
+  player: CrimePlayer;
+  mode: PlayerMode;
+  px = 0;
+  pz = 0;
+  pvx = 0;
+  pvz = 0;
+  pspeed = 0;
+  onStreet = false;
+
   /**
-   * @param {object} o - scene, controllers (player/controllers.js), traffic (traffic.js), groundHeight(x, z),
+   * @param {object} o - scene, controllers (player/controllers.ts), traffic (traffic.ts), groundHeight(x, z),
    *   solidAt(x, z), canvas (the right mouse button fires from a vehicle), audio (CityAudioSystem, optional),
-   *   aim (player/aim.js, optional: free aim on foot along the camera's crosshair),
+   *   aim (player/aim.ts, optional: free aim on foot along the camera's crosshair),
    *   onRespawn(kind 'wasted' | 'busted') puts the player back somewhere safe
    */
-  constructor({ scene, controllers, traffic, groundHeight, solidAt, canvas = null, audio = null, aim = null, onRespawn = null }) {
+  constructor({ scene, controllers, traffic, groundHeight, solidAt, canvas = null, audio = null, aim = null, onRespawn = null }: CrimeOptions) {
     this.scene = scene;
     this.aim = aim;
     this.controllers = controllers;
@@ -128,7 +404,9 @@ class CrimeSystem {
     this.solidAt = solidAt;
     this.audio = audio;
     this.onRespawn = onRespawn;
-    this.personGround = (owner, x, z) => controllers.getGroundHeight(x, z, 'person');
+    this.personGround = (_owner, x, z) => controllers.getGroundHeight(x, z, 'person');
+    this.player = controllers.getActiveEntity(); // (the frame's, from update())
+    this.mode = controllers.activeMode;
 
     this.wanted = new Wanted();
     this.arsenal = new Arsenal();
@@ -139,7 +417,7 @@ class CrimeSystem {
     this.stateTime = 0;
     this.shake = 0;
     this.hurtFlash = 0; // 0..1, for the HUD's red edges
-    this.toasts = []; // messages for the HUD (crime-hud.js takes them)
+    this.toasts = []; // messages for the HUD (crime-hud.ts takes them)
     this.gangAnger = GANGS.map(() => 0); // s a gang stays after the player
     this.lastHit = { x: 0, z: 0 };
     this.mouseFire = false;
@@ -168,19 +446,19 @@ class CrimeSystem {
     this.buildRoadGraph();
     this.bindInput(canvas);
 
-    traffic.setKnockListener((kind, x, z, speed) => {
+    traffic.setKnockListener((_kind, x, z, speed) => {
       this.report('runOver');
       traffic.panic(x, z, 25);
       this.fx.splatter(x, this.groundAt(x, z) + 0.9, z, speed);
     });
-    this.ragdolls = null; // (sim/ragdolls.js, from main.js: who falls, falls as a body)
+    this.ragdolls = null; // (sim/ragdolls.ts, from main.ts: who falls, falls as a body)
   }
 
   // =========================================================================
   // 1. MODELS: guns, patrol cars, pickups
   // =========================================================================
-  buildGuns() {
-    // (actors/weapon-models.js: one material, the finish in each gun's vertices)
+  buildGuns(): void {
+    // (actors/weapon-models.ts: one material, the finish in each gun's vertices)
     const material = createWeaponMaterial();
     // the player's: one of each, its grip a hand's breadth on from the rig's wrist
     this.playerGuns = {};
@@ -196,7 +474,8 @@ class CrimeSystem {
     }
     // everyone else's: one instanced draw per kind of gun they carry
     this.npcGuns = {};
-    for (const id of Object.keys(NPC_GUN)) {
+    // (NPC_GUN's keys are the StreetGuns)
+    for (const id of Object.keys(NPC_GUN) as StreetGun[]) {
       const mesh = new THREE.InstancedMesh(buildWeaponGeometry(id).translate(0, -0.012, GRIP_REACH), material, MAX_AGENTS);
       mesh.name = `CrimeGuns-${id}`;
       mesh.frustumCulled = false;
@@ -208,15 +487,16 @@ class CrimeSystem {
     }
   }
 
-  buildCruisers() {
+  buildCruisers(): void {
     const spec = BODY_SPECS.sedan;
     // (a paint of its own: the material cache shares a colour's material, and the player's stolen cruiser sets its
     // brake lights on the one it gets)
     const mat = createLoftedCarMaterial(spec, 0xf6f9fd);
-    if (mat.userData.carState) mat.userData.carState.value.set(0, 0, 0, 1); // police livery
-    this.burnt = new THREE.MeshStandardNodeMaterial({ color: 0x1d1b1a, roughness: 0.95, metalness: 0.1 });
+    // (the uniform createLoftedCarMaterial keeps in userData for a car of a colour of its own)
+    const carState = mat.userData.carState as { value: THREE.Vector4 } | undefined;
+    if (carState) carState.value.set(0, 0, 0, 1); // police livery
     // the cartel's black SUVs, without a light bar
-    const truckSpec = BODY_SPECS.suv || spec;
+    const truckSpec = Object.hasOwn(BODY_SPECS, 'suv') ? BODY_SPECS.suv : spec; // (a Record: TS takes any key to be there)
     const truckMat = createLoftedCarMaterial(truckSpec, 0x0c0d0f);
     const truckBody = buildCarGeometry(truckSpec, true);
     const body = buildCarGeometry(spec, true);
@@ -249,14 +529,13 @@ class CrimeSystem {
         x: 0, y: 0, z: 0, heading: 0, speed: 0, vx: 0, vz: 0, halfW: CRUISER.halfW, halfL: CRUISER.halfL,
         mass: CRUISER.mass, type: 'car', police: !truck, hp: truck ? 140 : 100, wreck: 0, state: 'chase', path: null, pathI: 0,
         replan: 0, stuckT: 0, checkX: 0, checkZ: 0, reverseT: 0, deployed: false, life: 0, pitch: 0, roll: 0,
+        hw: CRUISER.halfW, hl: CRUISER.halfL, stuckCount: 0, slowT: 0, startX: 0, startZ: 0, goalX: 0, goalZ: 0, passSide: 0, lift: 0, vy: 0,
         position: new THREE.Vector3() // (for the audio: crashes & sirens)
       });
     }
   }
 
-  buildPickups() {
-    const mat = new THREE.MeshBasicNodeMaterial();
-    this.pickupMesh = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.28, 0), mat, MAX_PICKUPS);
+  buildPickups(): void {
     this.pickupMesh.name = 'Pickups';
     this.pickupMesh.frustumCulled = false;
     for (let i = 0; i < MAX_PICKUPS; i++) {
@@ -268,7 +547,7 @@ class CrimeSystem {
   }
 
   // The road graph as an undirected weighted graph, bucketed for nearest-node lookups: the patrol cars' map
-  buildRoadGraph() {
+  buildRoadGraph(): void {
     const { nodes, edges } = this.traffic.network;
     this.nodes = nodes;
     const index = new Map(nodes.map((n, i) => [n, i]));
@@ -284,12 +563,14 @@ class CrimeSystem {
     nodes.forEach((n, i) => {
       if (!this.links[i].length) return;
       const k = `${Math.floor(n.x / 80)},${Math.floor(n.z / 80)}`;
-      (this.nodeCells.get(k) || this.nodeCells.set(k, []).get(k)).push(i);
+      let cell = this.nodeCells.get(k);
+      if (!cell) this.nodeCells.set(k, (cell = []));
+      cell.push(i);
     });
   }
 
   // The nearest intersection to (x, z) that can be driven to straight (no building in between), else the nearest
-  nearestNode(x, z) {
+  nearestNode(x: number, z: number): number {
     const cx = Math.floor(x / 80), cz = Math.floor(z / 80);
     let best = -1;
     let bestD = Infinity;
@@ -299,7 +580,7 @@ class CrimeSystem {
       for (let ix = cx - r; ix <= cx + r; ix++) {
         for (let iz = cz - r; iz <= cz + r; iz++) {
           if (Math.max(Math.abs(ix - cx), Math.abs(iz - cz)) !== r) continue;
-          for (const i of this.nodeCells.get(`${ix},${iz}`) || []) {
+          for (const i of this.nodeCells.get(`${ix},${iz}`) ?? []) {
             const n = this.nodes[i];
             const d = (n.x - x) ** 2 + (n.z - z) ** 2;
             if (d < bestD) {
@@ -318,13 +599,13 @@ class CrimeSystem {
   }
 
   // The intersections a patrol car drives through from (x0, z0) to (x1, z1): A* over the road graph, or null
-  route(x0, z0, x1, z1) {
+  route(x0: number, z0: number, x1: number, z1: number): XZ[] | null {
     const s = this.nearestNode(x0, z0), g = this.nearestNode(x1, z1);
     if (s < 0 || g < 0) return null;
     if (s === g) return [this.nodes[g]];
     const goal = this.nodes[g];
     const cost = new Map([[s, 0]]);
-    const from = new Map();
+    const from = new Map<number, number>();
     const open = new Heap();
     open.push(0, s);
     let expanded = 0;
@@ -333,6 +614,7 @@ class CrimeSystem {
       if (i === g) break;
       expanded++;
       const base = cost.get(i);
+      if (base === undefined) continue;
       for (const [j, w] of this.links[i]) {
         const c = base + w;
         if (c >= (cost.get(j) ?? Infinity)) continue;
@@ -343,16 +625,16 @@ class CrimeSystem {
       }
     }
     if (!from.has(g)) return null;
-    const path = [];
-    for (let i = g; i !== undefined; i = from.get(i)) path.push(this.nodes[i]);
+    const path: XZ[] = [];
+    for (let i: number | undefined = g; i !== undefined; i = from.get(i)) path.push(this.nodes[i]);
     return path.reverse();
   }
 
   // =========================================================================
   // 2. INPUT: fire (X, the left button while aiming on foot (aim.js), the right button from a vehicle; touch &
-  // gamepad through controllers.keys.fire), weapons 1-4, R to cycle, Tab for the wheel (ui/weapon-wheel.js)
+  // gamepad through controllers.keys.fire), weapons 1-4, R to cycle, Tab for the wheel (ui/weapon-wheel.ts)
   // =========================================================================
-  bindInput(canvas) {
+  bindInput(canvas: HTMLElement | null): void {
     if (canvas) {
       canvas.addEventListener('mousedown', (e) => {
         if (e.button === 2) this.mouseFire = true;
@@ -364,7 +646,8 @@ class CrimeSystem {
     window.addEventListener('blur', () => { this.mouseFire = false; });
     window.addEventListener('keydown', (e) => {
       if (isTypingInField(e) || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
-      let pick = { Digit1: 'fists', Digit2: 'pistol', Digit3: 'smg', Digit4: 'bazooka' }[e.code];
+      const keys: Partial<Record<string, WeaponId>> = { Digit1: 'fists', Digit2: 'pistol', Digit3: 'smg', Digit4: 'bazooka' };
+      let pick = keys[e.code];
       // 3 switches between the SMG and the rifle (once one has been taken off the cartel)
       if (pick === 'smg' && this.arsenal.has('rifle') && (this.arsenal.current === 'smg' || !this.arsenal.has('smg'))) pick = 'rifle';
       if (pick) this.selectWeapon(pick);
@@ -372,17 +655,17 @@ class CrimeSystem {
     });
   }
 
-  selectWeapon(id) {
+  selectWeapon(id: WeaponId): boolean {
     if (this.arsenal.select(id)) return true;
     this.toast(`No ${WEAPONS[id].label.toLowerCase()} rounds`);
     return false;
   }
 
-  cycleWeapon(dir = 1) {
+  cycleWeapon(dir = 1): void {
     this.arsenal.cycle(dir);
   }
 
-  toast(text) {
+  toast(text: string): void {
     this.toasts.push(text);
     if (this.toasts.length > 4) this.toasts.shift();
   }
@@ -390,7 +673,7 @@ class CrimeSystem {
   // =========================================================================
   // 3. THE FRAME
   // =========================================================================
-  update(dt, elapsed, camera) {
+  update(dt: number, elapsed: number, camera: THREE.Camera): void {
     const c = this.controllers;
     const mode = c.activeMode;
     const pe = c.getActiveEntity();
@@ -442,7 +725,7 @@ class CrimeSystem {
   }
 
   // The camera shaken by nearby blasts (after the camera system has placed it)
-  shakeCamera(camera) {
+  shakeCamera(camera: THREE.Camera): void {
     if (this.shake <= 0.001) return;
     const s = this.shake * this.shake * 0.35;
     camera.position.x += (Math.random() - 0.5) * s;
@@ -450,26 +733,27 @@ class CrimeSystem {
     camera.position.z += (Math.random() - 0.5) * s;
   }
 
-  // The player's vehicles and the patrol cars, for the traffic to stop behind (traffic.js setParked)
-  addObstacles(list) {
+  // The player's vehicles and the patrol cars, for the traffic to stop behind (traffic.ts setParked)
+  addObstacles<T>(list: (T | Cruiser)[]): (T | Cruiser)[] {
     for (const cr of this.cruisers) if (cr.active) list.push(cr);
     return list;
   }
 
-  // Patrol cars for the audio's sirens (audio-sources.js)
-  sirenSources() {
+  // Patrol cars for the audio's sirens (audio-sources.ts)
+  sirenSources(): Cruiser[] {
     return this.cruisers;
   }
 
   // =========================================================================
   // 4. THE PLAYER: firing, aiming, getting hurt
   // =========================================================================
-  updatePlayer(dt, elapsed) {
+  updatePlayer(dt: number, _elapsed: number): void {
     const c = this.controllers;
     const p = c.entities.person;
-    // aiming on foot (aim.js): the shots go where the crosshair is, and the right button aims rather than fires
-    const free = Boolean(this.aim?.active) && this.mode === 'person';
-    const mouse = free ? this.aim.fire : this.mouseFire && (this.mode !== 'person' || !this.aim);
+    // aiming on foot (aim.ts): the shots go where the crosshair is, and the right button aims rather than fires
+    const aimCtl = this.aim;
+    const free = aimCtl != null && aimCtl.active && this.mode === 'person';
+    const mouse = free ? aimCtl.fire : this.mouseFire && (this.mode !== 'person' || !this.aim);
     const held = Boolean(c.keys.fire) || mouse;
     const w = this.arsenal.weapon;
     // a change of weapon (the keys, the wheel, the mouse wheel, or out of rounds): the last one put away, this one
@@ -492,7 +776,7 @@ class CrimeSystem {
     if (free) {
       this.lockTarget = null;
       const hit = this.aimAlong(this.camera, w);
-      this.aim.onTarget = !w.melee && (hit.kind === 'agent' || hit.kind === 'ped' || hit.kind === 'cruiser' || hit.kind === 'vehicle');
+      aimCtl.onTarget = !w.melee && (hit.kind === 'agent' || hit.kind === 'ped' || hit.kind === 'cruiser' || hit.kind === 'vehicle');
     } else if (this.aim) {
       this.aim.onTarget = false;
     }
@@ -525,7 +809,7 @@ class CrimeSystem {
   }
 
   // The gun in the player's hand (when on foot): along the arm, pointing down when it isn't aiming
-  placePlayerGun(w) {
+  placePlayerGun(w: Weapon): void {
     const p = this.controllers.entities.person;
     for (const [id, g] of Object.entries(this.playerGuns)) {
       const show = this.mode === 'person' && id === w.id && this.state === 'play';
@@ -542,7 +826,7 @@ class CrimeSystem {
   }
 
   // The best target to lock on to ahead: the police, gangs and thieves first, then patrol cars, then passers-by
-  findTarget(x, z, heading, range, cone) {
+  findTarget(x: number, z: number, heading: number, range: number, cone: number): LockTarget | null {
     const list = this.candidates;
     list.length = 0;
     for (const a of this.agents) if (!a.fallen) list.push(a);
@@ -560,7 +844,7 @@ class CrimeSystem {
   }
 
   // Where the player's shots leave from: the hand on foot, the driver's window in a vehicle
-  muzzle(out) {
+  muzzle(out: Point3): Point3 {
     const pe = this.player;
     if (this.mode === 'person') {
       const h = this.controllers.entities.person.rig;
@@ -576,7 +860,7 @@ class CrimeSystem {
     return out;
   }
 
-  playerFire(w) {
+  playerFire(w: Weapon): void {
     const pe = this.player;
     if (w.melee) {
       this.punch();
@@ -584,9 +868,10 @@ class CrimeSystem {
     }
     const m = this.muzzle(this._muzzle ??= { x: 0, y: 0, z: 0 });
     const t = this.lockTarget;
-    const free = Boolean(this.aim?.active) && this.mode === 'person';
+    const aimCtl = this.aim;
+    const free = aimCtl != null && aimCtl.active && this.mode === 'person';
     let yaw = t ? Math.atan2(t.x - m.x, t.z - m.z) : pe.heading;
-    let slope = null; // (free aim: m up per m along, from the gun to the crosshair's point)
+    let slope: number | null = null; // (free aim: m up per m along, from the gun to the crosshair's point)
     if (free) {
       const a = this.aimPoint;
       const d = Math.hypot(a.x - m.x, a.z - m.z);
@@ -594,7 +879,7 @@ class CrimeSystem {
         yaw = Math.atan2(a.x - m.x, a.z - m.z);
         slope = (a.y - m.y) / d;
       } else {
-        slope = Math.tan(this.aim.pitch); // (right up against it: along the camera)
+        slope = Math.tan(aimCtl.pitch); // (right up against it: along the camera)
       }
       slope += (Math.random() - 0.5) * 2 * w.spread;
     }
@@ -617,7 +902,7 @@ class CrimeSystem {
 
   // Free aim: what the crosshair's ray (the middle of the screen, from the camera) meets first, past the player, within
   // the weapon's reach; its point goes into this.aimPoint (the shots are fired from the gun at it). Returns the trace.
-  aimAlong(camera, w) {
+  aimAlong(camera: THREE.Camera | null, w: Weapon): TraceHit {
     const a = this.aimPoint;
     if (!camera) return this._trace;
     const d = camera.getWorldDirection(this._camDir);
@@ -640,15 +925,15 @@ class CrimeSystem {
   // { t, kind: 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'vehicle', target }. Level (slope null), it
   // takes whoever stands in the line on the map; with a `slope` (m up per m along: aimed up or down) it passes over or
   // under people and vehicles, meets walls at its own height, and can hit the street.
-  trace(ox, oy, oz, yaw, range, slope = null, from = 0) {
+  trace(ox: number, oy: number, oz: number, yaw: number, range: number, slope: number | null = null, from = 0): TraceHit {
     const dx = Math.sin(yaw), dz = Math.cos(yaw);
     const out = this._trace;
     let best = range;
-    let kind = 'none';
-    let target = null;
+    let kind: TraceKind = 'none';
+    let target: TraceTarget | null = null;
     const pitched = slope !== null;
     // (the height of the shot over the ground at t m: on someone's body, or on a car's?)
-    const over = (t, x, z) => oy + slope * t - this.groundAt(x, z);
+    const over = (t: number, x: number, z: number) => oy + (slope ?? 0) * t - this.groundAt(x, z);
     // walls (and the street), every 0.8 m
     for (let t = Math.max(0.6, from); t < best; t += 0.8) {
       const x = ox + dx * t, z = oz + dz * t;
@@ -689,10 +974,10 @@ class CrimeSystem {
       target = cr;
     }
     const accept = pitched || from > 0
-      ? (k, o, t) => t >= from && (!pitched || inBody(over(t, o.x, o.z), k === 'ped' ? PERSON_H : o.bus ? BUS_H : CAR_H))
+      ? (k: 'ped' | 'vehicle', o: XZ & { bus?: boolean }, t: number) => t >= from && (!pitched || inBody(over(t, o.x, o.z), k === 'ped' ? PERSON_H : o.bus ? BUS_H : CAR_H))
       : null;
     const street = this.traffic.rayHit(ox, oz, dx, dz, best, accept);
-    if (street) {
+    if (street?.kind) {
       best = street.t;
       kind = street.kind;
       target = street.target;
@@ -705,7 +990,7 @@ class CrimeSystem {
 
   // A shot from (ox, oy, oz) along `yaw`, sloping towards height ty at the end (or along `slope`, aimed freely): the
   // first thing in its way takes it
-  hitScan(ox, oy, oz, yaw, ty, w, byPlayer, slope = null) {
+  hitScan(ox: number, oy: number, oz: number, yaw: number, ty: number, w: Weapon, byPlayer: boolean, slope: number | null = null): void {
     const dx = Math.sin(yaw), dz = Math.cos(yaw);
     const { t: best, kind, target } = this.trace(ox, oy, oz, yaw, w.range, slope);
     const ex = ox + dx * best, ez = oz + dz * best;
@@ -722,30 +1007,31 @@ class CrimeSystem {
     if (kind === 'wall' || kind === 'ground') this.fx.impact(ex, ey, ez, 'dust', -dx, -dz);
     else if (kind === 'agent') {
       this.fx.impact(ex, ey, ez, 'blood', dx, dz);
-      this.damageAgent(target, w.damage, dx, dz, byPlayer);
+      this.damageAgent(target as Agent, w.damage, dx, dz, byPlayer);
     } else if (kind === 'cruiser') {
       this.fx.impact(ex, ey, ez, 'metal', -dx, -dz);
-      this.damageCruiser(target, w.damage * 0.22, byPlayer);
+      this.damageCruiser(target as Cruiser, w.damage * 0.22, byPlayer);
     } else if (kind === 'ped') {
       this.fx.impact(ex, ey, ez, 'blood', dx, dz);
-      this.traffic.shootPed(target, dx, dz, 3.5);
+      this.traffic.shootPed(target as Ped, dx, dz, 3.5);
       if (byPlayer) this.report('shootPed');
     } else if (kind === 'vehicle') {
       this.fx.impact(ex, ey, ez, 'metal', -dx, -dz);
-      this.traffic.shootVehicle(target, ex, ey, ez, dx, dz);
+      this.traffic.shootVehicle(target as Vehicle, ex, ey, ez, dx, dz);
       if (byPlayer) this.report('shootCar', this.copNear(ex, ez, 50));
     }
   }
 
   // A punch at whoever stands within reach in front
-  punch() {
+  punch(): void {
     const p = this.controllers.entities.person;
     this.punchT = 0.18;
     const reach = WEAPONS.fists.range;
     const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
-    let best = null;
+    // (widened: TS can't see `consider` set it)
+    let best = null as Agent | Ped | null;
     let bestD = reach;
-    const consider = (o) => {
+    const consider = (o: Agent | Ped) => {
       const dx = o.x - this.px, dz = o.z - this.pz;
       const d = Math.hypot(dx, dz);
       if (d > bestD || (dx * fx + dz * fz) < d * 0.45) return;
@@ -760,7 +1046,7 @@ class CrimeSystem {
     const d = Math.max(0.01, bestD);
     const nx = (best.x - this.px) / d, nz = (best.z - this.pz) / d;
     this.audio?.gunfire?.('punch', best.x, this.groundAt(best.x, best.z) + 1.2, best.z);
-    if (this.agents.includes(best)) {
+    if (this.isAgent(best)) {
       this.damageAgent(best, WEAPONS.fists.damage, nx, nz, true, 2.5);
     } else {
       this.traffic.shootPed(best, nx, nz, 2.2);
@@ -769,7 +1055,7 @@ class CrimeSystem {
   }
 
   // The player hurt by `amount` (from the direction of (fromX, fromZ)): armour first, a vehicle takes some of it
-  hurt(amount, fromX = this.px, fromZ = this.pz) {
+  hurt(amount: number, fromX = this.px, fromZ = this.pz): void {
     if (this.state !== 'play' || amount <= 0) return;
     if (this.mode !== 'person') amount *= 0.55;
     const absorbed = Math.min(this.armor, amount * 0.75);
@@ -781,13 +1067,18 @@ class CrimeSystem {
     if (this.health <= 0) this.down('wasted');
   }
 
-  report(kind, witnessed = true) {
+  report(kind: CrimeKind, witnessed = true): void {
     if (this.state !== 'play') return;
     const gained = this.wanted.report(kind, witnessed);
     if (gained > 0 && this.wanted.stars === 1) this.toast('The police are after you');
   }
 
-  copNear(x, z, r) {
+  // One of crime's own people (not a passer-by of the traffic's)
+  isAgent(o: Agent | Ped): o is Agent {
+    return (this.agents as readonly object[]).includes(o);
+  }
+
+  copNear(x: number, z: number, r: number): boolean {
     for (const a of this.agents) {
       if (a.kind === 'cop' && !a.fallen && Math.hypot(a.x - x, a.z - z) < r) return true;
     }
@@ -800,7 +1091,7 @@ class CrimeSystem {
   // =========================================================================
   // 5. WASTED & BUSTED
   // =========================================================================
-  down(kind) {
+  down(kind: DownKind): void {
     if (this.state !== 'play') return;
     this.state = kind;
     this.stateTime = 0;
@@ -809,11 +1100,11 @@ class CrimeSystem {
     this.health = Math.max(0, this.health);
     // killed on foot: the player's body falls like anyone's
     const p = this.controllers.entities.person;
-    if (kind === 'wasted' && this.controllers.activeMode === 'person') { // (this.mode lags: thrown out of a car this frame)
+    if (kind === 'wasted' && this.controllers.activeMode === 'person' && this.ragdolls) { // (this.mode lags: thrown out of a car this frame)
       const d = Math.hypot(this.px - this.lastHit.x, this.pz - this.lastHit.z) || 1;
       const nx = (this.px - this.lastHit.x) / d, nz = (this.pz - this.lastHit.z) / d;
       // (already thrown, out of a car: that body it is)
-      this.playerFall = p.ragdoll || this.ragdolls.spawn(p.rig, { ...throwVelocity(nx * 2, nz * 2, nx, nz), bleed: 1 });
+      this.playerFall = p.ragdoll ?? this.ragdolls.spawn(p.rig, { ...throwVelocity(nx * 2, nz * 2, nx, nz), bleed: 1 });
       this.playerFall.bleed = 1;
       p.ragdoll = this.playerFall;
       p.ragdollOwner = 'crime'; // (it gets up at the hospital, not where it lies)
@@ -822,7 +1113,7 @@ class CrimeSystem {
     }
   }
 
-  updateDown(dt) {
+  updateDown(dt: number): void {
     this.stateTime += dt;
     this.controllers.resetInput();
     const p = this.controllers.entities.person;
@@ -836,8 +1127,9 @@ class CrimeSystem {
     }
     if (this.stateTime < RESPAWN_TIME) return;
     const kind = this.state;
+    if (kind === 'play') return; // (never: only while down)
     this.state = 'play';
-    this.ragdolls.release(this.playerFall);
+    this.ragdolls?.release(this.playerFall);
     if (p.ragdoll === this.playerFall) p.ragdoll = null;
     this.playerFall = null;
     p.rig.placed = false; // stands up afresh where it is put
@@ -863,7 +1155,7 @@ class CrimeSystem {
   // =========================================================================
   // 6. ROCKETS & EXPLOSIONS
   // =========================================================================
-  updateRockets(dt) {
+  updateRockets(dt: number): void {
     const w = WEAPONS.bazooka;
     for (let i = this.rockets.length - 1; i >= 0; i--) {
       const k = this.rockets[i];
@@ -902,9 +1194,9 @@ class CrimeSystem {
   }
 
   // An explosion at (x, y, z) of `radius` m: fire & smoke, people thrown, cars shoved, patrol cars and the player hurt
-  explode(x, y, z, radius, damage, byPlayer) {
+  explode(x: number, y: number, z: number, radius: number, damage: number, byPlayer: boolean): void {
     this.fx.explosion(x, y, z, radius);
-    this.onExplosion?.(x, y, z, radius); // (a burning wreck, a house catching: fires.js)
+    this.onExplosion?.(x, y, z, radius); // (a burning wreck, a house catching: fires.ts)
     this.audio?.gunfire?.('explosion', x, y, z);
     const near = Math.hypot(this.camera ? this.camera.position.x - x : 0, this.camera ? this.camera.position.z - z : 0);
     this.shake = Math.min(1.6, this.shake + clamp(1.6 - near / 40, 0, 1.6));
@@ -935,7 +1227,7 @@ class CrimeSystem {
       const k = blastFalloff(pd, radius * 1.3);
       this.hurt(95 * k, x, z);
       const pe = this.player;
-      if (this.mode === 'car' && pe) {
+      if (this.mode === 'car') {
         pe.vx = (pe.vx || 0) + (this.px - x) / Math.max(pd, 0.5) * 12 * k;
         pe.vz = (pe.vz || 0) + (this.pz - z) / Math.max(pd, 0.5) * 12 * k;
         pe.rollVel = (pe.rollVel || 0) + 6 * k;
@@ -947,14 +1239,14 @@ class CrimeSystem {
   // =========================================================================
   // 7. PEOPLE: police on foot, gangs, thieves
   // =========================================================================
-  spawnAgent(kind, x, z, { gang = -1, weapon = null } = {}) {
+  spawnAgent(kind: AgentKind, x: number, z: number, { gang = -1, weapon = null }: { gang?: number; weapon?: StreetGun | null } = {}): Agent | null {
     if (this.agents.length >= MAX_AGENTS) return null;
     const outfit = kind === 'cop' ? OUTFIT.police : kind === 'thief' ? OUTFIT.thief : GANGS[gang].outfit;
     const rig = new PersonRig({
       seed: outfit * OUTFIT_SEED + Math.floor(Math.random() * 997) + 0.5,
       scale: rand(0.95, 1.06), girth: rand(0.95, 1.12), hair: rand(0, 0.25), armSwing: rand(0.9, 1.1)
     });
-    const a = {
+    const a: Agent = {
       kind, gang, rig, x, z, heading: Math.atan2(this.px - x, this.pz - z), speed: 0, hp: kind === 'cop' ? 100 : 80,
       fallen: null, dead: false, state: kind === 'thief' ? 'approach' : kind === 'gang' ? 'idle' : 'chase',
       t: 0, weapon, cooldown: rand(0.5, 1.5), burst: 0, homeX: x, homeZ: z, money: 0, arrest: 0, idleYaw: Math.random() * 6.28,
@@ -965,20 +1257,20 @@ class CrimeSystem {
   }
 
   // The player took a gang on: they come after it (the cartel sends its trucks, see dispatch)
-  angerGang(g) {
+  angerGang(g: number): void {
     if (g === NARCO && this.gangAnger[g] <= 0) this.timers.trucks = Math.min(this.timers.trucks, 4);
     this.gangAnger[g] = g === NARCO ? 120 : 90;
   }
 
-  removeAgent(a) {
-    this.ragdolls.release(a.fallen);
+  removeAgent(a: Agent): void {
+    this.ragdolls?.release(a.fallen);
     a.fallen = null;
     const i = this.agents.indexOf(a);
     if (i >= 0) this.agents.splice(i, 1);
   }
 
   // Someone hurt: `damage` hit points, knocked along (nx, nz) at `throwSpeed` m/s if it brings them down
-  damageAgent(a, damage, nx, nz, byPlayer, throwSpeed = 3) {
+  damageAgent(a: Agent, damage: number, nx: number, nz: number, byPlayer: boolean, throwSpeed = 3): void {
     if (a.dead) return;
     a.hp -= damage;
     const killed = a.hp <= 0;
@@ -997,17 +1289,17 @@ class CrimeSystem {
     if (killed) this.kill(a);
   }
 
-  // Brings `a` down as a ragdoll (sim/ragdolls.js), hit at (vx, vz) along (nx, nz); by the player's car (`byCar`) its
+  // Brings `a` down as a ragdoll (sim/ragdolls.ts), hit at (vx, vz) along (nx, nz); by the player's car (`byCar`) its
   // body throws theirs itself. `bleed` (0..1): how badly they bleed where they come to rest (kill: the dead do)
-  knockAgent(a, vx, vz, nx, nz, byCar = false, bleed = 0) {
-    if (a.fallen) return;
+  knockAgent(a: Agent, vx: number, vz: number, nx: number, nz: number, byCar = false, bleed = 0): void {
+    if (a.fallen || !this.ragdolls) return;
     a.rig.update(1 / 60, a.x, a.z, a.heading, this.personGround, a, 0, true);
     a.rig.aim = 0;
     const v = byCar ? { vx: 0, vy: 0, vz: 0 } : throwVelocity(vx, vz, nx, nz);
     a.fallen = this.ragdolls.spawn(a.rig, { ...v, spin: byCar ? 0 : 2 + Math.hypot(vx, vz) * 0.3, bleed });
   }
 
-  kill(a) {
+  kill(a: Agent): void {
     a.dead = true;
     a.hp = 0;
     if (a.fallen) a.fallen.bleed = Math.max(a.fallen.bleed, 0.9);
@@ -1020,12 +1312,12 @@ class CrimeSystem {
       this.drop(a.weapon === 'smg' ? 'smg' : 'pistol', a.x, a.z);
     } else if (a.kind === 'gang') {
       const narco = a.gang === NARCO;
-      if (Math.random() < (narco ? 0.75 : 0.6)) this.drop(a.weapon || 'pistol', a.x, a.z);
+      if (Math.random() < (narco ? 0.75 : 0.6)) this.drop(a.weapon ?? 'pistol', a.x, a.z);
       if (Math.random() < 0.7) this.drop('money', a.x + 0.6, a.z, Math.round(narco ? rand(60, 220) : rand(15, 70)));
     }
   }
 
-  updateAgent(a, dt) {
+  updateAgent(a: Agent, dt: number): void {
     const dx = this.px - a.x, dz = this.pz - a.z;
     const dist = Math.hypot(dx, dz);
     a.t += dt;
@@ -1039,7 +1331,7 @@ class CrimeSystem {
       a.z = f.pz;
       if (!a.dead && f.rest > DOWN_TIME) {
         // back on their feet, and angry
-        this.ragdolls.release(f);
+        this.ragdolls?.release(f);
         a.fallen = null;
         a.rig.reset(a.x, a.z, a.heading, this.personGround, a);
         if (a.kind === 'thief' && a.state === 'approach') a.state = 'leave';
@@ -1070,7 +1362,7 @@ class CrimeSystem {
       }
     }
 
-    let goalYaw = a.heading;
+    let goalYaw: number; // (every kind's branch below sets it)
     let speed = 0;
     let aim = 0;
     a.stepT = Math.max(0, a.stepT - dt);
@@ -1100,7 +1392,7 @@ class CrimeSystem {
       goalYaw = Math.atan2(a.foe.x - a.x, a.foe.z - a.z);
       aim = 1;
       speed = foeDist > 30 ? RUN * 0.6 : 0;
-      const gun = NPC_GUN[a.weapon || 'pistol'];
+      const gun = NPC_GUN[a.weapon ?? 'pistol'];
       if (a.stepT <= 0) this.npcShoot(a, gun, a.kind === 'cop' ? SKILL.cop : SKILL.narco, foeDist, dt, a.foe);
       if (a.kind === 'cop' && a.state === 'leave') a.t = 0; // (still on the job)
     } else if (a.kind === 'cop') {
@@ -1118,7 +1410,7 @@ class CrimeSystem {
           }
         }
       } else {
-        const gun = POLICE.shoots[stars] ? NPC_GUN[a.weapon || 'pistol'] : null;
+        const gun = POLICE.shoots[stars] ? NPC_GUN[a.weapon ?? 'pistol'] : null;
         goalYaw = toPlayer;
         if (gun && a.los && dist < gun.range && dist > 2.2) {
           aim = 1;
@@ -1145,7 +1437,7 @@ class CrimeSystem {
         goalYaw = toPlayer;
         aim = 1;
         speed = dist > reach * 0.65 ? RUN * 0.7 : 0;
-        if (a.stepT <= 0) this.npcShoot(a, NPC_GUN[a.weapon || 'pistol'], g.narco ? SKILL.narco : SKILL.gang, dist, dt);
+        if (a.stepT <= 0) this.npcShoot(a, NPC_GUN[a.weapon ?? 'pistol'], g.narco ? SKILL.narco : SKILL.gang, dist, dt);
         // opening fire on the player in their turf is taking them on
         if (g.narco && !provoked && a.cooldown > 0.5) this.angerGang(NARCO);
       } else if (hostile && dist < 60) {
@@ -1167,7 +1459,8 @@ class CrimeSystem {
           if (dist < 12 && !hostile) goalYaw = toPlayer; // eyeing the player
         }
       }
-    } else if (a.kind === 'thief') {
+    } else {
+      // a thief
       if (a.state === 'approach' && (!playing || this.mode !== 'person' || a.t > 30)) a.state = 'leave';
       if (a.state === 'approach') {
         goalYaw = toPlayer;
@@ -1215,7 +1508,7 @@ class CrimeSystem {
     rig.update(dt, a.x, a.z, a.heading, this.personGround, a, 0, draw);
     if (!draw) return;
     this.crowd.add(rig, dist);
-    const guns = a.weapon && (this.npcGuns[a.weapon] || this.npcGuns.pistol);
+    const guns = a.weapon && (this.npcGuns[a.weapon] ?? this.npcGuns.pistol);
     if (guns && rig.aim > 0.05 && guns.count < MAX_AGENTS) {
       dummy.position.copy(rig.handPosition);
       dummy.rotation.set((1 - rig.aim) * 1.25, rig.aimYaw, 0, 'YXZ');
@@ -1226,14 +1519,14 @@ class CrimeSystem {
   }
 
   // Turns a towards `goalYaw` and walks it `speed` m/s, around walls and vehicles (the first clear heading either side)
-  walkAgent(a, goalYaw, speed, dt) {
+  walkAgent(a: Agent, goalYaw: number, speed: number, dt: number): void {
     // a vehicle standing in its way: it makes for the nearer end and goes round it
     const traffic = this.traffic;
     if (speed > 0 && traffic.vehicleBoxAt) {
       const sn = Math.sin(goalYaw), cs = Math.cos(goalYaw);
       // (looked for a step and two steps ahead, so it doesn't cut across a corner either)
-      const box = traffic.vehicleBoxAt(a.x + sn * 0.3, a.z + cs * 0.3, BODY_R) || traffic.vehicleBoxAt(a.x + sn * 0.7, a.z + cs * 0.7, BODY_R);
-      if (box && !traffic.vehicleAt(a.x, a.z, BODY_R)) {
+      const box = traffic.vehicleBoxAt(a.x + sn * 0.3, a.z + cs * 0.3, BODY_R) ?? traffic.vehicleBoxAt(a.x + sn * 0.7, a.z + cs * 0.7, BODY_R);
+      if (box && !traffic.vehicleAt?.(a.x, a.z, BODY_R)) {
         goalYaw = roundBox(a.x, a.z, a.x + Math.sin(goalYaw) * 20, a.z + Math.cos(goalYaw) * 20, box, BODY_R + 0.4);
       }
     }
@@ -1260,7 +1553,7 @@ class CrimeSystem {
   }
 
   // Can one see from (x0, z0) to (x1, z1) past the buildings? (every 2.5 m)
-  clearLine(x0, z0, x1, z1) {
+  clearLine(x0: number, z0: number, x1: number, z1: number): boolean {
     const d = Math.hypot(x1 - x0, z1 - z0);
     const n = Math.ceil(d / 2.5);
     for (let i = 1; i < n; i++) {
@@ -1270,8 +1563,8 @@ class CrimeSystem {
   }
 
   // The nearest of the other side (the police for the cartel, the cartel for the police) within FOE_RANGE in sight
-  findFoe(a) {
-    let best = null;
+  findFoe(a: Agent): Agent | null {
+    let best: Agent | null = null;
     let bestD = FOE_RANGE;
     for (const o of this.agents) {
       if (o.fallen || (a.kind === 'cop' ? o.gang !== NARCO : o.kind !== 'cop')) continue;
@@ -1286,7 +1579,7 @@ class CrimeSystem {
 
   // Someone on foot firing at the player (or at `foe`, one of the other side): in bursts for an SMG or a rifle,
   // hitting by distance, the target's speed and their skill
-  npcShoot(a, gun, skill, dist, dt, foe = null) {
+  npcShoot(a: Agent, gun: NpcGun, skill: number, dist: number, _dt: number, foe: Agent | null = null): void {
     if (a.cooldown > 0 || (this.state !== 'play' && !foe)) return;
     if (gun.burst > 1) {
       a.burst = a.burst > 0 ? a.burst - 1 : gun.burst - 1;
@@ -1299,7 +1592,7 @@ class CrimeSystem {
     const hy = a.rig.handPosition.y + 0.05;
     const hz = a.rig.handPosition.z + Math.cos(yaw) * 0.3;
     this.fx.muzzle(hx, hy, hz, yaw);
-    this.audio?.gunfire?.(a.weapon === 'rifle' ? 'smg' : a.weapon || 'pistol', hx, hy, hz);
+    this.audio?.gunfire?.(a.weapon === 'rifle' ? 'smg' : a.weapon ?? 'pistol', hx, hy, hz);
     if (foe) {
       const fy = this.groundAt(foe.x, foe.z) + 1.2;
       if (Math.random() < hitChance(dist, foe.speed, skill, gun.range)) {
@@ -1332,7 +1625,7 @@ class CrimeSystem {
   // 8. PATROL CARS
   // =========================================================================
   // A patrol car (faction 'police') or a cartel truck ('narco') coming after the player, out of sight down the road
-  spawnCruiser(faction = 'police') {
+  spawnCruiser(faction: Faction = 'police'): Cruiser | null {
     const cr = this.cruisers.find((c) => !c.active && c.faction === faction);
     if (!cr) return null;
     const s = this.traffic.roadSpot(this.px, this.pz, 70, 160);
@@ -1348,14 +1641,14 @@ class CrimeSystem {
     return cr;
   }
 
-  removeCruiser(cr) {
+  removeCruiser(cr: Cruiser): void {
     cr.active = false;
     cr.mesh.position.y = PARKED_Y;
     cr.position.set(0, PARKED_Y, 0);
     cr.path = null;
   }
 
-  damageCruiser(cr, damage, byPlayer) {
+  damageCruiser(cr: Cruiser, damage: number, byPlayer: boolean): void {
     if (cr.wreck) return;
     cr.hp -= damage;
     const police = cr.faction === 'police';
@@ -1372,7 +1665,7 @@ class CrimeSystem {
     cr.vy = 6;
   }
 
-  updateCruiser(cr, dt) {
+  updateCruiser(cr: Cruiser, dt: number): void {
     cr.life += dt;
     const dx = this.px - cr.x, dz = this.pz - cr.z;
     const dist = Math.hypot(dx, dz);
@@ -1427,22 +1720,21 @@ class CrimeSystem {
           cr.goalZ = this.pz;
           cr.replan = 3;
         }
-        if (cr.path && this.pursue(cr, 10 + Math.abs(cr.speed) * 0.6)) {
+        if (cr.path && this.pursue(cr, 10 + Math.abs(cr.speed) * 0.6) && this._aim) {
           tx = this._aim.x;
           tz = this._aim.z;
         }
       }
     }
-    // overtaking: something slow ahead in its way (a car or bus queued at a light), it pulls out round it
-    if (cr.state === 'chase' || cr.state === 'leave') {
-      const pass = this.blockerAhead(cr);
-      if (pass) {
-        const side = cr.passSide || 1; // (left first: the oncoming lane)
-        const lx = Math.cos(cr.heading) * side, lz = -Math.sin(cr.heading) * side;
-        if (this.solidAt(cr.x + lx * 3.2 + Math.sin(cr.heading) * 5, cr.z + lz * 3.2 + Math.cos(cr.heading) * 5)) cr.passSide = -side;
-        tx = cr.x + Math.sin(cr.heading) * 12 + lx * 3.4 * pass;
-        tz = cr.z + Math.cos(cr.heading) * 12 + lz * 3.4 * pass;
-      }
+    // overtaking: something slow ahead in its way (a car or bus queued at a light), it pulls out round it (chasing or
+    // leaving)
+    const pass = this.blockerAhead(cr);
+    if (pass) {
+      const side = cr.passSide || 1; // (left first: the oncoming lane)
+      const lx = Math.cos(cr.heading) * side, lz = -Math.sin(cr.heading) * side;
+      if (this.solidAt(cr.x + lx * 3.2 + Math.sin(cr.heading) * 5, cr.z + lz * 3.2 + Math.cos(cr.heading) * 5)) cr.passSide = -side;
+      tx = cr.x + Math.sin(cr.heading) * 12 + lx * 3.4 * pass;
+      tz = cr.z + Math.cos(cr.heading) * 12 + lz * 3.4 * pass;
     }
     let want = narco ? 22 : POLICE.speed[stars] || 13;
     // stop near a player on foot and send the officers out
@@ -1460,8 +1752,9 @@ class CrimeSystem {
 
   // Pure pursuit along a patrol car's route (where it was when it planned, then the intersections): the point `look`
   // m on along the street from the nearest point of the leg it is on, into this._aim. False at the route's end.
-  pursue(cr, look) {
+  pursue(cr: Cruiser, look: number): boolean {
     const path = cr.path;
+    if (!path) return false;
     const aim = (this._aim ??= { x: 0, z: 0 });
     for (;;) {
       if (cr.pathI >= path.length) return false;
@@ -1497,7 +1790,7 @@ class CrimeSystem {
   }
 
   // How much a slow vehicle of the traffic stands in a patrol car's way within 14 m ahead (0 none .. 1 dead ahead)
-  blockerAhead(cr) {
+  blockerAhead(cr: Cruiser): number {
     const fx = Math.sin(cr.heading), fz = Math.cos(cr.heading);
     let worst = 0;
     for (const list of [this.traffic.cars, this.traffic.buses]) {
@@ -1514,7 +1807,7 @@ class CrimeSystem {
     return worst;
   }
 
-  deployOfficers(cr) {
+  deployOfficers(cr: Cruiser): void {
     if (cr.faction === 'narco') {
       // the cartel's gunmen jump out with their rifles
       for (const side of [1, -1, 1]) {
@@ -1538,14 +1831,14 @@ class CrimeSystem {
 
   // Drives a patrol car towards (tx, tz) at up to `want` m/s: steering with the speed it has, feeling ahead for walls,
   // backing out when stuck
-  moveCruiser(cr, dt, want, tx = cr.x, tz = cr.z) {
+  moveCruiser(cr: Cruiser, dt: number, want: number, tx = cr.x, tz = cr.z): void {
     let steer = 0;
     if (want > 0) {
       const desired = Math.atan2(tx - cr.x, tz - cr.z);
       steer = wrapAngle(desired - cr.heading);
       // whiskers: a wall ahead turns it towards the clearer side
       const look = 3 + Math.abs(cr.speed) * 0.45;
-      const probe = (a) => this.solidAt(cr.x + Math.sin(cr.heading + a) * look, cr.z + Math.cos(cr.heading + a) * look);
+      const probe = (a: number) => this.solidAt(cr.x + Math.sin(cr.heading + a) * look, cr.z + Math.cos(cr.heading + a) * look);
       if (probe(0)) {
         const l = probe(0.6), r = probe(-0.6);
         if (!l && r) steer = 1;
@@ -1632,7 +1925,7 @@ class CrimeSystem {
   }
 
   // The player's half width & half length on the ground (its car's own, a motorcycle's, a bicycle's, on foot), or null
-  playerSize() {
+  playerSize(): [number, number] | null {
     const pe = this.player;
     const s = (this._size ??= [0, 0]);
     if (this.mode === 'car') {
@@ -1653,7 +1946,7 @@ class CrimeSystem {
   }
 
   // Patrol cars against the player and each other
-  collideCruisers() {
+  collideCruisers(): void {
     const pe = this.player;
     const box = this._playerBox ??= { x: 0, z: 0, heading: 0, hw: 0, hl: 0 };
     const size = this.playerSize();
@@ -1713,7 +2006,7 @@ class CrimeSystem {
   // =========================================================================
   // 9. WHO TURNS UP: the police for the stars, gangs on their turf, thieves, pickups
   // =========================================================================
-  dispatch(dt) {
+  dispatch(dt: number): void {
     const t = this.timers;
     const stars = this.state === 'play' ? this.wanted.stars : 0;
     t.dispatch -= dt;
@@ -1809,12 +2102,12 @@ class CrimeSystem {
   // =========================================================================
   // 10. PICKUPS
   // =========================================================================
-  drop(kind, x, z, amount = 0, life = 90) {
+  drop(kind: PickupKind, x: number, z: number, amount = 0, life = 90): void {
     if (this.pickups.length >= MAX_PICKUPS) this.pickups.shift();
     this.pickups.push({ kind, x, z, y: this.groundAt(x, z), amount, life });
   }
 
-  updatePickups(dt, elapsed) {
+  updatePickups(dt: number, elapsed: number): void {
     const mesh = this.pickupMesh;
     let n = 0;
     for (let i = this.pickups.length - 1; i >= 0; i--) {
@@ -1842,10 +2135,10 @@ class CrimeSystem {
     mesh.count = Math.max(1, n);
     if (!n) mesh.setMatrixAt(0, zero);
     mesh.instanceMatrix.needsUpdate = true;
-    mesh.instanceColor.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }
 
-  collect(p) {
+  collect(p: Pickup): void {
     this.audio?.gunfire?.('pickup', p.x, p.y + 1, p.z);
     if (p.kind === 'money') {
       this.money += p.amount;
@@ -1857,7 +2150,7 @@ class CrimeSystem {
       this.armor = Math.min(100, this.armor + p.amount);
       this.toast('Armor');
     } else {
-      const w = WEAPONS[p.kind];
+      const w: Weapon = WEAPONS[p.kind];
       const had = this.arsenal.has(w.id);
       this.arsenal.add(w.id, w.pickup);
       if (!had && w.id !== 'fists') this.arsenal.select(w.id);
@@ -1866,7 +2159,7 @@ class CrimeSystem {
   }
 
   // Positions on the minimap: { kind: 'cop' | 'cruiser' | 'gang' | 'thief' | <pickup kind>, x, z } (reused)
-  blips(out = (this._blips ??= [])) {
+  blips(out: Blips = (this._blips ??= [])): Blips {
     out.length = 0;
     for (const a of this.agents) if (!a.dead) out.push(a.kind === 'gang' ? ['rojos', 'verdes', 'narcos'][a.gang] : a.kind, a.x, a.z);
     for (const cr of this.cruisers) if (cr.active && !cr.wreck) out.push(cr.police ? 'cruiser' : 'truck', cr.x, cr.z);
@@ -1875,4 +2168,9 @@ class CrimeSystem {
   }
 }
 
+export type {
+  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, NpcGun, CrimePlayer,
+  CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser,
+  RocketFlight, Pickup, LockTarget, TraceHit
+};
 export { CrimeSystem };

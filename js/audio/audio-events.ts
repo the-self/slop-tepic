@@ -1,11 +1,110 @@
+// js/audio/audio-events.ts
+// One-shot sounds (footsteps, speech, horns, crashes, gunfire, blasts, thunder, the WALK signals' ticks), each baked
+// once into a few variants, and the wind's and the rain's continuous beds.
 import { setControlRate } from './audio-synthesis.ts';
+import type { SynthResources } from './audio-synthesis.ts';
+
+/** Every one-shot playEvent() plays */
+export type EventKind = 'footstep' | 'talk' | 'horn' | 'signal' | 'crash' | 'gun' | 'explosion' | 'pickup' | 'draw' | 'thunder';
+
+/** A gun's shots, a few variants each; any other weapon fires the pistol's */
+export interface GunBuffers {
+  [weapon: string]: AudioBuffer[] | undefined;
+  pistol: AudioBuffer[];
+  smg: AudioBuffer[];
+  bazooka: AudioBuffer[];
+}
+
+/** The synth's shared loops plus every one-shot's baked variants (createEventResources) */
+export interface EventResources extends SynthResources {
+  footsteps: AudioBuffer[];
+  /** Per speaker, a few syllable fragments */
+  syllables: AudioBuffer[][];
+  horns: AudioBuffer[];
+  crashes: { body: AudioBuffer[]; metal: AudioBuffer[]; debris: AudioBuffer[] };
+  guns: GunBuffers;
+  explosions: AudioBuffer[];
+  thunder: AudioBuffer[];
+  chime: AudioBuffer;
+  rack: AudioBuffer;
+  /** The wind's gust envelope, a slow control signal (8 kHz) */
+  gusts: AudioBuffer;
+  signalTick: AudioBuffer;
+  signalWalk: AudioBuffer;
+}
+
+/** How playEvent() plays one: all optional */
+export interface EventOptions {
+  seed?: number;
+  /** Start time on the context's clock (s); now by default */
+  when?: number;
+  /** 0..1 */
+  intensity?: number;
+  /** A crash's, 0..1 */
+  severity?: number;
+  /** The walker's speed (m/s): a faster step is brighter */
+  speed?: number;
+  /** Picks the talker's voice, steady across its turns */
+  voiceSeed?: number;
+  /** The gun's: 'pistol' | 'smg' | 'bazooka' | 'punch' (any other sounds as the pistol) */
+  weapon?: string;
+  /** A signal's WALK ticks, else its locator pulse */
+  walk?: boolean;
+}
+
+/** A playing one-shot: it ends at `endTime` (s, the context's clock), or fades out early on dispose() */
+export interface EventVoice {
+  endTime: number;
+  dispose(immediate?: boolean): void;
+}
+
+/** The rain's controls */
+export interface RainParams {
+  /** rainIntensity, 0..1 */
+  rain: number;
+  /** How walled-in the street is, 0..1 (CityAcoustics) */
+  enclosure: number;
+  /** Under a roof: a car's or the helicopter's */
+  inCar: boolean;
+}
+
+/** The wind's controls */
+export interface WindParams {
+  /** The player's speed, m/s */
+  speed: number;
+  /** m over the town's floor */
+  altitude: number;
+  /** 1 (or true) at night, which is quieter, else 0 */
+  night: number | boolean;
+  /** The traffic's nearby loudness, 0..1 */
+  traffic: number;
+  /** How walled-in the street is, 0..1 */
+  enclosure: number;
+}
+
+export interface RainVoice {
+  update(params?: Partial<RainParams>, now?: number): void;
+  dispose(): void;
+}
+
+export interface WindVoice {
+  update(params?: Partial<WindParams>, now?: number): void;
+  dispose(immediate?: boolean): void;
+}
+
+/** A talker's voice: pitch (Hz), its formants' scale and how breathy it is */
+interface Speaker {
+  pitch: number;
+  formants: number;
+  breath: number;
+}
 
 const TAU = Math.PI * 2;
-const finite = (value, fallback = 0) => Number.isFinite(value) ? value : fallback;
-const clamp = (value, low = 0, high = 1) => Math.max(low, Math.min(high, finite(value)));
-const smoothstep = (value) => { const x = clamp(value); return x * x * (3 - 2 * x); };
+const finite = (value: number | undefined, fallback = 0) => value !== undefined && Number.isFinite(value) ? value : fallback;
+const clamp = (value: number | undefined, low = 0, high = 1) => Math.max(low, Math.min(high, finite(value)));
+const smoothstep = (value: number) => { const x = clamp(value); return x * x * (3 - 2 * x); };
 
-function randomSource(seed) {
+function randomSource(seed: number | undefined) {
   let state = (finite(seed, 1) * 2654435761) >>> 0;
   state = Math.imul(state ^ (state >>> 16), 0x7feb352d);
   state = Math.imul(state ^ (state >>> 15), 0x846ca68b);
@@ -16,7 +115,7 @@ function randomSource(seed) {
   };
 }
 
-function makeBuffer(ctx, duration, synthesize, peak = 0.6) {
+function makeBuffer(ctx: BaseAudioContext, duration: number, synthesize: (t: number, sample: number) => number, peak = 0.6) {
   const buffer = ctx.createBuffer(1, Math.ceil(duration * ctx.sampleRate), ctx.sampleRate);
   const samples = buffer.getChannelData(0);
   let maximum = 0, mean = 0;
@@ -36,7 +135,7 @@ function makeBuffer(ctx, duration, synthesize, peak = 0.6) {
   return buffer;
 }
 
-function footstep(ctx, seed) {
+function footstep(ctx: BaseAudioContext, seed: number) {
   const random = randomSource(seed);
   const soleTime = 0.024 + random() * 0.035;
   const scuffTime = soleTime + 0.025 + random() * 0.025;
@@ -65,7 +164,7 @@ function footstep(ctx, seed) {
   }, 0.55);
 }
 
-function speechFragment(ctx, speaker, seed) {
+function speechFragment(ctx: BaseAudioContext, speaker: Speaker, seed: number) {
   const random = randomSource(seed);
   const vowels = [[600, 1170, 2380], [470, 1740, 2460], [340, 2010, 2650], [470, 890, 2300], [420, 1450, 2350]];
   const duration = 0.57 + random() * 0.28;
@@ -73,7 +172,8 @@ function speechFragment(ctx, speaker, seed) {
   const segments = Array.from({ length: count }, () => ({
     vowel: vowels[Math.floor(random() * vowels.length)], weight: 0.65 + random() * 0.7,
     consonant: Math.floor(random() * 5), transition: 0.028 + random() * 0.038,
-    stress: 0.62 + random() * 0.38, pitch: 0.96 + random() * 0.1
+    stress: 0.62 + random() * 0.38, pitch: 0.96 + random() * 0.1,
+    start: 0, duration: 0 // (s: laid out below, once all the weights are known)
   }));
   const weight = segments.reduce((sum, segment) => sum + segment.weight, 0);
   let cursor = 0;
@@ -148,7 +248,7 @@ function speechFragment(ctx, speaker, seed) {
   }, 0.5);
 }
 
-function horn(ctx, duration, seed) {
+function horn(ctx: BaseAudioContext, duration: number, seed: number) {
   const random = randomSource(seed);
   const frequencies = [365 + random() * 45, 465 + random() * 55];
   const phases = [random(), random()];
@@ -175,7 +275,7 @@ function horn(ctx, duration, seed) {
   }, 0.7);
 }
 
-function crashBody(ctx, seed) {
+function crashBody(ctx: BaseAudioContext, seed: number) {
   const random = randomSource(seed);
   const coefficients = [45, 240 + random() * 70, 950].map((frequency) => 1 - Math.exp(-TAU * frequency / ctx.sampleRate));
   const bands = [0, 0, 0];
@@ -193,7 +293,7 @@ function crashBody(ctx, seed) {
   }, 0.7);
 }
 
-function crashMetal(ctx, seed) {
+function crashMetal(ctx: BaseAudioContext, seed: number) {
   const random = randomSource(seed);
   const creases = Array.from({ length: 7 }, () => ({
     time: 0.008 + random() ** 2 * 0.19,
@@ -230,7 +330,7 @@ function crashMetal(ctx, seed) {
   }, 0.65);
 }
 
-function crashDebris(ctx, seed) {
+function crashDebris(ctx: BaseAudioContext, seed: number) {
   const random = randomSource(seed);
   const grains = Array.from({ length: 14 }, () => {
     const time = 0.015 + random() ** 1.7 * 0.51;
@@ -256,7 +356,7 @@ function crashDebris(ctx, seed) {
 
 // A gunshot: the muzzle's crack (a broadband snap) on a low chest-thump, with a short tail off the facades. `weapon`:
 // 'pistol' (a sharp crack), 'smg' (lighter and shorter), 'bazooka' (the launch's whoosh and roar)
-function gunshot(ctx, weapon, seed) {
+function gunshot(ctx: BaseAudioContext, weapon: 'pistol' | 'smg' | 'bazooka', seed: number) {
   const random = randomSource(seed);
   const bazooka = weapon === 'bazooka';
   const smg = weapon === 'smg';
@@ -279,7 +379,7 @@ function gunshot(ctx, weapon, seed) {
 }
 
 // An explosion: a deep boom that rolls on, with crackle and falling debris
-function explosion(ctx, seed) {
+function explosion(ctx: BaseAudioContext, seed: number) {
   const random = randomSource(seed);
   const coefficients = [70, 380].map((frequency) => 1 - Math.exp(-TAU * frequency / ctx.sampleRate));
   const bands = [0, 0];
@@ -296,7 +396,7 @@ function explosion(ctx, seed) {
 
 // Thunder: a crack (a near strike) or none, then a long rolling rumble of low bands, swelling & fading as the sound of
 // each stretch of the channel arrives from farther along it
-function thunder(ctx, seed) {
+function thunder(ctx: BaseAudioContext, seed: number) {
   const random = randomSource(seed);
   const coefficients = [45, 160, 900].map((frequency) => 1 - Math.exp(-TAU * frequency / ctx.sampleRate));
   const bands = [0, 0, 0];
@@ -313,7 +413,7 @@ function thunder(ctx, seed) {
 }
 
 // A pickup's chime: two quick rising notes
-function chime(ctx) {
+function chime(ctx: BaseAudioContext) {
   return makeBuffer(ctx, 0.32, (t) => {
     const second = t > 0.09 ? 1 : 0;
     const f = second ? 1318.5 : 987.8;
@@ -323,7 +423,7 @@ function chime(ctx) {
 }
 
 // A gun drawn: the slide pulled back over its rails and let go, a scrape and two metallic clacks
-function rack(ctx) {
+function rack(ctx: BaseAudioContext) {
   const random = randomSource(907);
   let scrape = 0;
   return makeBuffer(ctx, 0.28, (t) => {
@@ -338,13 +438,13 @@ function rack(ctx) {
   }, 0.5);
 }
 
-function gustBuffer(ctx) {
+function gustBuffer(ctx: BaseAudioContext) {
   // Low-rate, looping control signal: uneven overlapping gusts with a smooth seam, rather than a sine LFO.
   const sampleRate = 8000, duration = 24;
   const buffer = ctx.createBuffer(1, sampleRate * duration, sampleRate);
   const data = buffer.getChannelData(0), random = randomSource(349);
   const fast = Array.from({ length: 48 }, () => random()), slow = Array.from({ length: 12 }, () => random());
-  const interpolate = (knots, position) => {
+  const interpolate = (knots: number[], position: number) => {
     const index = Math.floor(position), t = position - index;
     const a = knots[(index + knots.length - 1) % knots.length], b = knots[index % knots.length];
     const c = knots[(index + 1) % knots.length], d = knots[(index + 2) % knots.length];
@@ -357,7 +457,7 @@ function gustBuffer(ctx) {
   return buffer;
 }
 
-function signal(ctx, walk) {
+function signal(ctx: BaseAudioContext, walk: boolean) {
   const random = randomSource(84);
   // Accessible pedestrian signals use rapid percussive ticks for WALK, with a quiet locator pulse between phases.
   return makeBuffer(ctx, walk ? 0.5 : 0.09, (t) => {
@@ -369,8 +469,8 @@ function signal(ctx, walk) {
   }, 0.45);
 }
 
-export function createEventResources(ctx, resources) {
-  const speakers = [
+export function createEventResources(ctx: BaseAudioContext, resources: SynthResources): EventResources {
+  const speakers: Speaker[] = [
     { pitch: 99, formants: 0.88, breath: 0.06 }, { pitch: 119, formants: 0.94, breath: 0.10 },
     { pitch: 143, formants: 1.00, breath: 0.08 }, { pitch: 166, formants: 1.04, breath: 0.12 },
     { pitch: 191, formants: 1.10, breath: 0.09 }, { pitch: 216, formants: 1.14, breath: 0.13 }
@@ -400,18 +500,18 @@ export function createEventResources(ctx, resources) {
   };
 }
 
-export function playEvent(ctx, resources, kind, output, options = {}) {
+export function playEvent(ctx: BaseAudioContext, resources: EventResources, kind: EventKind, output: AudioNode, options: EventOptions = {}): EventVoice {
   const random = randomSource(options.seed);
   const start = Math.max(ctx.currentTime, finite(options.when, ctx.currentTime));
   const intensity = clamp(finite(options.intensity, 1));
-  const levels = { footstep: 0.22, talk: 0.065, horn: 0.23, signal: 0.13, crash: 0.35, gun: 0.5, explosion: 0.7, pickup: 0.18, draw: 0.16, thunder: 0.6 };
-  if (!Object.hasOwn(levels, kind) || intensity === 0) return { endTime: start, dispose() {} };
+  const levels: Record<EventKind, number> = { footstep: 0.22, talk: 0.065, horn: 0.23, signal: 0.13, crash: 0.35, gun: 0.5, explosion: 0.7, pickup: 0.18, draw: 0.16, thunder: 0.6 };
+  if (!Object.hasOwn(levels, kind) || intensity === 0) return { endTime: start, dispose() { /* nothing is playing */ } };
   const gain = ctx.createGain();
   gain.gain.value = intensity * levels[kind];
   gain.connect(output);
-  const sources = new Map();
+  const sources = new Map<AudioBufferSourceNode, GainNode>();
   let disposed = false;
-  const release = (source) => {
+  const release = (source: AudioBufferSourceNode) => {
     const envelope = sources.get(source);
     if (!envelope) return;
     source.onended = null;
@@ -423,7 +523,7 @@ export function playEvent(ctx, resources, kind, output, options = {}) {
       gain.disconnect();
     }
   };
-  const event = {
+  const event: EventVoice = {
     endTime: start,
     dispose(immediate = false) {
       if (disposed) return;
@@ -438,7 +538,7 @@ export function playEvent(ctx, resources, kind, output, options = {}) {
       if (!fade) for (const source of sources.keys()) release(source);
     }
   };
-  const play = (buffer, when, rate = 1, volume = 1) => {
+  const play = (buffer: AudioBuffer, when: number, rate = 1, volume = 1) => {
     const source = ctx.createBufferSource();
     const envelope = ctx.createGain();
     source.buffer = buffer;
@@ -446,7 +546,7 @@ export function playEvent(ctx, resources, kind, output, options = {}) {
     envelope.gain.value = volume;
     source.connect(envelope).connect(gain);
     sources.set(source, envelope);
-    source.onended = () => release(source);
+    source.onended = () => { release(source); };
     const end = when + buffer.duration / rate;
     event.endTime = Math.max(event.endTime, end);
     source.start(when);
@@ -486,7 +586,7 @@ export function playEvent(ctx, resources, kind, output, options = {}) {
     if (weapon === 'punch') {
       play(resources.crashes.body[Math.floor(random() * resources.crashes.body.length)], start, 1.5 + random() * 0.2, 0.8);
     } else {
-      const set = resources.guns[weapon] || resources.guns.pistol;
+      const set = (weapon === undefined ? undefined : resources.guns[weapon]) ?? resources.guns.pistol;
       play(set[Math.floor(random() * set.length)], start, 0.94 + random() * 0.12);
     }
   } else if (kind === 'explosion') {
@@ -505,7 +605,10 @@ export function playEvent(ctx, resources, kind, output, options = {}) {
   return event;
 }
 
-function smoothParameter(parameter, timeConstant, epsilon = 0.0001) {
+/** A sampled parameter: set to `value` from `now` (s, the context's clock) */
+type SmoothedParameter = (value: number, now: number) => void;
+
+function smoothParameter(parameter: AudioParam, timeConstant: number, epsilon = 0.0001): SmoothedParameter {
   let target = NaN;
   return (value, now) => {
     if (Math.abs(value - target) < epsilon) return;
@@ -517,7 +620,7 @@ function smoothParameter(parameter, timeConstant, epsilon = 0.0001) {
 
 // Rain: the hiss of drops on the street all round, and their drumming on the roof over the player's head inside a car
 // (muffled, louder). `rain` is rainIntensity (0..1)
-export function createRainVoice(ctx, resources, output) {
+export function createRainVoice(ctx: BaseAudioContext, resources: SynthResources, output: AudioNode): RainVoice {
   const master = ctx.createGain();
   master.gain.value = 1;
   master.connect(output);
@@ -562,12 +665,12 @@ export function createRainVoice(ctx, resources, output) {
   };
 }
 
-export function createWindVoice(ctx, resources, output) {
+export function createWindVoice(ctx: BaseAudioContext, resources: EventResources, output: AudioNode): WindVoice {
   const master = ctx.createGain();
   master.gain.setValueAtTime(0, ctx.currentTime);
   master.gain.setTargetAtTime(1, ctx.currentTime, 0.8);
   master.connect(output);
-  const nodes = [master], sources = [], channels = [];
+  const nodes: AudioNode[] = [master], sources: AudioBufferSourceNode[] = [], channels: { air: SmoothedParameter; rumble: SmoothedParameter; cutoff: SmoothedParameter }[] = [];
   let disposed = false, remaining = 4;
   const disconnect = () => {
     for (const node of nodes) node.disconnect();

@@ -1,13 +1,41 @@
-// js/world/lot-greenery.js
+// js/world/lot-greenery.ts
 // The open ground inside Tepic's blocks, as the satellite sees it: the vacant lots (baldíos), the football fields no
 // one mapped, the backyards and patios between the houses, green in the rains and straw-yellow in the dry season, with
 // the mangos, laureles & tabachines that stand over them. Plain data in, plain data out (no three.js), so node --test
-// reads it directly: city-grid.js draws the ground cover, street-details.js plants the trees.
+// reads it directly: city-grid.ts draws the ground cover, street-details.ts plants the trees.
 // - openness(blocks, houses): the share of each curb island no building stands on, for the ground's look
 // - lotTrees(blocks, houses): tree sites on the open ground, clear of the walls and the sidewalk, thick along the
 //   edges of a lot and in the yards, sparse out in the middle of a big field (where the kids play football)
 
 import { hash } from './hash.ts';
+import type { CityBlock, PointXZ } from './city-config.ts';
+import type { Numbers } from './lattice.ts';
+
+/** A tree to plant (m): its size over the species' usual, the species (trees.ts SPECIES: 0 laurel, 1 jacaranda, 2 mango,
+ *  3 tabachín, 4 palm) and its tier (1 the camellón's, 2 a yard's). */
+export interface TreeSite {
+  x: number;
+  z: number;
+  scale: number;
+  species: number;
+  tier: number;
+}
+/** A house as an oriented box: centre (m), half width & depth (m), and the cos & sin of its turn. */
+export interface HouseBox {
+  cx: number;
+  cz: number;
+  hx: number;
+  hz: number;
+  cs: number;
+  sn: number;
+}
+export interface HouseIndex {
+  boxes: HouseBox[];
+  /** distance (m) from (x, z) to the nearest wall within `reach`, 0 inside a house, reach if there is none that near */
+  wallDistance: (x: number, z: number, reach: number) => number;
+}
+/** What lotTrees reads of a block. */
+export type LotBlock = Pick<CityBlock, 'rural' | 'median' | 'park' | 'area' | 'minX' | 'maxX' | 'minZ' | 'maxZ' | 'poly'>;
 
 const TREE_SPACING = 9; // m between the candidate tree sites (jittered)
 const WALL_CLEAR = 2.4; // m a trunk stands at least from any wall
@@ -17,9 +45,9 @@ const HOUSE_CELL = 24; // m cells of the houses' spatial index
  * The houses (city-geodata.js `houses`: stride integers each, centre x & z in dm, width & depth in dm, turn θ in
  * thousandths of a radian) as oriented boxes in a grid of HOUSE_CELL m cells
  */
-function indexHouses(houses, stride = 8) {
-  const cells = new Map();
-  const boxes = [];
+function indexHouses(houses: Numbers, stride = 8): HouseIndex {
+  const cells = new Map<number, HouseBox[]>();
+  const boxes: HouseBox[] = [];
   for (let i = 0; i + 4 < houses.length; i += stride) {
     const cx = houses[i] / 10, cz = houses[i + 1] / 10, hx = houses[i + 2] / 20, hz = houses[i + 3] / 20, th = houses[i + 4] / 1000;
     const cs = Math.cos(th), sn = Math.sin(th);
@@ -36,11 +64,11 @@ function indexHouses(houses, stride = 8) {
     }
   }
   // distance (m) from (x, z) to the nearest wall within `reach`, 0 inside a house, reach if there is none that near
-  const wallDistance = (x, z, reach) => {
+  const wallDistance = (x: number, z: number, reach: number) => {
     let best = reach;
     for (let ix = Math.floor((x - reach) / HOUSE_CELL); ix <= Math.floor((x + reach) / HOUSE_CELL); ix++) {
       for (let iz = Math.floor((z - reach) / HOUSE_CELL); iz <= Math.floor((z + reach) / HOUSE_CELL); iz++) {
-        for (const b of cells.get(ix * 100003 + iz) || []) {
+        for (const b of cells.get(ix * 100003 + iz) ?? []) {
           // the box's own frame: world = c + R_y(θ)·local, so local = R_y(−θ)·(p − c)
           const dx = x - b.cx, dz = z - b.cz;
           const u = Math.abs(dx * b.cs - dz * b.sn) - b.hx, v = Math.abs(dx * b.sn + dz * b.cs) - b.hz;
@@ -54,7 +82,7 @@ function indexHouses(houses, stride = 8) {
   return { boxes, wallDistance };
 }
 
-function inPolygon(x, z, pts) {
+function inPolygon(x: number, z: number, pts: PointXZ[]): boolean {
   let inside = false;
   for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
     const a = pts[i], b = pts[j];
@@ -64,7 +92,7 @@ function inPolygon(x, z, pts) {
 }
 
 // Distance (m) from (x, z) to the curb island's outline
-function edgeDistance(x, z, pts) {
+function edgeDistance(x: number, z: number, pts: PointXZ[]): number {
   let best = Infinity;
   for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
     const a = pts[j], b = pts[i];
@@ -79,16 +107,17 @@ function edgeDistance(x, z, pts) {
 
 /**
  * Share (0..1) of each block's ground inside its sidewalk band (`sidewalk` m from the curb) no house stands on: a Map
- * block → share, from the houses' areas summed per block (`blockAt(x, z)`, city-config.js) against the block's
+ * block → share, from the houses' areas summed per block (`blockAt(x, z)`, city-config.ts) against the block's
  * area less its sidewalk band
  */
-function openness(blocks, houses, blockAt, { stride = 8, sidewalk = 2.2 } = {}) {
-  const built = new Map();
+function openness<B extends { poly: PointXZ[]; area: number }>(blocks: B[], houses: Numbers, blockAt: (x: number, z: number) => B | null,
+  { stride = 8, sidewalk = 2.2 }: { stride?: number; sidewalk?: number } = {}): Map<B, number> {
+  const built = new Map<B, number>();
   for (let i = 0; i + 4 < houses.length; i += stride) {
     const b = blockAt(houses[i] / 10, houses[i + 1] / 10);
     if (b) built.set(b, (built.get(b) || 0) + (houses[i + 2] * houses[i + 3]) / 100);
   }
-  const out = new Map();
+  const out = new Map<B, number>();
   for (const b of blocks) {
     let perimeter = 0;
     for (let i = 0, j = b.poly.length - 1; i < b.poly.length; j = i++) perimeter += Math.hypot(b.poly[i].x - b.poly[j].x, b.poly[i].z - b.poly[j].z);
@@ -98,27 +127,29 @@ function openness(blocks, houses, blockAt, { stride = 8, sidewalk = 2.2 } = {}) 
   return out;
 }
 
-// The trees of Tepic's yards & lots (trees.js SPECIES: 0 laurel, 1 jacaranda, 2 mango, 3 tabachín, 4 palm): the mango
+// The trees of Tepic's yards & lots (trees.ts SPECIES: 0 laurel, 1 jacaranda, 2 mango, 3 tabachín, 4 palm): the mango
 // in nearly every backyard and the laurel de la India, dense dark domes from the air; a few tabachines, jacarandas & fan
 // palms
 const YARD_MIX = [0.36, 0.06, 0.44, 0.08, 0.06];
-const pickSpecies = (r) => {
+const pickSpecies = (r: number) => {
   for (let k = 0; k < YARD_MIX.length; k++) if ((r -= YARD_MIX[k]) < 0) return k;
   return 0;
 };
 
 /**
  * Tree sites ({ x, z, scale, species, tier }) on the open ground of the house blocks (not the parks, the open country
- * or the camellones, planted already by city-grid.js & street-details.js). A site needs WALL_CLEAR m to every wall and
+ * or the camellones, planted already by city-grid.ts & street-details.ts). A site needs WALL_CLEAR m to every wall and
  * stays off the sidewalk band and the front strip by the street (the street trees' and the fronts' own); its chance
  * runs high in the yards and along the edges of a lot (trees round a field) and low out in the open middle of one.
  * `houses`, `stride`: city-geodata.js houses; `sidewalk`: the sidewalk's width (m); `skip`: blocks planted otherwise
- * (the Libramiento's camellón, medians.js)
+ * (the Libramiento's camellón, medians.ts)
  */
-function lotTrees(blocks, houses, { stride = 8, sidewalk = 2.2, index = indexHouses(houses, stride), skip = null } = {}) {
-  const sites = [];
+function lotTrees<B extends LotBlock>(blocks: B[], houses: Numbers,
+  { stride = 8, sidewalk = 2.2, index = indexHouses(houses, stride), skip = null }:
+  { stride?: number; sidewalk?: number; index?: HouseIndex; skip?: Set<B> | null } = {}): TreeSite[] {
+  const sites: TreeSite[] = [];
   for (const b of blocks) {
-    if (b.rural || b.median || b.park > 0.6 || b.area < 150 || (skip && skip.has(b))) continue;
+    if (b.rural || b.median || b.park > 0.6 || b.area < 150 || skip?.has(b)) continue;
     for (let gx = b.minX + TREE_SPACING * 0.5; gx < b.maxX; gx += TREE_SPACING) {
       for (let gz = b.minZ + TREE_SPACING * 0.5; gz < b.maxZ; gz += TREE_SPACING) {
         const x = gx + (hash(gx, gz, 1) - 0.5) * TREE_SPACING * 0.8;
@@ -147,7 +178,7 @@ function lotTrees(blocks, houses, { stride = 8, sidewalk = 2.2, index = indexHou
  * How dry the grass is (0 green .. 1 straw) in `month` (0 = January): Tepic's rains run June to October; the grass
  * browns through the dry months and is at its driest in April-May, just before the first storms
  */
-function grassDryness(month) {
+function grassDryness(month: number): number {
   const DRY = [0.45, 0.6, 0.75, 0.9, 0.95, 0.6, 0.15, 0, 0, 0.05, 0.15, 0.3];
   return DRY[((Math.floor(month) % 12) + 12) % 12];
 }

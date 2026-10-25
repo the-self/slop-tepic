@@ -1,11 +1,12 @@
 # Car models
 
 Every car the traffic drives (and the player can steal) is a plain data entry here, one file per make. Each one is
-drawn with one of the shared body shapes (sedan, taxi, suv, pickup, van & hatch in `js/actors/actor-models.js`; coupe,
-fastback, wedge, crossover, supercar & offroad in `../bodies.js`), stretched to the car's real length, width and height, and driven by a drivetrain built from its real numbers
-(`js/player/drivetrain.js` `buildSpec`).
+drawn with one of the shared body shapes (sedan, taxi, suv, pickup, van & hatch in `js/actors/actor-models.ts`; coupe,
+fastback, wedge, crossover, supercar & offroad in `../bodies.ts`), stretched to the car's real length, width and height, and driven by a drivetrain built from its real numbers
+(`js/player/drivetrain.ts` `buildSpec`).
 
-To add a car: add an entry to its make's file (or a new `<make>.js` listed in `index.js`). Fields:
+To add a car: add an entry to its make's file (or a new `<make>.ts` listed in `index.ts`). Fields (the `CarModel` interface in `index.ts`, which type-checks
+every entry):
 
 | Field | Meaning |
 |---|---|
@@ -27,5 +28,6 @@ To add a car: add an entry to its make's file (or a new `<make>.js` listed in `i
 | `class` | `economy`, `family`, `truck`, `premium`, `sport` or `super`: tyres & brakes |
 | `traffic` | `false` keeps it out of the random traffic (the taxi and the police car have their own slots) |
 | `nitro` | optional: whether it has a nitrous kit (Shift); by default the `sport` and `super` cars do, electric ones never |
+| `wheelRadius` | optional: m, when the body shape's own wheels don't fit (the bus) |
 
 Figures are the Mexican-market versions where there is one (manufacturer data sheets); top speeds are the makers'.

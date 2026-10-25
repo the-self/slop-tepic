@@ -1,7 +1,9 @@
-// js/models/cars/toyota.js
+// js/models/cars/toyota.ts
 // Toyota (built in Tijuana & Apaseo el Grande). Fields: README.md
 
-export const CARS = [
+import type { CarModel } from './index.ts';
+
+export const CARS: CarModel[] = [
   {
     id: 'toyota-yaris', name: 'Toyota Yaris', body: 'sedan', class: 'economy',
     size: [4.42, 1.73, 1.47], mass: 1070, drive: 'fwd', power: [79, 6000], torque: [140, 4200], redline: 6500,

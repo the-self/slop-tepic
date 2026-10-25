@@ -1,6 +1,35 @@
+// js/audio/audio-acoustics.ts
 // Cheap outdoor obstruction using the same static building bounds as movement. Nearby bounds are cached;
 // only audible voices trace them, a few times per second. This deliberately avoids mesh raycasts or audio-rate DSP.
-function thickness(c, ax, ay, az, bx, by, bz, allowEndInside = false) {
+
+/** A point in the world, m */
+export interface Point3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * A building's collision bounds as the audio reads them (world/buildings.ts `Collider`): its AABB in m, from its foot
+ * (0 when it has none) to its top, and the oriented box inside it for one turned off the grid (centre, half-sizes, cos / sin)
+ */
+export interface AcousticCollider {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  minY?: number;
+  maxY: number;
+  obb?: { cx: number; cz: number; hx: number; hz: number; cs: number; sn: number } | null;
+}
+
+/** What the acoustics needs of the player's controllers: the colliders within `r` m of (x, z) */
+export interface ColliderQuery {
+  nearColliders(x: number, z: number, r: number): Iterable<AcousticCollider>;
+}
+
+// (the length, m, of the segment a → b inside the box)
+function thickness(c: AcousticCollider, ax: number, ay: number, az: number, bx: number, by: number, bz: number, allowEndInside = false) {
   let minX = c.minX, maxX = c.maxX, minZ = c.minZ, maxZ = c.maxZ;
   if (c.obb) {
     const o = c.obb;
@@ -37,7 +66,17 @@ function thickness(c, ax, ay, az, bx, by, bz, allowEndInside = false) {
 }
 
 class CityAcoustics {
-  constructor(controllerManager) {
+  controllers: ColliderQuery;
+  /** The tall buildings within 200 m of the listener, refreshed every 0.5 s or 20 m */
+  buildings: AcousticCollider[];
+  nextRefresh: number;
+  /** How walled-in the listener is, 0 (open) .. 1 */
+  enclosure: number;
+  x: number;
+  y: number;
+  z: number;
+
+  constructor(controllerManager: ColliderQuery) {
     this.controllers = controllerManager;
     this.buildings = [];
     this.nextRefresh = 0;
@@ -47,7 +86,7 @@ class CityAcoustics {
     this.z = Infinity;
   }
 
-  update(listener, now) {
+  update(listener: Point3, now: number) {
     if (now < this.nextRefresh && Math.hypot(listener.x - this.x, listener.y - this.y, listener.z - this.z) < 20) return;
     this.x = listener.x; this.y = listener.y; this.z = listener.z;
     this.nextRefresh = now + 0.5;
@@ -74,7 +113,8 @@ class CityAcoustics {
     this.enclosure = covered / 8;
   }
 
-  obstruction(source, listener, height = 0) {
+  // How much of the direct path from `source` (raised `height` m) to the listener the buildings block, 0..1
+  obstruction(source: Point3, listener: Point3, height = 0) {
     const dx = source.x - listener.x, dz = source.z - listener.z;
     const distance = Math.hypot(dx, dz);
     if (distance < 3) return 0;

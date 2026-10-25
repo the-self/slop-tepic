@@ -2,15 +2,25 @@ import * as THREE from 'three/webgpu';
 import { texture, uniform, positionWorld, step, mix } from 'three/tsl';
 import { BLOCKS, ROADS, CITY_OUTLINE } from './city-config.ts';
 import { GEO } from './city-geodata.js';
+import type { Node } from 'three/webgpu';
+import type { CityBlock, PointXZ } from './city-config.ts';
+import type { Rect } from './lattice.ts';
 
-// js/world/far-ground.js
-// The city's ground as seen from afar, the way GTA draws its LOD: beyond the streamed tiles (streaming.js), where the
+// js/world/far-ground.ts
+// The city's ground as seen from afar, the way GTA draws its LOD: beyond the streamed tiles (streaming.ts), where the
 // road deck, the sidewalks, the lots and the parks are not laid, the floor under the buildings is painted with them
 // instead, from one texture of the detailed box: the asphalt between the blocks, the blocks' lots (green where they lie
-// open, earth & patios where they are built up: lot-greenery.js openness), the parks, the open country, the rivers and
-// the airport. terrain.js puts it on the hills' floor under the tiles (on the slopes), city-grid.js's valley floor in
-// the flat city. Its colours are the near layers' own, averaged (tsl-materials.js), so a tile coming in changes the
+// open, earth & patios where they are built up: lot-greenery.ts openness), the parks, the open country, the rivers and
+// the airport. terrain.ts puts it on the hills' floor under the tiles (on the slopes), city-grid.ts's valley floor in
+// the flat city. Its colours are the near layers' own, averaged (tsl-materials.ts), so a tile coming in changes the
 // detail, not the colour.
+
+/** A texture of the box's ground: world (x, z) to its uv is (x - origin) / span (m). */
+export interface FarGround {
+  texture: THREE.Texture;
+  origin: THREE.Vector2;
+  span: THREE.Vector2;
+}
 
 const SIZE = 2048; // texels a side (the box is ~16 km: ~8 m a texel, a street a texel or two at 1 km and more)
 const COLORS = {
@@ -26,8 +36,8 @@ const COLORS = {
 };
 
 // The colour a block paints from afar: the open country's meadow, a park's lawn, a camellón's grass, else its lot's,
-// green where it lies open (over 60 % of it: `open`, lot-greenery.js openness) and earth & patios where built up
-function lotColor(b, open = 0.5) {
+// green where it lies open (over 60 % of it: `open`, lot-greenery.ts openness) and earth & patios where built up
+function lotColor(b: Pick<CityBlock, 'rural' | 'park' | 'median'>, open = 0.5): string {
   if (b.rural) return COLORS.meadow;
   if (b.park > 0.6 && !b.median) return COLORS.park;
   if (b.median) return COLORS.open;
@@ -36,37 +46,39 @@ function lotColor(b, open = 0.5) {
 
 /**
  * Paints the box's ground into a texture. `open`: Map(block -> 0..1) of how open each block's lot lies
- * (city-grid.js); `box`: { x0, x1, z0, z1 }. Returns { texture, origin, span }: world (x, z) to uv is
+ * (city-grid.ts); `box`: { x0, x1, z0, z1 }. Returns { texture, origin, span }: world (x, z) to uv is
  * (x - origin) / span, v down the canvas as z runs south.
  */
-function paintFarGround({ open = null, box, size = SIZE } = {}) {
+function paintFarGround({ open = null, box, size = SIZE }: { open?: Map<CityBlock, number> | null; box: Rect; size?: number }): FarGround {
   const span = Math.max(box.x1 - box.x0, box.z1 - box.z0);
   const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(size, size) : Object.assign(document.createElement('canvas'), { width: size, height: size });
   const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('far ground: no 2D canvas');
   const k = size / span;
   ctx.setTransform(k, 0, 0, k, -box.x0 * k, -box.z0 * k); // world metres in, texels out
-  const ring = (pts, path = new Path2D()) => {
-    pts.forEach((p, i) => (i ? path.lineTo(p.x, p.z) : path.moveTo(p.x, p.z)));
+  const ring = (pts: PointXZ[], path = new Path2D()) => {
+    pts.forEach((p, i) => { if (i) path.lineTo(p.x, p.z); else path.moveTo(p.x, p.z); });
     path.closePath();
     return path;
   };
-  const flatRing = (r, path = new Path2D()) => {
-    for (let i = 0; i + 1 < r.length; i += 2) (i ? path.lineTo(r[i], r[i + 1]) : path.moveTo(r[i], r[i + 1]));
+  const flatRing = (r: number[], path = new Path2D()) => {
+    for (let i = 0; i + 1 < r.length; i += 2) { if (i) path.lineTo(r[i], r[i + 1]); else path.moveTo(r[i], r[i + 1]); }
     path.closePath();
     return path;
   };
-  const flatLine = (r, path = new Path2D()) => {
-    for (let i = 0; i + 1 < r.length; i += 2) (i ? path.lineTo(r[i], r[i + 1]) : path.moveTo(r[i], r[i + 1]));
+  const flatLine = (r: number[], path = new Path2D()) => {
+    for (let i = 0; i + 1 < r.length; i += 2) { if (i) path.lineTo(r[i], r[i + 1]); else path.moveTo(r[i], r[i + 1]); }
     return path;
   };
   // the deck, then the blocks on it: each one's lot by how open it lies (a sidewalk's share of it at this scale)
   ctx.fillStyle = COLORS.asphalt;
   ctx.fill(ring(CITY_OUTLINE));
-  const byColor = new Map();
+  const byColor = new Map<string, Path2D>();
   for (const b of BLOCKS) {
     const c = lotColor(b, open?.get(b));
-    if (!byColor.has(c)) byColor.set(c, new Path2D());
-    ring(b.poly, byColor.get(c));
+    let path = byColor.get(c);
+    if (!path) byColor.set(c, (path = new Path2D()));
+    ring(b.poly, path);
   }
   for (const [c, path] of byColor) {
     ctx.fillStyle = c;
@@ -78,9 +90,9 @@ function paintFarGround({ open = null, box, size = SIZE } = {}) {
   for (const path of byColor.values()) ctx.stroke(path);
   // the parks & woods of OpenStreetMap over the open country, the water
   const parks = new Path2D(), woods = new Path2D(), water = new Path2D();
-  for (const p of GEO.parks || []) {
+  for (const p of GEO.parks) {
     const into = p.cat === 'water' ? water : p.cat === 'wood' || p.cat === 'forest' ? woods : p.cat === 'pitch' ? null : parks;
-    if (into) for (const r of p.rings || []) flatRing(r, into);
+    if (into) for (const r of p.rings) flatRing(r, into);
   }
   ctx.fillStyle = COLORS.park;
   ctx.fill(parks);
@@ -91,7 +103,7 @@ function paintFarGround({ open = null, box, size = SIZE } = {}) {
   // the rivers & arroyos at their widths (as the map draws them), the highways' asphalt over the lots they cross
   ctx.strokeStyle = COLORS.water;
   ctx.lineCap = ctx.lineJoin = 'round';
-  for (const [kind, , , flags, pts] of GEO.waterways || []) {
+  for (const [kind, , , flags, pts] of GEO.waterways) {
     if (flags & 2) continue;
     ctx.lineWidth = Math.max(kind === 'river' ? 10 : kind === 'stream' ? 3.8 : 2, 1 / k);
     ctx.stroke(flatLine(pts));
@@ -101,15 +113,15 @@ function paintFarGround({ open = null, box, size = SIZE } = {}) {
     if (!r.highway) continue;
     ctx.lineWidth = Math.max(r.w, 1 / k);
     const path = new Path2D();
-    r.pts.forEach((p, i) => (i ? path.lineTo(p.x, p.z) : path.moveTo(p.x, p.z)));
+    r.pts.forEach((p, i) => { if (i) path.lineTo(p.x, p.z); else path.moveTo(p.x, p.z); });
     ctx.stroke(path);
   }
   // the airport's apron, runway & taxiways
-  const airport = GEO.airport || { aprons: [], helipads: [], runways: [], taxiways: [] };
+  const airport = GEO.airport;
   ctx.fillStyle = ctx.strokeStyle = COLORS.airfield;
   for (const r of [...airport.aprons, ...airport.helipads]) ctx.fill(flatRing(r));
   ctx.lineCap = 'butt';
-  for (const [list, width] of [[airport.taxiways, 18], [airport.runways, 45]]) {
+  for (const [list, width] of [[airport.taxiways, 18], [airport.runways, 45]] as const) {
     ctx.lineWidth = width;
     for (const [, , pts] of list) ctx.stroke(flatLine(pts));
   }
@@ -127,7 +139,7 @@ function paintFarGround({ open = null, box, size = SIZE } = {}) {
 /**
  * The colour of the far ground at the fragment (TSL): the painted box's inside it, `outside` (a colour node) beyond it
  */
-function farGroundColor(far, outside) {
+function farGroundColor(far: FarGround, outside: Node<'vec3'>): Node<'vec3'> {
   const uv = positionWorld.xz.sub(uniform(far.origin)).div(uniform(far.span));
   const inside = step(0, uv.x).mul(step(uv.x, 1)).mul(step(0, uv.y)).mul(step(uv.y, 1));
   return mix(outside, texture(far.texture, uv).rgb, inside);

@@ -1,7 +1,9 @@
-// js/models/cars/kia-hyundai.js
+// js/models/cars/kia-hyundai.ts
 // KIA (built in Pesquería, Nuevo León) & Hyundai. Fields: README.md
 
-export const CARS = [
+import type { CarModel } from './index.ts';
+
+export const CARS: CarModel[] = [
   {
     id: 'kia-rio', name: 'KIA Rio', body: 'sedan', class: 'economy',
     size: [4.39, 1.73, 1.46], mass: 1140, drive: 'fwd', power: [82, 6300], torque: [151, 4850], redline: 6600,

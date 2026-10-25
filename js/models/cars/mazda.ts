@@ -1,7 +1,9 @@
-// js/models/cars/mazda.js
+// js/models/cars/mazda.ts
 // Mazda (built in Salamanca). Fields: README.md
 
-export const CARS = [
+import type { CarModel } from './index.ts';
+
+export const CARS: CarModel[] = [
   {
     id: 'mazda-3', name: 'Mazda 3', body: 'sedan', class: 'family',
     size: [4.66, 1.80, 1.44], mass: 1400, drive: 'fwd', power: [139, 6000], torque: [252, 4000], redline: 6500,

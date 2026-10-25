@@ -1,15 +1,94 @@
+// js/sim/pedestrian-routes.ts
 // Small, lazily connected sidewalk tracks. Junctions only connect points on the same curb island;
-// crossing the roadway is a separate, signal-controlled track owned by traffic.js.
-function createPedestrianRoutes({ walkable, onSidewalk }, blockAt) {
-  const sidewalks = new Map(), crossings = new Map(), junctions = new Map(), connections = new WeakMap();
-  const point = (track, end) => ({ x: track.ax + track.ux * track.len * end, z: track.az + track.uz * track.len * end });
-  const segment = (a, b, extra = {}) => {
+// crossing the roadway is a separate, signal-controlled track owned by traffic.ts.
+
+interface WalkPoint {
+  x: number;
+  z: number;
+}
+/** A curb island (city-config.ts blockAt): its outline */
+interface WalkBlock {
+  poly: readonly WalkPoint[];
+}
+/** The road a crosswalk spans (an edge of road-network.ts): its centreline's offset across (m) and half its width */
+interface WalkRoad {
+  x0: number;
+  z0: number;
+  half: number;
+}
+/** What the tracks read of a road-network.ts edge: start, unit direction & right (m), length, half width */
+interface WalkEdge<N> {
+  from: N;
+  to: N;
+  sx: number;
+  sz: number;
+  dx: number;
+  dz: number;
+  rx: number;
+  rz: number;
+  len: number;
+  half: number;
+  general?: boolean;
+}
+/** ...and of an intersection: centre, half extents (m), signal, edges in & out, and the road over each side's
+ *  crosswalk (traffic.ts) */
+interface WalkNode<E> {
+  x: number;
+  z: number;
+  hx: number;
+  hz: number;
+  signal: boolean;
+  in: E[];
+  out: E[];
+  road: (WalkRoad | null)[];
+}
+/** A straight walking line: start (m), unit direction, length (m). Along a sidewalk it has the edge (and its ends,
+ *  its block); over a crosswalk the intersection, its side and its line off the crosswalk's centre (m); a corner
+ *  piece neither. */
+interface WalkTrack<N, E, B> {
+  ax: number;
+  az: number;
+  ux: number;
+  uz: number;
+  len: number;
+  node: N | null;
+  side: number;
+  line: number;
+  edge?: E;
+  from?: N;
+  to?: N;
+  block?: B;
+}
+/** A leg of a walk: a track, walked forwards (1) or backwards (-1) */
+interface WalkLeg<N, E, B> {
+  track: WalkTrack<N, E, B>;
+  dir: number;
+}
+interface WalkPort<N, E, B> {
+  track: WalkTrack<N, E, B>;
+  end: number;
+}
+/** The road network's tests of open ground (road-network.ts) */
+interface WalkSurface {
+  walkable: (x0: number, x1: number, z0: number, z1: number) => boolean;
+  onSidewalk: (x: number, z: number) => boolean;
+}
+
+function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B extends WalkBlock>(
+  { walkable, onSidewalk }: WalkSurface, blockAt: (x: number, z: number) => B | null
+) {
+  type Track = WalkTrack<N, E, B>;
+  type Leg = WalkLeg<N, E, B>;
+  const sidewalks = new Map<E, Track[]>(), crossings = new Map<N, Track[]>(), junctions = new Map<N, WalkPort<N, E, B>[]>();
+  const connections = new WeakMap<Track, Leg[][][]>();
+  const point = (track: Track, end: number): WalkPoint => ({ x: track.ax + track.ux * track.len * end, z: track.az + track.uz * track.len * end });
+  const segment = (a: WalkPoint, b: WalkPoint, extra: Partial<Track> = {}): Track => {
     const len = Math.hypot(b.x - a.x, b.z - a.z);
     return { ax: a.x, az: a.z, ux: (b.x - a.x) / len, uz: (b.z - a.z) / len,
       len, node: null, side: 0, line: 0, ...extra };
   };
 
-  function clear(a, b, block = null) {
+  function clear(a: WalkPoint, b: WalkPoint, block: B | null = null): boolean {
     const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z)));
     let x = a.x, z = a.z;
     for (let i = 0; i <= steps; i++) {
@@ -21,9 +100,10 @@ function createPedestrianRoutes({ walkable, onSidewalk }, blockAt) {
     return true;
   }
 
-  function along(e) {
-    if (sidewalks.has(e)) return sidewalks.get(e);
-    const result = [];
+  function along(e: E): Track[] {
+    const known = sidewalks.get(e);
+    if (known) return known;
+    const result: Track[] = [];
     sidewalks.set(e, result);
     // Two walking lines on each side leave room for people to pass or stop together.
     for (const sign of [-1, 1]) {
@@ -40,9 +120,10 @@ function createPedestrianRoutes({ walkable, onSidewalk }, blockAt) {
     return result;
   }
 
-  function across(n) {
-    if (crossings.has(n)) return crossings.get(n);
-    const result = [];
+  function across(n: N): Track[] {
+    const known = crossings.get(n);
+    if (known) return known;
+    const result: Track[] = [];
     crossings.set(n, result);
     if (!n.signal) return result;
     for (let side = 0; side < 4; side++) {
@@ -61,9 +142,10 @@ function createPedestrianRoutes({ walkable, onSidewalk }, blockAt) {
     return result;
   }
 
-  function ports(n) {
-    if (junctions.has(n)) return junctions.get(n);
-    const result = [], seen = new Set();
+  function ports(n: N): WalkPort<N, E, B>[] {
+    const known = junctions.get(n);
+    if (known) return known;
+    const result: WalkPort<N, E, B>[] = [], seen = new Set<E>();
     junctions.set(n, result);
     for (const e of [...n.in, ...n.out]) {
       if (seen.has(e)) continue;
@@ -75,7 +157,7 @@ function createPedestrianRoutes({ walkable, onSidewalk }, blockAt) {
   }
 
   // Stay in the sidewalk band even where angled building colliders are deliberately omitted from the road graph.
-  function cornerClear(a, b, block) {
+  function cornerClear(a: WalkPoint, b: WalkPoint, block: B): boolean {
     if (!clear(a, b, block)) return false;
     const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z)));
     for (let i = 0; i <= steps; i++) {
@@ -91,12 +173,12 @@ function createPedestrianRoutes({ walkable, onSidewalk }, blockAt) {
     return true;
   }
 
-  function links(track, dir) {
+  function links(track: Track, dir: number): Leg[][] {
     let ends = connections.get(track);
     if (!ends) connections.set(track, ends = []);
     const end = dir > 0 ? 1 : 0;
     if (ends[end]) return ends[end];
-    const result = ends[end] = [];
+    const result: Leg[][] = ends[end] = [];
     const n = end ? track.to : track.from;
     if (!n) return result;
     const a = point(track, end), block = blockAt(a.x, a.z);
@@ -106,7 +188,7 @@ function createPedestrianRoutes({ walkable, onSidewalk }, blockAt) {
       if (next === track) continue;
       const b = point(next, port.end), distance = Math.hypot(b.x - a.x, b.z - a.z);
       if (distance > 32 || blockAt(b.x, b.z) !== block) continue;
-      const path = [];
+      const path: Leg[] = [];
       if (distance > 0.01) {
         if (cornerClear(a, b, block)) {
           path.push({ track: segment(a, b), dir: 1 });
@@ -129,8 +211,8 @@ function createPedestrianRoutes({ walkable, onSidewalk }, blockAt) {
     return result;
   }
 
-  function next(track, dir, goalX, goalZ) {
-    let best = null, bestScore = -Infinity;
+  function next(track: Track, dir: number, goalX: number, goalZ: number): Leg[] | null {
+    let best: Leg[] | null = null, bestScore = -Infinity;
     const a = point(track, dir > 0 ? 1 : 0);
     const gx = goalX - a.x, gz = goalZ - a.z, distance = Math.hypot(gx, gz) || 1;
     for (const path of links(track, dir)) {
@@ -146,4 +228,7 @@ function createPedestrianRoutes({ walkable, onSidewalk }, blockAt) {
   return { along, across, next };
 }
 
+type PedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B extends WalkBlock> = ReturnType<typeof createPedestrianRoutes<N, E, B>>;
+
+export type { WalkPoint, WalkBlock, WalkRoad, WalkEdge, WalkNode, WalkTrack, WalkLeg, WalkSurface, PedestrianRoutes };
 export { createPedestrianRoutes };

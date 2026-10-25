@@ -1,9 +1,9 @@
-// js/actors/weapon-models.js
-// The arsenal's 3D models (sim/weapons.js), built from profiles and tubes at their real sizes: a Colt 1911 in .38 Super
+// js/actors/weapon-models.ts
+// The arsenal's 3D models (sim/weapons.ts), built from profiles and tubes at their real sizes: a Colt 1911 in .38 Super
 // with ivory grips (the escuadra of the corridos), an MP5, the cartel's AK-47 (the cuerno de chivo), an RPG-7, and the
 // hands that hold them. Each weapon is one merged geometry whose vertices carry their finish (colour, metalness and
 // roughness), so a gun is one draw whatever it is made of (createWeaponMaterial reads them). They are drawn in the
-// player's and everyone else's hands (sim/crime.js) and baked into the wheel's and the HUD's icons (ui/weapon-icons.js).
+// player's and everyone else's hands (sim/crime.ts) and baked into the wheel's and the HUD's icons (ui/weapon-icons.ts).
 //
 // The hand frame: 1 unit = 1 m, the middle of the (rear) grip at the origin, +z along the barrel, +y up, +x the
 // shooter's left.
@@ -25,7 +25,33 @@ const FINISH = {
   warhead: [0x5f6646, 0.35, 0.5],
   skin: [0xa36a48, 0.0, 0.58],
   sleeve: [0x2f4766, 0.0, 0.92]
-};
+} satisfies Record<string, [hex: number, metalness: number, roughness: number]>;
+type Finish = keyof typeof FINISH;
+
+/** A z-y outline point of a side profile, m */
+type ProfilePoint = [z: number, y: number];
+
+/**
+ * Where a gun is held, in its frame (m): a grip's middle at (0, y, z), raked forward `rake` rad, of half depth a (z) and
+ * half width b (x), its trigger at [y, z]; a `support` grip is a handguard held from below, a `left` one the left
+ * hand's own grip
+ */
+export interface GripSpec {
+  y: number;
+  z: number;
+  a: number;
+  b: number;
+  rake?: number;
+  trigger?: [y: number, z: number];
+  support?: boolean;
+  left?: boolean;
+}
+
+/** A gun's grips (the first the trigger hand's) and its muzzle [x, y, z], m */
+interface GunInfo {
+  grips: [GripSpec, ...GripSpec[]];
+  muzzle: [x: number, y: number, z: number];
+}
 
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
@@ -34,7 +60,7 @@ const _s = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
 // Reverses each triangle of a non-indexed geometry (after a mirroring transform turned it inside out)
-function flipWinding(g) {
+function flipWinding(g: THREE.BufferGeometry) {
   for (const name of Object.keys(g.attributes)) {
     const a = g.attributes[name];
     const n = a.itemSize;
@@ -50,11 +76,13 @@ function flipWinding(g) {
 
 // Geometries collected with their finish, merged into one
 class Parts {
+  list: THREE.BufferGeometry[];
+
   constructor() {
     this.list = [];
   }
 
-  add(geo, finish, matrix = null) {
+  add(geo: THREE.BufferGeometry, finish: Finish, matrix: THREE.Matrix4 | null = null): this {
     const g = geo.index ? geo.toNonIndexed() : geo;
     if (g !== geo) geo.dispose();
     for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal') g.deleteAttribute(name);
@@ -82,7 +110,10 @@ class Parts {
   }
 
   // A side profile ([z, y] points round its outline, optional holes) `width` thick, centred at x
-  profile(points, width, finish, { x = 0, bevel = 0.0012, holes = [] } = {}) {
+  profile(
+    points: ProfilePoint[], width: number, finish: Finish,
+    { x = 0, bevel = 0.0012, holes = [] }: { x?: number; bevel?: number; holes?: ProfilePoint[][] } = {}
+  ): this {
     const shape = new THREE.Shape(points.map(([z, y]) => new THREE.Vector2(z, y)));
     for (const h of holes) shape.holes.push(new THREE.Path(h.map(([z, y]) => new THREE.Vector2(z, y))));
     const depth = Math.max(0.0005, width - bevel * 2);
@@ -96,14 +127,17 @@ class Parts {
   }
 
   // A tube along z from z0 to z1 (radius r0 at z0, r1 at z1) with its axis at (x, y)
-  tube(r0, r1, z0, z1, y, finish, { x = 0, seg = 16, open = false } = {}) {
+  tube(
+    r0: number, r1: number, z0: number, z1: number, y: number, finish: Finish,
+    { x = 0, seg = 16, open = false }: { x?: number; seg?: number; open?: boolean } = {}
+  ): this {
     const g = new THREE.CylinderGeometry(r1, r0, z1 - z0, seg, 1, open);
     g.rotateX(Math.PI / 2);
     g.translate(x, y, (z0 + z1) / 2);
     return this.add(g, finish);
   }
 
-  box(w, h, l, x, y, z, finish, { rx = 0 } = {}) {
+  box(w: number, h: number, l: number, x: number, y: number, z: number, finish: Finish, { rx = 0 }: { rx?: number } = {}): this {
     const g = new THREE.BoxGeometry(w, h, l);
     if (rx) g.rotateX(rx);
     g.translate(x, y, z);
@@ -111,7 +145,7 @@ class Parts {
   }
 
   // A rounded rod (capsule) from a to b
-  rod(a, b, r, finish) {
+  rod(a: THREE.Vector3, b: THREE.Vector3, r: number, finish: Finish): this {
     _v.subVectors(b, a);
     const len = _v.length();
     const g = new THREE.CapsuleGeometry(r, Math.max(0.0001, len), 3, 10);
@@ -122,7 +156,7 @@ class Parts {
   }
 
   // An ellipsoid of radii (rx, ry, rz) at (x, y, z)
-  blob(rx, ry, rz, x, y, z, finish) {
+  blob(rx: number, ry: number, rz: number, x: number, y: number, z: number, finish: Finish): this {
     const g = new THREE.SphereGeometry(1, 14, 10);
     g.scale(rx, ry, rz);
     g.translate(x, y, z);
@@ -130,7 +164,7 @@ class Parts {
   }
 
   // Everything added since `from`, transformed (a hand placed on its grip)
-  transform(from, matrix) {
+  transform(from: number, matrix: THREE.Matrix4): void {
     const flip = matrix.determinant() < 0;
     for (let i = from; i < this.list.length; i++) {
       this.list[i].applyMatrix4(matrix);
@@ -138,7 +172,7 @@ class Parts {
     }
   }
 
-  build() {
+  build(): THREE.BufferGeometry {
     const g = mergeGeometries(this.list);
     for (const p of this.list) p.dispose();
     this.list = [];
@@ -153,7 +187,7 @@ class Parts {
 // =====================================================================================================================
 
 // Colt M1911 in .38 Super: 216 mm long, the slide 23 mm wide, the grip raked back 18 degrees
-function pistol(p) {
+function pistol(p: Parts): GunInfo {
   // slide, its front a touch tapered, serrations at the back
   p.profile([[-0.055, 0.032], [0.162, 0.032], [0.162, 0.058], [0.156, 0.064], [-0.046, 0.064], [-0.055, 0.058]], 0.022, 'blued');
   for (let i = 0; i < 7; i++) p.box(0.0235, 0.022, 0.0016, 0, 0.049, -0.048 + i * 0.0042, 'polymer');
@@ -178,7 +212,7 @@ function pistol(p) {
 }
 
 // Heckler & Koch MP5A3: 550 mm stock in, a 30-round curved magazine, the polymer grip and handguard
-function smg(p) {
+function smg(p: Parts): GunInfo {
   // receiver: a stamped tube, rounded on top
   p.profile([[-0.11, 0.022], [0.2, 0.022], [0.2, 0.068], [0.19, 0.078], [-0.1, 0.078], [-0.11, 0.07]], 0.034, 'blued', { bevel: 0.004 });
   p.tube(0.012, 0.012, 0.15, 0.31, 0.07, 'blued'); // cocking tube
@@ -217,7 +251,7 @@ function smg(p) {
 }
 
 // Kalashnikov AK-47 (the cuerno de chivo, for its curved magazine): 880 mm, walnut stock and handguards
-function rifle(p) {
+function rifle(p: Parts): GunInfo {
   // receiver, the dust cover rounded over it, and the rear sight block
   p.profile([[-0.14, 0.02], [0.17, 0.02], [0.17, 0.066], [-0.14, 0.066]], 0.032, 'blued', { bevel: 0.002 });
   p.profile([[-0.14, 0.064], [0.13, 0.064], [0.135, 0.076], [0.12, 0.084], [-0.13, 0.084], [-0.14, 0.074]], 0.03, 'blued', { bevel: 0.004 });
@@ -255,7 +289,7 @@ function rifle(p) {
 }
 
 // RPG-7 with a PG-7V round: the 40 mm tube, its wooden heat shield, the venturi flaring out behind, two grips
-function bazooka(p) {
+function bazooka(p: Parts): GunInfo {
   const Y = 0.11; // the tube's axis over the grip (it rides the shoulder)
   p.tube(0.021, 0.021, -0.52, 0.44, Y, 'olive');
   p.tube(0.024, 0.024, -0.4, -0.34, Y, 'olive'); // rings
@@ -290,14 +324,16 @@ function bazooka(p) {
   };
 }
 
-const GUNS = { pistol, smg, rifle, bazooka };
+/** The guns' ids (sim/weapons.ts names its arsenal by them; 'fists' is the one without a model) */
+export type GunId = 'pistol' | 'smg' | 'rifle' | 'bazooka';
+const GUNS: Partial<Record<string, (p: Parts) => GunInfo>> & Record<GunId, (p: Parts) => GunInfo> = { pistol, smg, rifle, bazooka };
 
 // =====================================================================================================================
 // Hands
 // =====================================================================================================================
 
 // [height up the grip, radius, phalanx lengths] for the index (top) to the little finger
-const FINGERS = [
+const FINGERS: [y: number, radius: number, phalanges: [number, number, number]][] = [
   [0.034, 0.0092, [0.046, 0.027, 0.021]],
   [0.012, 0.0095, [0.05, 0.031, 0.023]],
   [-0.01, 0.009, [0.047, 0.029, 0.022]],
@@ -312,9 +348,11 @@ const _d = new THREE.Vector3();
 // of the hand on its right (-x), the fingers round the front to the left, the thumb over the top along the left.
 // `trigger` [y, z] puts the index finger on a trigger instead; `fist` closes it on nothing, the thumb across the front.
 // Returns the wrist's point.
-function hand(p, { a, b, trigger = null, fist = false }) {
+function hand(
+  p: Parts, { a, b, trigger = null, fist = false }: { a: number; b: number; trigger?: [y: number, z: number] | null; fist?: boolean }
+): THREE.Vector3 {
   // a point round the grip: angle 0 on the right, pi/2 in front, pi on the left, `out` m off its surface
-  const round = (out, phi, y, v) => v.set(-(b + out) * Math.cos(phi), y, (a + out) * Math.sin(phi));
+  const round = (out: number, phi: number, y: number, v: THREE.Vector3) => v.set(-(b + out) * Math.cos(phi), y, (a + out) * Math.sin(phi));
   p.blob(0.017, 0.05, 0.038, -b - 0.011, 0.002, -a * 0.5 - 0.004, 'skin'); // palm & back of the hand
   p.blob(0.021, 0.036, 0.018, -b * 0.4 - 0.004, -0.012, -a - 0.009, 'skin'); // heel of the palm
   p.blob(0.017, 0.024, 0.02, -b * 0.3, 0.03, -a - 0.006, 'skin'); // ball of the thumb
@@ -359,7 +397,7 @@ function hand(p, { a, b, trigger = null, fist = false }) {
 }
 
 // The forearm from the wrist out along `dir` (into the sleeve), `len` m of it
-function forearm(p, wrist, dir, len = 0.42) {
+function forearm(p: Parts, wrist: THREE.Vector3, dir: THREE.Vector3, len = 0.42) {
   const d = dir.clone().normalize();
   const elbow = d.clone().multiplyScalar(len).add(wrist);
   const cuff = d.clone().multiplyScalar(0.11).add(wrist);
@@ -372,7 +410,7 @@ function forearm(p, wrist, dir, len = 0.42) {
 
 // A matrix placing a hand built round a +y grip onto the gun: on a raked grip at (0, y, z), or along the barrel under a
 // handguard at (0, y, z) (the left hand, from below, its fingers up the right side)
-function gripMatrix(g) {
+function gripMatrix(g: GripSpec) {
   const m = new THREE.Matrix4();
   if (g.support) {
     // hand frame x (the thumb's side) -> up, y (the grip's axis) -> along the barrel, z (round the front) -> right
@@ -389,10 +427,12 @@ function gripMatrix(g) {
 // What the rest of the game builds
 // =====================================================================================================================
 
-const WEAPON_MODELS = ['pistol', 'smg', 'rifle', 'bazooka'];
+const WEAPON_MODELS: GunId[] = ['pistol', 'smg', 'rifle', 'bazooka'];
 
 // The gun alone (null for the fists), with its muzzle in userData
-function buildWeaponGeometry(id) {
+function buildWeaponGeometry(id: GunId): THREE.BufferGeometry;
+function buildWeaponGeometry(id: string): THREE.BufferGeometry | null;
+function buildWeaponGeometry(id: string): THREE.BufferGeometry | null {
   const make = GUNS[id];
   if (!make) return null;
   const p = new Parts();
@@ -409,10 +449,10 @@ function buildWeaponGeometry(id) {
 
 // The gun in the player's hands, as the wheel and the HUD show it, or the fist for the fists. `arms` adds the forearms
 // in their sleeves (left out of userData.bounds, so a picture frames the gun and the hands)
-function buildHeldGeometry(id, { arms = true } = {}) {
+function buildHeldGeometry(id: GunId | 'fists', { arms = true } = {}): THREE.BufferGeometry {
   const p = new Parts();
-  const wrists = [];
-  let centre = null;
+  const wrists: [wrist: THREE.Vector3, dir: THREE.Vector3, len: number][] = [];
+  let centre: GripSpec | null = null;
   if (id === 'fists') {
     const from = p.list.length;
     const wrist = hand(p, { a: 0.008, b: 0.008, fist: true });
@@ -442,7 +482,7 @@ function buildHeldGeometry(id, { arms = true } = {}) {
   const bounds = new THREE.Box3();
   for (const g of p.list) {
     g.computeBoundingBox();
-    bounds.union(g.boundingBox);
+    if (g.boundingBox) bounds.union(g.boundingBox);
   }
   if (arms) for (const [w, dir, len] of wrists) forearm(p, w, dir, len);
   const g = p.build();
@@ -455,7 +495,7 @@ function buildHeldGeometry(id, { arms = true } = {}) {
 }
 
 // One material for every gun: the finish comes with each vertex
-function createWeaponMaterial() {
+function createWeaponMaterial(): THREE.MeshStandardNodeMaterial {
   const m = new THREE.MeshStandardNodeMaterial({ vertexColors: true });
   const pbr = attribute('pbr', 'vec2');
   m.metalnessNode = pbr.x;

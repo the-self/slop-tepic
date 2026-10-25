@@ -1,5 +1,7 @@
 // Department stores, banks, beer & corner stores, fast food and gas stations: parody names in each chain's colours.
-const store = (id, match, name, bg, fg, border, big = false, stripe = border) => ({
+import type { StorefrontSpec } from './index.ts';
+
+const store = (id: string, match: RegExp, name: string, bg: string, fg: string, border: string, big = false, stripe = border): StorefrontSpec => ({
   id, match, name, sign: { bg, fg, border }, facade: { band: bg, stripe, glazing: true }, big
 });
 export default [

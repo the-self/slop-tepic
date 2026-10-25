@@ -17,19 +17,39 @@ import {
   screenSize
 } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import type { Node } from 'three/webgpu';
 
+// js/render/post-processing.ts
 // Scene-linear color grading and lens bloom, composed in the existing final render pass.
 
 // Exposure and white balance belong to the camera, independently of the physical lighting presets.
 // Keep exposure restrained for ACES; stronger bloom stays selective so midtones retain their contrast.
-const LOOKS = {
+/** A camera look: exposure & white balance (multipliers), contrast & saturation, bloom strength and its threshold */
+export interface Look {
+  exposure: number;
+  contrast: number;
+  saturation: number;
+  balance: [r: number, g: number, b: number];
+  bloom: number;
+  threshold: number;
+}
+export type LookName = 'golden' | 'midday' | 'twilight' | 'midnight';
+
+const LOOKS: Partial<Record<string, Look>> & Record<LookName, Look> = {
   golden:   { exposure: 1.04, contrast: 1.12, saturation: 1.08, balance: [1.045, 1.00, 0.955], bloom: 0.24, threshold: 1.20 },
   midday:   { exposure: 1.00, contrast: 1.10, saturation: 1.06, balance: [1.015, 1.00, 0.985], bloom: 0.18, threshold: 1.35 },
   twilight: { exposure: 1.06, contrast: 1.10, saturation: 1.08, balance: [1.025, 0.995, 1.015], bloom: 0.28, threshold: 1.05 },
   midnight: { exposure: 1.04, contrast: 1.08, saturation: 1.06, balance: [0.985, 1.00, 1.035], bloom: 0.30, threshold: 1.00 }
 };
 
-function createPostProcessing(renderer, sceneColor, reflections) {
+export interface ColorGrade {
+  outputNode: Node<'vec4'>;
+  applyPreset(id: string): void;
+  applyMix(a: string, b: string, t: number, overcast?: number): void;
+}
+
+/** sceneColor: the scene pass's colour; reflections: the screen-space reflections, added to it */
+function createPostProcessing(renderer: THREE.WebGPURenderer, sceneColor: Node<'vec4'>, reflections: Node<'vec4'>): ColorGrade {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   // Exposure is applied before bloom so its threshold follows the image's exposed brightness.
   // RenderPipeline performs ACES and the output color-space conversion exactly once, after this graph.
@@ -72,8 +92,8 @@ function createPostProcessing(renderer, sceneColor, reflections) {
     return vec4(color.mul(vignette), 1.0);
   })();
 
-  function applyPreset(id) {
-    const look = LOOKS[id] || LOOKS.golden;
+  function applyPreset(id: string) {
+    const look = LOOKS[id] ?? LOOKS.golden;
     exposure.value = look.exposure;
     contrast.value = look.contrast;
     saturation.value = look.saturation;
@@ -83,14 +103,14 @@ function createPostProcessing(renderer, sceneColor, reflections) {
   }
 
   // Live time of day: the looks of the two presets either side of the real sun, flattened under cloud cover
-  function applyMix(a, b, t, overcast = 0) {
-    const la = LOOKS[a] || LOOKS.golden;
-    const lb = LOOKS[b] || la;
-    const mix = (key) => la[key] + (lb[key] - la[key]) * t;
+  function applyMix(a: string, b: string, t: number, overcast = 0) {
+    const la = LOOKS[a] ?? LOOKS.golden;
+    const lb = LOOKS[b] ?? la;
+    const mix = (key: Exclude<keyof Look, 'balance'>) => la[key] + (lb[key] - la[key]) * t;
     exposure.value = mix('exposure');
     contrast.value = mix('contrast') * (1 - 0.06 * overcast);
     saturation.value = mix('saturation') * (1 - 0.14 * overcast);
-    balance.value.set(...la.balance.map((v, i) => v + (lb.balance[i] - v) * t));
+    balance.value.fromArray(la.balance.map((v, i) => v + (lb.balance[i] - v) * t));
     bloomPass.strength.value = mix('bloom');
     bloomPass.threshold.value = mix('threshold');
   }

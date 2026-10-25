@@ -3,13 +3,39 @@ import { color, float, mix, positionWorld, positionGeometry, fract, step, smooth
 import { GEO } from './city-geodata.js';
 import { groundHeight } from './ground.ts';
 import { cityUniforms } from '../render/tsl-materials.ts';
+import type { Bounds } from './city-config.ts';
 
-// js/world/cotos.js
+// js/world/cotos.ts
 // Tepic's gated communities (fraccionamientos cerrados, cotos; city-geodata.js `cotos`, found by the data builder from
 // the streets OpenStreetMap maps access=private): the barda round each one along the property line where it faces a
 // public street, painted block 2.6 m high with a darker plinth and a pale coping, and at every entrance a guard booth
 // (caseta) with its barrier arm (pluma), raised so the traffic gets through. The houses inside (one colour, one height)
-// are drawn by buildings.js.
+// are drawn by buildings.ts.
+
+/** A wall's or a booth's collider: its bounds (m, x & z, and the heights it spans) and the oriented box it is: centre,
+ *  half extents along its own axes, and the cos & sin of its yaw. */
+export interface ObbCollider extends Bounds {
+  minY: number;
+  maxY: number;
+  obb: { cx: number; cz: number; hx: number; hz: number; cs: number; sn: number };
+}
+/** A stretch of barda (m, yaw in radians, its foot's height y and its paint 0xrrggbb). */
+interface WallSegment {
+  cx: number;
+  cz: number;
+  len: number;
+  yaw: number;
+  y: number;
+  paint: number;
+}
+/** A gate: where the private street meets the public one, its unit direction into the coto and its width (m). */
+interface Gate {
+  x: number;
+  z: number;
+  ux: number;
+  uz: number;
+  width: number;
+}
 
 const WALL_H = 2.6; // m: a barda over head height, as the developers build them
 const WALL_T = 0.25; // m: one 15 cm block plus render on both faces
@@ -17,19 +43,19 @@ const BOOTH = { w: 2.4, h: 2.7, d: 2.4 };
 // the bardas' paint: cream, sand, terracotta, white, ochre (each coto its own)
 const PAINTS = [0xefe3c8, 0xd9c7a3, 0xc8735f, 0xf3efe6, 0xe0a94a];
 
-function buildCotos(scene) {
+function buildCotos(scene: THREE.Object3D): { group: THREE.Group; colliders: ObbCollider[] } {
   const group = new THREE.Group();
   group.name = 'Cotos';
-  const colliders = [];
-  const list = GEO.cotos || [];
+  const colliders: ObbCollider[] = [];
+  const list = GEO.cotos;
   if (!list.length) {
     scene.add(group);
     return { group, colliders };
   }
 
   // Wall segments & gates, flattened from the data
-  const walls = []; // { cx, cz, len, yaw, y, paint }
-  const gates = []; // { x, z, ux, uz, width }
+  const walls: WallSegment[] = []; // { cx, cz, len, yaw, y, paint }
+  const gates: Gate[] = []; // { x, z, ux, uz, width }
   list.forEach(([lines, gateData], id) => {
     const paint = PAINTS[id % PAINTS.length];
     for (const pl of lines) {
@@ -51,7 +77,7 @@ function buildCotos(scene) {
   const unitBox = new THREE.BoxGeometry(1, 1, 1);
   const dummy = new THREE.Object3D();
   const tint = new THREE.Color();
-  const obb = (cx, cz, hx, hz, yaw, minY, maxY) => {
+  const obb = (cx: number, cz: number, hx: number, hz: number, yaw: number, minY: number, maxY: number) => {
     const cs = Math.cos(yaw), sn = Math.sin(yaw);
     const ex = Math.abs(cs) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
     colliders.push({ minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez, minY, maxY, obb: { cx, cz, hx, hz, cs, sn } });

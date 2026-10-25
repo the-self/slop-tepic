@@ -1,23 +1,28 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GEO } from './city-geodata.js';
+import type { Airport, FlatPoints } from './city-geodata.js';
 import { createAirfieldMaterial } from '../render/tsl-materials.ts';
 import { drapeGeometry } from './drape.ts';
 import { townHeight } from './ground.ts';
 
-// js/world/airport.js
+// js/world/airport.ts
 // The Aeropuerto Internacional de Tepic – Riviera Nayarit (MMEP) south-east of town, from OpenStreetMap's aeroway=*
 // (GEO.airport, tools/build-tepic-geodata.mjs 4): runway 02/20 (45 m wide, ~3.1 km), its taxiways, the apron and the
-// helipads, laid over the asphalt deck the builder leaves there (like pavements.js, a few millimetres up, the
+// helipads, laid over the asphalt deck the builder leaves there (like pavements.ts, a few millimetres up, the
 // markings painted by the material), and airliners standing at the terminal's boarding bridges.
 
 // over the asphalt deck, each kind a hair apart where they overlap: apron, taxiways, runway
 const LIFT = [0.007, 0.011, 0.009, 0.007];
 
-function buildAirfieldGeometry(airport) {
-  const position = [], field = [], along = [], across = [], half = [], span = [];
-  const index = [];
-  const vertex = (x, z, k, a, c, h, l) => {
+/** The field kinds (the material's `field` attribute): 0 apron, 1 runway, 2 taxiway, 3 helipad */
+type FieldKind = 0 | 1 | 2 | 3;
+
+function buildAirfieldGeometry(airport: Airport): THREE.BufferGeometry | null {
+  const position: number[] = [], field: number[] = [], along: number[] = [], across: number[] = [], half: number[] = [], span: number[] = [];
+  const index: number[] = [];
+  // a corner: field kind k, a metres along its strip and c across, the strip's half width h and length l (m)
+  const vertex = (x: number, z: number, k: FieldKind, a: number, c: number, h: number, l: number) => {
     position.push(x, LIFT[k], z);
     field.push(k);
     along.push(a);
@@ -28,7 +33,7 @@ function buildAirfieldGeometry(airport) {
   };
   // A strip along a centreline: a quad per segment, carrying how far along it and how far across each corner is.
   // Taxiways run on half their width past their ends so their joins close; the runway ends square at its thresholds.
-  const strip = (k, width, pts, extend) => {
+  const strip = (k: FieldKind, width: number, pts: FlatPoints, extend: boolean) => {
     const h = width / 2;
     let total = 0;
     for (let i = 0; i + 3 < pts.length; i += 2) total += Math.hypot(pts[i + 2] - pts[i], pts[i + 3] - pts[i + 1]);
@@ -46,12 +51,12 @@ function buildAirfieldGeometry(airport) {
       const v1 = vertex(x0 + rx, z0 + rz, k, a0, h, h, total);
       const v2 = vertex(x1 + rx, z1 + rz, k, a1, h, h, total);
       const v3 = vertex(x1 - rx, z1 - rz, k, a1, -h, h, total);
-      index.push(v0, v1, v2, v0, v2, v3); // counter-clockwise seen from above (as pavements.js)
+      index.push(v0, v1, v2, v0, v2, v3); // counter-clockwise seen from above (as pavements.ts)
       s += len;
     }
   };
   // A paved area: its ring triangulated
-  const area = (k, ring) => {
+  const area = (k: FieldKind, ring: FlatPoints) => {
     const contour = [];
     for (let i = 0; i + 1 < ring.length; i += 2) contour.push(new THREE.Vector2(ring[i], ring[i + 1]));
     if (contour.length < 3) return;
@@ -83,7 +88,7 @@ function buildAirfieldGeometry(airport) {
 // A narrow-body airliner (A320 / 737 size: 37.6 m long, 34 m across the wings), nose toward +z, its wheels at y = 0:
 // [white body parts, tail & cheatline in the livery colour, dark parts (windows, engines' intakes, tyres)]
 function buildAirlinerGeometry() {
-  const body = [], livery = [], dark = [];
+  const body: THREE.BufferGeometry[] = [], livery: THREE.BufferGeometry[] = [], dark: THREE.BufferGeometry[] = [];
   const Y = 3.1; // the fuselage's axis over the apron
   // fuselage: a lathe along z, a round nose and a tail cone
   const profile = [[0, -18.8], [0.35, -18.6], [0.9, -17.2], [1.5, -15.2], [1.95, -12.8], [2.0, -10], [2.0, 13.5], [1.9, 15.4],
@@ -104,7 +109,7 @@ function buildAirlinerGeometry() {
     livery.push(new THREE.BoxGeometry(0.06, 0.22, 33).translate(side * 1.99, Y - 0.15, -0.5));
   }
   // a swept, tapered slab: a wing, a tailplane or the fin, from its root chord to its tip chord
-  const panel = (rootZ, rootChord, tipChord, spanLen, sweep, thick) => {
+  const panel = (rootZ: number, rootChord: number, tipChord: number, spanLen: number, sweep: number, thick: number) => {
     const s = new THREE.Shape();
     s.moveTo(0, rootZ);
     s.lineTo(spanLen, rootZ - sweep);
@@ -135,7 +140,7 @@ function buildAirlinerGeometry() {
   // nose gear
   dark.push(new THREE.CylinderGeometry(0.38, 0.38, 0.5, 12).rotateZ(Math.PI / 2).translate(0, 0.38, 13.2));
   body.push(new THREE.BoxGeometry(0.16, Y - 1.5, 0.16).translate(0, (Y - 1.5) / 2 + 0.38, 13.2));
-  const merge = (list) => mergeGeometries(list.map((g) => (g.index ? g.toNonIndexed() : g)).map((g) => {
+  const merge = (list: THREE.BufferGeometry[]) => mergeGeometries(list.map((g) => (g.index ? g.toNonIndexed() : g)).map((g) => {
     for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal') g.deleteAttribute(name);
     return g;
   }));
@@ -145,9 +150,9 @@ function buildAirlinerGeometry() {
 // Liveries for the airliners at the gates (generic, no airline's): the tail & cheatline colour
 const LIVERIES = [0x5b2a86, 0x0b3d91, 0xc8102e];
 
-function buildAirport(scene) {
+function buildAirport(scene: THREE.Scene): THREE.Group | null {
   const airport = GEO.airport;
-  if (!airport || !airport.runways.length) return null;
+  if (!airport.runways.length) return null;
   const group = new THREE.Group();
   group.name = 'Airport';
   const geometry = buildAirfieldGeometry(airport);
@@ -174,7 +179,7 @@ function buildAirport(scene) {
     const plane = new THREE.Group();
     plane.name = 'Airliner';
     const liveryMat = new THREE.MeshStandardNodeMaterial({ color: LIVERIES[i % LIVERIES.length], roughness: 0.4, metalness: 0.1, side: THREE.DoubleSide });
-    for (const [geo, mat] of [[bodyGeo, white], [liveryGeo, liveryMat], [darkGeo, darkMat]]) {
+    for (const [geo, mat] of [[bodyGeo, white], [liveryGeo, liveryMat], [darkGeo, darkMat]] as const) {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.castShadow = mesh.receiveShadow = true;
       plane.add(mesh);

@@ -5,51 +5,58 @@ import { cityUniforms } from '../render/tsl-materials.ts';
 import { farGroundColor } from './far-ground.ts';
 import { ISLAND_BOUNDS } from './city-config.ts';
 import { SINK, SLOPES, hillHeights, terrainHeight, hillGround, townHeight } from './ground.ts';
+import type { Node } from 'three/webgpu';
+import type { FarGround } from './far-ground.ts';
+import type { TileMask } from './streaming.ts';
 
-// js/world/terrain.js
+// js/world/terrain.ts
 // The hills around the valley (city-geodata.js `terrain`, from open elevation data, see tools/build-tepic-geodata.mjs):
 // a heightfield over the flat city, zero under its streets and houses and rising beyond them (Cerro de San Juan to the
-// west, Cerro de la Cruz to the north with its cross, the lomas). Its heights & terrainHeight(x, z) live in ground.js,
+// west, Cerro de la Cruz to the north with its cross, the lomas). Its heights & terrainHeight(x, z) live in ground.ts,
 // with the rest of the ground; they are re-exported here for the modules that import them from the hills.
 
-const T = GEO.terrain || null;
-// the detailed city, under the road deck (city-grid.js)
-const inBox = (x, z) => x >= ISLAND_BOUNDS.minX && x <= ISLAND_BOUNDS.maxX && z >= ISLAND_BOUNDS.minZ && z <= ISLAND_BOUNDS.maxZ;
+type Vec3 = [x: number, y: number, z: number];
+
+const T = GEO.terrain;
+// the detailed city, under the road deck (city-grid.ts)
+const inBox = (x: number, z: number) => x >= ISLAND_BOUNDS.minX && x <= ISLAND_BOUNDS.maxX && z >= ISLAND_BOUNDS.minZ && z <= ISLAND_BOUNDS.maxZ;
 // The height the hills' mesh is drawn at over (x, z) for a hill h m over the floor: on the town's floor, sunk under the
-// road deck, and beyond it on the ground everyone stands on (ground.js hillGround)
-const meshHeight = (x, z, h) => (!SLOPES || inBox(x, z) || h > SINK ? h - SINK : 0) + townHeight(x, z);
-const heights = hillHeights; // the hills' grid, decoded once by ground.js
+// road deck, and beyond it on the ground everyone stands on (ground.ts hillGround)
+const meshHeight = (x: number, z: number, h: number) => (!SLOPES || inBox(x, z) || h > SINK ? h - SINK : 0) + townHeight(x, z);
+const heights = hillHeights; // the hills' grid, decoded once by ground.ts
 
 // value noise for the hillside colouring
-const hash = (p) => fract(sin(dot(p, vec2(127.1, 311.7))).mul(43758.5453));
-const vnoise = (p) => {
+const hash = (p: Node<'vec2'>) => fract(sin(dot(p, vec2(127.1, 311.7))).mul(43758.5453));
+const vnoise = (p: Node<'vec2'>) => {
   const i = floor(p), f = fract(p);
   const u = f.mul(f).mul(float(3.0).sub(f.mul(2.0)));
   return mix(mix(hash(i), hash(i.add(vec2(1, 0))), u.x), mix(hash(i.add(vec2(0, 1))), hash(i.add(vec2(1, 1))), u.x), u.y);
 };
 
 /**
- * `mask` (streaming.js createTileMask): the streamed tiles' state. With it, the hills' flat cells inside the detailed
+ * `mask` (streaming.ts createTileMask): the streamed tiles' state. With it, the hills' flat cells inside the detailed
  * box (left out for the road deck that covers them) are drawn as a floor under the deck wherever its tile isn't
- * loaded, so the city beyond the streamed tiles stands on ground, not over a hole: painted with `far` (far-ground.js
+ * loaded, so the city beyond the streamed tiles stands on ground, not over a hole: painted with `far` (far-ground.ts
  * paintFarGround), the streets, lots and parks it stands in for.
  */
-function buildTerrain(scene, { mask = null, far = null } = {}) {
+function buildTerrain(scene: THREE.Object3D, { mask = null, far = null }: { mask?: TileMask | null; far?: FarGround | null } = {}): { group: THREE.Group } {
   const group = new THREE.Group();
   group.name = 'Hills';
-  if (!heights) {
+  if (!heights || !T) {
     scene.add(group);
     return { group };
   }
   // The mesh: the hills' 75 m grid, and on the town's slopes the town's finer grid over its own area instead (its
   // floor bends between the hills' nodes: the mesh must too, on the very triangles the ground is reckoned on). Only
   // the cells that rise at all; on the town's slopes the mesh is the ground all over the grids (the valley floor rings
-  // them), but for the detailed city's box where the road deck (city-grid.js) covers the flat parts. The flat cells,
+  // them), but for the detailed city's box where the road deck (city-grid.ts) covers the flat parts. The flat cells,
   // which cast no shadow, go apart: a mesh over the whole grid is never out of a cascade's view
   const G = SLOPES && GEO.ground ? GEO.ground : null;
   const gx1 = G ? G.x0 + (G.w - 1) * G.cell : 0, gz1 = G ? G.z0 + (G.h - 1) * G.cell : 0;
-  const position = [], hill = [], rising = [], flat = [], under = [];
-  const addGrid = (x0, z0, cell, w, h, hillAt, skip) => {
+  const position: number[] = [], hill: number[] = [], rising: number[] = [], flat: number[] = [], under: number[] = [];
+  const addGrid = (x0: number, z0: number, cell: number, w: number, h: number,
+    hillAt: (i: number, j: number, x: number, z: number) => number,
+    skip?: ((cx0: number, cz0: number, cx1: number, cz1: number) => boolean) | null) => {
     const base = position.length / 3;
     for (let j = 0; j < h; j++) {
       for (let i = 0; i < w; i++) {
@@ -61,7 +68,7 @@ function buildTerrain(scene, { mask = null, far = null } = {}) {
     for (let j = 0; j + 1 < h; j++) {
       for (let i = 0; i + 1 < w; i++) {
         const cx0 = x0 + i * cell, cz0 = z0 + j * cell, cx1 = cx0 + cell, cz1 = cz0 + cell;
-        if (skip && skip(cx0, cz0, cx1, cz1)) continue;
+        if (skip?.(cx0, cz0, cx1, cz1)) continue;
         const k = base + j * w + i;
         const rises = Math.max(hill[k], hill[k + 1], hill[k + w], hill[k + w + 1]) >= 0.15;
         if (!rises && (!SLOPES || (inBox(cx0, cz0) && inBox(cx1, cz1)))) {
@@ -75,7 +82,7 @@ function buildTerrain(scene, { mask = null, far = null } = {}) {
   const { w, h, cell, x0, z0 } = T;
   addGrid(x0, z0, cell, w, h, (i, j) => heights[j * w + i],
     G ? (cx0, cz0, cx1, cz1) => cx0 >= G.x0 && cx1 <= gx1 && cz0 >= G.z0 && cz1 <= gz1 : null);
-  if (G) addGrid(G.x0, G.z0, G.cell, G.w, G.h, (i, j, x, z) => terrainHeight(x, z));
+  if (G) addGrid(G.x0, G.z0, G.cell, G.w, G.h, (_i, _j, x, z) => terrainHeight(x, z));
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
   if (SLOPES) geo.setAttribute('hill', new THREE.Float32BufferAttribute(hill, 1)); // the height over the floor, for the colours
@@ -106,7 +113,8 @@ function buildTerrain(scene, { mask = null, far = null } = {}) {
   c = mix(c, rock, smoothstep(0.5, 0.38, slope));
   // (on the town's slopes the mesh also covers the valley floor around the town: its colour where no hill rises)
   if (SLOPES) c = mix(color(0x56653c), c, smoothstep(0.2, 2.0, y));
-  mat.colorNode = c.mul(vnoise(p.mul(0.25)).mul(0.14).add(0.93));
+  const hillColor = c.mul(vnoise(p.mul(0.25)).mul(0.14).add(0.93));
+  mat.colorNode = hillColor;
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.castShadow = true;
@@ -121,7 +129,7 @@ function buildTerrain(scene, { mask = null, far = null } = {}) {
     group.add(floorMesh);
   }
 
-  if (under.length) {
+  if (under.length && mask) {
     // the floor under the deck: the hills' colours (the valley floor's, there), cut where the tile mask says the tile's
     // layers are drawn. (It covers the river channels too: opening it over them as the deck is opened took seconds
     // at start-up, and beyond the streamed tiles they are too far off to see into.)
@@ -130,7 +138,7 @@ function buildTerrain(scene, { mask = null, far = null } = {}) {
     underGeo.setIndex(new THREE.Uint32BufferAttribute(under, 1));
     underGeo.computeBoundingSphere();
     const underMat = new THREE.MeshStandardNodeMaterial({ roughness: 0.96, metalness: 0.0 });
-    underMat.colorNode = far ? farGroundColor(far, mat.colorNode).mul(vnoise(p.mul(0.25)).mul(0.1).add(0.95)) : mat.colorNode;
+    underMat.colorNode = far ? farGroundColor(far, hillColor).mul(vnoise(p.mul(0.25)).mul(0.1).add(0.95)) : hillColor;
     const uv = positionWorld.xz.sub(uniform(mask.origin)).div(uniform(mask.span));
     underMat.opacityNode = float(1).sub(texture(mask.texture, uv).r);
     underMat.alphaTest = 0.5;
@@ -164,7 +172,7 @@ function buildTerrain(scene, { mask = null, far = null } = {}) {
     floor.position.y = 0.55;
     const parapet = new THREE.Mesh(new THREE.CylinderGeometry(R, R, 0.9, 40, 1, true), wallMat);
     parapet.position.y = 1.0;
-    const crossAt = (x, z, height, arm, thick) => {
+    const crossAt = (x: number, z: number, height: number, arm: number, thick: number) => {
       const g = new THREE.Group();
       const post = new THREE.Mesh(new THREE.BoxGeometry(thick, height, thick), crossMat);
       post.position.y = height / 2;
@@ -200,18 +208,19 @@ function buildTerrain(scene, { mask = null, far = null } = {}) {
 
 // The ways up the hills (city-geodata.js terrain.paths): ribbons laid on the hillside (each edge on the ground under
 // it), cobbled, paved or earth; the cobbled calzadas with a dry-stone wall on their downhill side and a lamp every 30 m
-function buildHillPaths(group) {
-  const paths = T.paths || [];
+function buildHillPaths(group: THREE.Group) {
+  if (!T) return;
+  const paths = T.paths;
   const STEP = 2.5;
   const PATH_LIFT = 0.04;
-  const ribbons = [[], [], []]; // positions per surface
-  const walls = [];
-  const lamps = [];
+  const ribbons: [number[], number[], number[]] = [[], [], []]; // positions per surface
+  const walls: [Vec3, Vec3][] = [];
+  const lamps: Vec3[] = [];
   for (const [surface, width, flat] of paths) {
-    const pts = [];
+    const pts: [number, number][] = [];
     for (let i = 0; i < flat.length; i += 2) pts.push([flat[i], flat[i + 1]]);
     // resample every STEP m
-    const samples = [];
+    const samples: [x: number, z: number, dx: number, dz: number][] = [];
     for (let i = 0; i + 1 < pts.length; i++) {
       const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
       const L = Math.hypot(bx - ax, bz - az);
@@ -232,7 +241,7 @@ function buildHillPaths(group) {
       const ha = terrainHeight(a[0], a[1]), hb = terrainHeight(b[0], b[1]);
       run += STEP;
       if (Math.max(ha, hb) < 0.3) continue; // in town: the streets are there already
-      const corner = (s, side) => {
+      const corner = (s: [number, number, number, number], side: number): Vec3 => {
         const x = s[0] - s[3] * side * hw, z = s[1] + s[2] * side * hw;
         return [x, meshHeight(x, z, terrainHeight(x, z)) + PATH_LIFT, z]; // just over the hill's mesh, where walkers stand
       };
@@ -240,7 +249,7 @@ function buildHillPaths(group) {
       out.push(...a0, ...a1, ...b0, ...a1, ...b1, ...b0); // counter-clockwise from above
       if (surface === 0 && width >= 4) {
         // the wall on the downhill side, from the hillside below up to knee height over the path
-        const below = (side) => {
+        const below = (side: number) => {
           const x = a[0] - a[3] * side * (hw + 3), z = a[1] + a[2] * side * (hw + 3);
           return terrainHeight(x, z) + townHeight(x, z);
         };
@@ -282,10 +291,10 @@ function buildHillPaths(group) {
   });
   if (walls.length) {
     // a dry-stone wall 0.45 m thick: its outer face reaching 1.2 m down the slope, 0.8 m over the path
-    const pos = [];
+    const pos: number[] = [];
     for (const [a, b] of walls) {
       const top = 0.8, bot = -1.2;
-      const quad = (p0, p1, y0, y1) => {
+      const quad = (p0: Vec3, p1: Vec3, y0: number, y1: number) => {
         pos.push(p0[0], p0[1] + y0, p0[2], p1[0], p1[1] + y0, p1[2], p0[0], p0[1] + y1, p0[2]);
         pos.push(p0[0], p0[1] + y1, p0[2], p1[0], p1[1] + y0, p1[2], p1[0], p1[1] + y1, p1[2]);
       };

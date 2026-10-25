@@ -1,7 +1,9 @@
-// js/models/cars/nissan.js
+// js/models/cars/nissan.ts
 // Nissan, Mexico's best-selling make (built in Aguascalientes & Cuernavaca). Fields: README.md
 
-export const CARS = [
+import type { CarModel } from './index.ts';
+
+export const CARS: CarModel[] = [
   {
     id: 'nissan-tsuru', name: 'Nissan Tsuru', body: 'taxi', class: 'economy', traffic: false, // the classic taxi
     size: [4.32, 1.69, 1.38], mass: 1100, drive: 'fwd', power: [78, 5200], torque: [136, 4000], redline: 6500,

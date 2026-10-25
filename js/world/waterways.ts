@@ -1,16 +1,75 @@
-// js/world/waterways.js
+// js/world/waterways.ts
 // The rivers & arroyos cut into the ground (city-geodata.js `waterways`, OpenStreetMap waterway=river | stream): the
 // Río Mololoa and the arroyos run in channels sunk into the gap the blocks leave them, with sloping stone banks, a
 // muddy bed and water in it. Where a street crosses one, the street stays (a bridge) and the channel runs on under it.
 // This module is the channels' shape: the ground they carve (offset, for everyone standing or driving in one), the
-// holes they cut in the road deck (cutHoles) and their meshes' vertices (meshData, river-channels.js draws them), all
-// heights over the town's floor under them (drape.js lays them on it). No three.js here, so node --test imports it.
+// holes they cut in the road deck (cutHoles) and their meshes' vertices (meshData, river-channels.ts draws them), all
+// heights over the town's floor under them (drape.ts lays them on it). No three.js here, so node --test imports it.
+import type { Waterway, WaterwayKind } from './city-geodata.js';
+import type { HeightFn, Numbers } from './lattice.ts';
+
+/** A channel's cross-section by kind (m, or shares of its width: see CHANNELS). */
+export interface ChannelSpec {
+  margin: number;
+  bed: number;
+  depth: number;
+  water: number;
+  dry: number;
+}
+/** A cross-section along a channel: centre, unit normal (left of the flow), metres along it, the bed's height over the
+ *  town's floor (m, < 0), and whether it is under the hills or under a street (a bridge). */
+export interface ChannelSection {
+  x: number;
+  z: number;
+  nx: number;
+  nz: number;
+  along: number;
+  rel: number;
+  hill: boolean;
+  bridge: boolean;
+}
+/** A channel: half its width and its bed's (m), its water's depth over the bed (m), its cross-sections downstream. */
+export interface Channel {
+  kind: WaterwayKind;
+  name: string;
+  half: number;
+  bedHalf: number;
+  water: number;
+  s: ChannelSection[];
+}
+/** A street for the bridges: full width (m), flat centreline points. */
+export interface StreetLine {
+  w: number;
+  pts: Numbers;
+}
+/** A channel mesh's vertices as plain triangle lists: positions x y z, uv, and for the banks `wet`. */
+export interface ChannelMesh<T> {
+  position: T;
+  uv: T;
+  wet?: T;
+}
+export interface ChannelMeshes {
+  banks: ChannelMesh<Float32Array>;
+  water: ChannelMesh<Float32Array>;
+  bridges: ChannelMesh<Float32Array>;
+}
+export interface Waterways {
+  channels: Channel[];
+  /** How far (m, <= 0) the channels carve the ground at (x, z) under the town's floor. */
+  offset: (x: number, z: number, fromY?: number) => number;
+  /** The holes in the road deck, as flat triangles x0, z0, x1, z1, x2, z2. */
+  holes: () => number[];
+  meshData: () => ChannelMeshes;
+}
+type Pt = [x: number, z: number];
+type Vec3 = [x: number, y: number, z: number];
+type UV = [u: number, v: number];
 
 // A channel's cross-section by kind: its banks' tops `margin` m inside the gap between the blocks (so a curb jutting
 // a little into the gap never overhangs the channel), the bed `bed` of the top's width across, `depth` m under the
 // banks' tops, and `water` m of water over it (less in an intermittent arroyo). The Mololoa through Tepic runs a few
 // metres down between stone walls; the arroyos are ditches a metre or two deep.
-const CHANNELS = {
+const CHANNELS: Record<'river' | 'stream', ChannelSpec> = {
   river: { margin: 1.0, bed: 0.44, depth: 3.2, water: 0.7, dry: 0.45 },
   stream: { margin: 0.6, bed: 0.38, depth: 1.4, water: 0.25, dry: 0.1 }
 };
@@ -22,13 +81,14 @@ const UNDER = 1.2; // m under a bridge's deck a body must be to be under it (in 
 const LIP = 0.35; // m the banks' tops reach on under the deck, so no crack opens along the hole's edge
 const SLAB = 0.8; // m deep, a bridge's deck seen from the channel
 const CELL = 10; // m, the cells of the lookup of the channels' pieces
+const CHANNEL_OF: Partial<Record<WaterwayKind, ChannelSpec>> = CHANNELS; // (no channel for canals, drains & ditches)
 
 // A polyline [[x, z], ...] with its corners cut twice (Chaikin), keeping its ends: the OSM ways' sharp bends would
 // fold a 10 m wide channel's inner bank over on itself
-function smooth(pts) {
+function smooth(pts: Pt[]): Pt[] {
   let p = pts;
   for (let pass = 0; pass < 2 && p.length > 2; pass++) {
-    const out = [p[0]];
+    const out: Pt[] = [p[0]];
     for (let i = 0; i + 1 < p.length; i++) {
       const [ax, az] = p[i], [bx, bz] = p[i + 1];
       if (i > 0) out.push([ax * 0.75 + bx * 0.25, az * 0.75 + bz * 0.25]);
@@ -41,8 +101,8 @@ function smooth(pts) {
 }
 
 // Points every `step` m (or less) along a polyline, its ends included
-function resample(pts, step) {
-  const out = [pts[0]];
+function resample(pts: Pt[], step: number): Pt[] {
+  const out: Pt[] = [pts[0]];
   for (let i = 0; i + 1 < pts.length; i++) {
     const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
     const len = Math.hypot(bx - ax, bz - az);
@@ -54,10 +114,17 @@ function resample(pts, step) {
 
 // The drivable streets' centrelines bucketed by cell, for the bridges: { near(x, z, pad) } is true within `pad` m of a
 // roadway's edge
-function streetLookup(roads) {
-  const cells = new Map();
+interface StreetSeg {
+  ax: number;
+  az: number;
+  bx: number;
+  bz: number;
+  r: number;
+}
+function streetLookup(roads: StreetLine[]) {
+  const cells = new Map<number, StreetSeg[]>();
   const S = 32;
-  const segs = [];
+  const segs: StreetSeg[] = [];
   for (const { w, pts } of roads) {
     for (let k = 0; k + 3 < pts.length; k += 2) {
       const s = { ax: pts[k], az: pts[k + 1], bx: pts[k + 2], bz: pts[k + 3], r: w / 2 };
@@ -73,7 +140,7 @@ function streetLookup(roads) {
     }
   }
   return {
-    near(x, z, pad) {
+    near(x: number, z: number, pad: number) {
       const list = cells.get(Math.floor(x / S) * 100003 + Math.floor(z / S));
       if (!list) return false;
       for (const s of list) {
@@ -91,19 +158,20 @@ function streetLookup(roads) {
  * flat points downstream]) on the town's floor `floor(x, z)`, out of the hills `hills(x, z)` (their height over it),
  * bridged by the streets `roads` ([{ w, pts }]: full width, flat centreline points).
  */
-function createWaterways(list, { floor = () => 0, hills = () => 0, roads = [] } = {}) {
+function createWaterways(list: Waterway[] | null | undefined,
+  { floor = () => 0, hills = () => 0, roads = [] }: { floor?: HeightFn; hills?: HeightFn; roads?: StreetLine[] } = {}): Waterways {
   const streets = streetLookup(roads);
-  const channels = [];
-  for (const [kind, cut, name, flags, flat] of list || []) {
-    const spec = CHANNELS[kind];
+  const channels: Channel[] = [];
+  for (const [kind, cut, name, flags, flat] of list ?? []) {
+    const spec = CHANNEL_OF[kind];
     // (only the waterways the blocks leave a gap for, above ground)
     if (!spec || !(cut > spec.margin) || flags & 2 || flat.length < 4) continue;
     const half = cut - spec.margin, bedHalf = half * spec.bed;
-    const line = [];
+    const line: Pt[] = [];
     for (let k = 0; k + 1 < flat.length; k += 2) line.push([flat[k], flat[k + 1]]);
     const pts = resample(smooth(line), STEP);
     if (pts.length < 2) continue;
-    const s = [];
+    const s: ChannelSection[] = [];
     let along = 0, bed = Infinity;
     for (let i = 0; i < pts.length; i++) {
       const [x, z] = pts[i];
@@ -125,8 +193,8 @@ function createWaterways(list, { floor = () => 0, hills = () => 0, roads = [] } 
   }
 
   // The wet pieces (between two cross-sections out of the hills), bucketed for offset(): [channel, cross-section]
-  const pieces = [];
-  const cells = new Map();
+  const pieces: number[] = [];
+  const cells = new Map<number, number[]>();
   channels.forEach((ch, c) => {
     const { s, half } = ch;
     for (let i = 0; i + 1 < s.length; i++) {
@@ -144,9 +212,9 @@ function createWaterways(list, { floor = () => 0, hills = () => 0, roads = [] } 
       }
     }
   });
-  const wet = (ch, i) => i >= 0 && i + 1 < ch.s.length && !ch.s[i].hill && !ch.s[i + 1].hill;
+  const wet = (ch: Channel, i: number) => i >= 0 && i + 1 < ch.s.length && !ch.s[i].hill && !ch.s[i + 1].hill;
   // where (x, z) projects along piece i of a channel: 0 at its start, 1 at its end
-  const along = (ch, i, x, z) => {
+  const along = (ch: Channel, i: number, x: number, z: number) => {
     const a = ch.s[i], b = ch.s[i + 1];
     const dx = b.x - a.x, dz = b.z - a.z;
     return ((x - a.x) * dx + (z - a.z) * dz) / (dx * dx + dz * dz || 1e-9);
@@ -157,7 +225,7 @@ function createWaterways(list, { floor = () => 0, hills = () => 0, roads = [] } 
    * Under a bridge only for a body coming from `fromY` well under the deck (one in the channel); on it, or with no
    * `fromY`, the street.
    */
-  function offset(x, z, fromY) {
+  function offset(x: number, z: number, fromY?: number) {
     const list = cells.get(Math.floor(x / CELL) * 100003 + Math.floor(z / CELL));
     if (!list) return 0;
     let best = 0;
@@ -173,7 +241,7 @@ function createWaterways(list, { floor = () => 0, hills = () => 0, roads = [] } 
       const t = Math.max(0, Math.min(1, raw));
       const d = Math.hypot(x - a.x - dx * t, z - a.z - dz * t);
       if (d >= ch.half) continue;
-      if ((a.bridge || b.bridge) && !(fromY < floor(x, z) - UNDER)) continue;
+      if ((a.bridge || b.bridge) && !(fromY !== undefined && fromY < floor(x, z) - UNDER)) continue;
       const rel = a.rel + (b.rel - a.rel) * t;
       const k = d <= ch.bedHalf ? 1 : (ch.half - d) / (ch.half - ch.bedHalf);
       if (rel * k < best) best = rel * k;
@@ -183,7 +251,7 @@ function createWaterways(list, { floor = () => 0, hills = () => 0, roads = [] } 
 
   /** The holes the channels open in the road deck, as triangles (flat x0, z0, x1, z1, x2, z2): not under the bridges */
   function holes() {
-    const out = [];
+    const out: number[] = [];
     for (const ch of channels) {
       const { s, half } = ch;
       for (let i = 0; i + 1 < s.length; i++) {
@@ -202,30 +270,33 @@ function createWaterways(list, { floor = () => 0, hills = () => 0, roads = [] } 
    * { position (x, y, z), uv } and, for the banks, `wet` (0 at the banks' tops, 1 down on the bed). The water's uv are
    * metres along the flow & across it (-1 left bank, 1 right).
    */
-  function meshData() {
-    const banks = { position: [], uv: [], wet: [] }, water = { position: [], uv: [] }, bridges = { position: [], uv: [] };
-    const tri = (m, p, uv, extra) => {
+  function meshData(): ChannelMeshes {
+    const banks: ChannelMesh<number[]> = { position: [], uv: [], wet: [] };
+    const water: ChannelMesh<number[]> = { position: [], uv: [] }, bridges: ChannelMesh<number[]> = { position: [], uv: [] };
+    const tri = (m: ChannelMesh<number[]>, p: Vec3[], uv: UV[], extra?: number[]) => {
       for (let k = 0; k < 3; k++) {
         m.position.push(p[k][0], p[k][1], p[k][2]);
         m.uv.push(uv[k][0], uv[k][1]);
-        if (extra) m.wet.push(extra[k]);
+        if (extra && m.wet) m.wet.push(extra[k]);
       }
     };
-    const quad = (m, p0, p1, p2, p3, u0, u1, u2, u3, w) => {
+    const quad = (m: ChannelMesh<number[]>, p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, u0: UV, u1: UV, u2: UV, u3: UV,
+      w?: number[]) => {
       tri(m, [p0, p1, p2], [u0, u1, u2], w && [w[0], w[1], w[2]]);
       tri(m, [p0, p2, p3], [u0, u2, u3], w && [w[0], w[2], w[3]]);
     };
     for (const ch of channels) {
       const { s, half, bedHalf } = ch;
       // a cross-section's bank points, left to right: [x, y, z, wet, across]
-      const section = (a) => {
-        const at = (off, y, w) => [a.x + a.nx * off, y, a.z + a.nz * off, w, off];
+      const section = (a: ChannelSection) => {
+        const at = (off: number, y: number, w: number): [x: number, y: number, z: number, wet: number, across: number] =>
+          [a.x + a.nx * off, y, a.z + a.nz * off, w, off];
         return [at(half + LIP, -0.03, 0), at(half, 0, 0), at(bedHalf, a.rel, 1), at(-bedHalf, a.rel, 1), at(-half, 0, 0), at(-half - LIP, -0.03, 0)];
       };
-      const wall = (a, facing) => {
+      const wall = (a: ChannelSection, facing: number) => {
         // the channel's square end: its cross-section, filled (seen from inside)
-        const p = section(a).slice(1, 5).map((v) => [v[0], v[1], v[2]]);
-        const u = p.map((v, k) => [a.along, k]);
+        const p = section(a).slice(1, 5).map((v): Vec3 => [v[0], v[1], v[2]]);
+        const u = p.map((_v, k): UV => [a.along, k]);
         if (facing > 0) quad(banks, p[0], p[1], p[2], p[3], u[0], u[1], u[2], u[3], [0, 1, 1, 0]);
         else quad(banks, p[3], p[2], p[1], p[0], u[3], u[2], u[1], u[0], [0, 1, 1, 0]);
       };
@@ -234,7 +305,7 @@ function createWaterways(list, { floor = () => 0, hills = () => 0, roads = [] } 
         const a = s[i], b = s[i + 1];
         const A = section(a), B = section(b);
         for (let k = 0; k + 1 < A.length; k++) {
-          const p = (v) => [v[0], v[1], v[2]];
+          const p = (v: Vec3 | [number, number, number, number, number]): Vec3 => [v[0], v[1], v[2]];
           quad(banks, p(A[k]), p(B[k]), p(B[k + 1]), p(A[k + 1]),
             [a.along, A[k][4]], [b.along, B[k][4]], [b.along, B[k + 1][4]], [a.along, A[k + 1][4]],
             [A[k][3], B[k][3], B[k + 1][3], A[k + 1][3]]);
@@ -264,16 +335,20 @@ function createWaterways(list, { floor = () => 0, hills = () => 0, roads = [] } 
             [b.x + b.nx * w, -SLAB, b.z + b.nz * w], [a.x + a.nx * w, -SLAB, a.z + a.nz * w],
             [a.along, -w], [b.along, -w], [b.along, w], [a.along, w]);
         }
-        for (const [e, dir] of [[s[a0], 1], [s[b0], -1]]) {
-          const l = [e.x + e.nx * half, 0, e.z + e.nz * half], r = [e.x - e.nx * half, 0, e.z - e.nz * half];
-          const ld = [l[0], -SLAB, l[2]], rd = [r[0], -SLAB, r[2]];
-          const u = [[0, 0], [0, SLAB], [half * 2, SLAB], [half * 2, 0]];
+        for (const [e, dir] of [[s[a0], 1], [s[b0], -1]] as const) {
+          const l: Vec3 = [e.x + e.nx * half, 0, e.z + e.nz * half], r: Vec3 = [e.x - e.nx * half, 0, e.z - e.nz * half];
+          const ld: Vec3 = [l[0], -SLAB, l[2]], rd: Vec3 = [r[0], -SLAB, r[2]];
+          const u: [UV, UV, UV, UV] = [[0, 0], [0, SLAB], [half * 2, SLAB], [half * 2, 0]];
           if (dir > 0) quad(bridges, l, ld, rd, r, ...u);
           else quad(bridges, r, rd, ld, l, ...u);
         }
       }
     }
-    const typed = (m) => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, Float32Array.from(v)]));
+    const typed = (m: ChannelMesh<number[]>) => {
+      const out: ChannelMesh<Float32Array> = { position: Float32Array.from(m.position), uv: Float32Array.from(m.uv) };
+      if (m.wet) out.wet = Float32Array.from(m.wet);
+      return out;
+    };
     return { banks: typed(banks), water: typed(water), bridges: typed(bridges) };
   }
 
@@ -285,12 +360,21 @@ function createWaterways(list, { floor = () => 0, hills = () => 0, roads = [] } 
  * or null) with the holes (flat triangles x0, z0, x1, z1, x2, z2, in plan) taken out of them, every attribute
  * interpolated along the cuts. Returns new, non-indexed arrays. (The road deck, where the channels open in it.)
  */
-function cutHoles(arrays, sizes, index, holes) {
+interface HoleTri {
+  /** flat x0, z0, x1, z1, x2, z2, wound so its inside is left of each edge */
+  p: number[];
+  x0: number;
+  x1: number;
+  z0: number;
+  z1: number;
+}
+function cutHoles(arrays: Numbers[], sizes: number[], index: Numbers | null, holes: number[] | Float32Array): Float32Array<ArrayBuffer>[] {
   const S = 16;
-  const tris = [];
-  const cells = new Map();
+  const tris: HoleTri[] = [];
+  const cells = new Map<number, number[]>();
   for (let h = 0; h + 5 < holes.length; h += 6) {
-    let [ax, az, bx, bz, cx, cz] = holes.slice(h, h + 6);
+    const ax = holes[h], az = holes[h + 1];
+    let bx = holes[h + 2], bz = holes[h + 3], cx = holes[h + 4], cz = holes[h + 5];
     const area = (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
     if (Math.abs(area) < 1e-6) continue;
     if (area < 0) [bx, bz, cx, cz] = [cx, cz, bx, bz]; // (wound so its inside is left of each edge)
@@ -307,7 +391,7 @@ function cutHoles(arrays, sizes, index, holes) {
   const stride = sizes.reduce((t, s) => t + s, 0);
   const pos = arrays[0], ps = sizes[0];
   const n = (index ? index.length : pos.length / ps) / 3;
-  const corner = (t, c) => (index ? index[t * 3 + c] : t * 3 + c);
+  const corner = (t: number, c: number) => (index ? index[t * 3 + c] : t * 3 + c);
   let pool = new Float64Array(stride * 1024);
   let used = 0;
   const grow = () => {
@@ -316,24 +400,24 @@ function cutHoles(arrays, sizes, index, holes) {
     next.set(pool);
     pool = next;
   };
-  const vertex = (i) => {
+  const vertex = (i: number) => {
     grow();
     let o = used * stride;
     for (let a = 0; a < arrays.length; a++) for (let c = 0; c < sizes[a]; c++) pool[o++] = arrays[a][i * sizes[a] + c];
     return used++;
   };
-  const between = (a, b, t) => {
+  const between = (a: number, b: number, t: number) => {
     grow();
     const o = used * stride, oa = a * stride, ob = b * stride;
     for (let c = 0; c < stride; c++) pool[o + c] = pool[oa + c] + (pool[ob + c] - pool[oa + c]) * t;
     return used++;
   };
-  const X = (v) => pool[v * stride], Z = (v) => pool[v * stride + 2];
+  const X = (v: number) => pool[v * stride], Z = (v: number) => pool[v * stride + 2];
   const EPS = 1e-9;
   // a convex piece split by the line through (ax, az) -> (bx, bz): [left (inside the hole's edge), right]
-  const split = (poly, ax, az, bx, bz) => {
-    const side = (v) => (bx - ax) * (Z(v) - az) - (bz - az) * (X(v) - ax);
-    const left = [], right = [];
+  const split = (poly: number[], ax: number, az: number, bx: number, bz: number) => {
+    const side = (v: number) => (bx - ax) * (Z(v) - az) - (bz - az) * (X(v) - ax);
+    const left: number[] = [], right: number[] = [];
     for (let i = 0; i < poly.length; i++) {
       const a = poly[i], b = poly[(i + 1) % poly.length];
       const sa = side(a), sb = side(b);
@@ -347,17 +431,17 @@ function cutHoles(arrays, sizes, index, holes) {
     }
     return [left, right];
   };
-  const whole = [];
-  const cutPieces = [];
-  const seen = new Set();
+  const whole: number[] = [];
+  const cutPieces: number[][] = [];
+  const seen = new Set<number>();
   for (let t = 0; t < n; t++) {
     const i0 = corner(t, 0), i1 = corner(t, 1), i2 = corner(t, 2);
     const xs = [pos[i0 * ps], pos[i1 * ps], pos[i2 * ps]], zs = [pos[i0 * ps + 2], pos[i1 * ps + 2], pos[i2 * ps + 2]];
     const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
     seen.clear();
-    const near = [];
+    const near: HoleTri[] = [];
     for (let j = Math.floor(z0 / S); j <= Math.floor(z1 / S); j++) for (let i = Math.floor(x0 / S); i <= Math.floor(x1 / S); i++) {
-      for (const id of cells.get(i * 100003 + j) || []) {
+      for (const id of cells.get(i * 100003 + j) ?? []) {
         if (seen.has(id)) continue;
         seen.add(id);
         const h = tris[id];
@@ -367,7 +451,7 @@ function cutHoles(arrays, sizes, index, holes) {
     if (!near.length) { whole.push(i0, i1, i2); continue; }
     let pieces = [[vertex(i0), vertex(i1), vertex(i2)]];
     for (const h of near) {
-      const next = [];
+      const next: number[][] = [];
       const [ax, az, bx, bz, cx, cz] = h.p;
       for (const piece of pieces) {
         let rest = piece;
@@ -392,7 +476,7 @@ function cutHoles(arrays, sizes, index, holes) {
     for (let a = 0; a < out.length; a++) for (let c = 0; c < sizes[a]; c++) out[a][w * sizes[a] + c] = arrays[a][i * sizes[a] + c];
     w++;
   }
-  const emit = (v) => {
+  const emit = (v: number) => {
     let o = v * stride;
     for (let a = 0; a < out.length; a++) for (let c = 0; c < sizes[a]; c++) out[a][w * sizes[a] + c] = pool[o++];
     w++;

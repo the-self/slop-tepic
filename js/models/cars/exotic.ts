@@ -1,7 +1,9 @@
-// js/models/cars/exotic.js
+// js/models/cars/exotic.ts
 // Supercars: a once-in-a-while sight on Tepic's streets. Fields: README.md
 
-export const CARS = [
+import type { CarModel } from './index.ts';
+
+export const CARS: CarModel[] = [
   {
     id: 'porsche-911', name: 'Porsche 911 Carrera', body: 'coupe', class: 'super',
     size: [4.52, 1.85, 1.30], mass: 1520, drive: 'rwd', power: [283, 6500], torque: [450, 1950], redline: 7500,

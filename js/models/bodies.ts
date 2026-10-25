@@ -1,10 +1,140 @@
-// js/models/bodies.js
-// The body shapes the car models (cars/) are drawn with, besides actor-models.js's own sedan, taxi, SUV, pickup, van &
+// js/models/bodies.ts
+// The body shapes the car models (cars/) are drawn with, besides actor-models.ts's own sedan, taxi, SUV, pickup, van &
 // hatchback: each is the lofted generator's spec (see BODY_SPECS there for what every curve means) as changes to
 // `base`. A model is one of these stretched to its real length, width & height, so one shape (one material, one
 // instanced mesh in the traffic) serves many cars. Plain data, no three.js.
 //
 // Frame: metres, +z ahead (zFront > 0 > zRear), y up from the ground, curves as [z, value] points.
+
+/** A side- or plan-view curve along the body: [z, value] control points, m (monotone-cubic interpolated) */
+export type Curve = [z: number, value: number][];
+
+/** A curve rounded off into the nose or the tail: [length from the tip (m), value at the tip (m), superellipse exponent] */
+export type EndRounding = [length: number, tip: number, exponent: number];
+
+/** The curves the nose and tail round off (a type, not an interface: Object.values reads it) */
+export type EndRoundings = Record<'halfWidth' | 'edge' | 'crown' | 'sill' | 'shoulder', EndRounding>;
+
+/** The glasshouse lofted on the belt line (z positions along the car, heights & half-widths in m) */
+export interface CabinSpec {
+  cowl: number; // foot of the windshield
+  roofFront: number;
+  roofRear: number;
+  deck: number; // foot of the backlight
+  roofY: Curve;
+  rail: [front: number, rear: number]; // roof rail half-width at the front & rear of the roof
+  inset: number; // side glass base inset from the body's top edge
+  bulge: number; // side glass outward curvature
+  roofEdge: number; // roof rail rounding height
+  roofCrown: number;
+  roofRound: number; // superellipse exponent of the roof's cross-section
+  pillars: number[]; // B (and C) pillar centres
+  glassEnd?: number; // side windows & backlight stop here; the cover behind is painted
+}
+
+/** What the body loft needs (the cars' and the bus's): its curves, wheels and arches, m */
+export interface LoftSpec {
+  name: string;
+  zFront: number;
+  zRear: number;
+  wheelRadius: number;
+  wheelZ: number; // axles at ±wheelZ
+  wheelX: number;
+  archGap: number; // wheel arch radius = wheelRadius + archGap
+  archFlare: number; // extra half-width over the wheels
+  tuck: number; // sill tucked in from the widest point
+  halfWidth: Curve;
+  sill: Curve;
+  shoulder: Curve;
+  edge: Curve;
+  crown: Curve;
+  tumble: Curve;
+  nose: EndRoundings;
+  tail: EndRoundings;
+  lowerRound?: number; // superellipse exponents of the section's lower & upper corners (sharper when higher)
+  upperRound?: number;
+  upperSamples?: number[]; // where the upper corner is sampled (0..1 round it)
+  stationStep?: number; // spacing of the loft's cross-sections, m
+  cabin?: CabinSpec;
+  _body?: (z: number) => BodySection; // (memo: bodyProfile)
+}
+
+/** A car body shape: the loft plus its glasshouse and everything the material paints on it */
+export interface BodySpec extends LoftSpec {
+  cabin: CabinSpec;
+  doors: number[]; // door shut lines (z)
+  handles: number[]; // door handle centres (z)
+  headlight: [x: number, y: number, halfWidth: number, halfHeight: number]; // centre |x|, y, half-width, half-height
+  taillight: [x: number, y: number, halfWidth: number, halfHeight: number];
+  grille: [y: number, halfWidth: number, halfHeight: number]; // upper grille between the headlights
+  intake: [y: number, halfWidth: number, halfHeight: number]; // lower grille
+  plates: [front: number, rear: number]; // plate centre heights
+  bumperLine: [front: number, rear: number]; // hood / bumper and trunk / bumper shut lines on the nose & tail
+  bumpers: [front: [y: number, halfHeight: number], rear: [y: number, halfHeight: number]]; // trim strips
+  chrome: boolean; // chrome strip along the side windows' sills
+  cladding: number; // height of the unpainted lower body cladding (SUVs), 0 for none
+  sign: boolean; // the taxi's roof sign
+  rails: boolean; // roof rails
+  rearWiper: boolean;
+  // Lamp heights (front, rear) and centres across the car, for code that places lamp flares (set for every spec)
+  lamps?: [front: number, rear: number];
+  lampX?: [front: number, rear: number];
+  _layout?: CarLayout; // (memo: carLayout)
+  _dims?: BodyDims; // (memo: bodyDims)
+}
+
+/** One of BODY_SHAPES: changes to the sedan's or the SUV's spec */
+export interface BodyShape extends Partial<Omit<BodySpec, 'name'>> {
+  base: 'sedan' | 'suv';
+}
+
+/** A body cross-section's parameters at z, m: half-width, sill, shoulder (widest), top edge, crown, sill half-width */
+export interface BodySection {
+  z: number;
+  W: number;
+  yB: number;
+  yS: number;
+  yE: number;
+  yT: number;
+  xE: number;
+  xB: number;
+}
+
+/** The glasshouse's cross-section at z, m: side glass base (belt), top of the side glass (rail), roof crown height */
+export interface CabinSection {
+  z: number;
+  beltX: number;
+  beltY: number;
+  railX: number;
+  railY: number;
+  h: number;
+  bulge: number;
+}
+
+export interface Point2 {
+  x: number;
+  y: number;
+}
+
+/** A car's body profile plus its glasshouse (actor-models.ts carLayout) */
+export interface CarLayout {
+  spec: BodySpec;
+  body: (z: number) => BodySection;
+  cabin: (z: number) => CabinSection;
+  cabinTop: (c: CabinSection, x: number) => number; // height of the glasshouse's top surface at |x|
+  archR: number;
+  belt: { cowl: Point2; deck: Point2 };
+  rail: { front: Point2; mid: Point2; rear: Point2; roofMid: number };
+}
+
+/** A body shape's overall size, m: what a car model's real size is stretched from */
+export interface BodyDims {
+  length: number;
+  width: number; // over the wheel arches
+  height: number; // to the roof
+  halfW: number;
+  halfL: number; // the longer of the nose and tail
+}
 
 export const BODY_SHAPES = {
 
@@ -161,4 +291,6 @@ export const BODY_SHAPES = {
     bumperLine: [1.1, 0.72], bumpers: [[0.6, 0.08], [0.62, 0.08]],
     chrome: false, cladding: 0.62, rails: false, rearWiper: true
   }
-};
+} satisfies Record<string, BodyShape>;
+
+export type BodyShapeName = keyof typeof BODY_SHAPES;

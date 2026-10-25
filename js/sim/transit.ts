@@ -1,24 +1,65 @@
-// js/sim/transit.js
+// js/sim/transit.ts
 // Tepic's bus & combi routes (GEO.transit: the Secretaría de Movilidad de Nayarit's map, driven along the road graph
 // by tools/build-tepic-geodata.mjs 6B) as polylines for the traffic to follow. A vehicle on a route keeps a cursor,
 // metres along its path; at each intersection it takes the move whose road runs on along the path from there
 // (pickMove). Paths that loop (most routes run out and back) wrap round, so a bus keeps to its route for as long as it
 // stays near the player. No three.js here, so node --test can load it.
 
+import type { Transit as TransitData, TransitRoute, RoadGraph } from '../world/city-geodata.js';
+
 const CELL = 32; // m, the spatial hash of path segments
 const ON_PATH = 4.5; // m: a road this close to a path, running its way, is on it
 const ALIGNED = 0.85; // cos of the largest angle between a road and the path it is on
 
+/** One piece of a route as a polyline: pts flat x, z (m), cum the metres along it at each point, len its length */
+interface TransitPath {
+  name: string;
+  group: number;
+  color: string;
+  fleet: TransitRoute[3];
+  routeIndex: number;
+  pts: Float64Array;
+  cum: Float64Array;
+  len: number;
+  loop: boolean;
+}
+/** The road a move leads onto, as pickMove probes it: start (m), unit direction, length (m) */
+interface TransitRoad {
+  sx: number;
+  sz: number;
+  dx: number;
+  dz: number;
+  len: number;
+}
+interface TransitMove {
+  to: TransitRoad;
+}
+/** Where a point lies on a path: s metres along it, d metres off it */
+interface PathProbe {
+  s: number;
+  d: number;
+}
+/** A road found on a path: s, where the road ends on it */
+interface PathAlong {
+  path: TransitPath;
+  s: number;
+}
+/** pickMove's answer (reused): the move's index (-1 none) and where its road ends on the path */
+interface PathPick {
+  index: number;
+  s: number;
+}
+
 // Decodes GEO.transit over GEO.roadGraph: one path per piece of each route, its polyline from the links it drives
-function decodeTransit(transit, roadGraph) {
-  const paths = [];
+function decodeTransit(transit: TransitData | null | undefined, roadGraph: RoadGraph | null | undefined): TransitPath[] {
+  const paths: TransitPath[] = [];
   if (!transit || !roadGraph) return paths;
   const N = roadGraph.nodes;
   const links = roadGraph.links;
   transit.routes.forEach(([name, group, color, fleet, loops, pieces], routeIndex) => {
     for (const piece of pieces) {
-      const xs = [];
-      const push = (x, z) => {
+      const xs: number[] = [];
+      const push = (x: number, z: number) => {
         const n = xs.length;
         if (n && Math.abs(xs[n - 2] - x) < 0.05 && Math.abs(xs[n - 1] - z) < 0.05) return;
         xs.push(x, z);
@@ -43,25 +84,26 @@ function decodeTransit(transit, roadGraph) {
   return paths;
 }
 
-function createTransit(transit, roadGraph) {
+function createTransit(transit: TransitData | null | undefined, roadGraph: RoadGraph | null | undefined) {
   const paths = decodeTransit(transit, roadGraph);
   const routeNames = transit ? transit.routes.map((r) => r[0]) : [];
-  const grid = new Map();
+  const grid = new Map<number, number[]>();
   paths.forEach((p, pi) => {
     for (let i = 0; i + 1 < p.pts.length / 2; i++) {
       const ax = p.pts[2 * i], az = p.pts[2 * i + 1], bx = p.pts[2 * i + 2], bz = p.pts[2 * i + 3];
       for (let ix = Math.floor(Math.min(ax, bx) / CELL); ix <= Math.floor(Math.max(ax, bx) / CELL); ix++) {
         for (let iz = Math.floor(Math.min(az, bz) / CELL); iz <= Math.floor(Math.max(az, bz) / CELL); iz++) {
           const key = ix * 100003 + iz;
-          if (!grid.has(key)) grid.set(key, []);
-          grid.get(key).push(pi, i);
+          let list = grid.get(key);
+          if (!list) grid.set(key, (list = []));
+          list.push(pi, i);
         }
       }
     }
   });
 
   // The segment of path p that s falls in (s wrapped round a loop, else clamped)
-  function segmentAt(p, s) {
+  function segmentAt(p: TransitPath, s: number): number {
     if (p.loop) s = ((s % p.len) + p.len) % p.len;
     else s = Math.max(0, Math.min(p.len, s));
     let lo = 0, hi = p.cum.length - 2;
@@ -75,7 +117,7 @@ function createTransit(transit, roadGraph) {
 
   // The nearest point of path p to (x, z) between s0 and s0 + span metres along it (wrapping round a loop), running
   // within ALIGNED of direction (dx, dz) when given: out.s (unwrapped, from s0's lap), out.d; false if p has none there
-  function project(p, x, z, s0, span, dx, dz, out) {
+  function project(p: TransitPath, x: number, z: number, s0: number, span: number, dx: number | undefined, dz: number, out: PathProbe): boolean {
     const segs = p.cum.length - 1;
     let i = segmentAt(p, s0);
     let lap = p.loop ? Math.floor(s0 / p.len) * p.len : 0;
@@ -106,14 +148,14 @@ function createTransit(transit, roadGraph) {
 
   // The paths a straight road from (ax, az) to (bx, bz) lies on, running its way: [{ path, s }] with s where the road
   // ends on each (spawning a vehicle there, and keeping its cursor from then on)
-  const probe = { s: 0, d: 0 };
-  function pathsAlong(ax, az, bx, bz) {
+  const probe: PathProbe = { s: 0, d: 0 };
+  function pathsAlong(ax: number, az: number, bx: number, bz: number): PathAlong[] {
     const L = Math.hypot(bx - ax, bz - az);
     if (L < 1) return [];
     const dx = (bx - ax) / L, dz = (bz - az) / L;
     const mx = (ax + bx) / 2, mz = (az + bz) / 2;
-    const found = [];
-    const seen = new Set();
+    const found: PathAlong[] = [];
+    const seen = new Set<number>();
     const ix0 = Math.floor(mx / CELL), iz0 = Math.floor(mz / CELL);
     for (let ix = ix0 - 1; ix <= ix0 + 1; ix++) {
       for (let iz = iz0 - 1; iz <= iz0 + 1; iz++) {
@@ -145,8 +187,8 @@ function createTransit(transit, roadGraph) {
   // on): each move's road is probed along its length; the one closest to the path ahead, running its way, wins.
   // Returns its index and where its road ends on the path, or index -1 when none runs on along it (the vehicle has
   // strayed off its route). `ok(m)` filters the moves (those the vehicle's lane allows).
-  const pick = { index: -1, s: 0 };
-  function pickMove(p, s, moves, ok = null, reach = 0) {
+  const pick: PathPick = { index: -1, s: 0 };
+  function pickMove<M extends TransitMove>(p: TransitPath, s: number, moves: readonly M[], ok: ((m: M) => boolean) | null = null, reach = 0): PathPick {
     pick.index = -1;
     let bestScore = ON_PATH * 2;
     for (let k = 0; k < moves.length; k++) {
@@ -174,4 +216,7 @@ function createTransit(transit, roadGraph) {
   return { paths, routeNames, pathsAlong, pickMove, project, segmentAt };
 }
 
+type Transit = ReturnType<typeof createTransit>;
+
+export type { Transit, TransitPath, TransitRoad, TransitMove, PathProbe, PathAlong, PathPick };
 export { createTransit, decodeTransit };

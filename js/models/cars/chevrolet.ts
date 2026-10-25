@@ -1,7 +1,9 @@
-// js/models/cars/chevrolet.js
+// js/models/cars/chevrolet.ts
 // Chevrolet (GM de México, built in Ramos Arizpe, Silao & San Luis Potosí). Fields: README.md
 
-export const CARS = [
+import type { CarModel } from './index.ts';
+
+export const CARS: CarModel[] = [
   {
     id: 'chevrolet-aveo', name: 'Chevrolet Aveo', body: 'sedan', class: 'economy',
     size: [4.40, 1.73, 1.47], mass: 1120, drive: 'fwd', power: [72, 6000], torque: [136, 4000], redline: 6500,

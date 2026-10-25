@@ -4,10 +4,13 @@ const { join } = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const source = readFileSync(join(__dirname, '../js/sim/traffic.ts'), 'utf8');
+const { stripTypes } = require('./helpers/module.cjs');
+
+// (the JavaScript the bundle ships: the types blanked out, every line and column kept)
+const source = stripTypes(readFileSync(join(__dirname, '../js/sim/traffic.ts'), 'utf8'));
 // Exercise the production lane query and player snapshot without creating the WebGPU scene.
-const laneQuery = source.match(/  function playerInLane\(lane, pl\) \{[\s\S]*?\n  \}/)?.[0];
-const playerSnapshot = source.match(/    const pl = entity[\s\S]*?\n    \} : null;/)?.[0];
+const laneQuery = source.match(/ {2}function playerInLane\(lane\s*, pl\s*\)\s*\{[\s\S]*?\n {2}\}/)?.[0];
+const playerSnapshot = source.match(/ {4}const pl = entity[\s\S]*?\n {4}\} : null;/)?.[0];
 assert.ok(laneQuery, 'traffic lane query is present');
 assert.ok(playerSnapshot, 'traffic player snapshot is present');
 const { playerInLane, snapshot } = vm.runInNewContext(`
@@ -20,7 +23,7 @@ const { playerInLane, snapshot } = vm.runInNewContext(`
 `);
 
 // The player-vs-vehicle box test, also used for cyclists and motorcyclists over their whole bike (contactRider)
-const overlapSource = source.match(/  const satHit = [\s\S]*?\n  function overlapWithPlayer\([\s\S]*?\n  \}/)?.[0];
+const overlapSource = source.match(/ {2}const satHit = [\s\S]*?\n {2}function overlapWithPlayer\([\s\S]*?\n {2}\}/)?.[0];
 assert.ok(overlapSource, 'traffic player overlap test is present');
 const overlapWithPlayer = vm.runInNewContext(`${overlapSource}; overlapWithPlayer`);
 

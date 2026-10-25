@@ -3,10 +3,11 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
+const { stripTypes } = require('./helpers/module.cjs');
 
-const source = readFileSync(join(__dirname, '../js/render/scene-culling.ts'), 'utf8');
+const source = stripTypes(readFileSync(join(__dirname, '../js/render/scene-culling.ts'), 'utf8'));
 const topLevel = (name) => {
-  const match = source.match(new RegExp(`^function ${name}\\([^]*?\\n\\}`, 'm'));
+  const match = source.match(new RegExp(`^function ${name}\\s*\\([^]*?\\n\\}`, 'm'));
   assert.ok(match, `${name} is present`);
   return match[0];
 };
@@ -50,7 +51,7 @@ class Mesh extends Object3D {
 }
 const THREE = { BufferAttribute, BufferGeometry, Mesh };
 const context = { THREE, Math, Map, Object, _a: new Vector3(), _b: new Vector3(), _c: new Vector3() };
-const splitMesh = vm.runInNewContext(`${topLevel('copyObjectState')}\n(${topLevel('splitMesh')})`, context);
+const splitMesh = vm.runInNewContext(`${topLevel('emptyLike')}\n${topLevel('copyObjectState')}\n(${topLevel('splitMesh')})`, context);
 
 test('a large merged mesh is split into squares by where its triangles are, every triangle kept once', () => {
   const parent = new Object3D();
@@ -112,7 +113,8 @@ test('the frozen static city is left out of the per-frame matrix updates, everyt
 
 test('the static city drops the CPU copies the GPU already holds, keeping what it may still need', () => {
   const ctx = { state: { culled: [], frozen: new Set(), pendingRelease: null }, Set, Map, Object, RELEASE_MIN_VERTICES: 2048 };
-  const release = vm.runInNewContext(`(${topLevel('releaseStaticArrays')})`, ctx);
+  const helpers = ['isMesh', 'isInstancedMesh', 'emptyLike', 'isBackendData'].map(topLevel).join('\n');
+  const release = vm.runInNewContext(`${helpers}\n(${topLevel('releaseStaticArrays')})`, ctx);
   const uploaded = new Set();
   const renderer = { backend: { has: (a) => uploaded.has(a), get: () => ({ buffer: {} }) } };
   const attr = (n, itemSize, extra = {}) => Object.assign(new BufferAttribute(new Float32Array(n * itemSize), itemSize), extra);

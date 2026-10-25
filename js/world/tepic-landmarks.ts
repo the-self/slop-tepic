@@ -2,11 +2,13 @@ import * as THREE from 'three/webgpu';
 import { color, mix, positionWorld, fract, step, smoothstep, sin, time } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GEO } from './city-geodata.js';
+import type { Landmark } from './city-geodata.js';
 import { cityUniforms } from '../render/tsl-materials.ts';
 import { liftAt, landHeight } from './ground.ts';
 import { MODEL_RESERVES, geoToWorld } from './landmark-models.ts';
+import type { Collider } from './buildings.ts';
 
-// js/world/tepic-landmarks.js
+// js/world/tepic-landmarks.ts
 // Tepic's landmarks on their real footprints (city-geodata.js `landmarks`, from OpenStreetMap): the Catedral on the
 // Plaza Principal, its facade towards the plaza between two neo-Gothic towers (a tall shaft, two belfries with open
 // arches, an octagonal spire with a cross). LANDMARK_RESERVES are their lots, kept clear of the generic houses.
@@ -16,11 +18,36 @@ import { MODEL_RESERVES, geoToWorld } from './landmark-models.ts';
 // Francisco Villa...), the fountains (Los 3 Delfines, the Molcajete), the big TEPIC & NAYARIT letters, the cross on the
 // Cerro de la Cruz and the antennas of the Cerro Microondas, their red lights blinking at night.
 
+type Vec2 = [number, number];
+
+/** A turned rectangle: its centre (m), its axes a & b (unit vectors) and its sizes along them (m) */
+interface OrientedBox {
+  cx: number;
+  cz: number;
+  ax: Vec2;
+  bx: Vec2;
+  a: number;
+  b: number;
+}
+
+/** The Catedral's frame: centre (m), facade normal f (towards the plaza), facade width & depth (m), yaw (rad) of f */
+export interface CatedralFrame {
+  x: number;
+  z: number;
+  f: Vec2;
+  width: number;
+  depth: number;
+  yaw: number;
+}
+
+/** One piece of a monument and what it's made of */
+type MonumentPart = [THREE.BufferGeometry, THREE.Material];
+
 // Oriented box around a flat [x, z, ...] ring: the turned rectangle of least area
-function orientedBox(flat) {
-  const pts = [];
+function orientedBox(flat: ArrayLike<number>): OrientedBox | null {
+  const pts: Vec2[] = [];
   for (let i = 0; i < flat.length; i += 2) pts.push([flat[i], flat[i + 1]]);
-  let best = null;
+  let best: { area: number; ux: number; uz: number; u0: number; u1: number; v0: number; v1: number } | null = null;
   for (let i = 0; i < pts.length; i++) {
     const a = pts[i], b = pts[(i + 1) % pts.length];
     const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -41,13 +68,13 @@ function orientedBox(flat) {
 }
 
 // The Catedral's frame: centre, facade normal f (towards the plaza), across-axis r, facade width & depth
-const CATEDRAL = (() => {
-  const site = GEO.landmarks && GEO.landmarks.Catedral;
-  if (!site || !site.ring) return null;
+const CATEDRAL = ((): CatedralFrame | null => {
+  const site = GEO.landmarks.Catedral as Landmark | undefined; // (a Record: the city may not have it)
+  if (!site) return null;
   const box = orientedBox(site.ring);
   if (!box) return null;
   const toPlaza = [-box.cx, -box.cz];
-  const sides = [[box.ax, box.a, box.b], [box.bx, box.b, box.a]].flatMap(([n, along, across]) => [
+  const sides = ([[box.ax, box.a, box.b], [box.bx, box.b, box.a]] satisfies [Vec2, number, number][]).flatMap(([n, along, across]): { f: Vec2; depth: number; width: number }[] => [
     { f: n, depth: along, width: across },
     { f: [-n[0], -n[1]], depth: along, width: across }
   ]);
@@ -69,7 +96,7 @@ if (CATEDRAL) {
   });
 }
 
-function stoneMaterial(tint) {
+function stoneMaterial(tint: number) {
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.82, metalness: 0.0 });
   // ashlar courses: a darker joint every 0.55 m
   const joint = step(0.93, fract(positionWorld.y.div(0.55)));
@@ -78,7 +105,7 @@ function stoneMaterial(tint) {
 }
 
 // A pointed (Gothic) arch, w wide and h tall, as a flat shape standing on y = 0
-function pointedArch(w, h) {
+function pointedArch(w: number, h: number) {
   const shape = new THREE.Shape();
   const spring = h - w * 0.75; // where the arch springs from its jambs
   shape.moveTo(-w / 2, 0);
@@ -94,8 +121,9 @@ function pointedArch(w, h) {
 // windows and a round medallion; two towers rising from its corners in three tiers that step in (each with pointed
 // openings on every face under a flaring cornice), crowned by a small dome, a lantern and a cross; the clock gable
 // between them; the nave behind.
-function buildCatedral(group, colliders) {
+function buildCatedral(group: THREE.Group, colliders: Collider[]) {
   const C = CATEDRAL;
+  if (!C) return;
   const root = new THREE.Group();
   root.name = 'Catedral';
   // OpenStreetMap's outline takes in the atrium & the annexes: the church itself is ~26 m across and at most 60 m long,
@@ -116,7 +144,7 @@ function buildCatedral(group, colliders) {
   const glass = new THREE.MeshStandardNodeMaterial({ color: 0x3a4a5e, roughness: 0.3 });
   glass.emissiveNode = color(0xffc77a).mul(cityUniforms.uInteriorGlow).mul(0.5);
   const white = new THREE.MeshStandardNodeMaterial({ color: 0xf2efe6, roughness: 0.5 });
-  const add = (geo, mat, x, y, z, ry = 0) => {
+  const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, ry = 0) => {
     const m = new THREE.Mesh(geo, mat);
     m.position.set(x, y, z);
     m.rotation.y = ry;
@@ -124,8 +152,8 @@ function buildCatedral(group, colliders) {
     root.add(m);
     return m;
   };
-  const box = (w, h, d, x, y, z, mat = stone) => add(new THREE.BoxGeometry(w, h, d), mat, x, y, z);
-  const arch = (w, h, x, y, z, ry, mat = dark) => add(new THREE.ShapeGeometry(pointedArch(w, h)), mat, x, y, z, ry);
+  const box = (w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material = stone) => add(new THREE.BoxGeometry(w, h, d), mat, x, y, z);
+  const arch = (w: number, h: number, x: number, y: number, z: number, ry: number, mat: THREE.Material = dark) => add(new THREE.ShapeGeometry(pointedArch(w, h)), mat, x, y, z, ry);
   const FRONT_H = 20, NAVE_H = 15;
   const fz = L / 2; // the facade's plane
   // nave & roof
@@ -164,7 +192,7 @@ function buildCatedral(group, colliders) {
     hand.rotation.z = hr;
     root.add(hand);
   }
-  const finial = (x, y, z, r = 0.35) => {
+  const finial = (x: number, y: number, z: number, r = 0.35) => {
     add(new THREE.CylinderGeometry(r * 0.5, r * 0.6, 1.0, 8), light, x, y + 0.5, z);
     add(new THREE.SphereGeometry(r, 10, 8), light, x, y + 1.2, z);
   };
@@ -207,13 +235,15 @@ function buildCatedral(group, colliders) {
   }
   // Merged into one mesh per material (and shadow casting), in the church's frame: drawn part by part, its ~140 pieces
   // cost ~270 draws a frame in the shadow cascades alone from the plaza
-  const parts = new Map();
+  const parts = new Map<string, { mat: THREE.Material; cast: boolean; geos: THREE.BufferGeometry[] }>();
   for (const m of root.children) {
+    if (!isSingleMesh(m)) continue; // (all of them: the parts above)
     m.updateMatrix();
     const geo = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry).applyMatrix4(m.matrix);
     const key = `${m.material.uuid}:${m.castShadow}`;
-    if (!parts.has(key)) parts.set(key, { mat: m.material, cast: m.castShadow, geos: [] });
-    parts.get(key).geos.push(geo);
+    let part = parts.get(key);
+    if (!part) parts.set(key, (part = { mat: m.material, cast: m.castShadow, geos: [] }));
+    part.geos.push(geo);
   }
   root.clear();
   for (const { mat, cast, geos } of parts.values()) {
@@ -230,12 +260,17 @@ function buildCatedral(group, colliders) {
   colliders.push({ minX: ox - ex, maxX: ox + ex, minZ: oz - ez, maxZ: oz + ez, minY: base, maxY: base + 50, obb: { cx: ox, cz: oz, hx, hz, cs, sn } });
 }
 
+// A mesh with one material
+function isSingleMesh(o: THREE.Object3D): o is THREE.Mesh<THREE.BufferGeometry, THREE.Material> {
+  return o instanceof THREE.Mesh && !Array.isArray(o.material);
+}
+
 // =====================================================================================================================
 // THE MONUMENTS: a kit of parts (each a geometry in the monument's frame, base on y = 0, front towards +z), merged per
 // material for each monument
 // =====================================================================================================================
-const box = (w, h, d, x = 0, y = 0, z = 0) => new THREE.BoxGeometry(w, h, d).translate(x, y + h / 2, z).toNonIndexed();
-const cyl = (r0, r1, h, x = 0, y = 0, z = 0, n = 16) => new THREE.CylinderGeometry(r1, r0, h, n).translate(x, y + h / 2, z).toNonIndexed();
+const box = (w: number, h: number, d: number, x = 0, y = 0, z = 0) => new THREE.BoxGeometry(w, h, d).translate(x, y + h / 2, z).toNonIndexed();
+const cyl = (r0: number, r1: number, h: number, x = 0, y = 0, z = 0, n = 16) => new THREE.CylinderGeometry(r1, r0, h, n).translate(x, y + h / 2, z).toNonIndexed();
 
 // A standing figure s metres tall: legs under a coat or robe, torso, head, one arm raised when `raised` (a flag, a
 // greeting) and the other down
@@ -274,7 +309,7 @@ function angel(s = 3.6) {
 }
 
 // A stepped stone pedestal h tall, w across
-function pedestal(w, h) {
+function pedestal(w: number, h: number) {
   return mergeGeometries([
     box(w + 1.2, 0.3, w + 1.2),
     box(w + 0.6, 0.3, w + 0.6, 0, 0.3),
@@ -284,7 +319,7 @@ function pedestal(w, h) {
 }
 
 // A round fountain: a stone basin r across with its water, a bowl on a stem in the middle
-function fountain(r) {
+function fountain(r: number) {
   const rim = new THREE.LatheGeometry([[r - 0.35, 0], [r, 0], [r, 0.6], [r - 0.35, 0.6], [r - 0.35, 0.05]].map(([x, y]) => new THREE.Vector2(x, y)), 40).toNonIndexed();
   return {
     stone: mergeGeometries([rim, cyl(0.35, 0.25, 1.6), new THREE.LatheGeometry([[0, 1.5], [1.1, 1.6], [1.2, 1.85], [1.0, 1.8], [0, 1.7]].map(([x, y]) => new THREE.Vector2(x, y)), 24).toNonIndexed()]),
@@ -294,29 +329,31 @@ function fountain(r) {
 }
 
 // The block letters of a word, h tall, standing on y = 0, centred on x: each letter a set of boxes on a 3 x 5 grid
-const GLYPHS = {
+const GLYPHS: Record<string, string[]> = {
   T: ['111', '010', '010', '010', '010'], E: ['111', '100', '111', '100', '111'], P: ['111', '101', '111', '100', '100'],
   I: ['111', '010', '010', '010', '111'], C: ['111', '100', '100', '100', '111'], N: ['101', '111', '111', '111', '101'],
   A: ['111', '101', '111', '101', '101'], Y: ['101', '101', '010', '010', '010'], R: ['111', '101', '110', '101', '101']
 };
-function letters(word, h) {
+function letters(word: string, h: number) {
   const u = h / 5;
-  const out = [];
-  [...word].forEach((ch, i) => {
+  const out: THREE.BufferGeometry[] = [];
+  Array.from(word).forEach((ch, i) => {
     const g = GLYPHS[ch];
     const x0 = (i - (word.length - 1) / 2) * u * 4;
-    const parts = [];
-    g.forEach((row, r) => [...row].forEach((on, c) => {
-      if (on === '1') parts.push(box(u, u, u * 0.8, x0 + (c - 1) * u, (4 - r) * u, 0));
-    }));
+    const parts: THREE.BufferGeometry[] = [];
+    g.forEach((row, r) => {
+      Array.from(row).forEach((on, c) => {
+        if (on === '1') parts.push(box(u, u, u * 0.8, x0 + (c - 1) * u, (4 - r) * u, 0));
+      });
+    });
     out.push(mergeGeometries(parts));
   });
   return out;
 }
 
 // A lattice telecom tower h tall (four legs braced every 4 m, narrowing up), dishes & a beacon on top
-function tower(h) {
-  const legs = [];
+function tower(h: number) {
+  const legs: THREE.BufferGeometry[] = [];
   const base = h * 0.09;
   for (let y = 0; y < h; y += 4) {
     const a = base * (1 - (y / h) * 0.75), b = base * (1 - ((y + 4) / h) * 0.75);
@@ -337,8 +374,8 @@ function tower(h) {
   return { steel: mergeGeometries(legs), dishes: mergeGeometries(dishes), beacon: new THREE.SphereGeometry(0.35, 10, 8).translate(0, h + 0.4, 0).toNonIndexed() };
 }
 
-function buildMonuments(group, colliders) {
-  const pois = new Map((GEO.pois || []).map((p) => [p.name, p]));
+function buildMonuments(group: THREE.Group, colliders: Collider[]) {
+  const pois = new Map(GEO.pois.map((p) => [p.name, p]));
   const stone = stoneMaterial(0xb3a893);
   const darkStone = stoneMaterial(0x6d655b);
   const bronze = new THREE.MeshStandardNodeMaterial({ color: 0x4f3d2a, roughness: 0.42, metalness: 0.75 });
@@ -358,21 +395,22 @@ function buildMonuments(group, colliders) {
   let built = 0;
 
   // A monument at POI `name` (or at x, z): parts [geometry, material], yaw, footprint half-size for its collider
-  const place = (name, parts, { yaw = 0, half = 1.5, height = 6, at = null } = {}) => {
-    const p = at || pois.get(name);
+  const place = (name: string, parts: MonumentPart[], { yaw = 0, half = 1.5, height = 6, at = null }: { yaw?: number; half?: number; height?: number; at?: { x: number; z: number } | null } = {}) => {
+    const p = at ?? pois.get(name);
     if (!p) return;
     const root = new THREE.Group();
     root.name = name;
     root.position.set(p.x, landHeight(p.x, p.z) - 0.05, p.z);
     root.rotation.y = yaw;
-    const byMat = new Map();
+    const byMat = new Map<THREE.Material, THREE.BufferGeometry[]>();
     for (const [geo, mat] of parts) {
-      if (!byMat.has(mat)) byMat.set(mat, []);
-      byMat.get(mat).push(geo);
+      let geos = byMat.get(mat);
+      if (!geos) byMat.set(mat, (geos = []));
+      geos.push(geo);
     }
     for (const [mat, geos] of byMat) {
       const mesh = new THREE.Mesh(geos.length > 1 ? mergeGeometries(geos) : geos[0], mat);
-      mesh.castShadow = mesh.receiveShadow = !mat.transparent && !mat.isMeshBasicNodeMaterial;
+      mesh.castShadow = mesh.receiveShadow = !mat.transparent && !(mat instanceof THREE.MeshBasicNodeMaterial);
       root.add(mesh);
     }
     group.add(root);
@@ -381,7 +419,7 @@ function buildMonuments(group, colliders) {
   };
 
   // Columns: the Columna de la Pacificación, with its figure, and the Ángel de la Independencia, golden on top
-  const column = (h, top, topMat) => [
+  const column = (h: number, top: THREE.BufferGeometry, topMat: THREE.Material): MonumentPart[] => [
     [pedestal(3.2, 4), stone],
     [cyl(0.85, 0.7, h, 0, 4), stone],
     [cyl(0.95, 1.05, 1.0, 0, 4 + h), stone],
@@ -392,11 +430,11 @@ function buildMonuments(group, colliders) {
   // The Monumento a los Constituyentes: a wide pedestal carrying a group of figures
   place('Monumento a los Constituyentes', [
     [pedestal(4.5, 3.2), stone],
-    ...[-1.1, 0, 1.1].map((x) => [figure(2.5, x === 0).translate(x, 3.2, 0), bronze])
+    ...[-1.1, 0, 1.1].map((x): MonumentPart => [figure(2.5, x === 0).translate(x, 3.2, 0), bronze])
   ], { half: 3, height: 7 });
   // Statues on pedestals
   for (const [name, raised] of [['Amado Nervo', false], ['Monumento al Gral. Esteban Baca Calderón', true], ['Monumento al Gral. Francisco Villa', true],
-    ['Monumento a Juan Espinoza Bávara', false], ['Monumento a Marcelino Cedano Mora', false], ['Monumento a Esteban Baca Calderón', true], ['Rotonda del Titulado', true]]) {
+    ['Monumento a Juan Espinoza Bávara', false], ['Monumento a Marcelino Cedano Mora', false], ['Monumento a Esteban Baca Calderón', true], ['Rotonda del Titulado', true]] satisfies [string, boolean][]) {
     place(name, [[pedestal(1.6, 2.6), stone], [figure(2.6, raised).translate(0, 2.6, 0), bronze]], { half: 1.4, height: 5.5 });
   }
   // The Monumento of the Alameda: an obelisk
@@ -428,7 +466,7 @@ function buildMonuments(group, colliders) {
   // The big letters: TEPIC & NAYARIT, each letter its own colour
   for (const [name, word] of [['Tepic', 'TEPIC'], ['Nayarit', 'NAYARIT']]) {
     const glyphs = letters(word, 2.6);
-    place(name, glyphs.map((g, i) => [g, letterMats[i % letterMats.length]]), { half: word.length * 1.1, height: 2.6 });
+    place(name, glyphs.map((g, i): MonumentPart => [g, letterMats[i % letterMats.length]]), { half: word.length * 1.1, height: 2.6 });
   }
   // The cross on the Cerro de la Cruz (white, 14 m) and the antennas of the Cerro Microondas
   place('Cerro de la Cruz', [[box(0.9, 14, 0.9), white], [box(6.5, 0.9, 0.9, 0, 9.2), white], [box(2.4, 0.8, 2.4), white]], { half: 1.2, height: 14 });
@@ -444,10 +482,10 @@ function buildMonuments(group, colliders) {
   return built;
 }
 
-function buildTepicLandmarks(scene) {
+function buildTepicLandmarks(scene: THREE.Object3D) {
   const group = new THREE.Group();
   group.name = 'TepicLandmarks';
-  const colliders = [];
+  const colliders: Collider[] = [];
   if (CATEDRAL) buildCatedral(group, colliders);
   const monuments = buildMonuments(group, colliders);
   console.info(`[landmarks] the Catedral and ${monuments} monuments`);

@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 
-// js/sim/gunfire-fx.js
-// What gunfire and explosions look like (crime.js fires them): tracers, muzzle flashes, blood and dust puffs off what a
+// js/sim/gunfire-fx.ts
+// What gunfire and explosions look like (crime.ts fires them): tracers, muzzle flashes, blood and dust puffs off what a
 // shot hits, rockets with their smoke trails, fireballs, smoke and flames. Two instanced particle pools, one drawn
 // unlit and bright enough for the bloom (tracers, flashes, fire), one lit (smoke, dust, blood, debris), plus a couple
 // of point lights for the blasts. Nothing is allocated per shot: every pool is made up front.
@@ -16,10 +16,38 @@ const dummy = new THREE.Object3D();
 const tint = new THREE.Color();
 const zero = new THREE.Matrix4().makeScale(0, 0, 0);
 
+// What a shot throws up where it hits: blood off people, sparks off metal, dust off anything else
+type ImpactKind = 'blood' | 'metal' | 'dust';
+// A rocket in flight (launchRocket's handle)
+interface Rocket {
+  mesh: THREE.Group;
+  live: boolean;
+}
+// A blast's flash: t s since it went off, power its peak intensity
+interface BlastLight {
+  light: THREE.PointLight;
+  t: number;
+  power: number;
+}
+
 // A pool of particles drawn as one instanced mesh. Each particle grows from size0 to size1 over its life (or keeps a
 // fixed length along its direction: tracers), drifts with its velocity, falls with `gravity` and fades its colour.
 class ParticlePool {
-  constructor(scene, geometry, material, max, name) {
+  max: number;
+  mesh: THREE.InstancedMesh;
+  // per particle: position (m), velocity (m/s), age & life (s), sizes (m), streak length (m, 0 for a puff) & its
+  // direction (rad), colour (linear, over 1 glows), gravity (m/s²; negative rises), drag (1/s), spin (rad)
+  x: Float32Array; y: Float32Array; z: Float32Array;
+  vx: Float32Array; vy: Float32Array; vz: Float32Array;
+  age: Float32Array; life: Float32Array; size0: Float32Array; size1: Float32Array;
+  len: Float32Array; yaw: Float32Array; pitch: Float32Array;
+  r: Float32Array; g: Float32Array; b: Float32Array;
+  gravity: Float32Array; drag: Float32Array; spin: Float32Array;
+  alive: Uint8Array;
+  cursor: number;
+  used: number;
+
+  constructor(scene: THREE.Object3D, geometry: THREE.BufferGeometry, material: THREE.Material, max: number, name: string) {
     this.max = max;
     this.mesh = new THREE.InstancedMesh(geometry, material, max);
     this.mesh.name = name;
@@ -29,20 +57,21 @@ class ParticlePool {
       this.mesh.setMatrixAt(i, zero);
       this.mesh.setColorAt(i, tint.setRGB(1, 1, 1));
     }
-    this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    this.mesh.instanceColor?.setUsage(THREE.DynamicDrawUsage);
     this.mesh.count = 1; // one (degenerate) particle until the first, so the pipeline compiles up front
     scene.add(this.mesh);
     const f = () => new Float32Array(max);
-    Object.assign(this, {
-      x: f(), y: f(), z: f(), vx: f(), vy: f(), vz: f(), age: f(), life: f(), size0: f(), size1: f(),
-      len: f(), yaw: f(), pitch: f(), r: f(), g: f(), b: f(), gravity: f(), drag: f(), spin: f()
-    });
+    this.x = f(); this.y = f(); this.z = f(); this.vx = f(); this.vy = f(); this.vz = f();
+    this.age = f(); this.life = f(); this.size0 = f(); this.size1 = f();
+    this.len = f(); this.yaw = f(); this.pitch = f(); this.r = f(); this.g = f(); this.b = f();
+    this.gravity = f(); this.drag = f(); this.spin = f();
     this.alive = new Uint8Array(max);
     this.cursor = 0;
     this.used = 0;
   }
 
-  spawn(x, y, z, vx, vy, vz, life, size0, size1, r, g, b, gravity = 0, drag = 0) {
+  spawn(x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, size0: number, size1: number,
+    r: number, g: number, b: number, gravity = 0, drag = 0): number {
     // the next free slot, or the oldest one round the ring
     let i = this.cursor;
     for (let k = 0; k < this.max; k++) {
@@ -65,7 +94,7 @@ class ParticlePool {
     return i;
   }
 
-  update(dt) {
+  update(dt: number): void {
     let n = 0;
     const mesh = this.mesh;
     for (let i = 0; i < this.max; i++) {
@@ -109,14 +138,23 @@ class ParticlePool {
     mesh.instanceMatrix.clearUpdateRanges();
     mesh.instanceMatrix.addUpdateRange(0, Math.max(1, n) * 16);
     mesh.instanceMatrix.needsUpdate = true;
-    mesh.instanceColor.clearUpdateRanges();
-    mesh.instanceColor.addUpdateRange(0, Math.max(1, n) * 3);
-    mesh.instanceColor.needsUpdate = true;
+    const colors = mesh.instanceColor;
+    if (colors) {
+      colors.clearUpdateRanges();
+      colors.addUpdateRange(0, Math.max(1, n) * 3);
+      colors.needsUpdate = true;
+    }
   }
 }
 
 class GunfireFX {
-  constructor(scene) {
+  scene: THREE.Object3D;
+  glow: ParticlePool; // unlit: tracers, flashes, fire, sparks
+  puff: ParticlePool; // lit: smoke, dust, blood, debris
+  rockets: Rocket[];
+  lights: BlastLight[];
+
+  constructor(scene: THREE.Object3D) {
     this.scene = scene;
     // unlit: colours over 1 glow through the bloom
     const glowMat = new THREE.MeshBasicNodeMaterial({ toneMapped: true });
@@ -154,7 +192,7 @@ class GunfireFX {
   }
 
   // A tracer streak from (x0, y0, z0) to (x1, y1, z1)
-  tracer(x0, y0, z0, x1, y1, z1) {
+  tracer(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): void {
     const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
     const d = Math.hypot(dx, dy, dz);
     if (d < 0.3) return;
@@ -169,7 +207,7 @@ class GunfireFX {
   }
 
   // A muzzle flash at (x, y, z) firing towards `yaw`: bigger for the bazooka's back-blast
-  muzzle(x, y, z, yaw, big = false) {
+  muzzle(x: number, y: number, z: number, yaw: number, big = false): void {
     const s = big ? 0.5 : 0.2;
     for (let k = 0; k < (big ? 4 : 2); k++) {
       this.glow.spawn(x, y, z, Math.sin(yaw) * (2 + k * 2), 0, Math.cos(yaw) * (2 + k * 2), 0.05 + k * 0.01, s, s * 0.4, 14, 9, 3);
@@ -182,9 +220,9 @@ class GunfireFX {
     }
   }
 
-  // Someone hit by a vehicle at `speed` m/s (traffic.js knockListener, crime.js): blood thrown from where they were
+  // Someone hit by a vehicle at `speed` m/s (traffic.ts knockListener, crime.ts): blood thrown from where they were
   // struck, more of it and further the harder the hit, along the way they were sent (nx, nz) and falling back
-  splatter(x, y, z, speed, nx = 0, nz = 0) {
+  splatter(x: number, y: number, z: number, speed: number, nx = 0, nz = 0): void {
     const n = Math.min(36, 6 + Math.round(speed * 1.1));
     for (let k = 0; k < n; k++) {
       const throwSpeed = speed * (0.15 + Math.random() * 0.45);
@@ -194,7 +232,7 @@ class GunfireFX {
   }
 
   // What a shot hitting something at (x, y, z) throws up: 'blood' off people, 'dust' off walls, sparks off metal
-  impact(x, y, z, kind, nx = 0, nz = 0) {
+  impact(x: number, y: number, z: number, kind: ImpactKind, nx = 0, nz = 0): void {
     if (kind === 'blood') {
       for (let k = 0; k < 6; k++) {
         this.puff.spawn(x, y, z, nx * 2 + rnd(1.6), 0.5 + Math.random() * 1.5, nz * 2 + rnd(1.6), 0.4 + Math.random() * 0.3, 0.08, 0.04, 0.32, 0.02, 0.02, 9, 0.5);
@@ -212,20 +250,20 @@ class GunfireFX {
   }
 
   // A puff of grey smoke at (x, y, z), `size` m across when it has spread: rocket trails, burning wrecks
-  smoke(x, y, z, size = 1, dark = 0.5) {
+  smoke(x: number, y: number, z: number, size = 1, dark = 0.5): void {
     const c = 0.62 - dark * 0.5;
     this.puff.spawn(x + rnd(0.2), y, z + rnd(0.2), rnd(0.4), 0.9 + Math.random() * 0.8, rnd(0.4), 1.6 + Math.random() * 1.2,
       size * 0.25, size, c, c, c * 0.98, -0.3, 0.6);
   }
 
   // A lick of flame at (x, y, z)
-  flame(x, y, z, size = 1) {
+  flame(x: number, y: number, z: number, size = 1): void {
     this.glow.spawn(x + rnd(0.4 * size), y, z + rnd(0.4 * size), rnd(0.3), 1.4 + Math.random() * 1.4, rnd(0.3), 0.35 + Math.random() * 0.3,
       size * 0.45, size * 0.12, 12, 4.2 + Math.random() * 2, 0.6, -1.5, 1.2);
   }
 
   // A fireball at (x, y, z) `size` m across, its smoke and debris, and a flash lighting up the street around
-  explosion(x, y, z, size = 7) {
+  explosion(x: number, y: number, z: number, size = 7): void {
     for (let k = 0; k < 18; k++) {
       const a = Math.random() * Math.PI * 2;
       const up = Math.random();
@@ -254,7 +292,7 @@ class GunfireFX {
   }
 
   // A rocket flying from (x, y, z) towards `yaw`, `pitch`: returns its handle (move it with placeRocket) or null
-  launchRocket(x, y, z, yaw, pitch) {
+  launchRocket(x: number, y: number, z: number, yaw: number, pitch: number): Rocket | null {
     const r = this.rockets.find((q) => !q.live);
     if (!r) return null;
     r.live = true;
@@ -262,7 +300,7 @@ class GunfireFX {
     return r;
   }
 
-  placeRocket(r, x, y, z, yaw, pitch) {
+  placeRocket(r: Rocket, x: number, y: number, z: number, yaw: number, pitch: number): void {
     r.mesh.position.set(x, y, z);
     r.mesh.rotation.set(pitch, yaw, 0, 'YXZ');
     // its exhaust
@@ -270,12 +308,12 @@ class GunfireFX {
     this.smoke(x - Math.sin(yaw) * 0.5, y, z - Math.cos(yaw) * 0.5, 0.9, 0.1);
   }
 
-  dropRocket(r) {
+  dropRocket(r: Rocket): void {
     r.live = false;
     r.mesh.position.y = PARKED_Y;
   }
 
-  update(dt) {
+  update(dt: number): void {
     this.glow.update(dt);
     this.puff.update(dt);
     for (const slot of this.lights) {
@@ -290,6 +328,7 @@ class GunfireFX {
   }
 }
 
-const rnd = (s) => (Math.random() - 0.5) * 2 * s;
+const rnd = (s: number): number => (Math.random() - 0.5) * 2 * s;
 
+export type { ImpactKind, Rocket, BlastLight, ParticlePool };
 export { GunfireFX };

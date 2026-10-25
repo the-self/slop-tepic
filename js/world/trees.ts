@@ -1,9 +1,10 @@
 import * as THREE from 'three/webgpu';
 import { createTreeMaterial } from '../render/tsl-materials.ts';
 import { liftAt } from './ground.ts';
+import type { Collider } from './buildings.ts';
 
-// js/world/trees.js
-// Procedural street & park trees of Tepic, planted by street-details.js (section 7):
+// js/world/trees.ts
+// Procedural street & park trees of Tepic, planted by street-details.ts (section 7):
 // - Laurel de la India (Ficus microcarpa, the plazas' and sidewalks' tree), jacaranda, mango and tabachín
 //   (flamboyán) grown from seeded per-species rules: a flared trunk / leader carrying scaffold limbs, branches and
 //   twigs as tapered, curving bark tubes (uv in metres for the bark shader); the jacarandas bloom purple in
@@ -14,14 +15,128 @@ import { liftAt } from './ground.ts';
 //   leaves, feathery bipinnate fronds, long mango leaves, a dense far-canopy clump and the palm's fan) whose mipmaps
 //   keep their coverage, so distant crowns don't thin out
 // - Crown-shell normals, interior occlusion & sway weights baked per vertex (attributes: createTreeMaterial in
-//   tsl-materials.js)
+//   tsl-materials.ts)
 // - Three levels of detail (two variants per species up close), picked per tree from the camera distance and
 //   regrouped per spatial cell / species / variant / level whenever the camera has moved a few metres
 
 const V3 = THREE.Vector3;
 
+/** A point on a leaf card's spray (m: x right, y up from the card's attachment point) */
+type P2 = [number, number];
+
+/** The primitives a leaf spray is drawn from (m): twigs & stalks as polylines w wide, leaves as blades from p at angle a
+ *  (rad off straight up) len long and wid of that wide, t (0..1) along their twig */
+type SprayPrim =
+  | { type: 'twig'; pts: P2[]; w0: number; w1: number }
+  | { type: 'stalk'; pts: P2[]; w: number; a?: undefined; b?: undefined }
+  | { type: 'stalk'; pts?: undefined; a: P2; b: P2; w: number }
+  | { type: 'oval'; p: P2; a: number; len: number; wid: number; t: number; skew?: number }
+  | { type: 'palmate'; p: P2; a: number; len: number; t: number };
+
+/** How a branch bends, per metre (toward the sky, away from the trunk, down toward its tip), and its wander */
+interface Bend {
+  up: number;
+  out: number;
+  droop: number;
+  jitter: number;
+}
+
+/** Branches or twigs along a parent: count, span along it (fractions), angle off it (rad), length (share of the
+ *  parent, or m for twigs) from the span's start to its end, segments */
+interface BranchSpec extends Bend {
+  n: number;
+  t: P2;
+  angle: P2;
+  len: P2;
+  segs: number;
+}
+
+/** A broadleaf species' growing rules (see SPECIES) */
+interface BroadleafSpecies {
+  name: string;
+  tile: number;
+  palm?: false;
+  /** radius (m), top (m), lean, segments */
+  trunk: { r: number; top: number; lean: number; segs: number };
+  /** scaffold limbs: count, heights up the leader (m), tilt off vertical (rad) & length (m) from the lowest to the
+   *  highest, base radius as a share of the trunk's there, segments */
+  limbs: Bend & { n: number; y: P2; tilt: P2; len: P2; r: number; segs: number };
+  branches: BranchSpec;
+  twigs: BranchSpec;
+  /** leaf cards per twig, their scale (of the tile's size) and droop */
+  cards: { perTwig: number; scale: P2; droop: number };
+  /** the per-tree foliage tints (sRGB) */
+  tints: number[];
+  /** the months (0 = January) a share of the trees flowers, in those tints */
+  bloom?: { months: number[]; share: number; tints: number[] };
+}
+
+/** A palm's growing rules (growPalm): its trunk (skirt: the dead fronds' length under the crown, m), its leaves */
+interface PalmSpecies {
+  name: string;
+  tile: number;
+  palm: true;
+  trunk: { r: number; top: number; lean: number; segs: number; skirt: number };
+  leaves: { n: number; size: P2 };
+  tints: number[];
+  bloom?: undefined;
+}
+
+export type TreeSpecies = BroadleafSpecies | PalmSpecies;
+
+/** A grown branch: its skeleton points & radii (m), length (m), level (0 trunk, 1 limb, 2 branch, 3 twig), the
+ *  length fraction at each point, where it sits on its parent, and the bark's mark per point (the palm's skirt) */
+interface Branch {
+  pts: THREE.Vector3[];
+  rad: number[];
+  len: number;
+  level: number;
+  ts: number[];
+  parentT?: number;
+  mark?: number[];
+}
+
+/** A leaf card: its bottom edge's centre, its up & facing directions, its size (m) and atlas tile */
+interface LeafCard {
+  at: THREE.Vector3;
+  up: THREE.Vector3;
+  face: THREE.Vector3;
+  size: number;
+  tile: number;
+}
+
+/** What a tree geometry's userData says of it */
+interface TreeGeometryStats {
+  species: string;
+  variant: number;
+  lod: number;
+  cards: number;
+  triangles: number;
+}
+
+/**
+ * Where a tree stands (street-details.ts): position (m; y its foot, 0 when unset), scale (1: a mature park tree),
+ * species (index into SPECIES), yaw (rad, hashed when unset), stretch across x / z, draw-distance tier (0 park &
+ * plaza, 1 avenue, 2 cross-street), whitewashed trunk
+ */
+export interface TreeSite {
+  x: number;
+  y?: number;
+  z: number;
+  scale: number;
+  species?: number;
+  yaw?: number;
+  sx?: number;
+  sz?: number;
+  tier?: number;
+  whitewash?: boolean;
+}
+
+/** A leaf's frame on the canvas: (u along, v across) → canvas px */
+type LeafFrame = (u: number, v: number) => P2;
+
 // Seeded PRNG (mulberry32): every species, variant and level grows the same tree on every load
-function mulberry32(seed) {
+function mulberry32(seed: number) {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -32,8 +147,8 @@ function mulberry32(seed) {
   };
 }
 
-const lerp = (a, b, t) => a + (b - a) * t;
-const smooth = (e0, e1, x) => {
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const smooth = (e0: number, e1: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
   return t * t * (3 - 2 * t);
 };
@@ -50,16 +165,15 @@ const ATLAS_SIZE = TILE * ATLAS_TILES;
 const GUTTER = 8; // px kept clear round every tile, so mip levels don't bleed between tiles
 const TILE_FAR = 3;
 const TILE_PALM = 4;
-const tileOrigin = (k) => [(k % ATLAS_TILES) * TILE, Math.floor(k / ATLAS_TILES) * TILE];
+const tileOrigin = (k: number): P2 => [(k % ATLAS_TILES) * TILE, Math.floor(k / ATLAS_TILES) * TILE];
 
 // Spray primitives in metres (x right, y up from the card's attachment point): twigs (polylines) & leaves
-function buildSprays(rng) {
-  const R = (a, b) => a + (b - a) * rng();
-  const dirOf = (a) => [Math.sin(a), Math.cos(a)]; // a = angle from straight up
+function buildSprays(rng: () => number) {
+  const R = (a: number, b: number) => a + (b - a) * rng();
 
   // Curving twig from (x, y) at angle a off vertical, len m long, curling by `curl` rad over its length
-  const twig = (x, y, a, len, curl, segs = 12) => {
-    const pts = [[x, y]];
+  const twig = (x: number, y: number, a: number, len: number, curl: number, segs = 12) => {
+    const pts: P2[] = [[x, y]];
     let ang = a;
     for (let i = 1; i <= segs; i++) {
       ang += curl / segs + R(-0.035, 0.035);
@@ -69,7 +183,7 @@ function buildSprays(rng) {
     return pts;
   };
   // Point & direction angle at arc fraction t of a polyline
-  const at = (pts, t) => {
+  const at = (pts: P2[], t: number): { p: P2; a: number } => {
     const f = Math.min(pts.length - 1.001, t * (pts.length - 1));
     const i = Math.floor(f);
     const k = f - i;
@@ -78,11 +192,11 @@ function buildSprays(rng) {
     return { p: [lerp(a[0], b[0], k), lerp(a[1], b[1], k)], a: Math.atan2(b[0] - a[0], b[1] - a[1]) };
   };
 
-  const sprays = [];
+  const sprays: SprayPrim[][] = [];
 
   // 0. Laurel de la India: many short twigs crowded with small, glossy, elliptic leaves (a dense, dark crown)
   {
-    const prims = [];
+    const prims: SprayPrim[] = [];
     const n = 6;
     for (let i = 0; i < n; i++) {
       const f = (i + 0.5) / n - 0.5;
@@ -103,7 +217,7 @@ function buildSprays(rng) {
   // 1. Jacaranda & tabachín: slender twigs bearing feathery bipinnate fronds of tiny paired leaflets (lacy,
   //    light-dappled; in bloom the tint turns them purple or red)
   {
-    const prims = [];
+    const prims: SprayPrim[] = [];
     const n = 3;
     for (let i = 0; i < n; i++) {
       const f = (i + 0.5) / n - 0.5;
@@ -132,7 +246,7 @@ function buildSprays(rng) {
 
   // 2. Mango: stout twigs ending in whorls of long, narrow, leathery leaves hanging from the tips
   {
-    const prims = [];
+    const prims: SprayPrim[] = [];
     const n = 4;
     for (let i = 0; i < n; i++) {
       const f = (i + 0.5) / n - 0.5;
@@ -153,13 +267,13 @@ function buildSprays(rng) {
 
   // 3. Far-canopy clump: a ragged, roundish mass of leaves (one card stands for a whole section of a distant crown)
   {
-    const prims = [];
+    const prims: SprayPrim[] = [];
     const lobes = Array.from({ length: 7 }, () => ({ a: R(0, Math.PI * 2), r: R(0.75, 1.0), w: R(0.5, 0.9) }));
-    const edge = (ang) => 1.25 * lobes.reduce((m, l) => Math.max(m, l.r * Math.cos(Math.min(Math.PI / 2, Math.abs(((ang - l.a + Math.PI * 3) % (Math.PI * 2)) - Math.PI) / l.w))), 0.6);
+    const edge = (ang: number) => 1.25 * lobes.reduce((m, l) => Math.max(m, l.r * Math.cos(Math.min(Math.PI / 2, Math.abs(((ang - l.a + Math.PI * 3) % (Math.PI * 2)) - Math.PI) / l.w))), 0.6);
     for (let k = 0; k < 520; k++) {
       const ang = R(0, Math.PI * 2);
       const rr = Math.sqrt(rng()) * edge(ang);
-      const p = [Math.cos(ang) * rr, 1.3 + Math.sin(ang) * rr];
+      const p: P2 = [Math.cos(ang) * rr, 1.3 + Math.sin(ang) * rr];
       prims.push({ type: 'oval', p, a: R(-Math.PI, Math.PI), len: R(0.16, 0.22), wid: 0.55, t: Math.min(1, Math.max(0, (p[1] - 0.2) / 2.2)) });
     }
     sprays.push(prims);
@@ -168,8 +282,8 @@ function buildSprays(rng) {
   // 4. Washingtonia fan leaf: a stalk rising to the hastula, then some fifty folded segments radiating over a half
   //    circle, the outer ones bending down at their tips, with loose threads between them
   {
-    const prims = [];
-    const stalk = [[0, 0], [0, 0.55]];
+    const prims: SprayPrim[] = [];
+    const stalk: P2[] = [[0, 0], [0, 0.55]];
     prims.push({ type: 'twig', pts: stalk, w0: 0.035, w1: 0.028 });
     const h = stalk[1];
     const n = 52;
@@ -195,12 +309,12 @@ function buildSprays(rng) {
 }
 
 // Bounding box of a spray (metres), with leaves treated as discs round their centre
-function sprayBounds(prims) {
+function sprayBounds(prims: SprayPrim[]) {
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
   let maxY = -Infinity;
-  const add = (x, y, r = 0) => {
+  const add = (x: number, y: number, r = 0) => {
     minX = Math.min(minX, x - r);
     maxX = Math.max(maxX, x + r);
     minY = Math.min(minY, y - r);
@@ -222,7 +336,9 @@ function createLeafAtlas() {
   const ctx2d = () => {
     const c = document.createElement('canvas');
     c.width = c.height = ATLAS_SIZE;
-    return c.getContext('2d', { willReadFrequently: true });
+    const g = c.getContext('2d', { willReadFrequently: true });
+    if (!g) throw new Error('trees: no 2D canvas context');
+    return g;
   };
   const col = ctx2d(); // r leaf brightness, g hue jitter, b twig mask
   const cov = ctx2d(); // coverage
@@ -234,9 +350,9 @@ function createLeafAtlas() {
     c.lineJoin = 'round';
   }
   const rng = mulberry32(20261015);
-  const R = (a, b) => a + (b - a) * rng();
+  const R = (a: number, b: number) => a + (b - a) * rng();
   const sprays = buildSprays(rng);
-  const tileMeters = [];
+  const tileMeters: number[] = [];
 
   sprays.forEach((prims, k) => {
     // Fit: attachment point at the bottom centre of the tile (the far clump: centred), widest extent to the gutter
@@ -256,38 +372,38 @@ function createLeafAtlas() {
       by = oy + TILE - GUTTER;
     }
     tileMeters[k] = room / s;
-    const X = (p) => cx + p[0] * s;
-    const Y = (p) => by - p[1] * s;
+    const X = (p: P2) => cx + p[0] * s;
+    const Y = (p: P2) => by - p[1] * s;
     // Point (u along, v across) of a leaf from P at angle a, L long & W wide (canvas space)
-    const frame = (P, a, L, W) => {
+    const frame = (P: P2, a: number, L: number, W: number) => {
       const d = [Math.sin(a), -Math.cos(a)];
       const x0 = X(P);
       const y0 = Y(P);
-      return (u, v) => [x0 + d[0] * u * L * s - d[1] * v * W * s, y0 + d[1] * u * L * s + d[0] * v * W * s];
+      return (u: number, v: number): P2 => [x0 + d[0] * u * L * s - d[1] * v * W * s, y0 + d[1] * u * L * s + d[0] * v * W * s];
     };
-    const ovalPath = (c, f, skew = 0) => {
+    const ovalPath = (c: CanvasRenderingContext2D, f: LeafFrame, skew = 0) => {
       c.moveTo(...f(0, 0));
       c.bezierCurveTo(...f(0.05, 0.6 + skew), ...f(0.6, 0.62), ...f(1, 0));
       c.bezierCurveTo(...f(0.6, -0.62), ...f(0.05, -0.6 + skew), ...f(0, 0));
     };
-    const halfPath = (c, f, skew = 0) => {
+    const halfPath = (c: CanvasRenderingContext2D, f: LeafFrame, skew = 0) => {
       c.moveTo(...f(0, 0));
       c.bezierCurveTo(...f(0.05, 0.6 + skew), ...f(0.6, 0.62), ...f(1, 0));
       c.closePath();
     };
     // Same path on both canvases: data colour on one, white coverage on the other
-    const fill = (path, rgb) => {
-      for (const [c, style] of [[col, rgb], [cov, '#fff']]) {
+    const fill = (path: (c: CanvasRenderingContext2D) => void, rgb: string) => {
+      for (const [c, style] of [[col, rgb], [cov, '#fff']] satisfies [CanvasRenderingContext2D, string][]) {
         c.beginPath();
         path(c);
         c.fillStyle = style;
         c.fill();
       }
     };
-    const stroke = (pts, w0, w1, rgb) => {
+    const stroke = (pts: P2[], w0: number, w1: number, rgb: string) => {
       for (let i = 0; i < pts.length - 1; i++) {
         const w = Math.max(0.8, lerp(w0, w1, i / (pts.length - 1)) * s);
-        for (const [c, style] of [[col, rgb], [cov, '#fff']]) {
+        for (const [c, style] of [[col, rgb], [cov, '#fff']] satisfies [CanvasRenderingContext2D, string][]) {
           c.beginPath();
           c.moveTo(X(pts[i]), Y(pts[i]));
           c.lineTo(X(pts[i + 1]), Y(pts[i + 1]));
@@ -297,20 +413,22 @@ function createLeafAtlas() {
         }
       }
     };
-    const leafRGB = (t) => {
+    const leafRGB = (t: number): P2 => {
       // brighter towards the sunlit outer end of the spray, a few darker or older leaves
       const r = Math.min(255, Math.round(255 * R(0.6, 0.9) * (0.8 + 0.2 * t)));
       return [r, Math.round(255 * rng())];
     };
-    const rgb = (r, g, bl = 0) => `rgb(${r}, ${g}, ${bl})`;
+    const rgb = (r: number, g: number, bl = 0) => `rgb(${r}, ${g}, ${bl})`;
 
     for (const q of prims) {
       if (q.type === 'twig') stroke(q.pts, q.w0, q.w1, rgb(110, 128, 255));
-      else if (q.type === 'stalk') stroke(q.pts || [q.a, q.b], q.w, q.w * 0.7, rgb(120, 128, 150));
+      else if (q.type === 'stalk') stroke(q.pts ?? [q.a, q.b], q.w, q.w * 0.7, rgb(120, 128, 150));
       else if (q.type === 'oval') {
         const [r, g] = leafRGB(q.t);
         const f = frame(q.p, q.a, q.len, q.len * q.wid);
-        fill((c) => ovalPath(c, f, q.skew || 0), rgb(r, g));
+        fill((c) => {
+          ovalPath(c, f, q.skew || 0);
+        }, rgb(r, g));
         if (q.len * s > 9) {
           // one half of the blade a little darker (folded along the midrib) and the midrib itself
           col.beginPath();
@@ -318,18 +436,22 @@ function createLeafAtlas() {
           col.fillStyle = rgb(Math.round(r * 0.84), g);
           col.fill();
         }
-      } else if (q.type === 'palmate') {
+      } else { // 'palmate'
         // Five pointed lobes radiating from the blade centre: main, two side & two small basal ones
         const [r, g] = leafRGB(q.t);
         const L = q.len;
-        const cP = [q.p[0] + Math.sin(q.a) * L * 0.22, q.p[1] + Math.cos(q.a) * L * 0.22];
+        const cP: P2 = [q.p[0] + Math.sin(q.a) * L * 0.22, q.p[1] + Math.cos(q.a) * L * 0.22];
         const lobes = [[0, 0.78, 0.36], [0.85, 0.62, 0.34], [-0.85, 0.62, 0.34], [1.65, 0.34, 0.36], [-1.65, 0.34, 0.36]];
         lobes.forEach(([da, ll, ww], li) => {
           const f = frame(cP, q.a + da + R(-0.08, 0.08), L * ll, L * ll * ww);
           const shade = li === 0 ? 1 : (da > 0 ? 0.88 : 0.95);
-          fill((c) => ovalPath(c, f), rgb(Math.round(r * shade), g));
+          fill((c) => {
+            ovalPath(c, f);
+          }, rgb(Math.round(r * shade), g));
         });
-        fill((c) => c.arc(X(cP), Y(cP), L * 0.24 * s, 0, Math.PI * 2), rgb(Math.round(r * 0.96), g));
+        fill((c) => {
+          c.arc(X(cP), Y(cP), L * 0.24 * s, 0, Math.PI * 2);
+        }, rgb(Math.round(r * 0.96), g));
       }
     }
   });
@@ -359,9 +481,9 @@ function createLeafAtlas() {
 
 // Box-filtered mip chain whose alpha is rescaled per tile so the share of texels above the alpha-test cutoff stays as
 // it is at level 0 (otherwise alpha-tested foliage thins out and vanishes at distance)
-function coverageMips(level0, size, tiles, cutoff = 128) {
+function coverageMips(level0: Uint8Array, size: number, tiles: number, cutoff = 128) {
   const levels = [{ data: level0, width: size, height: size }];
-  const target = [];
+  const target: number[] = [];
   const tilePx = size / tiles;
   for (let ty = 0; ty < tiles; ty++) {
     for (let tx = 0; tx < tiles; tx++) {
@@ -428,7 +550,7 @@ function coverageMips(level0, size, tiles, cutoff = 128) {
 //    Scale 1 is a mature park tree; street trees are planted smaller. `bloom`: the months (0 = January) a share of
 //    the trees flowers, in those tints. A palm (`palm`) grows by its own rules (growPalm).
 // =====================================================================================================================
-const SPECIES = [
+const SPECIES: TreeSpecies[] = [
   { // 0: Laurel de la India (Ficus microcarpa): a short, stout, pale trunk forking low into many spreading limbs, a
     //    dense, dark, rounded dome of small glossy leaves (the plazas' trees, kept clipped on the sidewalks)
     name: 'laurel', tile: 0,
@@ -482,7 +604,7 @@ const SPECIES = [
 // The month the trees show (0 = January): the Live time's (?live-time=<ISO date>, as main.js reads it) or today's
 function treeMonth() {
   try {
-    const q = new URLSearchParams(globalThis.location ? globalThis.location.search : '').get('live-time');
+    const q = new URLSearchParams('location' in globalThis ? globalThis.location.search : '').get('live-time');
     const d = q ? new Date(q) : new Date();
     return Number.isFinite(d.getTime()) ? d.getMonth() : new Date().getMonth();
   } catch {
@@ -495,7 +617,7 @@ function treeMonth() {
 // =====================================================================================================================
 
 // Unit vector `angle` off `dir`, turned `azimuth` round it
-function deflect(dir, angle, azimuth) {
+function deflect(dir: THREE.Vector3, angle: number, azimuth: number) {
   const ref = Math.abs(dir.y) < 0.95 ? new V3(0, 1, 0) : new V3(1, 0, 0);
   const u = new V3().crossVectors(dir, ref).normalize();
   const w = new V3().crossVectors(dir, u);
@@ -507,8 +629,8 @@ function deflect(dir, angle, azimuth) {
 
 // A branch as a polyline from p0 along dir, len metres in segs steps (or at the given length fractions), bending per
 // metre toward the sky (up), away from the trunk axis (out) and downward toward its tip (droop), with some wander
-function growBranch(p0, dir, len, r0, r1, segs, bend, rng, level, schedule = null) {
-  const ts = schedule || Array.from({ length: segs + 1 }, (_, i) => i / segs);
+function growBranch(p0: THREE.Vector3, dir: THREE.Vector3, len: number, r0: number, r1: number, segs: number, bend: Bend, rng: () => number, level: number, schedule: number[] | null = null): Branch {
+  const ts = schedule ?? Array.from({ length: segs + 1 }, (_, i) => i / segs);
   const pts = [p0.clone()];
   const rad = [r0];
   const d = dir.clone();
@@ -531,7 +653,7 @@ function growBranch(p0, dir, len, r0, r1, segs, bend, rng, level, schedule = nul
 }
 
 // Point, direction & radius at length fraction t of a branch
-function along(b, t) {
+function along(b: Branch, t: number) {
   const ts = b.ts;
   let i = 0;
   while (i < ts.length - 2 && ts[i + 1] < t) i++;
@@ -543,10 +665,10 @@ function along(b, t) {
   };
 }
 
-function growTree(sp, seed) {
+function growTree(sp: BroadleafSpecies, seed: number) {
   const rng = mulberry32(seed);
-  const R = (a, b) => a + (b - a) * rng();
-  const branches = [];
+  const R = (a: number, b: number) => a + (b - a) * rng();
+  const branches: Branch[] = [];
   const still = { up: 0, out: 0, droop: 0, jitter: 0.025 };
 
   // Trunk & leader: leaning a little, flaring at the root (dense rings at the base), tapering to a slim top
@@ -609,6 +731,13 @@ function growTree(sp, seed) {
 // 4. GEOMETRY: bark tubes & leaf cards of one species / variant at one level of detail
 // =====================================================================================================================
 class TreeGeometryBuilder {
+  pos: number[];
+  nrm: number[];
+  uv: number[];
+  /** per vertex: leaf (1) or bark (0), occlusion, sway weight, a per-card random / the bark's mark */
+  attr: number[];
+  idx: number[];
+
   constructor() {
     this.pos = [];
     this.nrm = [];
@@ -617,7 +746,7 @@ class TreeGeometryBuilder {
     this.idx = [];
   }
 
-  vertex(p, n, u, v, leaf, ao, sway, rnd) {
+  vertex(p: THREE.Vector3, n: THREE.Vector3, u: number, v: number, leaf: number, ao: number, sway: number, rnd: number) {
     this.pos.push(p.x, p.y, p.z);
     this.nrm.push(n.x, n.y, n.z);
     this.uv.push(u, v);
@@ -641,18 +770,18 @@ class TreeGeometryBuilder {
 
 // Tapered tube along a branch with parallel-transported rings (every `stride`-th skeleton point); uv in metres;
 // b.mark (per skeleton point, 0..1, optional) goes to the bark's aTree.w (the palm's skirt of dead fronds)
-function addTube(gb, b, radial, stride, aoAt, swayAt) {
+function addTube(gb: TreeGeometryBuilder, b: Branch, radial: number, stride: number, aoAt: (p: THREE.Vector3) => number, swayAt: (b: Branch, t: number) => number) {
   const n = b.pts.length;
-  const keep = [];
+  const keep: number[] = [];
   for (let i = 0; i < n; i += stride) keep.push(i);
   if (keep[keep.length - 1] !== n - 1) keep.push(n - 1);
-  const tangent = (i) => {
+  const tangent = (i: number) => {
     const a = b.pts[Math.max(0, i - 1)];
     const c = b.pts[Math.min(n - 1, i + 1)];
     return c.clone().sub(a).normalize();
   };
   let T = tangent(keep[0]);
-  let N = Math.abs(T.y) < 0.9 ? new V3(0, 1, 0).cross(T).normalize() : new V3(1, 0, 0).cross(T).normalize();
+  const N = Math.abs(T.y) < 0.9 ? new V3(0, 1, 0).cross(T).normalize() : new V3(1, 0, 0).cross(T).normalize();
   const q = new THREE.Quaternion();
   const around = 2 * Math.PI * Math.max(b.rad[0], 0.02);
   let vLen = 0;
@@ -690,7 +819,7 @@ function addTube(gb, b, radial, stride, aoAt, swayAt) {
 }
 
 // Leaf card: bottom edge centred on `at`, rising along `up`, facing `face`; uv over atlas tile `tile` (mirrored or not)
-function addCard(gb, at, up, face, size, tile, mirror, rnd, crown) {
+function addCard(gb: TreeGeometryBuilder, at: THREE.Vector3, up: THREE.Vector3, face: THREE.Vector3, size: number, tile: number, mirror: boolean, rnd: number, crown: Crown) {
   const side = new V3().crossVectors(up, face).normalize();
   const nrm = new V3().crossVectors(side, up).normalize();
   const [ox, oy] = tileOrigin(tile);
@@ -716,7 +845,7 @@ function addCard(gb, at, up, face, size, tile, mirror, rnd, crown) {
 }
 
 // Crown ellipsoid (from the foliage) for shell normals & interior occlusion
-function makeCrown(points) {
+function makeCrown(points: THREE.Vector3[]) {
   const box = new THREE.Box3().setFromPoints(points);
   const C = box.getCenter(new V3());
   const Rr = box.getSize(new V3()).multiplyScalar(0.5).max(new V3(0.5, 0.5, 0.5));
@@ -727,7 +856,7 @@ function makeCrown(points) {
     R: Rr,
     bottom: box.min.y,
     // Shell normal (out from the centre, a little skyward) blended with the card face (turned to agree with it)
-    shade(p, face) {
+    shade(p: THREE.Vector3, face: THREE.Vector3) {
       tmp.copy(p).sub(C).divide(Rr);
       const e = tmp.length();
       sn.copy(tmp).normalize();
@@ -740,7 +869,7 @@ function makeCrown(points) {
       return { n, ao };
     },
     // Bark: open below the crown, darker the deeper inside it
-    barkAO(p) {
+    barkAO(p: THREE.Vector3) {
       if (p.y < box.min.y) return 0.9;
       tmp.copy(p).sub(C).divide(Rr);
       return lerp(0.32, 0.8, smooth(0.2, 1.0, tmp.length()));
@@ -748,8 +877,10 @@ function makeCrown(points) {
   };
 }
 
+type Crown = ReturnType<typeof makeCrown>;
+
 // Sway weight along the hierarchy: 0 on the trunk (whole-tree bend is height based), rising to 1 at the twig tips
-function swayWeight(b, t) {
+function swayWeight(b: Branch, t: number) {
   switch (b.level) {
     case 0: return 0;
     case 1: return 0.18 * t;
@@ -760,11 +891,11 @@ function swayWeight(b, t) {
 
 // Leaf cards of one tree: lod 0 on every twig, lod 1 fewer & larger along the branches, lod 2 a shell of whole-crown
 // cards (far-canopy tile) round the crown ellipsoid
-function placeCards(sp, branches, lod, tileMeters, rng, crown) {
-  const R = (a, b) => a + (b - a) * rng();
-  const cards = [];
-  const outward = (p) => new V3(p.x - crown.C.x, (p.y - crown.C.y) * 0.6, p.z - crown.C.z).normalize();
-  const orient = (p, d, droop) => {
+function placeCards(sp: BroadleafSpecies, branches: Branch[], lod: number, tileMeters: number[], rng: () => number, crown: Crown) {
+  const R = (a: number, b: number) => a + (b - a) * rng();
+  const cards: LeafCard[] = [];
+  const outward = (p: THREE.Vector3) => new V3(p.x - crown.C.x, (p.y - crown.C.y) * 0.6, p.z - crown.C.z).normalize();
+  const orient = (p: THREE.Vector3, d: THREE.Vector3, droop: number) => {
     const o = outward(p);
     const up = d.clone().multiplyScalar(0.55).addScaledVector(o, 0.45)
       .add(new V3(R(-0.3, 0.3), R(-0.2, 0.3), R(-0.3, 0.3)));
@@ -829,9 +960,9 @@ function placeCards(sp, branches, lod, tileMeters, rng, crown) {
 // A Washingtonia: the trunk (rising from a flared foot, curving a little back towards the sky, swelling into the
 // skirt of dead fronds under the crown: b.mark) and its fan leaves, young ones upright, the oldest hanging, spiralling
 // round the crown by the golden angle. Returns { trunk, leaves: [{ at, dir }] }
-function growPalm(sp, seed) {
+function growPalm(sp: PalmSpecies, seed: number) {
   const rng = mulberry32(seed);
-  const R = (a, b) => a + (b - a) * rng();
+  const R = (a: number, b: number) => a + (b - a) * rng();
   const T = sp.trunk;
   const top = T.top * R(0.92, 1.08);
   const lean = R(0, Math.PI * 2);
@@ -840,14 +971,15 @@ function growPalm(sp, seed) {
   for (let i = 1; i <= T.segs; i++) schedule.push(0.04 + (0.96 * i) / T.segs);
   const trunk = growBranch(new V3(0, 0, 0), dir, top, T.r, T.r, T.segs, { up: 0.012, out: 0, droop: 0, jitter: 0.01 }, rng, 0, schedule);
   const skirt0 = 1 - T.skirt / top;
-  trunk.mark = trunk.ts.map((t) => smooth(skirt0 - 0.01, skirt0 + 0.02, t));
+  const mark = trunk.ts.map((t) => smooth(skirt0 - 0.01, skirt0 + 0.02, t));
+  trunk.mark = mark;
   trunk.rad = trunk.ts.map((t, i) => {
     const foot = 1 + 0.9 * Math.exp(-(t * top) / 0.35);
-    const skirt = trunk.mark[i] * (1.2 + 0.3 * smooth(skirt0, 1, t)) * (1 - 0.3 * smooth(0.97, 1, t));
+    const skirt = mark[i] * (1.2 + 0.3 * smooth(skirt0, 1, t)) * (1 - 0.3 * smooth(0.97, 1, t));
     return T.r * Math.max(foot * (1 - 0.18 * t), skirt * 1.45);
   });
   const crown = trunk.pts[trunk.pts.length - 1];
-  const leaves = [];
+  const leaves: { at: THREE.Vector3; dir: THREE.Vector3 }[] = [];
   const n = sp.leaves.n;
   let az = R(0, Math.PI * 2);
   for (let i = 0; i < n; i++) {
@@ -861,37 +993,37 @@ function growPalm(sp, seed) {
 }
 
 // A palm's levels: lod 0 & 1 every leaf (lod 1 on a coarser trunk), lod 2 half of them, larger, on a prism
-function buildPalmGeometries(sp, variant, tileMeters, seed) {
+function buildPalmGeometries(sp: PalmSpecies, variant: number, tileMeters: number[], seed: number) {
   const { trunk, leaves } = growPalm(sp, seed);
   const rng0 = mulberry32(seed ^ 0x2545f491);
-  const R = (a, b) => a + (b - a) * rng0();
+  const R = (a: number, b: number) => a + (b - a) * rng0();
   const size = tileMeters[sp.tile];
-  const cardOf = (l, scale) => {
+  const cardOf = (l: { at: THREE.Vector3; dir: THREE.Vector3 }, scale: number) => {
     // the fan's face skyward (outward for the upright young leaves)
     let face = new V3(0, 1, 0).addScaledVector(l.dir, -l.dir.y);
     if (face.lengthSq() < 0.05) face = new V3(-l.dir.x, 0, -l.dir.z);
     return { at: l.at, up: l.dir, face: face.normalize(), size: size * scale };
   };
   const cards0 = leaves.map((l) => cardOf(l, R(sp.leaves.size[0], sp.leaves.size[1])));
-  const pts = [];
+  const pts: THREE.Vector3[] = [];
   for (const c of cards0) pts.push(c.at.clone().addScaledVector(c.up, c.size * 0.5), c.at.clone().addScaledVector(c.up, c.size));
   const crown = makeCrown(pts);
-  const geos = [];
+  const geos: THREE.BufferGeometry[] = [];
   for (const lod of variant === 0 ? [0, 1, 2] : [0, 1]) {
     const gb = new TreeGeometryBuilder();
     const rng = mulberry32(seed + lod * 31337);
-    addTube(gb, trunk, [10, 7, 5][lod], [1, 2, 3][lod], (p) => crown.barkAO(p), (b, t) => 0.25 * t * t);
+    addTube(gb, trunk, [10, 7, 5][lod], [1, 2, 3][lod], (p) => crown.barkAO(p), (_b, t) => 0.25 * t * t);
     const cards = lod < 2 ? cards0 : cards0.filter((_, i) => i % 2 === 0).map((c) => ({ ...c, size: c.size * 1.2 }));
     for (const c of cards) addCard(gb, c.at, c.up, c.face, c.size, sp.tile, rng() < 0.5, rng(), crown);
     const g = gb.build();
-    g.userData = { species: sp.name, variant, lod, cards: cards.length, triangles: gb.idx.length / 3 };
+    g.userData = { species: sp.name, variant, lod, cards: cards.length, triangles: gb.idx.length / 3 } satisfies TreeGeometryStats;
     geos[lod] = g;
   }
   return geos;
 }
 
 // One species / variant: [lod0, lod1, lod2] geometries (lod 2 only for variant 0)
-function buildTreeGeometries(speciesIndex, variant, tileMeters) {
+function buildTreeGeometries(speciesIndex: number, variant: number, tileMeters: number[]) {
   const sp = SPECIES[speciesIndex];
   const seed = 7919 * (speciesIndex + 1) + 104729 * (variant + 1);
   if (sp.palm) return buildPalmGeometries(sp, variant, tileMeters, seed);
@@ -899,23 +1031,23 @@ function buildTreeGeometries(speciesIndex, variant, tileMeters) {
 
   // Crown from the full-detail foliage: card anchors pushed out by half a card
   const rngC = mulberry32(seed ^ 0x5bd1e995);
-  const tips = [];
+  const tips: THREE.Vector3[] = [];
   for (const b of branches) if (b.level === 3) tips.push(b.pts[b.pts.length - 1]);
   const roughCrown = makeCrown(tips);
   const cards0 = placeCards(sp, branches, 0, tileMeters, rngC, roughCrown);
-  const pts = [];
+  const pts: THREE.Vector3[] = [];
   for (const c of cards0) {
     pts.push(c.at.clone().addScaledVector(c.up, c.size * 0.5));
     pts.push(c.at.clone().addScaledVector(c.up, c.size));
   }
   const crown = makeCrown(pts);
 
-  const geos = [];
+  const geos: THREE.BufferGeometry[] = [];
   const levels = variant === 0 ? [0, 1, 2] : [0, 1];
   for (const lod of levels) {
     const gb = new TreeGeometryBuilder();
     const rng = mulberry32(seed + lod * 31337);
-    const aoAt = (p) => crown.barkAO(p);
+    const aoAt = (p: THREE.Vector3) => crown.barkAO(p);
     // Bark: lod 0 everything, lod 1 trunk + limbs + branches (coarser), lod 2 trunk + limbs as thin prisms
     for (const b of branches) {
       if (lod === 0) {
@@ -930,7 +1062,7 @@ function buildTreeGeometries(speciesIndex, variant, tileMeters) {
     const cards = lod === 0 ? cards0 : placeCards(sp, branches, lod, tileMeters, rng, crown);
     for (const c of cards) addCard(gb, c.at, c.up, c.face, c.size, c.tile, rng() < 0.5, rng(), crown);
     const g = gb.build();
-    g.userData = { species: sp.name, variant, lod, cards: cards.length, triangles: gb.idx.length / 3 };
+    g.userData = { species: sp.name, variant, lod, cards: cards.length, triangles: gb.idx.length / 3 } satisfies TreeGeometryStats;
     geos[lod] = g;
   }
   return geos;
@@ -939,6 +1071,21 @@ function buildTreeGeometries(speciesIndex, variant, tileMeters) {
 // =====================================================================================================================
 // 5. TREE FIELD: per-tree level of detail, with spatial cells culled separately in the view and shadow passes
 // =====================================================================================================================
+/** One shared tree geometry (a species / variant / level), its wind's reach past its bounds (m), its meshes per cell */
+interface TreeType {
+  geo: THREE.BufferGeometry;
+  name: string;
+  windPadding: number;
+  meshes: THREE.InstancedMesh[];
+}
+
+/** A spatial cell of the field: its group, its trees (indices), the index of its mesh for each geometry */
+interface TreeCell {
+  group: THREE.Group;
+  trees: number[];
+  meshes: Map<TreeType, number>;
+}
+
 const TREE_CELL_SIZE = 200;
 const LOD_NEAR = 105; // full detail within (m)
 const LOD_MID = 420; // coarse cards & branches within; whole-crown cards beyond
@@ -948,18 +1095,18 @@ const LOD_HYSTERESIS = 6;
 const MAX_DIST = [3000, 1600, 950];
 const LOW_CUTOFF = 1150;
 
-function hashPos(x, y, z) {
+function hashPos(x: number, y: number, z: number) {
   const s = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;
   return s - Math.floor(s);
 }
 
 /**
- * The trunks of the trees at `sites` (as createTreeField draws them) as colliders for the player (controllers.js): a
+ * The trunks of the trees at `sites` (as createTreeField draws them) as colliders for the player (controllers.ts): a
  * box around each trunk's flared foot, its species' radius at the tree's own scale, up to where the crown starts.
  * A car runs into a tree instead of through it
  */
-function treeTrunkColliders(sites) {
-  const out = [];
+function treeTrunkColliders(sites: TreeSite[]) {
+  const out: Collider[] = [];
   for (const t of sites) {
     const sp = SPECIES[Math.min(SPECIES.length - 1, Math.max(0, t.species || 0))];
     const s = t.scale * (0.9 + hashPos(t.x, 1.3, t.z) * 0.2); // (createTreeField's own)
@@ -975,7 +1122,7 @@ function treeTrunkColliders(sites) {
  * tree's level of detail up to date from the camera of every view pass (scene.onBeforeRender). Returns
  * { group, material, atlas, update(cameraPosition) }.
  */
-function createTreeField(scene, sites) {
+function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
   const group = new THREE.Group();
   group.name = 'Trees';
   const atlas = createLeafAtlas();
@@ -992,17 +1139,19 @@ function createTreeField(scene, sites) {
   const py = new Float32Array(N);
   const pz = new Float32Array(N);
   const meshOf = new Int32Array(N * 3); // mesh index per level
-  const cellOf = new Array(N);
+  const cellOf = new Array<TreeCell>(N);
   const tier = new Uint8Array(N);
   const lod = new Uint8Array(N).fill(255);
 
   // Shared geometry types: lod 0 & 1 per species & variant, lod 2 per species
-  const types = [];
-  const makeType = (geo, name) => {
-    const height = Math.max(Math.abs(geo.boundingBox.min.y), Math.abs(geo.boundingBox.max.y));
+  const types: TreeType[] = [];
+  const makeType = (geo: THREE.BufferGeometry, name: string) => {
+    const box = geo.boundingBox; // (TreeGeometryBuilder.build computes it)
+    if (!box) throw new Error(`trees: ${name} has no bounding box`);
+    const height = Math.max(Math.abs(box.min.y), Math.abs(box.max.y));
     // The material adds wind after the instance transform: height-squared lean/rock, plus bob and flutter.
     const windPadding = Math.hypot(0.2, 0.06) * Math.hypot(0.86, 0.51) * (height / 11) ** 2 + 2;
-    const type = { geo, name, windPadding, meshes: [] };
+    const type: TreeType = { geo, name, windPadding, meshes: [] };
     types.push(type);
     return type;
   };
@@ -1011,9 +1160,9 @@ function createTreeField(scene, sites) {
     l1: [0, 1].map((v) => makeType(geos[s][v][1], `Trees_${sp.name}_v${v}_lod1`)),
     l2: makeType(geos[s][0][2], `Trees_${sp.name}_lod2`)
   }));
-  const cells = new Map();
-  const meshes = [];
-  const counts = [];
+  const cells = new Map<string, TreeCell>();
+  const meshes: { type: TreeType; cell: TreeCell; name: string; capacity: number }[] = [];
+  const counts: number[] = [];
 
   const dummy = new THREE.Object3D();
   const tint = new THREE.Color();
@@ -1040,7 +1189,7 @@ function createTreeField(scene, sites) {
     py[i] = (t.y || 0) + 6 * s;
     pz[i] = t.z;
     tier[i] = Math.min(2, t.tier || 0);
-    const key = Math.floor(t.x / TREE_CELL_SIZE) + ',' + Math.floor(t.z / TREE_CELL_SIZE);
+    const key = `${Math.floor(t.x / TREE_CELL_SIZE)},${Math.floor(t.z / TREE_CELL_SIZE)}`;
     let cell = cells.get(key);
     if (!cell) {
       const cellGroup = new THREE.Group();
@@ -1092,7 +1241,7 @@ function createTreeField(scene, sites) {
   });
 
   // Repack only cells whose trees changed level; the meshes and their buffer capacities stay fixed.
-  const dirtyCells = new Set();
+  const dirtyCells = new Set<TreeCell>();
   function rebuild() {
     for (const cell of dirtyCells) {
       for (const mi of cell.meshes.values()) counts[mi] = 0;
@@ -1101,9 +1250,11 @@ function createTreeField(scene, sites) {
         if (l === 255) continue;
         const mi = meshOf[i * 3 + l];
         const mesh = instanced[mi];
+        const treeData = mesh.geometry.attributes.aTreeData;
+        if (!(treeData instanceof THREE.BufferAttribute)) continue; // (always: set up above)
         const c = counts[mi]++;
         mesh.instanceMatrix.array.set(mats.subarray(i * 16, i * 16 + 16), c * 16);
-        mesh.geometry.attributes.aTreeData.array.set(data.subarray(i * 4, i * 4 + 4), c * 4);
+        treeData.array.set(data.subarray(i * 4, i * 4 + 4), c * 4);
       }
       let visible = false;
       for (const mi of cell.meshes.values()) {
@@ -1114,13 +1265,15 @@ function createTreeField(scene, sites) {
         if (n > 0) {
           visible = true;
           // main.js swaps instanceMatrix for a storage attribute: look it up here on every changed cell.
-          for (const attr of [mesh.instanceMatrix, mesh.geometry.attributes.aTreeData]) {
+          const treeData = mesh.geometry.attributes.aTreeData;
+          if (!(treeData instanceof THREE.BufferAttribute)) continue; // (always: set up above)
+          for (const attr of [mesh.instanceMatrix, treeData]) {
             attr.clearUpdateRanges();
             attr.addUpdateRange(0, n * attr.itemSize);
             attr.needsUpdate = true;
           }
           mesh.computeBoundingSphere();
-          mesh.boundingSphere.radius += meshes[mi].type.windPadding;
+          if (mesh.boundingSphere) mesh.boundingSphere.radius += meshes[mi].type.windPadding;
         }
       }
       // Hidden cells avoid traversing all their dormant species/variant/LOD meshes in every render pass.
@@ -1132,7 +1285,7 @@ function createTreeField(scene, sites) {
   // Levels from the camera position (3D distance to mid-crown), with hysteresis at every boundary
   const last = new V3(Infinity, Infinity, Infinity);
   const cam = new V3();
-  function update(position) {
+  function update(position: THREE.Vector3) {
     cam.copy(position);
     if (cam.distanceToSquared(last) < 16) return false;
     last.copy(cam);
@@ -1164,10 +1317,11 @@ function createTreeField(scene, sites) {
 
   // Follow the view camera of every scene render (shadow cascades are orthographic and keep the view's levels)
   const viewPos = new V3();
-  const prevBeforeRender = scene.onBeforeRender;
-  scene.onBeforeRender = function (renderer, scn, camera, target) {
-    prevBeforeRender.call(this, renderer, scn, camera, target);
-    if (camera.isOrthographicCamera === true || camera.isArrayCamera === true) return;
+  const prevBeforeRender = scene.onBeforeRender.bind(scene);
+  // (the WebGPU renderer passes its render target 4th; three's types carry the WebGL renderer's six arguments)
+  scene.onBeforeRender = function (renderer, scn, camera, target, material, grp) {
+    prevBeforeRender(renderer, scn, camera, target, material, grp);
+    if (camera instanceof THREE.OrthographicCamera || camera instanceof THREE.ArrayCamera) return;
     update(viewPos.setFromMatrixPosition(camera.matrixWorld));
   };
 
@@ -1176,7 +1330,7 @@ function createTreeField(scene, sites) {
 
   // Precompile one visible representative per geometry; the other cells use exactly the same pipeline.
   for (const type of types) {
-    const representative = type.meshes.find((mesh) => mesh.visible) || type.meshes[0];
+    const representative = type.meshes.find((mesh) => mesh.visible) ?? type.meshes[0];
     for (const mesh of type.meshes) if (mesh !== representative) mesh.userData.sharesPipelineWith = representative;
   }
 
@@ -1189,8 +1343,8 @@ function createTreeField(scene, sites) {
 
   const stats = {
     trees: N,
-    triangles: geos.map((v) => v.map((l) => l.map((g) => g && g.userData.triangles))),
-    cards: geos.map((v) => v.map((l) => l.map((g) => g && g.userData.cards)))
+    triangles: geos.map((v) => v.map((l) => l.map((g) => (g.userData as TreeGeometryStats).triangles))),
+    cards: geos.map((v) => v.map((l) => l.map((g) => (g.userData as TreeGeometryStats).cards)))
   };
   return { group, material, atlas, update, meshes: instanced, stats };
 }

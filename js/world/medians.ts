@@ -1,19 +1,44 @@
-// js/world/medians.js
+// js/world/medians.ts
 // The Periférico Libramiento's wide camellón: between its two carriageways (mapped as two one-way roads ~31 m apart
 // centre to centre, so ~24 m of median) runs Tepic's ciclovía, down the middle of a tree-lined walk, nearly the whole
-// way round the south of the city. Plain data (no three.js): city-grid.js draws the path, street-details.js plants the
-// trees, lot-greenery.js leaves these medians to them.
+// way round the south of the city. Plain data (no three.js): city-grid.ts draws the path, street-details.ts plants the
+// trees, lot-greenery.ts leaves these medians to them.
 // - cyclewayRuns(roads): the path's centre line, in runs broken where a cross street cuts the median: each point
 //   { x, z, tx, tz (along the path, unit), half (m from the centre line to either carriageway's edge) }
 // - medianTrees(runs): two rows of trees each side of the path
 
 import { hash } from './hash.ts';
+import type { Road } from './city-geodata.js';
+import type { Numbers } from './lattice.ts';
+import type { TreeSite } from './lot-greenery.ts';
+
+/** A point of the cycleway's centre line (m): the unit direction along it, and its half width to the carriageways. */
+export interface CyclewayPoint {
+  x: number;
+  z: number;
+  tx: number;
+  tz: number;
+  half: number;
+}
+/** The nearest point on a polyline: its distance (m), position and the unit direction of its segment. */
+export interface NearestPoint {
+  d: number;
+  x: number;
+  z: number;
+  tx: number;
+  tz: number;
+}
+interface Carriageway {
+  i: number;
+  w: number;
+  c: number[];
+}
 
 const CYCLEWAY_HALF = 1.6; // m: a two-way bike path 3.2 m wide
 
 // The nearest point to (x, z) on a flat [x0, z0, x1, z1, ...] polyline: { d, x, z, tx, tz }
-function nearestOn(c, x, z) {
-  let best = { d: Infinity, x: 0, z: 0, tx: 0, tz: 0 };
+function nearestOn(c: Numbers, x: number, z: number): NearestPoint {
+  let best: NearestPoint = { d: Infinity, x: 0, z: 0, tx: 0, tz: 0 };
   for (let k = 0; k + 3 < c.length; k += 2) {
     const ax = c[k], az = c[k + 1], ux = c[k + 2] - ax, uz = c[k + 3] - az;
     const L2 = ux * ux + uz * uz;
@@ -33,17 +58,19 @@ function nearestOn(c, x, z) {
  * The cycleway's centre line between the paired carriageways of the roads named like `match` (city-geodata.js
  * `roads`: [name, width, dir, lanes, major, flat points]): every `step` m along each one-way carriageway, the point
  * halfway to the nearest carriageway running the other way `gap` m off. Each stretch is taken from the carriageway of
- * the pair listed first, so it is drawn once. `inMedian(x, z)` (city-config.js: a curb island no house stands on)
+ * the pair listed first, so it is drawn once. `inMedian(x, z)` (city-config.ts: a curb island no house stands on)
  * breaks the runs where a cross street or a junction cuts the median.
  */
-function cyclewayRuns(roads, { match = /Libramiento/i, gap = [18, 46], step = 4, inMedian = () => true } = {}) {
-  const ways = [];
+function cyclewayRuns(roads: Road[],
+  { match = /Libramiento/i, gap = [18, 46], step = 4, inMedian = () => true }:
+  { match?: RegExp; gap?: [min: number, max: number]; step?: number; inMedian?: (x: number, z: number) => boolean } = {}): CyclewayPoint[][] {
+  const ways: Carriageway[] = [];
   roads.forEach((r, i) => {
     if (match.test(r[0]) && r[2] !== 'TW' && r[5].length >= 4) ways.push({ i, w: r[1], c: r[5] });
   });
-  const runs = [];
+  const runs: CyclewayPoint[][] = [];
   for (const P of ways) {
-    let run = null;
+    let run: CyclewayPoint[] | null = null;
     const end = () => {
       if (run && run.length * step >= 48) runs.push(run); // (not the scraps where a ramp meets the median)
       run = null;
@@ -56,7 +83,7 @@ function cyclewayRuns(roads, { match = /Libramiento/i, gap = [18, 46], step = 4,
       const tx = ux / L, tz = uz / L;
       for (let s = 0; s < L; s += step) {
         const x = c[k] + tx * s, z = c[k + 1] + tz * s;
-        let partner = null;
+        let partner: { Q: Carriageway; q: NearestPoint } | null = null;
         for (const Q of ways) {
           if (Q === P) continue;
           const q = nearestOn(Q.c, x, z);
@@ -69,9 +96,9 @@ function cyclewayRuns(roads, { match = /Libramiento/i, gap = [18, 46], step = 4,
         if (!inMedian(mx, mz)) { end(); continue; }
         // the median's half width: half the gap less half of each carriageway
         const half = partner.q.d / 2 - (P.w + partner.Q.w) / 4;
-        if (!run) run = [];
+        run ??= [];
         // along the path: the average of the two carriageways' directions (they run opposite ways)
-        let ax = tx - partner.q.tx, az = tz - partner.q.tz;
+        const ax = tx - partner.q.tx, az = tz - partner.q.tz;
         const al = Math.hypot(ax, az) || 1;
         run.push({ x: mx, z: mz, tx: ax / al, tz: az / al, half });
       }
@@ -85,8 +112,8 @@ function cyclewayRuns(roads, { match = /Libramiento/i, gap = [18, 46], step = 4,
  * Trees along the cycleway: rows `rows` m either side of its centre line every `spacing` m, staggered, where the
  * median is wide enough (2 m clear of the carriageway's curb); laureles & tabachines mostly, some jacarandas
  */
-function medianTrees(runs, { spacing = 8, rows = [4.6, 8.4] } = {}) {
-  const sites = [];
+function medianTrees(runs: CyclewayPoint[][], { spacing = 8, rows = [4.6, 8.4] }: { spacing?: number; rows?: number[] } = {}): TreeSite[] {
+  const sites: TreeSite[] = [];
   for (const run of runs) {
     let along = 0;
     let next = spacing * 0.5;

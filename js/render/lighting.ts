@@ -23,19 +23,79 @@ import { SunLightNode } from 'three/addons/lights/SunLightNode.js';
 import { cityUniforms } from './tsl-materials.ts';
 import { GEO } from '../world/city-geodata.js';
 import { LiveWeather, sunDirection, isRaining } from '../world/weather.ts';
+import type { Weather, WeatherLocation, SunPosition } from '../world/weather.ts';
 import { localHour } from '../sim/traffic-demand.ts';
 import { SLOPES, townHeight } from '../world/ground.ts';
+import type { Node, UniformNode } from 'three/webgpu';
 
-// js/render/lighting.js
+// js/render/lighting.ts
 // Physically-Based Atmospheric Sky (Preetham SkyMesh + Beer-Powder Clouds),
 // Live PMREMGenerator IBL Cubemap, Three.js r186 SunLight (2-Cascade CSM),
 // and Occlusion-Aware Urban Canyon Global Illumination for Three.js r186 WebGPURenderer
 
-const TIME_PRESETS = {
+/**
+ * A time of day: the sun (direction toward it, colour, intensity), the sky & ground fill, the fog (FogExp2 density, 1/m),
+ * the city's shared uniforms (cityUniforms), the image-based light's intensity and the physical sky's parameters;
+ * nightFactor 0 day .. 1 night
+ */
+export interface TimePreset {
+  id: PresetName;
+  name: string;
+  hour: number; // 0-24, local
+  sunDir: THREE.Vector3;
+  sunColor: number;
+  sunIntensity: number;
+  hemiSky: number;
+  hemiGround: number;
+  hemiIntensity: number;
+  skyTop: number;
+  skyHorizon: number;
+  fogColor: number;
+  fogDensity: number;
+  interiorGlow: number;
+  roadWetness: number;
+  envIntensity: number;
+  canyonBounce: number;
+  turbidity: number;
+  rayleigh: number;
+  mieCoefficient: number;
+  mieDirectionalG: number;
+  cloudCoverage: number;
+  cloudDensity: number;
+  skyExposure: number;
+  nightFactor: number;
+}
+export type PresetName = 'golden' | 'midday' | 'twilight' | 'midnight';
+
+const COLOR_KEYS = ['sunColor', 'hemiSky', 'hemiGround', 'skyTop', 'skyHorizon', 'fogColor'] as const;
+type ColorKey = (typeof COLOR_KEYS)[number];
+type NumberKey = Exclude<keyof TimePreset, ColorKey | 'id' | 'name' | 'sunDir'>;
+/** What the scene is lit with: a preset's numbers & colours, or a blend of two under the live weather */
+export type LightParams = Record<NumberKey, number> & Record<ColorKey, THREE.ColorRepresentation>;
+/** A blend of two presets (its colours mixed), with the live weather's cloud drift (sky units / s) */
+export type LiveParams = Record<NumberKey, number> & Record<ColorKey, THREE.Color> & { cloudSpeed?: number };
+
+export interface PresetBlend {
+  a: PresetName;
+  b: PresetName;
+  t: number;
+}
+/** What Live shows: the sun, the presets blended for it, how much of the sun the clouds block (0..1), the conditions */
+export interface LiveState {
+  sun: SunPosition;
+  blend: PresetBlend;
+  block: number;
+  weather: Weather;
+  live: boolean;
+  loading: boolean;
+  location: WeatherLocation;
+}
+
+const TIME_PRESETS: Partial<Record<string, TimePreset>> & Record<PresetName, TimePreset> = {
   golden: {
     id: 'golden',
     name: 'Golden Hour · 17:45',
-    hour: 17.75, // (the traffic's and the crowds' hour, traffic-demand.js)
+    hour: 17.75, // (the traffic's and the crowds' hour, traffic-demand.ts)
     // Crisp street-canyon sun slicing across avenues & intersections so buildings, cars, trees & pedestrians cast sharp shadows
     sunDir: new THREE.Vector3(-0.44, 0.58, -0.68).normalize(),
     sunColor: 0xffca92,
@@ -145,7 +205,7 @@ const TIME_PRESETS = {
 
 // Live time of day: the presets are pinned at these real sun elevations (degrees) and blend in between; the weather then
 // dims, greys, fogs and wets the result
-const LIVE_KEYFRAMES = [
+const LIVE_KEYFRAMES: { elevation: number; id: PresetName }[] = [
   { elevation: -12, id: 'midnight' },
   { elevation: -4, id: 'twilight' },
   { elevation: 7, id: 'golden' },
@@ -156,13 +216,12 @@ const LIVE_KEYFRAMES = [
 const LIVE_TICK_MS = 15000;
 const LIVE_SUN_STEP = 0.5;
 const LIVE_EASE = 0.35; // share of the way the shown weather moves toward newly fetched conditions per tick
-const EASED_WEATHER_KEYS = ['temperature', 'cloudCover', 'cloudLow', 'cloudMid', 'cloudHigh', 'rainRate', 'recentRain', 'visibility', 'windSpeed'];
-const COLOR_KEYS = ['sunColor', 'hemiSky', 'hemiGround', 'skyTop', 'skyHorizon', 'fogColor'];
+const EASED_WEATHER_KEYS = ['temperature', 'cloudCover', 'cloudLow', 'cloudMid', 'cloudHigh', 'rainRate', 'recentRain', 'visibility', 'windSpeed'] as const;
 const MOON_DIR = TIME_PRESETS.midnight.sunDir;
 const { smoothstep } = THREE.MathUtils;
 
 // Presets either side of a sun elevation & the smoothstepped weight of the upper one
-function liveBlend(elevationDeg) {
+function liveBlend(elevationDeg: number): PresetBlend {
   const k = LIVE_KEYFRAMES;
   if (elevationDeg <= k[0].elevation) return { a: k[0].id, b: k[0].id, t: 0 };
   for (let i = 1; i < k.length; i++) {
@@ -174,19 +233,23 @@ function liveBlend(elevationDeg) {
   return { a: last, b: last, t: 0 };
 }
 
-function mixPresets(a, b, t) {
+function mixPresets(a: PresetName, b: PresetName, t: number): LiveParams {
   const pa = TIME_PRESETS[a];
   const pb = TIME_PRESETS[b];
-  const p = {};
-  for (const key of Object.keys(pa)) {
-    if (typeof pa[key] === 'number' && !COLOR_KEYS.includes(key)) p[key] = pa[key] + (pb[key] - pa[key]) * t;
+  const p: Partial<Record<keyof TimePreset, number | THREE.Color>> = {};
+  // (the keys of a preset object are its own)
+  for (const key of Object.keys(pa) as (keyof TimePreset)[]) {
+    const va = pa[key];
+    const vb = pb[key];
+    if (typeof va === 'number' && typeof vb === 'number' && !(COLOR_KEYS as readonly string[]).includes(key)) p[key] = va + (vb - va) * t;
   }
   for (const key of COLOR_KEYS) p[key] = new THREE.Color(pa[key]).lerp(new THREE.Color(pb[key]), t);
-  return p;
+  // (every number of the presets, every colour)
+  return p as LiveParams;
 }
 
 // Overlays live conditions onto blended preset params; returns how much of the direct sun the clouds block (0..1)
-function applyWeather(p, w) {
+function applyWeather(p: LiveParams, w: Weather): number {
   const raining = isRaining(w);
   const storm = w.code >= 95 ? 1 : 0;
   const foggy = w.code === 45 || w.code === 48 ? 1 : 0;
@@ -200,7 +263,7 @@ function applyWeather(p, w) {
   p.turbidity += 4 * block;
   // Overcast light is flat & grey: pull the sky-driven colours toward their own luminance
   const grey = new THREE.Color();
-  for (const key of ['hemiSky', 'skyTop', 'skyHorizon', 'fogColor']) {
+  for (const key of ['hemiSky', 'skyTop', 'skyHorizon', 'fogColor'] as const) {
     const c = p[key];
     const l = c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
     c.lerp(grey.setRGB(l, l, l), block * 0.55);
@@ -222,7 +285,36 @@ function applyWeather(p, w) {
 }
 
 class LightingSystem {
-  constructor(scene, renderer = null) {
+  scene: THREE.Scene;
+  renderer: THREE.WebGPURenderer | null;
+  activePresetId: string; // a PresetName or 'live'
+  weather: LiveWeather;
+  liveClock: () => Date;
+  liveState: LiveState | null;
+  liveWeather: Weather | null;
+  nextLiveTick: number; // performance.now() ms
+  liveSunApplied: SunPosition | null;
+  onLiveChange: ((state: LiveState) => void) | null;
+  sky: SkyMesh;
+  uSkyExposure: UniformNode<'float', number>;
+  uNightFactor: UniformNode<'float', number>;
+  uNightSkyColor: UniformNode<'color', THREE.Color>;
+  pmremGenerator: THREE.PMREMGenerator | null;
+  envScene: THREE.Scene;
+  envRenderTarget: THREE.RenderTarget | null = null;
+  sunLight: SunLight;
+  hemiLight: THREE.HemisphereLight;
+  // (made after the first applyPreset, which runs before them)
+  uFogDensity: UniformNode<'float', number> | undefined;
+  uFogHeight: UniformNode<'float', number>; // m
+  uFogBase: UniformNode<'float', number>; // m
+  baseHemi: number | undefined;
+  baseSkyExposure: number | undefined;
+  flashStart = 0; // performance.now() ms, 0 when no flash
+  flashStrength = 0;
+  flashFlicker = 0; // s
+
+  constructor(scene: THREE.Scene, renderer: THREE.WebGPURenderer | null = null) {
     this.scene = scene;
     this.renderer = renderer;
     this.activePresetId = 'golden';
@@ -235,9 +327,11 @@ class LightingSystem {
     this.onLiveChange = null;
 
     // Assign SunLight its node implementation for WebGPURenderer (Light.registerNode since r187; r186 used the library)
-    if (SunLight.registerNode) {
-      SunLight.registerNode(SunLightNode);
-    } else if (renderer && renderer.library) {
+    // (@types/three 0.186 doesn't know Light.registerNode yet)
+    const sunLightClass: { prototype: SunLight; registerNode?: (nodeClass: typeof SunLightNode) => void } = SunLight;
+    if (sunLightClass.registerNode) {
+      sunLightClass.registerNode(SunLightNode);
+    } else if (renderer) {
       renderer.library.addLight(SunLightNode, SunLight);
     }
 
@@ -266,7 +360,7 @@ class LightingSystem {
     this.uSkyExposure = uniform(0.148);
     this.uNightFactor = uniform(0.0);
     this.uNightSkyColor = uniform(new THREE.Color(0x0b1528));
-    const rawSkyNode = this.sky.material.colorNode;
+    const rawSkyNode = this.sky.material.colorNode as Node<'vec4'>; // (SkyMesh's own: the sky's radiance, a vec4)
     this.sky.material.colorNode = Fn(() => {
       const raw = rawSkyNode;
       const dayCol = raw.rgb.mul(this.uSkyExposure);
@@ -275,8 +369,8 @@ class LightingSystem {
     })();
 
     // In reversedDepthBuffer mode ([1..0]), camera.far is z = 0.0 (whereas SkyMesh defaults to z = w)
-    if (renderer && renderer.reversedDepthBuffer) {
-      const rawSkyVertexNode = this.sky.material.vertexNode;
+    if (renderer?.reversedDepthBuffer) {
+      const rawSkyVertexNode = this.sky.material.vertexNode as Node<'vec4'>; // (SkyMesh's own: a clip-space position)
       this.sky.material.vertexNode = Fn(() => {
         const pos = rawSkyVertexNode.toVar();
         pos.z.assign(0.0);
@@ -289,7 +383,6 @@ class LightingSystem {
     // Reusable PMREMGenerator & offscreen envScene (mirrors webgpu_generator_city.html)
     this.pmremGenerator = renderer ? new THREE.PMREMGenerator(renderer) : null;
     this.envScene = new THREE.Scene();
-    this.envRenderTarget = null;
 
     // Three.js r186 SunLight with automatic 2-Cascade Shadow Map (SunLightShadow + SunShadowNode)
     // Shines from its position vector toward the origin (no .target needed)
@@ -298,7 +391,10 @@ class LightingSystem {
     this.sunLight.castShadow = true;
     // 3072x3072 per cascade = 6144x3072 2-cascade shadow atlas (an 8192x4096 one cost ~20% fps and caused hitches),
     // 2048 where the device allows less. The near cascade spans ~0.35-80 m of the view at street level (see update)
-    const maxTex = (renderer && renderer.backend && renderer.backend.device && renderer.backend.device.limits.maxTextureDimension2D) || 4096;
+    const backend = renderer?.backend;
+    // (the WebGPU backend's device, which @types/three doesn't declare: the WebGL fallback has none)
+    const device = backend instanceof THREE.WebGPUBackend && 'device' in backend ? backend.device : null;
+    const maxTex = (device instanceof GPUDevice && device.limits.maxTextureDimension2D) || 4096;
     const tile = maxTex >= 6144 ? 3072 : 2048;
     this.sunLight.shadow.mapSize.set(tile, tile);
     this.sunLight.shadow.camera.near = 0.5;
@@ -326,7 +422,8 @@ class LightingSystem {
     if (this.envRenderTarget) this.scene.fogNode = this.createAerialFogNode();
   }
 
-  createAerialFogNode() {
+  createAerialFogNode(): Node<'vec4'> | null {
+    if (!this.envRenderTarget || !this.uFogDensity) return null;
     const toFrag = positionWorld.sub(cameraPosition);
     const dist = length(toFrag);
     const dir = toFrag.div(max(dist, 0.001));
@@ -344,7 +441,7 @@ class LightingSystem {
     return fog(skyColor, float(1.0).sub(exp(tau.mul(tau).negate())));
   }
 
-  bakeEnvironmentMap() {
+  bakeEnvironmentMap(): void {
     if (!this.pmremGenerator) return;
     // Bake physical SkyMesh (without solar disc) into scene.environment for realistic canyon IBL.
     // Reuses a single RenderTarget so texture identity never changes.
@@ -360,16 +457,16 @@ class LightingSystem {
 
   // The hour of the day it is in the town (0-24, local): the live clock's in the weather location's time zone, or the
   // preset's own
-  get hourOfDay() {
+  get hourOfDay(): number {
     if (this.activePresetId !== 'live') return TIME_PRESETS[this.activePresetId]?.hour ?? 14;
-    return localHour(this.liveClock(), this.weather.location?.timeZone);
+    return localHour(this.liveClock(), this.weather.location.timeZone);
   }
 
-  get isNight() {
+  get isNight(): boolean {
     return this.activePresetId === 'midnight' || (this.activePresetId === 'live' && this.uNightFactor.value > 0.5);
   }
 
-  applyPreset(presetId, force = false) {
+  applyPreset(presetId: string, force = false): void {
     if (presetId === 'live') {
       if (!force && this.activePresetId === 'live' && this.envRenderTarget !== null) return;
       this.activePresetId = 'live';
@@ -378,7 +475,7 @@ class LightingSystem {
       this.updateLive(true);
       return;
     }
-    const p = TIME_PRESETS[presetId] || TIME_PRESETS.golden;
+    const p = TIME_PRESETS[presetId] ?? TIME_PRESETS.golden;
     if (!force && this.activePresetId === p.id && this.envRenderTarget !== null) {
       return;
     }
@@ -389,13 +486,13 @@ class LightingSystem {
   }
 
   // Real sun over the weather location, blended presets & live conditions; re-fetches the weather when it is due
-  updateLive(force = false) {
+  updateLive(force = false): void {
     const now = performance.now();
     if (!force && now < this.nextLiveTick) return;
     this.nextLiveTick = now + LIVE_TICK_MS;
     const fetching = this.weather.refresh();
     if (this.weather.pending) {
-      fetching.then(() => {
+      void fetching.then(() => {
         if (this.activePresetId === 'live') this.nextLiveTick = 0; // show the new conditions (or the failure) right away
       });
     }
@@ -403,7 +500,7 @@ class LightingSystem {
     const target = this.weather.current;
     let easing = false;
     // Snap rather than ease when entering Live or when the first real conditions replace the clear placeholder
-    if (!this.liveWeather || (this.weather.live && !(this.liveState && this.liveState.live))) {
+    if (!this.liveWeather || (this.weather.live && !this.liveState?.live)) {
       this.liveWeather = { ...target };
       force = true;
     } else {
@@ -411,7 +508,7 @@ class LightingSystem {
       for (const key of EASED_WEATHER_KEYS) {
         const from = this.liveWeather[key];
         const to = target[key];
-        if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
+        if (typeof from !== 'number' || typeof to !== 'number' || !Number.isFinite(from) || !Number.isFinite(to)) continue;
         const next = from + (to - from) * LIVE_EASE;
         // settle once within 1% (of the value, or of 1 for fractions near zero)
         if (Math.abs(to - next) > 0.01 * Math.max(1, Math.abs(to))) {
@@ -427,14 +524,14 @@ class LightingSystem {
     const last = this.liveSunApplied;
     const sunMoved = !last || Math.abs(sun.elevationDeg - last.elevationDeg) > LIVE_SUN_STEP || Math.abs(sun.azimuthDeg - last.azimuthDeg) > LIVE_SUN_STEP;
     const prev = this.liveState;
-    const statusChanged = !prev || prev.live !== this.weather.live || prev.loading !== !!this.weather.pending;
+    const statusChanged = prev?.live !== this.weather.live || prev.loading !== !!this.weather.pending;
     if (!force && !easing && !sunMoved && !statusChanged) return;
     this.liveSunApplied = sun;
     const blend = liveBlend(sun.elevationDeg);
     const p = mixPresets(blend.a, blend.b, blend.t);
     const block = applyWeather(p, this.liveWeather);
 
-    const bearing = GEO.frame.bearingDeg ?? 0;
+    const bearing = GEO.frame.bearingDeg;
     const real = sunDirection(sun.elevationDeg, sun.azimuthDeg, bearing);
     // Grazing light keeps every street in shadow, so the key light never drops below 8°; under the horizon it hands
     // over to the presets' moonlight
@@ -442,7 +539,7 @@ class LightingSystem {
     const dayWeight = smoothstep(sun.elevationDeg, -6, 3);
     const lightDir = new THREE.Vector3().copy(MOON_DIR).lerp(new THREE.Vector3(lightSun.x, lightSun.y, lightSun.z), dayWeight).normalize();
     const skyDir = sun.elevationDeg >= -5 ? new THREE.Vector3(real.x, real.y, real.z) : new THREE.Vector3().copy(sunDirection(-5, sun.azimuthDeg, bearing));
-    this.sky.cloudSpeed.value = p.cloudSpeed;
+    if (p.cloudSpeed !== undefined) this.sky.cloudSpeed.value = p.cloudSpeed;
     this.applyParams(p, lightDir, skyDir.normalize());
 
     this.liveState = {
@@ -451,7 +548,7 @@ class LightingSystem {
     if (this.onLiveChange) this.onLiveChange(this.liveState);
   }
 
-  applyParams(p, sunDir, skySunDir) {
+  applyParams(p: LightParams, sunDir: THREE.Vector3, skySunDir: THREE.Vector3): void {
     this.sunLight.color.set(p.sunColor);
     this.sunLight.intensity = p.sunIntensity;
     this.sunLight.position.copy(sunDir);
@@ -462,8 +559,11 @@ class LightingSystem {
     this.hemiLight.intensity = p.hemiIntensity;
     this.baseHemi = p.hemiIntensity; // (what a lightning flash adds to, see flash())
 
-    this.scene.fog.color.set(p.fogColor);
-    this.scene.fog.density = p.fogDensity;
+    const fog = this.scene.fog;
+    if (fog instanceof THREE.FogExp2) {
+      fog.color.set(p.fogColor);
+      fog.density = p.fogDensity;
+    }
     if (this.uFogDensity) this.uFogDensity.value = p.fogDensity;
 
     // Update physical Preetham SkyMesh uniforms
@@ -484,15 +584,13 @@ class LightingSystem {
     cityUniforms.uSkySunDir.value.copy(sunDir);
     cityUniforms.uInteriorGlow.value = p.interiorGlow;
     cityUniforms.uRoadWetness.value = p.roadWetness;
-    if (cityUniforms.uCanyonBounce) {
-      cityUniforms.uCanyonBounce.value = p.canyonBounce;
-    }
+    cityUniforms.uCanyonBounce.value = p.canyonBounce;
 
     this.scene.environmentIntensity = p.envIntensity;
     this.bakeEnvironmentMap();
   }
 
-  update(focusPos) {
+  update(focusPos: THREE.Vector3 | null): void {
     // SunLightShadow automatically fits & texel-snaps its 2 cascades to the view camera frustum
     // every frame inside SunShadowNode.renderShadow(), splitting [near, far] halfway between a uniform and a
     // logarithmic split (the near cascade ends at ~far / 4). Keep far at 300 m at street level so the near cascade
@@ -505,14 +603,14 @@ class LightingSystem {
   }
 
   // Lightning: the sky and everything under it light up white for a moment, flicker once or twice and fade within a
-  // second (strength 0..1, a near strike 1). main.js fires it during thunderstorms
-  flash(strength = 1) {
+  // second (strength 0..1, a near strike 1). main.ts fires it during thunderstorms
+  flash(strength = 1): void {
     this.flashStart = performance.now();
     this.flashStrength = strength;
     this.flashFlicker = 0.18 + Math.random() * 0.12;
   }
 
-  updateFlash() {
+  updateFlash(): void {
     const t = (performance.now() - this.flashStart) / 1000;
     const on = t < 0.08 || Math.abs(t - this.flashFlicker) < 0.05 ? 1 : 0.35;
     const f = t > 0.9 ? 0 : this.flashStrength * Math.exp(-t * 4) * on;

@@ -3,9 +3,11 @@ import { FloodLevel, floodTerrain, floodDepth, riverStage, riverSpill, floodSpot
 import { createFloodWaterMaterial } from '../render/tsl-materials.ts';
 import { landHeight, waterways } from './ground.ts';
 import { GEO } from './city-geodata.js';
+import type { FloodSpot, FloodSpotHit, FloodTerrain } from './flood-model.ts';
+import type { Weather } from './weather.ts';
 
-// js/world/floods.js
-// The floods of the Live weather's storms (flood-model.js) round the camera: a sheet of muddy water over the streets
+// js/world/floods.ts
+// The floods of the Live weather's storms (flood-model.ts) round the camera: a sheet of muddy water over the streets
 // as deep as the model has it on a grid of the ground (the hollows, the low ground, the places that flood every year
 // where the drains choke, the canals & drains spilling over), the Mololoa risen in its channel (and over its banks),
 // and the depth under the player's feet or wheels for the controllers (wading, a car's drag, an engine drowned).
@@ -18,19 +20,55 @@ const MOVE = 180; // m the camera goes before the grid is laid round it again
 const DRY = -0.6; // m a dry cell's vertex sinks under the ground (the water's edge runs between wet & dry cells)
 const REACH = 160; // m round the grid the rivers & canals are looked for
 
+const isMesh = (o: THREE.Object3D): o is THREE.Mesh => 'isMesh' in o && Boolean(o.isMesh);
+
+export interface FloodsOptions {
+  scene: THREE.Object3D;
+  /** river-channels.ts buildRiverChannels' result: the water mesh rises with the river */
+  rivers?: { water: THREE.Mesh | null } | null;
+  /** a level to keep (?flood=) */
+  hold?: number | null;
+}
+
 class Floods {
+  model: FloodLevel;
+  /** the flood's level (flood-model.ts FloodLevel), and the one the water's surface was last drawn at */
+  level: number;
+  shown: number;
+  scene: THREE.Object3D;
+  riverMaterial: THREE.Material | THREE.Material[] | null;
+  /** the river's water meshes, and their usual height (m) */
+  riverMeshes: [mesh: THREE.Mesh, y: number][] | null;
+  /** the grid's centre (m) */
+  cx: number;
+  cz: number;
+  /** per cell of the grid: the land's height, the water's depth (m) */
+  heights: Float32Array;
+  depths: Float32Array;
+  terrain: FloodTerrain | null;
+  riverAbove: Float32Array;
+  riverDist: Float32Array;
+  canalAbove: Float32Array;
+  canalDist: Float32Array;
+  spots: Float32Array;
+  /** flat x, z, ground height triples */
+  riverPoints: number[];
+  canalPoints: number[];
+  _spot: FloodSpotHit;
+  mesh: THREE.Mesh;
+
   /**
-   * @param {object} o - scene; rivers (river-channels.js buildRiverChannels' result: the water mesh rises with the
-   *   river); hold: a level to keep (?flood=)
+   * `scene`; `rivers` (river-channels.ts buildRiverChannels' result: the water mesh rises with the river); `hold`: a
+   * level to keep (?flood=)
    */
-  constructor({ scene, rivers = null, hold = null }) {
+  constructor({ scene, rivers = null, hold = null }: FloodsOptions) {
     this.model = new FloodLevel();
     if (hold !== null) this.model.hold(hold);
     this.level = 0;
     this.shown = -1;
-    // (the river's water: scene-culling.js may have cut its mesh into chunks, found by their material on first use)
+    // (the river's water: scene-culling.ts may have cut its mesh into chunks, found by their material on first use)
     this.scene = scene;
-    this.riverMaterial = rivers?.water?.material || null;
+    this.riverMaterial = rivers?.water?.material ?? null;
     this.riverMeshes = null;
     this.cx = Infinity;
     this.cz = Infinity;
@@ -50,7 +88,7 @@ class Floods {
     }
     // the canals, the drains (the El Sabino) & the arroyos, every ~10 m along them
     this.canalPoints = [];
-    for (const [kind, , , , flat] of GEO.waterways || []) {
+    for (const [kind, , , , flat] of GEO.waterways) {
       if (kind === 'river') continue;
       for (let i = 0; i + 3 < flat.length; i += 2) {
         const L = Math.hypot(flat[i + 2] - flat[i], flat[i + 3] - flat[i + 1]);
@@ -74,7 +112,7 @@ class Floods {
 
   // The grid laid round (x, z): the ground's heights, its hollows & low ground, how the river & the canals lie from
   // each cell, the flood spots it falls in
-  layAround(x, z) {
+  layAround(x: number, z: number): void {
     this.cx = Math.round(x / CELL) * CELL;
     this.cz = Math.round(z / CELL) * CELL;
     const x0 = this.cx - SPAN / 2, z0 = this.cz - SPAN / 2;
@@ -93,19 +131,19 @@ class Floods {
   }
 
   /**
-   * The frame: the flood's level from the weather `w` (weather.js conditions, the Live one or clear), the grid round
+   * The frame: the flood's level from the weather `w` (weather.ts conditions, the Live one or clear), the grid round
    * the camera, the water's surface (redrawn when the level has moved a centimetre)
    */
-  update(dt, w, camera) {
+  update(dt: number, w: Readonly<Weather> | null | undefined, camera: THREE.Object3D): void {
     this.level = this.model.update(dt, w);
     const stage = riverStage(this.level);
     // the river in its channel: its water mesh rises (up to the banks' top: it spills on the grid beyond)
     if (this.riverMaterial && !this.riverMeshes) {
-      this.riverMeshes = [];
-      this.scene.traverse((o) => { if (o.isMesh && o.material === this.riverMaterial) this.riverMeshes.push([o, o.position.y]); });
+      const meshes: [THREE.Mesh, number][] = (this.riverMeshes = []);
+      this.scene.traverse((o) => { if (isMesh(o) && o.material === this.riverMaterial) meshes.push([o, o.position.y]); });
     }
-    // (the river is static city, its world matrices frozen (scene-culling.js): each is brought up to date by hand)
-    for (const [mesh, y] of this.riverMeshes || []) {
+    // (the river is static city, its world matrices frozen (scene-culling.ts): each is brought up to date by hand)
+    for (const [mesh, y] of this.riverMeshes ?? []) {
       const to = y + Math.min(stage, 2.5);
       if (mesh.position.y === to) continue;
       mesh.position.y = to;
@@ -116,7 +154,7 @@ class Floods {
     if (!flooding) return;
     const p = camera.position;
     if (Math.hypot(p.x - this.cx, p.z - this.cz) > MOVE) this.layAround(p.x, p.z);
-    if (Math.abs(this.level - this.shown) < 0.01) return;
+    if (Math.abs(this.level - this.shown) < 0.01 || !this.terrain) return;
     this.shown = this.level;
     const { hollow, low } = this.terrain;
     const pos = this.mesh.geometry.attributes.position;
@@ -136,7 +174,7 @@ class Floods {
   }
 
   // The water's depth (m) at (x, z): 0 where it is dry or off the grid
-  depthAt(x, z) {
+  depthAt(x: number, z: number): number {
     if (this.level <= 0.01 || !this.terrain) return 0;
     const fx = (x - this.cx + SPAN / 2) / CELL, fz = (z - this.cz + SPAN / 2) / CELL;
     if (!(fx >= 0 && fz >= 0 && fx < N - 1 && fz < N - 1)) return 0;
@@ -145,8 +183,8 @@ class Floods {
     return (D[k] * (1 - tx) + D[k + 1] * tx) * (1 - tz) + (D[k + N] * (1 - tx) + D[k + N + 1] * tx) * tz;
   }
 
-  // The reported flood spot (flood-model.js FLOOD_SPOTS) (x, z) is in while it floods, or null
-  spotAt(x, z) {
+  // The reported flood spot (flood-model.ts FLOOD_SPOTS) (x, z) is in while it floods, or null
+  spotAt(x: number, z: number): FloodSpot | null {
     if (this.level < 0.15) return null;
     const s = floodSpotAt(x, z, this._spot);
     return s.weight > 0.3 ? s.spot : null;

@@ -1,12 +1,132 @@
+// js/audio/audio-system.ts
+// The city's procedural audio (no audio files): it pools spatial voices for the nearest motors, sirens and loops,
+// plays the one-shots (steps, talk, horns, crashes, gunfire, signals, thunder) and the wind's and rain's beds,
+// all through one compressor, with the streets' shared reflections.
 import { createSynthResources, createMotorVoice, setControlRate } from './audio-synthesis.ts';
+import type { MotorVoice, MotorVoiceParams } from './audio-synthesis.ts';
 import { createEventResources, playEvent, createWindVoice, createRainVoice } from './audio-events.ts';
+import type { EventKind, EventOptions, EventResources, EventVoice, RainParams, RainVoice, WindParams, WindVoice } from './audio-events.ts';
 import { CityAudioSources } from './audio-sources.ts';
+import type { AudioControllers, AudioEntity, AudioSimulation, CollisionImpact, CollisionSource, Conversation, MotorSound, PersonSound } from './audio-sources.ts';
 import { CityAcoustics } from './audio-acoustics.ts';
+import type { Point3 } from './audio-acoustics.ts';
 import { createAmbienceResources, createLoopVoice } from './audio-ambience.ts';
+import type { AmbienceResources, AmbientSource, LoopVoice } from './audio-ambience.ts';
 
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const nearestFirst = (a, b) => a.d2 - b.d2;
-const smooth = (param, value, now, time = 0.035, immediate = false) => {
+/** What a spatial emitter places: a point (m) with, optionally, its heading (rad), level (0..1) and seed */
+export interface EmitterSource extends Point3 {
+  heading?: number;
+  gain?: number;
+  seed?: number;
+}
+
+/** What a one-shot is played at: an emitter's source, the thing it belongs to and, for talk, the conversation */
+export interface EventSource extends EmitterSource {
+  id?: unknown;
+  conversation?: Conversation | null;
+}
+
+/** The camera the listener rides on: its place (m) and its world matrix, for the ears' orientation */
+export interface ListenerCamera {
+  position: Point3;
+  matrixWorld: { elements: ArrayLike<number> };
+  updateMatrixWorld(): void;
+}
+
+/** A motor's or a siren's pooled voice */
+interface MotorSlot extends Point3 {
+  emitter: SpatialEmitter;
+  voice: MotorVoice;
+  /** m to the listener at the last update, for the Doppler shift */
+  distance: number;
+  fresh: boolean;
+  selected?: boolean;
+  /** When (s) a voice no longer wanted is let go, after it fades; 0 while wanted */
+  retire?: number;
+}
+
+/** An ambient loop's pooled voice */
+interface LoopSlot {
+  emitter: SpatialEmitter;
+  voice: LoopVoice;
+  fresh: boolean;
+  selected?: boolean;
+  retire?: number;
+}
+
+/** A one-shot playing */
+interface EventSlot {
+  kind: EventKind;
+  voice: EventVoice;
+  emitter: SpatialEmitter;
+  id: unknown;
+  /** m */
+  range: number;
+  severity: number;
+  /** Its own copy of where it plays */
+  position: EventSource;
+  /** Talk and horns follow their source while it is still heard */
+  follow: boolean;
+}
+
+/** What the audio remembers of a source between ticks (a person's last stride phase, a driver's patience...) */
+interface SourceState {
+  variation: number;
+  phase: number | undefined;
+  grounded: boolean | undefined;
+  x: number;
+  z: number;
+  /** When (s) a WALK signal ticks next */
+  signal: number;
+  /** The earliest a stuck driver honks again (s) */
+  horn: number;
+  /** s stuck */
+  stopped: number;
+  stepSequence: number;
+  walk?: boolean;
+}
+
+/** What state() needs of a source */
+interface StatefulSource {
+  id: object;
+  seed: number;
+  x: number;
+  z: number;
+  phase?: number;
+  grounded?: boolean;
+}
+
+/** A pair of things that touched: when (s) they last did, last sounded, and how hard (m/s) */
+interface Contact {
+  last: number;
+  played: number;
+  speed: number;
+}
+
+interface VoiceLimits {
+  motors: number;
+  sirens: number;
+  events: number;
+  loops: number;
+}
+
+/** An older Safari's listener: no AudioParams, only the setters */
+interface PositionalListener {
+  positionX?: undefined;
+  setPosition(x: number, y: number, z: number): void;
+  setOrientation(x: number, y: number, z: number, upX: number, upY: number, upZ: number): void;
+}
+
+// (an older Safari has only the prefixed constructor, and some embedded browsers have neither)
+interface AudioGlobals {
+  AudioContext?: typeof AudioContext;
+  webkitAudioContext?: typeof AudioContext;
+}
+const audioGlobals: AudioGlobals = globalThis;
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const nearestFirst = (a: AmbientSource, b: AmbientSource) => (a.d2 ?? 0) - (b.d2 ?? 0);
+const smooth = (param: AudioParam, value: number, now: number, time = 0.035, immediate = false) => {
   param.cancelScheduledValues(now);
   if (immediate) param.setValueAtTime(value, now);
   else param.setTargetAtTime(value, now, time);
@@ -15,7 +135,21 @@ const smooth = (param, value, now, time = 0.035, immediate = false) => {
 // Direct sound is muffled behind buildings; the shared reflection path keeps some diffuse sound around corners.
 // All voices share one short convolution and the existing collision grid, with no mesh traversal or per-voice reverb.
 class SpatialEmitter {
-  constructor(context, dry, reflections, acoustics, refDistance, height = 0, directional = false) {
+  /** m over the source's point the sound comes from */
+  height: number;
+  acoustics: CityAcoustics;
+  /** When (s) the walls in between are traced again */
+  nextObstruction: number;
+  /** How much the walls block it, 0..1 */
+  obstruction: number;
+  /** Where a voice plays into */
+  input: GainNode;
+  filter: BiquadFilterNode;
+  panner: PannerNode;
+  direct: GainNode;
+
+  constructor(context: BaseAudioContext, dry: AudioNode, reflections: AudioNode, acoustics: CityAcoustics, refDistance: number,
+    height = 0, directional = false) {
     this.height = height;
     this.acoustics = acoustics;
     this.nextObstruction = 0;
@@ -47,7 +181,7 @@ class SpatialEmitter {
     this.panner.connect(reflections);
   }
 
-  update(source, listener, now, range = 160, snap = false, immediate = false) {
+  update(source: EmitterSource, listener: Point3, now: number, range = 160, snap = false, immediate = false) {
     const y = source.y + this.height;
     const distance = Math.hypot(source.x - listener.x, y - listener.y, source.z - listener.z);
     if (snap) {
@@ -62,7 +196,7 @@ class SpatialEmitter {
       smooth(this.panner.positionY, y, now);
       smooth(this.panner.positionZ, source.z, now);
     }
-    if (this.panner.coneOuterAngle < 360 && Number.isFinite(source.heading)) {
+    if (this.panner.coneOuterAngle < 360 && source.heading !== undefined && Number.isFinite(source.heading)) {
       smooth(this.panner.orientationX, Math.sin(source.heading), now);
       smooth(this.panner.orientationZ, Math.cos(source.heading), now);
     }
@@ -87,7 +221,55 @@ class SpatialEmitter {
 }
 
 class CityAudioSystem {
-  constructor(simulation, { onStateChange = () => {} } = {}) {
+  sources: CityAudioSources;
+  controllers: AudioControllers;
+  acoustics: CityAcoustics;
+  onStateChange: () => void;
+  context: AudioContext | null;
+  /** Set by main.ts once the city is up: nothing sounds before */
+  ready: boolean;
+  disposed: boolean;
+  supported: boolean;
+  enabled: boolean;
+  limits: VoiceLimits;
+  motors: Map<object, MotorSlot>;
+  loops: Map<object, LoopSlot>;
+  ambientSources: AmbientSource[];
+  sirens: Map<object, MotorSlot>;
+  events: EventSlot[];
+  states: WeakMap<object, SourceState>;
+  conversations: WeakMap<Conversation, { reply: boolean; sequence: number; next: number }>;
+  /** Where the ears are, m */
+  listener: Point3;
+  haveListener: boolean;
+  /** s since the last control tick (10 Hz) */
+  accumulator: number;
+  lastHorn: number;
+  collisionPairs: WeakMap<object, WeakMap<object, Contact>>;
+  collisionSequence: number;
+  collisionSystems: CollisionSource[];
+  onCollision: (impact: CollisionImpact) => boolean;
+  motorParams: MotorVoiceParams;
+  windParams: WindParams;
+  rainParams: RainParams;
+  footPosition: Point3 & { seed: number };
+  onGesture: (event: KeyboardEvent | PointerEvent) => void;
+  onVisibility: () => void;
+  // The graph, built on the first gesture (initialize)
+  resources?: EventResources;
+  ambience?: AmbienceResources;
+  mix?: GainNode;
+  compressor?: DynamicsCompressorNode;
+  master?: GainNode;
+  reflections?: GainNode;
+  reverb?: ConvolverNode;
+  reflectionFilter?: BiquadFilterNode;
+  wind?: WindVoice;
+  rainVoice?: RainVoice;
+  /** The record gunfire() plays its shots at, reused */
+  gunSource?: { id: unknown; x: number; y: number; z: number; seed: number };
+
+  constructor(simulation: AudioSimulation, { onStateChange = () => { /* nobody to tell */ } }: { onStateChange?: () => void } = {}) {
     this.sources = new CityAudioSources(simulation);
     this.controllers = simulation.controllerManager;
     this.acoustics = new CityAcoustics(simulation.controllerManager);
@@ -95,7 +277,7 @@ class CityAudioSystem {
     this.context = null;
     this.ready = false;
     this.disposed = false;
-    this.supported = !!(globalThis.AudioContext || globalThis.webkitAudioContext);
+    this.supported = !!(audioGlobals.AudioContext ?? audioGlobals.webkitAudioContext);
     this.enabled = true;
     try { this.enabled = localStorage.getItem('nyc-sound') !== 'off'; } catch { /* Private browsing. */ }
     const smallDevice = navigator.hardwareConcurrency <= 4 || matchMedia('(pointer: coarse)').matches;
@@ -115,7 +297,7 @@ class CityAudioSystem {
     this.lastHorn = -Infinity;
     this.collisionPairs = new WeakMap();
     this.collisionSequence = 0;
-    this.collisionSystems = [simulation.controllerManager, simulation.trafficSystem, simulation.propBreaker].filter(Boolean);
+    this.collisionSystems = [simulation.controllerManager, simulation.trafficSystem, simulation.propBreaker].filter((system) => system != null);
     this.onCollision = (impact) => this.crash(impact);
     for (const system of this.collisionSystems) system.setCollisionListener?.(this.onCollision);
     this.motorParams = { speed: 0, load: 0, verticalSpeed: 0, doppler: 1, seed: 0, rpm: 0 };
@@ -123,12 +305,13 @@ class CityAudioSystem {
     this.rainParams = { rain: 0, enclosure: 0, inCar: false };
     this.footPosition = { x: 0, y: 0, z: 0, seed: 0 };
     this.onGesture = (event) => {
-      if (event.type === 'keydown' && (event.repeat || event.metaKey || event.ctrlKey || /INPUT|TEXTAREA|SELECT/.test(event.target?.tagName))) return;
+      if (event instanceof KeyboardEvent && (event.repeat || event.metaKey || event.ctrlKey
+        || (event.target instanceof Element && /INPUT|TEXTAREA|SELECT/.test(event.target.tagName)))) return;
       if (this.enabled) this.unlock();
     };
     this.onVisibility = () => {
       this.reset();
-      if (document.hidden) this.suspend();
+      if (document.hidden) void this.suspend();
       else if (this.enabled && this.context) this.unlock();
     };
     // Keep gesture handlers: iOS can interrupt a previously running context, and resuming may need another tap.
@@ -140,23 +323,25 @@ class CityAudioSystem {
   unlock() {
     if (!this.supported || !this.enabled || this.disposed || document.hidden) return;
     try {
-      if (!this.context) this.initialize();
-      if (this.context.state !== 'running') {
-        this.context.resume().then(() => {
+      const context = this.context ?? this.initialize();
+      if (context.state !== 'running') {
+        context.resume().then(() => {
           if (!this.enabled || document.hidden || this.disposed) return this.suspend();
           this.onStateChange();
-        }).catch(() => {}); // A later user gesture can retry autoplay/interruption failures.
+          return undefined;
+        }).catch(() => { /* A later user gesture can retry autoplay/interruption failures. */ });
       }
     } catch (error) {
       console.warn('[audio] Unable to initialize sound', error);
       this.supported = false;
-      this.context?.close().catch(() => {});
+      this.context?.close().catch(() => { /* closing anyway */ });
       this.onStateChange();
     }
   }
 
   initialize() {
-    const Context = globalThis.AudioContext || globalThis.webkitAudioContext;
+    const Context = audioGlobals.AudioContext ?? audioGlobals.webkitAudioContext;
+    if (!Context) throw new TypeError('Web Audio is unavailable');
     const context = this.context = new Context({ latencyHint: 'interactive' });
     const listener = context.listener;
     setControlRate(
@@ -189,16 +374,17 @@ class CityAudioSystem {
     this.reflections.connect(this.reverb).connect(this.reflectionFilter).connect(this.mix);
     this.wind = createWindVoice(context, this.resources, this.mix);
     this.rainVoice = createRainVoice(context, this.resources, this.mix);
-    context.onstatechange = () => this.onStateChange();
+    context.onstatechange = () => { this.onStateChange(); };
+    return context;
   }
 
-  setEnabled(enabled) {
-    this.enabled = !!enabled;
+  setEnabled(enabled: boolean) {
+    this.enabled = enabled;
     try { localStorage.setItem('nyc-sound', this.enabled ? 'on' : 'off'); } catch { /* Storage is optional. */ }
     if (this.enabled) this.unlock();
     else {
       this.reset();
-      this.suspend();
+      void this.suspend();
     }
     this.onStateChange();
   }
@@ -209,7 +395,7 @@ class CityAudioSystem {
     // cannot leave an enabled system suspended merely because resume saw the old 'running' state.
     return this.context.suspend().then(() => {
       if (this.enabled && !document.hidden && !this.disposed) this.unlock();
-    }).catch(() => {});
+    }).catch(() => { /* a later gesture retries */ });
   }
 
   reset() {
@@ -224,13 +410,13 @@ class CityAudioSystem {
     this.collisionPairs = new WeakMap();
     this.haveListener = false;
     this.accumulator = 0;
-    if (this.master) {
+    if (this.master && this.context) {
       this.master.gain.cancelScheduledValues(this.context.currentTime);
       this.master.gain.setValueAtTime(0, this.context.currentTime);
     }
   }
 
-  state(source, now) {
+  state(source: StatefulSource, now: number) {
     let state = this.states.get(source.id);
     if (!state) {
       const hash = Math.sin(source.seed * 127.1 + 311.7) * 43758.5453;
@@ -242,11 +428,11 @@ class CityAudioSystem {
     return state;
   }
 
-  updateConversations(people, now) {
+  updateConversations(people: PersonSound[], now: number) {
     // Only the nearby pair's first member schedules speech. Shared turn state prevents overlapping replies.
     for (const source of people) {
       const pair = source.conversation;
-      if (!pair || pair.a !== source.id || pair.a.conversation !== pair || pair.b.conversation !== pair) continue;
+      if (pair?.a !== source.id || pair.a.conversation !== pair || pair.b.conversation !== pair) continue;
       const partner = people.find(person => person.id === pair.b && person.conversation === pair);
       if (!partner || source.speed > 0.15 || partner.speed > 0.15) continue;
       let state = this.conversations.get(pair);
@@ -268,7 +454,8 @@ class CityAudioSystem {
     }
   }
 
-  updatePool(pool, candidates, limit, now, dt, siren = false) {
+  updatePool(pool: Map<object, MotorSlot>, candidates: MotorSound[], limit: number, now: number, dt: number, siren = false) {
+    if (!this.context || !this.mix || !this.reflections || !this.resources) return;
     for (const slot of pool.values()) slot.selected = false;
     let count = 0;
     for (const source of candidates) {
@@ -313,14 +500,15 @@ class CityAudioSystem {
     }
   }
 
-  removeEvent(index) {
+  removeEvent(index: number) {
     const event = this.events[index];
     event.voice.dispose(true);
     event.emitter.dispose();
     this.events.splice(index, 1);
   }
 
-  emit(kind, source, options = {}) {
+  emit(kind: EventKind, source: EventSource, options: EventOptions = {}) {
+    if (!this.context || !this.mix || !this.reflections || !this.resources) return false;
     const now = this.context.currentTime;
     const crash = kind === 'crash';
     const loud = kind === 'gun' || kind === 'explosion'; // (gunfire & blasts take their voices like crashes do)
@@ -362,7 +550,7 @@ class CityAudioSystem {
     return true;
   }
 
-  crash(impact) {
+  crash(impact: CollisionImpact) {
     if (!this.ready || !this.enabled || !this.haveListener || this.context?.state !== 'running' || document.hidden) return false;
     const { a, b, x, y, z, speed } = impact;
     if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || a === b
@@ -384,7 +572,7 @@ class CityAudioSystem {
     // Both pair orders share the gate. Sustained rubbing stays quiet, but a substantially stronger second hit
     // or a new impact after separation can sound again; muting/reset discards this history rather than queuing it.
     if (now - contact.played < 0.18 || (!separated && speed <= Math.max(4, contact.speed * 1.8))) return false;
-    const light = a.type === 'cyclist' || b.type === 'cyclist';
+    const light = ('type' in a && a.type === 'cyclist') || ('type' in b && b.type === 'cyclist');
     const severity = clamp((speed - 0.8) / 22, 0, 1) * (light ? 0.65 : 1);
     const intensity = (0.12 + 0.88 * Math.sqrt(severity)) * (light ? 0.7 : 1);
     // The physics record is reused. emit() copies this position so the crash remains at the contact point.
@@ -396,7 +584,7 @@ class CityAudioSystem {
 
   // A shot, a punch, a blast, a pickup or a gun drawn at (x, y, z) (crime.js): 'pistol' | 'smg' | 'bazooka' | 'punch'
   // | 'explosion' | 'pickup' | 'draw'
-  gunfire(kind, x, y, z) {
+  gunfire(kind: string, x: number, y: number, z: number) {
     if (!this.ready || !this.enabled || !this.haveListener || this.context?.state !== 'running' || document.hidden) return false;
     const source = this.gunSource ??= { id: null, x: 0, y: 0, z: 0, seed: 0 };
     source.id = this.gunSource; source.x = x; source.y = y; source.z = z; source.seed = ++this.collisionSequence;
@@ -406,15 +594,16 @@ class CityAudioSystem {
     return this.emit('gun', source, { weapon: kind, severity: kind === 'bazooka' ? 1 : kind === 'smg' ? 0.5 : 0.7, intensity: 1 });
   }
 
-  honk(entity) {
+  honk(entity: AudioEntity | null | undefined) {
     if (!this.ready || !this.enabled || this.context?.state !== 'running' || entity?.type !== 'car') return;
     const now = this.context.currentTime;
     if (now - this.lastHorn < 0.8) return;
     if (this.emit('horn', { id: entity, ...entity.position, heading: entity.heading, seed: 4 }, { intensity: 0.7 })) this.lastHorn = now;
   }
 
-  update(dt, elapsed, camera, night = false) {
+  update(dt: number, elapsed: number, camera: ListenerCamera, night = false) {
     if (!this.ready || !this.enabled || this.context?.state !== 'running' || document.hidden) return;
+    if (!this.reflections || !this.reflectionFilter || !this.master || !this.wind || !this.rainVoice) return;
     this.accumulator += dt;
     if (this.accumulator < 0.1) return;
     dt = Math.min(this.accumulator, 0.25);
@@ -425,7 +614,8 @@ class CityAudioSystem {
     this.listener.x = position.x; this.listener.y = position.y; this.listener.z = position.z;
     camera.updateMatrixWorld();
     const m = camera.matrixWorld.elements;
-    const listener = this.context.listener;
+    // (widened: TS would otherwise take the DOM's word that every listener has its AudioParams)
+    const listener = this.context.listener as AudioListener | PositionalListener;
     if (listener.positionX) {
       const values = [position.x, position.y, position.z, -m[8], -m[9], -m[10], m[4], m[5], m[6]];
       const params = [listener.positionX, listener.positionY, listener.positionZ, listener.forwardX, listener.forwardY,
@@ -455,7 +645,7 @@ class CityAudioSystem {
           event.voice.dispose();
           event.follow = false; // Fade at the old position if the meeting ended or a pedestrian was recycled.
         }
-        const source = event.follow && (sources.motors.find(s => s.id === event.id) || sources.people.find(s => s.id === event.id));
+        const source = event.follow && (sources.motors.find(s => s.id === event.id) ?? sources.people.find(s => s.id === event.id));
         if (source) Object.assign(event.position, source);
         event.emitter.update(event.position, this.listener, now, event.range);
       }
@@ -466,7 +656,7 @@ class CityAudioSystem {
     for (const source of sources.people) {
       const state = this.state(source, now);
       const moved = Math.hypot(source.x - state.x, source.z - state.z);
-      if (source.grounded && moved < 3 && Number.isFinite(state.phase)) {
+      if (source.grounded && moved < 3 && state.phase !== undefined && Number.isFinite(state.phase)) {
         for (let foot = 0; foot < 2; foot++) {
           // The rig plants each foot when its phase wraps, including different stride lengths and running gaits.
           const offset = foot * 0.5;
@@ -517,21 +707,22 @@ class CityAudioSystem {
       }
     }
     // (the altitude over the town's floor: its slopes put the streets well over y = 0)
-    const altitude = position.y - (this.controllers ? this.controllers.floorHeight(position.x, position.z) : 0);
+    const altitude = position.y - this.controllers.floorHeight(position.x, position.z);
     Object.assign(this.windParams, { speed: Math.min(sources.motion, 50), altitude, traffic: sources.traffic, night: night ? 1 : 0, enclosure });
     this.wind.update(this.windParams, now);
-    const mode = this.controllers?.activeMode;
+    const mode = this.controllers.activeMode;
     Object.assign(this.rainParams, { enclosure, inCar: mode === 'car' || mode === 'helicopter' });
     this.rainVoice.update(this.rainParams, now);
   }
 
-  // The sounds that stay where they are this frame: [{ kind (audio-ambience.js), id, x, y, z, gain, range? }]
-  setAmbience(list) {
+  // The sounds that stay where they are this frame (audio-ambience.ts)
+  setAmbience(list: AmbientSource[]) {
     this.ambientSources = list;
   }
 
   // The nearest few of them play, each through its own spatial emitter (walls muffle a club's music like the rest)
-  updateLoops(now) {
+  updateLoops(now: number) {
+    if (!this.context || !this.mix || !this.reflections || !this.ambience) return;
     const L = this.listener;
     const list = this.ambientSources;
     for (const s of list) s.d2 = (s.x - L.x) ** 2 + (s.y - L.y) ** 2 + (s.z - L.z) ** 2;
@@ -541,7 +732,7 @@ class CityAudioSystem {
     for (const source of list) {
       const range = source.range ?? 120;
       // (each has a range of its own: one out of earshot, a crowd's murmur, doesn't hide a party's music further on)
-      if (source.d2 > range * range) continue;
+      if ((source.d2 ?? 0) > range * range) continue;
       if (++count > this.limits.loops) break;
       let slot = this.loops.get(source.id);
       if (!slot) {
@@ -570,13 +761,13 @@ class CityAudioSystem {
   }
 
   // How hard it rains (rainIntensity, 0..1), for the rain's hiss
-  setRain(intensity) {
+  setRain(intensity: number) {
     this.rainParams.rain = intensity;
   }
 
   // A thunderclap `delay` s from now (the sound of a strike `delay` × 343 m away), louder for a near one
   thunder(delay = 0, near = 0.5) {
-    if (!this.ready || !this.enabled || this.context?.state !== 'running') return;
+    if (!this.ready || !this.enabled || this.context?.state !== 'running' || !this.resources || !this.mix) return;
     playEvent(this.context, this.resources, 'thunder', this.mix, { when: this.context.currentTime + delay, intensity: 0.35 + 0.65 * near, seed: Math.floor(Math.random() * 1e6) });
   }
 
@@ -592,9 +783,9 @@ class CityAudioSystem {
     for (const node of [this.mix, this.compressor, this.master, this.reflections, this.reverb, this.reflectionFilter]) node?.disconnect();
     if (this.context) {
       this.context.onstatechange = null;
-      this.context.close().catch(() => {});
+      this.context.close().catch(() => { /* gone either way */ });
     }
   }
 }
 
-export { CityAudioSystem };
+export { CityAudioSystem, SpatialEmitter };

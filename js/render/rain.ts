@@ -1,14 +1,15 @@
 import * as THREE from 'three/webgpu';
+import type { Node } from 'three/webgpu';
 import { attribute, uniform, vec3, float, mod, normalize, cross, length, smoothstep, mix, cameraPosition, abs } from 'three/tsl';
 
-// js/render/rain.js
+// js/render/rain.ts
 // Falling rain around the camera: thin streaks in a box that follows it, each drop placed in the vertex shader from
 // its seed and the time (nothing moves on the CPU), wrapped round the box so the rain stays put in the world as the
 // camera moves through it. They fall at a raindrop's terminal speed (~9 m/s for 2-3 mm drops), slanted by the wind,
 // and each streak is as long as a drop moves in a 1/30 s exposure. Density follows the intensity (draw range).
 
 const DROPS = 12000;
-const BOX = [64, 36, 64]; // m around the camera (x, y, z)
+const BOX: [number, number, number] = [64, 36, 64]; // m around the camera (x, y, z)
 const FALL = 9; // m/s
 const EXPOSURE = 1 / 30; // s: the motion blur of a streak
 
@@ -35,7 +36,13 @@ function buildRainGeometry() {
   return g;
 }
 
-function createRain(scene, nightFactor) {
+export interface Rain {
+  mesh: THREE.Mesh;
+  update(intensity: number, windX: number, windZ: number, elapsed: number, camera: THREE.Camera): void;
+}
+
+/** nightFactor: 0 by day .. 1 at night (LightingSystem's uNightFactor), dims the streaks */
+function createRain(scene: THREE.Scene, nightFactor: Node<'float'>): Rain {
   const uCenter = uniform(new THREE.Vector3());
   const uVelocity = uniform(new THREE.Vector3(0, -FALL, 0));
   const uTime = uniform(0);
