@@ -17,7 +17,8 @@ import type { Collider } from './buildings.ts';
 // - Crown-shell normals, interior occlusion & sway weights baked per vertex (attributes: createTreeMaterial in
 //   tsl-materials.ts)
 // - Three levels of detail (two variants per species up close), picked per tree from the camera distance and
-//   regrouped per spatial cell / species / variant / level whenever the camera has moved a few metres
+//   regrouped per spatial cell / species / variant / level whenever the camera has moved a few metres (the farther
+//   the level, the wider its cells: LEVEL_CELL)
 
 const V3 = THREE.Vector3;
 
@@ -1081,14 +1082,18 @@ interface TreeType {
   meshes: THREE.InstancedMesh[];
 }
 
-/** A spatial cell of the field: its group, its trees (indices), the index of its mesh for each geometry */
+/** One level's square of the field: the trees in it (each drawn here while it is at `level`), a mesh per type */
 interface TreeCell {
+  level: number;
   group: THREE.Group;
   trees: number[];
   meshes: Map<TreeType, number>;
 }
 
-const TREE_CELL_SIZE = 200;
+// Cell size per level (m). Every cell is a draw per tree type in the view and each shadow cascade, so the far levels,
+// a few trees a cell at 200 m (~460 meshes of ~10 crowns at street level, ~300 tree draws a frame), share wider
+// squares: the coarse trees from 105 m, the whole-crown cards from 420 m. Near ones keep small cells to cull finely.
+const LEVEL_CELL = [200, 600, 1600];
 const LOD_NEAR = 105; // full detail within (m)
 const LOD_MID = 420; // coarse cards & branches within; whole-crown cards beyond
 const LOD_HYSTERESIS = 6;
@@ -1141,7 +1146,7 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
   const py = new Float32Array(N);
   const pz = new Float32Array(N);
   const meshOf = new Int32Array(N * 3); // mesh index per level
-  const cellOf = new Array<TreeCell>(N);
+  const cellOf = new Array<TreeCell>(N * 3); // cell per level
   const tier = new Uint8Array(N);
   const lod = new Uint8Array(N).fill(255);
 
@@ -1193,21 +1198,22 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
     py[i] = (t.y || 0) + 6 * s;
     pz[i] = t.z;
     tier[i] = Math.min(2, t.tier || 0);
-    const key = `${Math.floor(t.x / TREE_CELL_SIZE)},${Math.floor(t.z / TREE_CELL_SIZE)}`;
-    let cell = cells.get(key);
-    if (!cell) {
-      const cellGroup = new THREE.Group();
-      cellGroup.name = `TreeCell_${key}`;
-      cellGroup.visible = false;
-      group.add(cellGroup);
-      cell = { group: cellGroup, trees: [], meshes: new Map() };
-      cells.set(key, cell);
-    }
-    cell.trees.push(i);
-    cellOf[i] = cell;
     const mi = meshIndex[sp];
     const treeTypes = [mi.l0[variant], mi.l1[variant], mi.l2];
     for (let l = 0; l < 3; l++) {
+      const size = LEVEL_CELL[l];
+      const key = `${l}:${Math.floor(t.x / size)},${Math.floor(t.z / size)}`;
+      let cell = cells.get(key);
+      if (!cell) {
+        const cellGroup = new THREE.Group();
+        cellGroup.name = `TreeCell_${key}`;
+        cellGroup.visible = false;
+        group.add(cellGroup);
+        cell = { level: l, group: cellGroup, trees: [], meshes: new Map() };
+        cells.set(key, cell);
+      }
+      cell.trees.push(i);
+      cellOf[i * 3 + l] = cell;
       const type = treeTypes[l];
       let index = cell.meshes.get(type);
       if (index === undefined) {
@@ -1249,9 +1255,9 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
   function rebuild() {
     for (const cell of dirtyCells) {
       for (const mi of cell.meshes.values()) counts[mi] = 0;
+      const l = cell.level;
       for (const i of cell.trees) {
-        const l = lod[i];
-        if (l === 255) continue;
+        if (lod[i] !== l) continue;
         const mi = meshOf[i * 3 + l];
         const mesh = instanced[mi];
         const treeData = mesh.geometry.attributes.aTreeData;
@@ -1310,8 +1316,10 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
       }
       const next = nextL === 3 ? 255 : nextL;
       if (next !== lod[i]) {
+        // (the cell of the level it leaves, and of the one it takes)
+        if (lod[i] !== 255) dirtyCells.add(cellOf[i * 3 + lod[i]]);
+        if (next !== 255) dirtyCells.add(cellOf[i * 3 + next]);
         lod[i] = next;
-        dirtyCells.add(cellOf[i]);
         changed = true;
       }
     }
