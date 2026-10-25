@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { PersonCrowd, PersonRig, OUTFIT, OUTFIT_SEED } from './pedestrians.js';
-import { BONES, boxHit, startTumble, stepTumble, tumblePose } from './mayhem.js';
+import { boxHit } from './mayhem.js';
+import { throwVelocity, bleedOf } from './ragdolls.js';
 import { WEAPONS, Arsenal, pickTarget, rayCircle, rayBox, boxOverlap, roundBox, blastFalloff, hitChance, wrapAngle } from './weapons.js';
 import { Wanted, POLICE, GANGS, NARCO, gangTurf } from './crime-rules.js';
 import { GunfireFX } from './gunfire-fx.js';
@@ -167,10 +168,12 @@ class CrimeSystem {
     this.buildRoadGraph();
     this.bindInput(canvas);
 
-    traffic.setKnockListener((kind, x, z) => {
+    traffic.setKnockListener((kind, x, z, speed) => {
       this.report('runOver');
       traffic.panic(x, z, 25);
+      this.fx.splatter(x, this.groundAt(x, z) + 0.9, z, speed);
     });
+    this.ragdolls = null; // (sim/ragdolls.js, from main.js: who falls, falls as a body)
   }
 
   // =========================================================================
@@ -806,12 +809,14 @@ class CrimeSystem {
     this.health = Math.max(0, this.health);
     // killed on foot: the player's body falls like anyone's
     const p = this.controllers.entities.person;
-    if (kind === 'wasted' && this.mode === 'person') {
+    if (kind === 'wasted' && this.controllers.activeMode === 'person') { // (this.mode lags: thrown out of a car this frame)
       const d = Math.hypot(this.px - this.lastHit.x, this.pz - this.lastHit.z) || 1;
       const nx = (this.px - this.lastHit.x) / d, nz = (this.pz - this.lastHit.z) / d;
-      this.playerBase = this.playerBase || new Float32Array(BONES * 8);
-      this.playerBase.set(p.rig.pose.subarray(0, BONES * 8));
-      this.playerFall = startTumble(this.px, this.groundAt(this.px, this.pz), this.pz, nx * 2, nz * 2, nx, nz);
+      // (already thrown, out of a car: that body it is)
+      this.playerFall = p.ragdoll || this.ragdolls.spawn(p.rig, { ...throwVelocity(nx * 2, nz * 2, nx, nz), bleed: 1 });
+      this.playerFall.bleed = 1;
+      p.ragdoll = this.playerFall;
+      p.ragdollOwner = 'crime'; // (it gets up at the hospital, not where it lies)
     } else {
       this.playerFall = null;
     }
@@ -824,9 +829,7 @@ class CrimeSystem {
     p.rig.aim = 0;
     this.placePlayerGun(this.arsenal.weapon);
     if (this.playerFall && this.mode === 'person') {
-      const f = this.playerFall;
-      stepTumble(f, dt, this.groundAt(f.px, f.pz), this.solidAt);
-      tumblePose(p.rig.pose, this.playerBase, f);
+      // (its pose the ragdoll's)
       p.crowd.begin();
       p.crowd.add(p.rig, 0);
       p.crowd.end();
@@ -834,6 +837,8 @@ class CrimeSystem {
     if (this.stateTime < RESPAWN_TIME) return;
     const kind = this.state;
     this.state = 'play';
+    this.ragdolls.release(this.playerFall);
+    if (p.ragdoll === this.playerFall) p.ragdoll = null;
     this.playerFall = null;
     p.rig.placed = false; // stands up afresh where it is put
     this.health = 100;
@@ -899,6 +904,7 @@ class CrimeSystem {
   // An explosion at (x, y, z) of `radius` m: fire & smoke, people thrown, cars shoved, patrol cars and the player hurt
   explode(x, y, z, radius, damage, byPlayer) {
     this.fx.explosion(x, y, z, radius);
+    this.onExplosion?.(x, y, z, radius); // (a burning wreck, a house catching: fires.js)
     this.audio?.gunfire?.('explosion', x, y, z);
     const near = Math.hypot(this.camera ? this.camera.position.x - x : 0, this.camera ? this.camera.position.z - z : 0);
     this.shake = Math.min(1.6, this.shake + clamp(1.6 - near / 40, 0, 1.6));
@@ -950,7 +956,7 @@ class CrimeSystem {
     });
     const a = {
       kind, gang, rig, x, z, heading: Math.atan2(this.px - x, this.pz - z), speed: 0, hp: kind === 'cop' ? 100 : 80,
-      fallen: null, fallBase: null, dead: false, state: kind === 'thief' ? 'approach' : kind === 'gang' ? 'idle' : 'chase',
+      fallen: null, dead: false, state: kind === 'thief' ? 'approach' : kind === 'gang' ? 'idle' : 'chase',
       t: 0, weapon, cooldown: rand(0.5, 1.5), burst: 0, homeX: x, homeZ: z, money: 0, arrest: 0, idleYaw: Math.random() * 6.28,
       wanderT: rand(2, 6), los: false, losT: 0, stepT: 0, foe: null, foeT: Math.random() * 0.5
     };
@@ -965,6 +971,8 @@ class CrimeSystem {
   }
 
   removeAgent(a) {
+    this.ragdolls.release(a.fallen);
+    a.fallen = null;
     const i = this.agents.indexOf(a);
     if (i >= 0) this.agents.splice(i, 1);
   }
@@ -989,18 +997,20 @@ class CrimeSystem {
     if (killed) this.kill(a);
   }
 
-  knockAgent(a, vx, vz, nx, nz) {
+  // Brings `a` down as a ragdoll (sim/ragdolls.js), hit at (vx, vz) along (nx, nz); by the player's car (`byCar`) its
+  // body throws theirs itself. `bleed` (0..1): how badly they bleed where they come to rest (kill: the dead do)
+  knockAgent(a, vx, vz, nx, nz, byCar = false, bleed = 0) {
     if (a.fallen) return;
     a.rig.update(1 / 60, a.x, a.z, a.heading, this.personGround, a, 0, true);
-    a.fallBase = a.fallBase || new Float32Array(BONES * 8);
-    a.fallBase.set(a.rig.pose.subarray(0, BONES * 8));
-    a.fallen = startTumble(a.x, this.personGround(a, a.x, a.z), a.z, vx, vz, nx, nz);
     a.rig.aim = 0;
+    const v = byCar ? { vx: 0, vy: 0, vz: 0 } : throwVelocity(vx, vz, nx, nz);
+    a.fallen = this.ragdolls.spawn(a.rig, { ...v, spin: byCar ? 0 : 2 + Math.hypot(vx, vz) * 0.3, bleed });
   }
 
   kill(a) {
     a.dead = true;
     a.hp = 0;
+    if (a.fallen) a.fallen.bleed = Math.max(a.fallen.bleed, 0.9);
     // what they leave behind
     if (a.kind === 'thief' && a.money > 0) {
       this.drop('money', a.x, a.z, a.money);
@@ -1025,18 +1035,17 @@ class CrimeSystem {
     }
     if (a.fallen) {
       const f = a.fallen;
-      const g = this.personGround(a, f.px, f.pz);
-      const rest = stepTumble(f, dt, g, this.solidAt);
       a.x = f.px;
       a.z = f.pz;
-      if (!a.dead && rest > DOWN_TIME) {
+      if (!a.dead && f.rest > DOWN_TIME) {
         // back on their feet, and angry
+        this.ragdolls.release(f);
         a.fallen = null;
         a.rig.reset(a.x, a.z, a.heading, this.personGround, a);
         if (a.kind === 'thief' && a.state === 'approach') a.state = 'leave';
         if (a.kind === 'gang') this.gangAnger[a.gang] = Math.max(this.gangAnger[a.gang], 60);
       } else {
-        tumblePose(a.rig.pose, a.fallBase, f);
+        // (its pose the ragdoll's)
         this.crowd.add(a.rig, dist);
         return;
       }
@@ -1050,7 +1059,8 @@ class CrimeSystem {
         const dmg = this.pspeed * (this.mode === 'car' ? 7 : this.mode === 'moto' ? 4 : 2.5);
         this.audio?.crash?.({ a: this.player, b: a, x: a.x, y: this.groundAt(a.x, a.z) + 1, z: a.z, speed: this.pspeed });
         a.hp -= dmg;
-        this.knockAgent(a, this.pvx, this.pvz, hit.nx, hit.nz);
+        this.knockAgent(a, this.pvx, this.pvz, hit.nx, hit.nz, this.mode === 'car', bleedOf(this.pspeed));
+        this.fx.splatter(a.x, this.groundAt(a.x, a.z) + 0.9, a.z, this.pspeed, hit.nx, hit.nz);
         if (a.kind === 'cop') this.report(a.hp <= 0 ? 'killCop' : 'hitCop');
         else this.report('runOver');
         if (a.kind === 'gang') this.angerGang(a.gang);

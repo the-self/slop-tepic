@@ -379,7 +379,7 @@ function setupSceneCulling(scene, roots, shadow = null) {
   state.culled = culled;
 }
 
-const state = { culled: [] };
+const state = { culled: [], frozen: new Set(), pendingRelease: null };
 
 // Per frame (after the warm-up frame, which must see everything): hide the chunks beyond their cull distance
 function updateSceneCulling(cameraPosition) {
@@ -392,4 +392,89 @@ function updateSceneCulling(cameraPosition) {
   }
 }
 
-export { setupSceneCulling, updateSceneCulling, SHADOW_PROXY_LAYER };
+/**
+ * Computes the world matrices of the static city under `roots` (and of the shadow stand-ins) once, for good. three.js
+ * calls scene.updateMatrixWorld() in every scene render (the view and each shadow cascade: three a frame), and as the
+ * scene's own matrix auto-updates, that recomputes every object's world matrix each time: ~42k objects (the tree
+ * field's dormant cells are most of them) cost ~18 ms a frame. Nothing under these roots moves after the build (their
+ * props change through instance matrices & visibility). Rendering stops updating the scene; updateDynamicMatrices()
+ * updates the rest of it, once a frame.
+ */
+function freezeStaticMatrices(scene, roots) {
+  scene.updateMatrixWorld(true);
+  scene.matrixWorldAutoUpdate = false;
+  state.frozen = new Set(roots);
+  for (const child of scene.children) if (child.userData.shadowProxy) state.frozen.add(child);
+}
+
+// Per frame, before rendering: the world matrices of everything else in the scene (the player, the traffic, the
+// lights that follow the camera...), including whatever was added since
+function updateDynamicMatrices(scene) {
+  const children = scene.children;
+  for (let i = 0; i < children.length; i++) {
+    if (!state.frozen.has(children[i])) children[i].updateMatrixWorld();
+  }
+}
+
+// Below this many vertices a geometry keeps its arrays: the small shared ones (unit boxes, a prop's shape) may still be
+// cloned or merged by something built later, and the memory is all in the big merged batches anyway
+const RELEASE_MIN_VERTICES = 2048;
+
+/**
+ * Drops the CPU-side copies of the static city's vertex data once the GPU holds them. three.js keeps every attribute's
+ * array after the upload, so the frozen city (its streets, facades, paint & shadow stand-ins: ~10M vertices) sat twice
+ * in memory, ~1 GB of it in the JS heap alone. Only the attributes the renderer has already uploaded go, and never the
+ * instance matrices & colours (knocked-over props change theirs: mayhem.js). The warm-up frame draws one object per
+ * shader pipeline, so the first call (after it) frees what it drew and keeps the rest as pending: call it again now and
+ * then (main.js does, every few seconds) and each part of the city goes once it has been drawn. Each attribute keeps
+ * its count and its array's type (the pipelines read both); its array becomes empty, and its geometry is marked
+ * `userData.arraysReleased`: nothing may read, clone or change it afterwards. Returns the bytes released by this call.
+ */
+function releaseStaticArrays(renderer) {
+  const backend = renderer.backend;
+  if (!state.pendingRelease) {
+    const entries = new Map(); // attribute (or interleaved buffer) -> { target, geos: the geometries sharing it }
+    state.pendingRelease = [];
+    for (const root of state.frozen) {
+      root.traverse((o) => {
+        const geo = o.geometry;
+        if (!o.isMesh || !geo || geo.userData.keepArrays) return;
+        const pos = geo.attributes.position;
+        if (!pos || pos.count < RELEASE_MIN_VERTICES) return;
+        // (three.js would compute these from the arrays the first time it culled or bounded the object)
+        if (!geo.boundingBox) geo.computeBoundingBox();
+        if (!geo.boundingSphere) geo.computeBoundingSphere();
+        if (o.isInstancedMesh && !o.boundingSphere) o.computeBoundingSphere();
+        const attributes = Object.values(geo.attributes).filter((a) => !a.isInstancedBufferAttribute);
+        if (geo.index) attributes.push(geo.index);
+        for (const attribute of attributes) {
+          const target = attribute.isInterleavedBufferAttribute ? attribute.data : attribute;
+          let entry = entries.get(target);
+          if (!entry) {
+            entries.set(target, (entry = { target, geos: new Set() }));
+            state.pendingRelease.push(entry);
+          }
+          entry.geos.add(geo);
+        }
+      });
+    }
+  }
+  let bytes = 0;
+  let kept = 0;
+  const pending = state.pendingRelease;
+  for (const entry of pending) {
+    const { target, geos } = entry;
+    const data = backend.has(target) ? backend.get(target) : null;
+    if (!data || !(data.buffer || data.bufferGPU)) {
+      pending[kept++] = entry; // (not drawn yet)
+      continue;
+    }
+    bytes += target.array.byteLength;
+    target.array = new target.array.constructor(0);
+    for (const geo of geos) geo.userData.arraysReleased = true;
+  }
+  pending.length = kept;
+  return bytes;
+}
+
+export { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices, releaseStaticArrays, SHADOW_PROXY_LAYER };

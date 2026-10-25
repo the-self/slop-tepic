@@ -69,6 +69,9 @@ class CameraSystem {
     this._aimPos = new THREE.Vector3();
     this._aimLook = new THREE.Vector3();
     this._lookAt = new THREE.Vector3();
+    this._shake = new THREE.Vector3(); // (speedEffects)
+    this.shakeAmp = 0;
+    this.speedRush = 0;
 
     this.bindPointerControls();
   }
@@ -364,12 +367,21 @@ class CameraSystem {
       const g = Math.max(this.groundAt(p.x, p.z), this.groundAt((p.x + t.x) / 2, (p.z + t.z) / 2) - 0.5);
       if (p.y < g + 1.2) p.y = g + 1.2;
     }
+    // inside a room (interiors.js): the camera stays between its walls and under its ceiling
+    const room = this.interior;
+    if (room) {
+      const p = this.currentPos;
+      p.x = Math.max(room.minX, Math.min(room.maxX, p.x));
+      p.z = Math.max(room.minZ, Math.min(room.maxZ, p.z));
+      p.y = Math.min(room.maxY, p.y);
+    }
     // aiming on foot: eased from the follow camera's own framing (which goes on following meanwhile) to the shoulder's,
     // a little zoomed in
     const preset = this.getActivePreset();
     const b = this.aim && entity.type === 'person' && preset.category === 'follow' ? this.aim.blend : 0;
     const k = b * b * (3 - 2 * b);
-    const fov = preset.fov * (1 - 0.16 * k);
+    const rush = this.speedEffects(entity, preset, dt, elapsed);
+    const fov = preset.fov * (1 - 0.16 * k) + 12 * rush;
     if (Math.abs(this.camera.fov - fov) > 0.05) {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
@@ -382,6 +394,40 @@ class CameraSystem {
       this.camera.position.copy(this.currentPos);
       this.camera.lookAt(this.currentLookAt);
     }
+    if (this.shakeAmp > 0.0005) {
+      // (moved after aiming: the follow framing itself stays smooth, only the lens shakes)
+      this.camera.position.add(this._shake);
+      const sh = this._shake, t = this.currentLookAt;
+      // (the aim shakes more than the lens moves: the view trembles rather than slides)
+      this.camera.lookAt(this._lookAt.set(t.x + sh.x * 1.6, t.y + sh.y * 1.6, t.z + sh.z * 1.6));
+    }
+  }
+
+  // Speed, GTA-style, in a car or on a moto on the follow cameras: the view widens as it goes faster (more of the road
+  // rushing past at the edges; the nitro's push widens it further) and shakes from ~90 km/h, harder the faster, as the
+  // wind and the road's roughness do to a fast car; a crash jolts it (entity.cameraKick, 0..1, controllers.js). Returns
+  // the widening (0..1, eased); leaves the shake's offset in this._shake
+  speedEffects(entity, preset, dt, elapsed) {
+    const vehicle = (entity.type === 'car' || entity.type === 'moto') && preset.category === 'follow';
+    const kmh = vehicle ? Math.abs(entity.speed) * 3.6 : 0;
+    const target = Math.min(1, Math.max(0, (kmh - 60) / 170)) + (vehicle && entity.drive?.nitroOn ? 0.35 : 0);
+    this.speedRush += (target - this.speedRush) * (1 - Math.exp(-dt * 2.5));
+    const kick = vehicle ? Math.min(1, entity.cameraKick || 0) : 0;
+    if (entity.cameraKick) entity.cameraKick *= Math.exp(-dt * 7);
+    const fast = Math.min(1, Math.max(0, (kmh - 90) / 160));
+    this.shakeAmp = vehicle ? 0.07 * fast + (entity.drive?.nitroOn ? 0.03 : 0) + 0.3 * kick : 0;
+    const shake = this._shake;
+    if (this.shakeAmp > 0.0005) {
+      // two incommensurate tones a side, so it never settles into a visible rhythm
+      const t = elapsed;
+      const sx = Math.sin(t * 13.1) * 0.6 + Math.sin(t * 31.7 + 1.3) * 0.4;
+      const sy = Math.sin(t * 17.3 + 0.5) * 0.6 + Math.sin(t * 43.9 + 2.1) * 0.4;
+      // across the view (its right, flat) and up
+      const dx = this.currentLookAt.x - this.currentPos.x, dz = this.currentLookAt.z - this.currentPos.z;
+      const len = Math.hypot(dx, dz) || 1;
+      shake.set((-dz / len) * sx * this.shakeAmp, sy * this.shakeAmp, (dx / len) * sx * this.shakeAmp);
+    } else shake.set(0, 0, 0);
+    return Math.min(1.35, this.speedRush);
   }
 
   // The aiming view: over the right shoulder (from the eyes in POV), along the player's heading tilted by the aim's
@@ -452,6 +498,11 @@ class CameraSystem {
       this.orbitBaseY + this.orbitLookFrom.y * (1 - b) + this._chaseLookY * b,
       p.z + this.orbitLookFrom.z * (1 - b) + cos * 5.2 * b
     );
+  }
+
+  // Inside a room ({ minX, maxX, minZ, maxZ, maxY }, interiors.js) or out of it (null)
+  setInterior(room) {
+    this.interior = room || null;
   }
 
   // Height of the ground (the hills over the flat city) at (x, z): the cameras keep above it

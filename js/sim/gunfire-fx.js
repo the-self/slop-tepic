@@ -122,7 +122,8 @@ class GunfireFX {
     const glowMat = new THREE.MeshBasicNodeMaterial({ toneMapped: true });
     this.glow = new ParticlePool(scene, new THREE.BoxGeometry(1, 1, 1), glowMat, GLOW_MAX, 'GunfireGlow');
     const puffMat = new THREE.MeshStandardNodeMaterial({ roughness: 1, metalness: 0 });
-    this.puff = new ParticlePool(scene, new THREE.IcosahedronGeometry(0.5, 0), puffMat, PUFF_MAX, 'GunfireSmoke');
+    // (rounder than a plain icosahedron: a fire's smoke column is made of puffs metres across)
+    this.puff = new ParticlePool(scene, new THREE.IcosahedronGeometry(0.5, 1), puffMat, PUFF_MAX, 'GunfireSmoke');
     this.puff.mesh.castShadow = false;
     this.puff.mesh.receiveShadow = true;
 
@@ -178,6 +179,17 @@ class GunfireFX {
         this.puff.spawn(x - Math.sin(yaw) * 0.6, y, z - Math.cos(yaw) * 0.6, -Math.sin(yaw) * 4 + rnd(1.5), rnd(1), -Math.cos(yaw) * 4 + rnd(1.5),
           1.2 + Math.random(), 0.3, 1.4, 0.75, 0.74, 0.72, -0.4, 1.8);
       }
+    }
+  }
+
+  // Someone hit by a vehicle at `speed` m/s (traffic.js knockListener, crime.js): blood thrown from where they were
+  // struck, more of it and further the harder the hit, along the way they were sent (nx, nz) and falling back
+  splatter(x, y, z, speed, nx = 0, nz = 0) {
+    const n = Math.min(36, 6 + Math.round(speed * 1.1));
+    for (let k = 0; k < n; k++) {
+      const throwSpeed = speed * (0.15 + Math.random() * 0.45);
+      this.puff.spawn(x, y + rnd(0.5), z, nx * throwSpeed + rnd(2.4), 0.6 + Math.random() * (1.5 + speed * 0.12), nz * throwSpeed + rnd(2.4),
+        0.5 + Math.random() * 0.5, 0.07 + Math.random() * 0.06, 0.03, 0.3, 0.015, 0.02, 9.8, 0.4);
     }
   }
 

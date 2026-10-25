@@ -1389,7 +1389,7 @@ const { ground = null, ...terrainGrid } = (() => {
   // floor it is the built-up cells' elevation only (a normalised blur), so a hill beside a street doesn't lift it, and
   // away from the city (and towards the grid's edge) it eases to the city's mean, the floor the hills stand on now. Its
   // cells halve the hills' 75 m ones, so the world laid on the ground is cut along one lattice for both
-  // (ground.js clipToLattice).
+  // (lattice.js clipToLattice).
   // Heights are over the datum, the lowest point of the town (built-up cells in BOX), so its ground is never under y = 0
   const GCELL = CELL / 2, GMARGIN = 1200, GEDGE = 600;
   // over the detailed city (BOX) and a margin for the roads leaving it, on whole cells of the hills' grid

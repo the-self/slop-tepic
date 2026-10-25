@@ -15,6 +15,7 @@ node --test tests/*.test.*           # client and tool tests (Node ≥ 22; no in
   - `?live-time=<ISO date>` and `?live-weather=<clear|cloudy|overcast|rain|storm|fog>` preview the Live time of day.
   - `?multiplayer=1` joins the room server (see `server/README.md`).
   - `?slopes=0` builds the flat city of before, everything at y = 0 (the default lays the town on its real slopes, `world/ground.js`).
+  - `?stream=0` lays all the ground layers at start-up, as before streaming (the default lays them tile by tile around the camera, `world/streaming.js`).
 
 ## Layout
 
@@ -23,7 +24,7 @@ node --test tests/*.test.*           # client and tool tests (Node ≥ 22; no in
 | Folder | What lives there |
 |---|---|
 | `render/` | Sky and sun light, IBL and fog (`lighting.js`), post-processing and grading, TSL materials and shared uniforms (`tsl-materials.js`), culling |
-| `world/` | Map data and everything built from it: `city-config.js` (street database and frame helpers over the generated geodata), blocks and buildings, landmarks, street furniture, trees, the road graph and paint, terrain, storefronts, `weather.js` (real sun and Open-Meteo conditions) |
+| `world/` | Map data and everything built from it: `city-config.js` (street database and frame helpers over the generated geodata), blocks and buildings, landmarks, street furniture, trees, the road graph and paint, terrain, storefronts, `weather.js` (real sun and Open-Meteo conditions); the GTA-style streaming of the ground layers: `tiles.js` & `lattice.js` (the tile grid and the drape's arithmetic, three-free), `streaming.js` (which tiles to lay, around the camera and ahead of it), `tile-worker.js` (lays them off the main thread), `far-ground.js` (the city painted on the floor beyond them) |
 | `sim/` | Traffic, pedestrians and their routes, knock-downs (`mayhem.js`), crime (`crime.js`: guns, the wanted level and the police, gangs, thieves; rules in `weapons.js` and `crime-rules.js`, effects in `gunfire-fx.js`) |
 | `actors/` | Vehicle and helicopter geometry and materials, vehicle lights |
 | `player/` | The player controllers (person, car, cyclist, moto, helicopter), the car's drivetrain & crash damage, and the camera rigs |

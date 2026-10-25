@@ -12,7 +12,8 @@ import { drapeGeometry } from './drape.js';
 
 const LIFT = 0.005; // over the asphalt (the paint is at 0.012)
 
-function buildPavements(scene) {
+// With `streamer` (streaming.js) the strips go to it as a layer, laid tile by tile around the camera
+function buildPavements(scene, streamer = null) {
   const position = [];
   const pave = [];
   const index = [];
@@ -40,11 +41,15 @@ function buildPavements(scene) {
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(position.map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
   geometry.setAttribute('pave', new THREE.Float32BufferAttribute(pave, 1));
   geometry.setIndex(index);
+  console.info(`[pavements] ${PAVEMENTS.length} streets of empedrado, adoquín, tierra & concreto`);
+  if (streamer) {
+    streamer.addLayer(geometry, createPavementMaterial(), { name: 'Pavements' });
+    return null;
+  }
   const mesh = new THREE.Mesh(drapeGeometry(geometry), createPavementMaterial());
   mesh.name = 'Pavements';
   mesh.receiveShadow = true;
   scene.add(mesh);
-  console.info(`[pavements] ${PAVEMENTS.length} streets of empedrado, adoquín, tierra & concreto`);
   return mesh;
 }
 

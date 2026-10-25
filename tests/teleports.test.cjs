@@ -52,6 +52,7 @@ test('preset and map teleports share arrival resets and leave no GPS waypoint', 
     touchControls: { reset: () => calls.push(['touch']) },
     gamepadControls: { reset: () => calls.push(['gamepad']) },
     cameraSystem: { resetForTeleport: () => calls.push(['camera']) },
+    interiors: null, // (on the street: no room to leave, interiors.js)
     selectCamera: (...args) => calls.push(['selectCamera', ...args]),
     getLocationLabel: (x, z) => `${x}, ${z}`,
     cityBlocks: { allBlocks: [] },

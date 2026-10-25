@@ -1,18 +1,12 @@
 import * as THREE from 'three/webgpu';
 
 // js/sim/mayhem.js
-// Arcade knock-downs for the player's car and bicycle: people (pedestrians, cyclists, motorcyclists) thrown and
-// tumbling to the ground, street furniture (lamp posts, hydrants) tipping over. Pure helpers (tested in
+// Knock-downs for the player's car and bicycle: who is hit (pedestrians, cyclists, motorcyclists; thrown as ragdolls,
+// sim/ragdolls.js), and street furniture (lamp posts, hydrants) tipping over. Pure helpers (tested in
 // tests/mayhem.test.cjs) plus the props' breaker, which hides a prop's static instances and animates a stand-in falling
 // in its place.
 
-const BONES = 15; // PersonRig bones (pedestrians.js BONE_COUNT): each 8 floats, quaternion, translation, scale
 const GRAVITY = 9.8;
-const HIP = 0.95; // a standing body's centre above its feet
-const LIE = 0.16; // a lying body's centre above the ground
-const SKID = 9; // m/s²: the ground's friction on a body tumbling along it (from 30 m/s it rolls ~3 s, some 50 m)
-const ROLL_R = 0.3; // m: a body tumbling along the ground turns head over heels once every 2π·0.3 ≈ 1.9 m
-const ROLLING = 1.5; // m/s over the ground above which it keeps tumbling; below, it settles on its back or front
 
 /**
  * Does a body of radius `r` at (x, z) touch the player's box (centre px, pz, facing `heading`, half width hw, half
@@ -41,117 +35,6 @@ function riderKnocked(mode, rvx, rvz, nx, nz, minSpeed) {
   const closing = rvx * nx + rvz * nz;
   const slide = Math.hypot(rvx - closing * nx, rvz - closing * nz);
   return closing > minSpeed || slide > minSpeed * 2.5;
-}
-
-/**
- * Starts a body tumbling: thrown from its feet at (x, ground, z) by an impact of velocity (vx, vz) (the player's) with
- * `push` outwards along (nx, nz). `rand` gives 0..1.
- */
-function startTumble(x, ground, z, vx, vz, nx, nz, rand = Math.random) {
-  const speed = Math.hypot(vx, vz);
-  // thrown along the hit, a little outwards, more up the faster it came
-  const tvx = vx * 0.85 + nx * (1.2 + speed * 0.12);
-  const tvz = vz * 0.85 + nz * (1.2 + speed * 0.12);
-  const th = Math.hypot(tvx, tvz) || 1;
-  return {
-    t: 0,
-    rest: 0,
-    landed: false,
-    x0: x, y0: ground + HIP, z0: z, // the pose's pivot as it stood
-    px: x, py: ground + HIP, pz: z, // the pivot now
-    vx: tvx, vy: 1.6 + Math.min(9, speed * 0.32), vz: tvz,
-    ax: tvz / th, az: -tvx / th, // tilt axis: up x throw direction, so the head goes the way it's thrown
-    angle: 0,
-    angVel: 3.5 + Math.min(14, speed * 0.45) * (0.8 + rand() * 0.4),
-    spin: 0,
-    spinVel: (rand() - 0.5) * Math.min(10, 2 + speed * 0.4)
-  };
-}
-
-/**
- * Advances a tumble by dt over ground height `ground`; returns how long it has lain still. `solidAt(x, z)` (optional)
- * tells where walls stand: the body bounces back off them instead of flying into a building.
- * Landing fast it tumbles on along the ground, head over heels at its speed, bouncing as it goes, until friction has
- * slowed it enough to settle on its back or front.
- */
-function stepTumble(f, dt, ground, solidAt = null) {
-  f.t += dt;
-  f.vy -= GRAVITY * dt;
-  slide(f, f.vx * dt, f.vz * dt, solidAt);
-  f.py += f.vy * dt;
-  f.angle += f.angVel * dt;
-  f.spin += f.spinVel * dt;
-  // the lowest the pivot can be at this tilt: on its feet (upright) down to lying flat
-  const floor = ground + LIE + (HIP - LIE) * Math.abs(Math.cos(f.angle));
-  const onGround = f.py <= floor;
-  if (onGround) {
-    f.py = floor;
-    f.vy = f.vy < -2 ? -f.vy * 0.28 : 0;
-    f.landed = true;
-  }
-  // sliding friction, in the hops of its tumble too: the speed falls by SKID m/s every second (a little more at speed)
-  if (f.landed && f.py <= floor + 0.25) {
-    const v = Math.hypot(f.vx, f.vz);
-    if (v > 0) {
-      const k = (Math.max(0, v - SKID * dt) * Math.exp(-0.6 * dt)) / v;
-      f.vx *= k;
-      f.vz *= k;
-    }
-    f.spinVel *= Math.exp(-2 * dt);
-  }
-  if (f.landed) {
-    const speed = Math.hypot(f.vx, f.vz);
-    if (speed > ROLLING) {
-      // on the ground it tumbles head over heels the way it's going (its tilt axis is up x the throw: forwards is
-      // (-az, ax)), turning as fast as it rolls; in the air between bounces it keeps turning
-      if (onGround) {
-        const way = f.vx * -f.az + f.vz * f.ax >= 0 ? 1 : -1;
-        f.angVel = way * Math.min(25, speed / ROLL_R);
-      }
-    } else {
-      // settle on the back or the front
-      f.angVel *= Math.exp(-3.5 * dt);
-      const target = Math.round((f.angle - Math.PI / 2) / Math.PI) * Math.PI + Math.PI / 2;
-      f.angle += (target - f.angle) * Math.min(1, 5 * dt);
-      if (speed < 0.4 && Math.abs(f.vy) < 0.1) f.rest += dt;
-    }
-  }
-  return f.rest;
-}
-
-/**
- * Writes into `dst` the pose `base` (solved standing or riding: per bone quaternion, translation, scale) turned as one
- * rigid body by the tumble `f`: tilted by f.angle about its axis after a turn of f.spin about the vertical, moved from
- * its pivot (x0, y0, z0) to (px, py, pz). World vertex = q·bind·s + t, so q' = R·q and t' = R·(t − p0) + p1.
- */
-function tumblePose(dst, base, f, bones = BONES) {
-  // R = tilt(axis, angle) · spin(up, spin)
-  const ha = f.angle * 0.5;
-  const sa = Math.sin(ha);
-  const tx = f.ax * sa, ty = 0, tz = f.az * sa, tw = Math.cos(ha);
-  const hs = f.spin * 0.5;
-  const sy = Math.sin(hs), sw = Math.cos(hs);
-  // (tx, ty, tz, tw) * (0, sy, 0, sw)
-  const rx = tx * sw - tz * sy;
-  const ry = tw * sy + ty * sw;
-  const rz = tz * sw + tx * sy;
-  const rw = tw * sw - ty * sy;
-  for (let b = 0; b < bones; b++) {
-    const o = b * 8;
-    const qx = base[o], qy = base[o + 1], qz = base[o + 2], qw = base[o + 3];
-    dst[o] = rw * qx + rx * qw + ry * qz - rz * qy;
-    dst[o + 1] = rw * qy - rx * qz + ry * qw + rz * qx;
-    dst[o + 2] = rw * qz + rx * qy - ry * qx + rz * qw;
-    dst[o + 3] = rw * qw - rx * qx - ry * qy - rz * qz;
-    // rotate v = t − p0 by (rx, ry, rz, rw): v + 2w(u × v) + 2u × (u × v)
-    const vx = base[o + 4] - f.x0, vy = base[o + 5] - f.y0, vz = base[o + 6] - f.z0;
-    const cx = ry * vz - rz * vy, cy = rz * vx - rx * vz, cz = rx * vy - ry * vx;
-    const dx = ry * cz - rz * cy, dy = rz * cx - rx * cz, dz = rx * cy - ry * cx;
-    dst[o + 4] = vx + 2 * (rw * cx + dx) + f.px;
-    dst[o + 5] = vy + 2 * (rw * cy + dy) + f.py;
-    dst[o + 6] = vz + 2 * (rw * cz + dz) + f.pz;
-    dst[o + 7] = base[o + 7];
-  }
 }
 
 // Moves o.px, o.pz by (dx, dz) unless that enters a wall, in which case its horizontal velocity bounces back softly
@@ -378,4 +261,4 @@ function hideInstance(mesh, index) {
   attr.needsUpdate = true;
 }
 
-export { BONES, boxHit, riderKnocked, startTumble, stepTumble, slide, tumblePose, startTopple, stepTopple, hideInstance, PropBreaker };
+export { boxHit, riderKnocked, slide, startTopple, stepTopple, hideInstance, PropBreaker };

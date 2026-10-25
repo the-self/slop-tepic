@@ -7,14 +7,16 @@
   <link rel="icon" href="data:," />
   <meta name="description" content="Slop Tepic: simulación 3D estilo GTA de Tepic, Nayarit, con Three.js WebGPURenderer y TSL. Calles, colonias y parques reales de OpenStreetMap, navegación en tercera persona (a pie, coche, bici y helicóptero) y 11 cámaras cinematográficas." />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
-  <!-- three.js dev branch (builds committed to mrdoob/three.js@dev, served by jsDelivr) -->
+  <!-- three.js dev branch (builds committed to mrdoob/three.js@dev, served by jsDelivr); Jolt Physics for the player's
+       car (player/car-physics.js, MIT) -->
   <script type="importmap">
     {
       "imports": {
         "three": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/build/three.webgpu.js",
         "three/webgpu": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/build/three.webgpu.js",
         "three/tsl": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/build/three.tsl.js",
-        "three/addons/": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/jsm/"
+        "three/addons/": "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/jsm/",
+        "jolt-physics": "https://cdn.jsdelivr.net/npm/jolt-physics@1.1.0/dist/jolt-physics.wasm.js"
       }
     }
   </script>
@@ -23,6 +25,17 @@
   <link rel="modulepreload" href="./js/world/city-config.js" />
   <link rel="modulepreload" href="./js/render/tsl-materials.js" />
   <link rel="modulepreload" href="./js/world/trees.js" />
+  <link rel="modulepreload" href="./js/world/hash.js" />
+  <link rel="modulepreload" href="./js/world/lot-greenery.js" />
+  <link rel="modulepreload" href="./js/world/medians.js" />
+  <link rel="modulepreload" href="./js/world/venues.js" />
+  <link rel="modulepreload" href="./js/world/street-food.js" />
+  <link rel="modulepreload" href="./js/world/flood-model.js" />
+  <link rel="modulepreload" href="./js/world/floods.js" />
+  <link rel="modulepreload" href="./js/world/nightlife.js" />
+  <link rel="modulepreload" href="./js/world/interiors.js" />
+  <link rel="modulepreload" href="./js/sim/fires.js" />
+  <link rel="modulepreload" href="./js/sim/bystanders.js" />
   <link rel="modulepreload" href="./js/models/bodies.js" />
   <link rel="modulepreload" href="./js/models/cars/nissan.js" />
   <link rel="modulepreload" href="./js/models/cars/chevrolet.js" />
@@ -48,6 +61,10 @@
   <link rel="modulepreload" href="./js/world/city-grid.js" />
   <link rel="modulepreload" href="./js/world/terrain.js" />
   <link rel="modulepreload" href="./js/world/ground.js" />
+  <link rel="modulepreload" href="./js/world/lattice.js" />
+  <link rel="modulepreload" href="./js/world/tiles.js" />
+  <link rel="modulepreload" href="./js/world/streaming.js" />
+  <link rel="modulepreload" href="./js/world/far-ground.js" />
   <link rel="modulepreload" href="./js/world/drape.js" />
   <link rel="modulepreload" href="./js/world/waterways.js" />
   <link rel="modulepreload" href="./js/world/river-channels.js" />
@@ -85,6 +102,9 @@
   <link rel="modulepreload" href="./js/ui/weapon-icons.js" />
   <link rel="modulepreload" href="./js/player/drivetrain.js" />
   <link rel="modulepreload" href="./js/player/vehicle-damage.js" />
+  <link rel="modulepreload" href="./js/player/car-physics.js" />
+  <link rel="modulepreload" href="./js/sim/ragdolls.js" />
+  <link rel="modulepreload" href="./js/sim/blood.js" />
   <link rel="modulepreload" href="./js/player/controllers.js" />
   <link rel="modulepreload" href="./js/player/stats.js" />
   <link rel="modulepreload" href="./js/player/aim.js" />
@@ -99,6 +119,7 @@
   <link rel="modulepreload" href="./js/audio/audio-events.js" />
   <link rel="modulepreload" href="./js/audio/audio-sources.js" />
   <link rel="modulepreload" href="./js/audio/audio-acoustics.js" />
+  <link rel="modulepreload" href="./js/audio/audio-ambience.js" />
   <link rel="modulepreload" href="./js/audio/audio-system.js" />
   <link rel="modulepreload" href="./js/main.js" />
   <script type="module" src="./js/main.js"></script>

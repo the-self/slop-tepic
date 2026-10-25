@@ -89,3 +89,83 @@ test('a large merged mesh is split into squares by where its triangles are, ever
   assert.equal(tris, 9);
   assert.equal(seen.size, 9);
 });
+
+test('the frozen static city is left out of the per-frame matrix updates, everything else (even added later) is not', () => {
+  const state = { culled: [], frozen: new Set() };
+  const ctx = { state, Set };
+  const { freeze, update } = vm.runInNewContext(
+    `${topLevel('freezeStaticMatrices')}\n${topLevel('updateDynamicMatrices')}\n({ freeze: freezeStaticMatrices, update: updateDynamicMatrices })`,
+    ctx
+  );
+  const updated = [];
+  const node = (name, userData = {}) => ({ name, userData, updateMatrixWorld() { updated.push(name); } });
+  const city = node('CityBlocks'), proxy = node('ShadowProxy', { shadowProxy: true }), player = node('Player');
+  let sceneUpdates = 0;
+  const scene = { children: [city, proxy, player], matrixWorldAutoUpdate: true, updateMatrixWorld() { sceneUpdates++; } };
+  freeze(scene, [city]);
+  assert.equal(sceneUpdates, 1, 'the static matrices are computed once');
+  assert.equal(scene.matrixWorldAutoUpdate, false, 'rendering no longer walks the scene');
+  scene.children.push(node('Rocket'));
+  update(scene);
+  assert.deepEqual(updated, ['Player', 'Rocket']);
+});
+
+test('the static city drops the CPU copies the GPU already holds, keeping what it may still need', () => {
+  const ctx = { state: { culled: [], frozen: new Set(), pendingRelease: null }, Set, Map, Object, RELEASE_MIN_VERTICES: 2048 };
+  const release = vm.runInNewContext(`(${topLevel('releaseStaticArrays')})`, ctx);
+  const uploaded = new Set();
+  const renderer = { backend: { has: (a) => uploaded.has(a), get: () => ({ buffer: {} }) } };
+  const attr = (n, itemSize, extra = {}) => Object.assign(new BufferAttribute(new Float32Array(n * itemSize), itemSize), extra);
+  const geometry = (n) => {
+    const g = new BufferGeometry();
+    g.userData = {};
+    g.boundingBox = g.boundingSphere = {};
+    g.setAttribute('position', attr(n, 3));
+    g.setAttribute('normal', attr(n, 3));
+    return g;
+  };
+  const big = geometry(3000);
+  big.index = new BufferAttribute(new Uint32Array(6000), 1);
+  // (no bounds yet: they must come from the arrays while there are arrays)
+  big.boundingBox = big.boundingSphere = null;
+  big.computeBoundingBox = () => { big.boundingBox = { from: big.attributes.position.array.length }; };
+  big.computeBoundingSphere = () => { big.boundingSphere = { from: big.attributes.position.array.length }; };
+  const small = geometry(24); // (a unit box something may still clone)
+  const pending = geometry(3000); // (not drawn yet: nothing on the GPU)
+  const kept = geometry(3000);
+  kept.userData.keepArrays = true;
+  // (a tree field's cells: geometries of their own over one tree's shared attributes)
+  const cell = new BufferGeometry();
+  cell.userData = {};
+  cell.boundingBox = cell.boundingSphere = {};
+  cell.setAttribute('position', big.attributes.position);
+  const props = geometry(3000);
+  props.setAttribute('instanceTint', attr(10, 3, { isInstancedBufferAttribute: true }));
+  for (const g of [big, small, kept, props]) for (const a of [...Object.values(g.attributes), g.index]) if (a) uploaded.add(a);
+  const root = new Object3D();
+  const meshes = [big, cell, small, pending, kept, props].map((g) => Object.assign(new Mesh(g, {}), { isMesh: true }));
+  root.traverse = (fn) => meshes.forEach(fn);
+  ctx.state.frozen.add(root);
+  const bytes = release(renderer);
+  assert.deepEqual([big.boundingBox.from, big.boundingSphere.from], [9000, 9000], 'the bounds came from the full arrays');
+  assert.equal(big.attributes.position.array.length, 0);
+  assert.equal(big.attributes.position.count, 3000, 'the count the draws use stays');
+  assert.ok(big.attributes.position.array instanceof Float32Array, 'and the array type the pipelines read');
+  assert.equal(big.index.array.length, 0);
+  assert.ok(big.index.array instanceof Uint32Array);
+  assert.equal(big.userData.arraysReleased, true);
+  assert.equal(cell.userData.arraysReleased, true, 'every geometry sharing a released attribute is marked');
+  assert.equal(small.attributes.position.array.length, 24 * 3);
+  assert.equal(pending.attributes.position.array.length, 3000 * 3);
+  assert.equal(pending.userData.arraysReleased, undefined);
+  assert.equal(kept.attributes.position.array.length, 3000 * 3);
+  assert.equal(props.attributes.position.array.length, 0);
+  assert.equal(props.attributes.instanceTint.array.length, 30, 'instance data stays: knocked-over props change it');
+  assert.equal(bytes, (3000 * 6 * 4 + 6000 * 4) + 3000 * 6 * 4);
+  // ...and once the pending one has been drawn, the next call frees it (and nothing twice)
+  for (const a of Object.values(pending.attributes)) uploaded.add(a);
+  assert.equal(release(renderer), 3000 * 6 * 4);
+  assert.equal(pending.attributes.position.array.length, 0);
+  assert.equal(release(renderer), 0);
+  assert.equal(ctx.state.pendingRelease.length, 0);
+});

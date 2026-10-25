@@ -4,7 +4,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GEO } from './city-geodata.js';
 import { cityUniforms } from '../render/tsl-materials.js';
 import { liftAt, landHeight } from './ground.js';
-import { MODEL_RESERVES } from './landmark-models.js';
+import { MODEL_RESERVES, geoToWorld } from './landmark-models.js';
 
 // js/world/tepic-landmarks.js
 // Tepic's landmarks on their real footprints (city-geodata.js `landmarks`, from OpenStreetMap): the Catedral on the
@@ -205,6 +205,23 @@ function buildCatedral(group, colliders) {
     box(0.22, 2.4, 0.22, tx, y + top * 0.38 + 5.2, tz, dark);
     box(1.2, 0.22, 0.22, tx, y + top * 0.38 + 5.6, tz, dark);
   }
+  // Merged into one mesh per material (and shadow casting), in the church's frame: drawn part by part, its ~140 pieces
+  // cost ~270 draws a frame in the shadow cascades alone from the plaza
+  const parts = new Map();
+  for (const m of root.children) {
+    m.updateMatrix();
+    const geo = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry).applyMatrix4(m.matrix);
+    const key = `${m.material.uuid}:${m.castShadow}`;
+    if (!parts.has(key)) parts.set(key, { mat: m.material, cast: m.castShadow, geos: [] });
+    parts.get(key).geos.push(geo);
+  }
+  root.clear();
+  for (const { mat, cast, geos } of parts.values()) {
+    const mesh = new THREE.Mesh(geos.length > 1 ? mergeGeometries(geos) : geos[0], mat);
+    mesh.castShadow = cast;
+    mesh.receiveShadow = true;
+    root.add(mesh);
+  }
   group.add(root);
   // a collider over the church
   const hx = W / 2, hz = L / 2;
@@ -388,6 +405,15 @@ function buildMonuments(group, colliders) {
   {
     const f = fountain(5);
     place('Fuente Los 3 Delfines', [[f.stone, stone], [f.water, water], [f.jet, jetMat]], { half: 0 });
+  }
+  {
+    // La Hermana Agua: a woman in bronze high over a round fountain, in the glorieta where the Paseo de la Loma meets
+    // the Calzada de la Cruz & Av. México by the Parque La Loma (not mapped in OpenStreetMap: its roundabout is, way
+    // 1313667127, whose ring is centred here; the island ~13 m across)
+    const [x, z] = geoToWorld(21.502578, -104.896108);
+    const f = fountain(7.5);
+    place('Hermana Agua', [[f.stone, stone], [f.water, water], [pedestal(1.8, 4.6), stone], [figure(3.6, false).translate(0, 4.6, 0), bronze]],
+      { half: 2, height: 9, at: { x, z } });
   }
   {
     const f = fountain(7);
