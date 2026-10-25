@@ -635,8 +635,8 @@ function createMexicanHouseMaterial({ floorHeight = 3.0, chains = [] } = {}) {
     const dayOpen = step(float(7.5).add(shopSeed.mul(2.0)), hour).mul(step(hour, float(19.5).add(shopSeed.mul(2.5))));
     const nightOpen = max(step(float(17.5).add(shopSeed), hour), step(hour, 1.5));
     const shopOpen = mix(dayOpen, max(dayOpen, nightOpen), nightFlag).mul(step(0.22, shopSeed)); // (some stay shut)
-    const opening = isShop.mul(ground).mul(step(0.3, sx)).mul(step(sx, wallW.sub(0.3))).mul(step(fv, 2.3));
-    const shopView = opening.mul(shopOpen);
+    const shopFront = isShop.mul(ground).mul(step(0.3, sx)).mul(step(sx, wallW.sub(0.3))).mul(step(fv, 2.3));
+    const shopView = shopFront.mul(shopOpen);
     const roomSeed = hash2D(vec2(cellK.add(seed.mul(7.0)), fl.add(wallSeed.mul(5.0))));
     const roomSeed2 = hash2D(vec2(roomSeed.mul(13.1), seed));
     // the eye's ray in the wall's frame: across (to the right seen facing the wall), up, and into it
