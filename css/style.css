@@ -329,6 +329,9 @@ body.hud-minimized .toolbar > :not(#btn-toggle-hud) {
 .hud-crime {
   top: calc(var(--edge) + var(--bar-h) + 12px);
   right: var(--edge);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end; /* (the quick switch's strip, wider than the card, grows leftwards under it) */
 }
 
 .crime-card {
@@ -340,9 +343,11 @@ body.hud-minimized .toolbar > :not(#btn-toggle-hud) {
 }
 
 .crime-weapon {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  grid-template-areas: 'icon name' 'icon ammo';
+  align-items: center;
+  column-gap: 8px;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -350,7 +355,53 @@ body.hud-minimized .toolbar > :not(#btn-toggle-hud) {
   color: var(--text-2);
 }
 
+/* the weapon in the hand, in 3D (ui/weapon-icons.js), drawn again when it changes */
+.crime-weapon-icon {
+  grid-area: icon;
+  width: 88px;
+  aspect-ratio: 2;
+  margin: -4px 0 -4px -4px;
+}
+
+.crime-weapon-icon > * {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.crime-weapon-icon > [hidden] {
+  display: none;
+}
+
+.crime-weapon-icon img {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+}
+
+.crime-weapon-icon use {
+  fill: currentColor;
+}
+
+.crime-weapon.is-switching .crime-weapon-icon {
+  animation: weapon-draw 0.32s var(--ease-out) both;
+}
+
+@keyframes weapon-draw {
+  from { opacity: 0; transform: translate(-6px, 10px) rotate(18deg); }
+  to { opacity: 1; transform: none; }
+}
+
+#hud-weapon-name {
+  grid-area: name;
+  justify-self: end;
+  align-self: end;
+}
+
 .crime-ammo {
+  grid-area: ammo;
+  justify-self: end;
+  align-self: start;
+  min-height: 1em;
   font-size: 15px;
   font-variant-numeric: tabular-nums;
   color: var(--text);
@@ -567,15 +618,18 @@ body.is-aiming canvas {
 }
 
 /* ------------------------------------------------------------------------------------------------------------------
-   The weapon wheel (ui/weapon-wheel.js): the arsenal round the middle of the screen while Tab is held
+   The weapon wheel (ui/weapon-wheel.js): the arsenal in wedges round the middle of the screen while Tab (or LB) is
+   held, each with its weapon in 3D (ui/weapon-icons.js); the one pointed at turns in the hub, its bars below
    ------------------------------------------------------------------------------------------------------------------ */
 .weapon-wheel {
   position: fixed;
   z-index: 13;
   inset: 0;
   display: grid;
-  place-items: center;
-  background: radial-gradient(circle at center, rgba(0, 0, 0, 0.42) 0, rgba(0, 0, 0, 0.18) 340px, transparent 520px);
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  background: radial-gradient(circle at center, rgba(0, 0, 0, 0.55) 0, rgba(0, 0, 0, 0.3) 300px, rgba(0, 0, 0, 0.08) 560px);
 }
 
 .weapon-wheel[hidden] {
@@ -583,132 +637,307 @@ body.is-aiming canvas {
 }
 
 .weapon-wheel.is-open .wheel-ring {
-  animation: wheel-in 0.16s var(--ease-out) both;
+  animation: wheel-in 0.18s var(--ease-out) both;
+}
+
+.weapon-wheel.is-open .wheel-stats {
+  animation: wheel-in 0.24s var(--ease-out) both;
 }
 
 @keyframes wheel-in {
-  from { opacity: 0; transform: scale(0.88); }
+  from { opacity: 0; transform: scale(0.9); }
   to { opacity: 1; transform: none; }
 }
 
 .wheel-ring {
-  --r: 138px; /* from the centre to each slot's */
   position: relative;
-  width: calc(var(--r) * 2 + 120px);
-  height: calc(var(--r) * 2 + 96px);
+  width: min(480px, 92vw, 72vh);
+  aspect-ratio: 1;
+  user-select: none;
 }
 
+.wheel-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.45));
+}
+
+.wheel-wedge {
+  fill: rgba(14, 15, 18, 0.8);
+  stroke: rgba(255, 255, 255, 0.07);
+  stroke-width: 1;
+  cursor: pointer;
+  transition: fill 0.12s;
+}
+
+.wheel-wedge.is-current {
+  fill: rgba(30, 32, 38, 0.86);
+}
+
+.wheel-wedge.is-pointed {
+  fill: rgba(64, 54, 18, 0.92);
+}
+
+.wheel-wedge.is-empty {
+  fill: rgba(10, 10, 12, 0.55);
+  cursor: default;
+}
+
+.wheel-rim {
+  fill: rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+  transition: fill 0.12s;
+}
+
+.wheel-rim.is-pointed {
+  fill: var(--taxi);
+}
+
+.wheel-hub {
+  fill: rgba(10, 11, 14, 0.82);
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1;
+}
+
+/* a wedge's picture, name, rounds and key (placed over its middle by weapon-wheel.js) */
 .wheel-slot {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 112px;
-  height: 78px;
-  margin: -39px 0 0 -56px;
-  transform: rotate(var(--a)) translateY(calc(-1 * var(--r))) rotate(calc(-1 * var(--a)));
+  width: 29%;
+  transform: translate(-50%, -50%);
   display: grid;
-  grid-template-rows: 1fr auto;
   justify-items: center;
-  align-items: center;
-  padding: 8px 8px 7px;
-  border-radius: 14px;
-  border: 1px solid var(--glass-border);
-  background: var(--glass-strong);
+  gap: 1px;
   color: var(--text-2);
-  font: inherit;
-  cursor: pointer;
-  transition: border-color 0.12s, color 0.12s, background 0.12s, scale 0.12s;
+  pointer-events: none;
+  transition: scale 0.12s var(--ease-out), opacity 0.12s;
+}
+
+.wheel-slot.is-pointed {
+  color: var(--text);
+  scale: 1.1;
+}
+
+.wheel-slot.is-empty {
+  opacity: 0.3;
+}
+
+.wheel-icon,
+.strip-icon {
+  display: block;
+  aspect-ratio: 2;
+  color: var(--text-2);
 }
 
 .wheel-icon {
-  width: 64px;
-  height: 32px;
+  width: 100%;
+}
+
+.wheel-icon img,
+.strip-icon img,
+.wheel-icon svg,
+.strip-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.wheel-icon img,
+.strip-icon img {
+  /* (a pale halo: blued steel and black polymer on the dark wedges) */
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.55)) drop-shadow(0 0 7px rgba(255, 255, 255, 0.18));
+}
+
+.wheel-slot.is-empty .wheel-icon img {
+  filter: grayscale(1) brightness(0.7);
+}
+
+.wheel-glyph use {
+  fill: currentColor;
 }
 
 .wheel-label {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 .wheel-ammo {
-  position: absolute;
-  right: 9px;
-  top: 6px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
   color: var(--text);
+  min-height: 1em;
 }
 
 .wheel-key {
   position: absolute;
-  left: 9px;
-  top: 6px;
+  left: 2px;
+  top: -2px;
   font-size: 10px;
   font-weight: 700;
   color: var(--text-3);
 }
 
-.wheel-slot.is-current {
-  border-color: rgba(255, 255, 255, 0.28);
-}
-
-.wheel-slot.is-pointed {
-  color: var(--text);
-  border-color: var(--taxi);
-  background: rgba(40, 34, 14, 0.92);
-  scale: 1.08;
-}
-
-.wheel-slot.is-empty {
-  opacity: 0.38;
-  cursor: default;
+.wheel-slot.is-current .wheel-key::after {
+  content: ' ●';
+  color: var(--taxi);
 }
 
 .wheel-centre {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 132px;
-  margin-left: -66px;
-  transform: translateY(-50%);
+  width: 40%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  justify-items: center;
   text-align: center;
   pointer-events: none;
 }
 
+.wheel-spin {
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.55)) drop-shadow(0 0 8px rgba(255, 255, 255, 0.16));
+  width: 100%;
+  aspect-ratio: 2;
+  margin-bottom: 2px;
+}
+
 .wheel-centre-name {
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 800;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 }
 
 .wheel-centre-ammo {
-  margin-top: 2px;
-  font-size: 12px;
+  margin-top: 1px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--taxi);
+}
+
+.wheel-stats {
+  display: grid;
+  gap: 5px;
+  width: min(300px, 80vw);
+  padding: 10px 14px;
+  border-radius: var(--r-panel);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-strong);
+}
+
+.wheel-stat {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  align-items: center;
+  gap: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.wheel-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.wheel-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--text);
+  transform-origin: left center;
+  transition: transform 0.18s var(--ease-out);
+}
+
+@media (max-height: 520px) {
+  .wheel-stats {
+    display: none;
+  }
+}
+
+/* The quick switch (scroll, R, the d-pad): the arsenal for a moment under the status card, the weapon in hand lit */
+.hud > .weapon-strip {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+  pointer-events: none;
+}
+
+.hud > .weapon-strip[hidden] {
+  display: none;
+}
+
+.weapon-strip.is-in {
+  animation: strip-life 1.6s linear both;
+}
+
+@keyframes strip-life {
+  0% { opacity: 0; transform: translateY(-6px); }
+  8% { opacity: 1; transform: none; }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.strip-tile {
+  display: grid;
+  justify-items: center;
+  width: 74px;
+  padding: 5px 6px 4px;
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-strong);
+  color: var(--text-3);
+  opacity: 0.7;
+}
+
+.strip-tile[hidden] {
+  display: none;
+}
+
+.strip-tile.is-current {
+  opacity: 1;
+  color: var(--text);
+  border-color: var(--taxi);
+}
+
+.strip-icon {
+  width: 62px;
+}
+
+.strip-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.strip-ammo {
+  font-size: 10px;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  min-height: 1em;
 }
 
 @media (max-width: 620px) {
-  .wheel-ring {
-    --r: 112px;
+  .strip-tile {
+    width: 58px;
   }
 
-  .wheel-slot {
-    width: 92px;
-    height: 66px;
-    margin: -33px 0 0 -46px;
-  }
-
-  .wheel-icon {
-    width: 52px;
-    height: 26px;
+  .strip-icon {
+    width: 48px;
   }
 }
 

@@ -49,7 +49,7 @@ class Mesh extends Object3D {
   constructor(geometry, material) { super(); Object.assign(this, { geometry, material }); }
 }
 const THREE = { BufferAttribute, BufferGeometry, Mesh };
-const context = { THREE, Math, Map, Object, _a: new Vector3(), _b: new Vector3(), _c: new Vector3() };
+const context = { THREE, Math, Map, Object, Float64Array, _a: new Vector3(), _b: new Vector3(), _c: new Vector3() };
 const splitMesh = vm.runInNewContext(`${topLevel('copyObjectState')}\n(${topLevel('splitMesh')})`, context);
 
 test('a large merged mesh is split into squares by where its triangles are, every triangle kept once', () => {
@@ -65,7 +65,7 @@ test('a large merged mesh is split into squares by where its triangles are, ever
   geo.setAttribute('uv', new BufferAttribute(new Float32Array(uv), 2));
   const material = {};
   const mesh = new Mesh(geo, material);
-  mesh.matrixWorld = { tx: 200, tz: 0 };
+  mesh.matrixWorld = { elements: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 200, 0, 0, 1] };
   mesh.name = 'Curbs';
   mesh.receiveShadow = true;
   parent.add(mesh);
@@ -90,6 +90,26 @@ test('a large merged mesh is split into squares by where its triangles are, ever
   assert.equal(seen.size, 9);
 });
 
+test('an indexed mesh is split by its triangles\' corners, each piece non-indexed', () => {
+  const parent = new Object3D();
+  const geo = new BufferGeometry();
+  // two quads sharing their corners through the index, one each side of x = 1000
+  geo.setAttribute('position', new BufferAttribute(new Float32Array([
+    100, 0, 100, 200, 0, 100, 200, 0, 200, 100, 0, 200,
+    1100, 0, 100, 1200, 0, 100, 1200, 0, 200, 1100, 0, 200
+  ]), 3));
+  geo.index = new BufferAttribute(new Uint16Array([0, 2, 1, 0, 3, 2, 4, 6, 5, 4, 7, 6]), 1);
+  const mesh = new Mesh(geo, {});
+  mesh.matrixWorld = { elements: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] };
+  parent.add(mesh);
+  splitMesh(mesh, 1000);
+  assert.equal(parent.children.length, 2);
+  const xs = parent.children.map((p) => [...p.geometry.attributes.position.array].filter((_, i) => i % 3 === 0));
+  assert.deepEqual(xs.map((x) => x.length), [6, 6]);
+  assert.ok(xs[0].every((x) => x < 1000) && xs[1].every((x) => x > 1000));
+  assert.deepEqual(xs[0].slice(0, 3), [100, 200, 200], 'the corners the index names, in order');
+});
+
 test('the frozen static city is left out of the per-frame matrix updates, everything else (even added later) is not', () => {
   const state = { culled: [], frozen: new Set() };
   const ctx = { state, Set };
@@ -108,4 +128,83 @@ test('the frozen static city is left out of the per-frame matrix updates, everyt
   scene.children.push(node('Rocket'));
   update(scene);
   assert.deepEqual(updated, ['Player', 'Rocket']);
+});
+
+test('the static city drops the CPU copies the GPU already holds, keeping what it may still need', () => {
+  const ctx = { state: { culled: [], frozen: new Set(), pendingRelease: null }, Set, Map, Object, RELEASE_MIN_VERTICES: 2048 };
+  const release = vm.runInNewContext(`(${topLevel('releaseStaticArrays')})`, ctx);
+  const uploaded = new Set();
+  const renderer = { backend: { has: (a) => uploaded.has(a), get: () => ({ buffer: {} }) } };
+  const attr = (n, itemSize, extra = {}) => Object.assign(new BufferAttribute(new Float32Array(n * itemSize), itemSize), extra);
+  const geometry = (n) => {
+    const g = new BufferGeometry();
+    g.userData = {};
+    g.boundingBox = g.boundingSphere = {};
+    g.setAttribute('position', attr(n, 3));
+    g.setAttribute('normal', attr(n, 3));
+    return g;
+  };
+  const big = geometry(3000);
+  big.index = new BufferAttribute(new Uint32Array(6000), 1);
+  // (no bounds yet: they must come from the arrays while there are arrays)
+  big.boundingBox = big.boundingSphere = null;
+  big.computeBoundingBox = () => { big.boundingBox = { from: big.attributes.position.array.length }; };
+  big.computeBoundingSphere = () => { big.boundingSphere = { from: big.attributes.position.array.length }; };
+  const small = geometry(24); // (a unit box something may still clone)
+  const pending = geometry(3000); // (not drawn yet: nothing on the GPU)
+  const kept = geometry(3000);
+  kept.userData.keepArrays = true;
+  // (a tree field's cells: geometries of their own over one tree's shared attributes)
+  const cell = new BufferGeometry();
+  cell.userData = {};
+  cell.boundingBox = cell.boundingSphere = {};
+  cell.setAttribute('position', big.attributes.position);
+  const props = geometry(3000);
+  props.setAttribute('instanceTint', attr(10, 3, { isInstancedBufferAttribute: true }));
+  for (const g of [big, small, kept, props]) for (const a of [...Object.values(g.attributes), g.index]) if (a) uploaded.add(a);
+  const root = new Object3D();
+  const meshes = [big, cell, small, pending, kept, props].map((g) => Object.assign(new Mesh(g, {}), { isMesh: true }));
+  root.traverse = (fn) => meshes.forEach(fn);
+  ctx.state.frozen.add(root);
+  const bytes = release(renderer);
+  assert.deepEqual([big.boundingBox.from, big.boundingSphere.from], [9000, 9000], 'the bounds came from the full arrays');
+  assert.equal(big.attributes.position.array.length, 0);
+  assert.equal(big.attributes.position.count, 3000, 'the count the draws use stays');
+  assert.ok(big.attributes.position.array instanceof Float32Array, 'and the array type the pipelines read');
+  assert.equal(big.index.array.length, 0);
+  assert.ok(big.index.array instanceof Uint32Array);
+  assert.equal(big.userData.arraysReleased, true);
+  assert.equal(cell.userData.arraysReleased, true, 'every geometry sharing a released attribute is marked');
+  assert.equal(small.attributes.position.array.length, 24 * 3);
+  assert.equal(pending.attributes.position.array.length, 3000 * 3);
+  assert.equal(pending.userData.arraysReleased, undefined);
+  assert.equal(kept.attributes.position.array.length, 3000 * 3);
+  assert.equal(props.attributes.position.array.length, 0);
+  assert.equal(props.attributes.instanceTint.array.length, 30, 'instance data stays: knocked-over props change it');
+  assert.equal(bytes, (3000 * 6 * 4 + 6000 * 4) + 3000 * 6 * 4);
+  // ...and once the pending one has been drawn, the next call frees it (and nothing twice)
+  for (const a of Object.values(pending.attributes)) uploaded.add(a);
+  assert.equal(release(renderer), 3000 * 6 * 4);
+  assert.equal(pending.attributes.position.array.length, 0);
+  assert.equal(release(renderer), 0);
+  assert.equal(ctx.state.pendingRelease.length, 0);
+});
+
+test('the shadow stand-ins are shown to the cascades only, and visible again between renders', () => {
+  const showOnlyTo = vm.runInNewContext(`(${topLevel('showOnlyTo')})`, {});
+  const calls = [];
+  const scene = { onBeforeRender: () => calls.push('before'), onAfterRender: () => calls.push('after') };
+  const group = { visible: true };
+  const proxyLayers = { layer: 3 };
+  showOnlyTo(scene, group, proxyLayers);
+  // (a camera sees the stand-ins' layers if it has layer 3 enabled: the cascades do, the view doesn't)
+  const camera = (enabled) => ({ layers: { test: (l) => l === proxyLayers && enabled.includes(l.layer) } });
+  const view = camera([0]), cascade = camera([0, 3]);
+  scene.onBeforeRender({}, scene, view);
+  assert.equal(group.visible, false, 'hidden from the view');
+  scene.onAfterRender({}, scene, view);
+  assert.equal(group.visible, true, 'visible again after it');
+  scene.onBeforeRender({}, scene, cascade);
+  assert.equal(group.visible, true, 'shown to a cascade');
+  assert.deepEqual(calls, ['before', 'after', 'before'], 'the hooks set before are still called');
 });

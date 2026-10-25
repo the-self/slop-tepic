@@ -1,5 +1,7 @@
 import * as THREE from 'three/webgpu';
-import { SLOPES, LATTICE, clipToLattice, townHeight } from './ground.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { SLOPES, LATTICE, townHeight } from './ground.js';
+import { visibleTriangles, layOnFloor, clipToLattice } from './lattice.js';
 
 // js/world/drape.js
 // Lays the city's ground layers, built flat at y = 0 (the road deck, sidewalks & curbs, meadows, park walks, yards,
@@ -7,26 +9,10 @@ import { SLOPES, LATTICE, clipToLattice, townHeight } from './ground.js';
 // raised by the town's floor under it, so a layer follows the ground exactly and the layers stacked on it keep their
 // few centimetres apart. In the flat city (?slopes=0) everything is left as built.
 
+const FLAT_CELL = 37.5; // m: the cells the flat city's deck is cut in before its holes (the slopes' lattice cell)
+
 const _inverse = new THREE.Matrix4();
 const _identity = new THREE.Matrix4();
-
-// The triangles of a geometry facing up or sideways (an index list): the undersides of the slabs lying on the ground
-// are never seen, and cut along the lattice they would cost as much as their tops
-function visibleTriangles(geo) {
-  const pos = geo.attributes.position.array;
-  const index = geo.index ? geo.index.array : null;
-  const n = (index ? index.length : pos.length / 3) / 3;
-  const keep = [];
-  for (let t = 0; t < n; t++) {
-    const a = index ? index[t * 3] : t * 3, b = index ? index[t * 3 + 1] : t * 3 + 1, c = index ? index[t * 3 + 2] : t * 3 + 2;
-    const ux = pos[b * 3] - pos[a * 3], uy = pos[b * 3 + 1] - pos[a * 3 + 1], uz = pos[b * 3 + 2] - pos[a * 3 + 2];
-    const vx = pos[c * 3] - pos[a * 3], vy = pos[c * 3 + 1] - pos[a * 3 + 1], vz = pos[c * 3 + 2] - pos[a * 3 + 2];
-    const ny = uz * vx - ux * vz, len = Math.hypot(uy * vz - uz * vy, ny, ux * vy - uy * vx);
-    if (len > 0 && ny / len < -0.9) continue; // facing down
-    keep.push(a, b, c);
-  }
-  return keep;
-}
 
 /**
  * A geometry in world space laid on the town's floor (a new, non-indexed geometry; the same one with ?slopes=0).
@@ -37,14 +23,18 @@ function drapeGeometry(geo, { undersides = true } = {}) {
   const names = Object.keys(geo.attributes).sort((a, b) => (a === 'position' ? -1 : b === 'position' ? 1 : 0));
   const attrs = names.map((name) => geo.attributes[name]);
   const arrays = attrs.map((a) => (a.isInterleavedBufferAttribute ? Float32Array.from({ length: a.count * a.itemSize }, (_, i) => a.getComponent(Math.floor(i / a.itemSize), i % a.itemSize)) : a.array));
-  const index = undersides ? (geo.index ? geo.index.array : null) : visibleTriangles(geo);
-  const out = clipToLattice(arrays, attrs.map((a) => a.itemSize), index, LATTICE);
-  const pos = out[0];
-  for (let i = 0; i < pos.length; i += 3) pos[i + 1] += townHeight(pos[i], pos[i + 2]);
-  // the faces that looked up now look square off the slope under them (each piece lies in one ground triangle's
-  // plane); walls keep facing sideways
-  const n = names.indexOf('normal');
-  if (n >= 0 && attrs[n].itemSize === 3) tiltUpNormals(pos, out[n]);
+  let index = geo.index ? geo.index.array : null;
+  if (!undersides) {
+    const keep = visibleTriangles(arrays[0], index);
+    const corners = new Uint32Array(keep.length * 3);
+    keep.forEach((t, k) => {
+      for (let c = 0; c < 3; c++) corners[k * 3 + c] = index ? index[t * 3 + c] : t * 3 + c;
+    });
+    index = corners;
+  }
+  // (the faces that looked up then look square off the slope under them, each piece lying in one ground triangle's
+  // plane; walls keep facing sideways)
+  const out = layOnFloor(arrays, attrs.map((a) => a.itemSize), LATTICE, townHeight, names.indexOf('normal'), index);
   const draped = new THREE.BufferGeometry();
   names.forEach((name, k) => draped.setAttribute(name, new THREE.BufferAttribute(out[k], attrs[k].itemSize, attrs[k].normalized)));
   draped.computeBoundingBox();
@@ -52,23 +42,30 @@ function drapeGeometry(geo, { undersides = true } = {}) {
   return draped;
 }
 
-// The normals of a non-indexed geometry's up-facing triangles turned to their (draped) face normals
-function tiltUpNormals(pos, normal) {
-  for (let o = 0; o < pos.length; o += 9) {
-    if (normal[o + 1] < 0.9 || normal[o + 4] < 0.9 || normal[o + 7] < 0.9) continue;
-    const ux = pos[o + 3] - pos[o], uy = pos[o + 4] - pos[o + 1], uz = pos[o + 5] - pos[o + 2];
-    const vx = pos[o + 6] - pos[o], vy = pos[o + 7] - pos[o + 1], vz = pos[o + 8] - pos[o + 2];
-    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    const len = Math.hypot(nx, ny, nz);
-    if (!(len > 0)) continue;
-    const s = (ny < 0 ? -1 : 1) / len; // (up, whichever way the piece is wound)
-    nx *= s; ny *= s; nz *= s;
-    for (let k = 0; k < 9; k += 3) {
-      normal[o + k] = nx;
-      normal[o + k + 1] = ny;
-      normal[o + k + 2] = nz;
-    }
+// A mesh (its world matrix up to date) laid on the town's floor in place, without its undersides
+function drapeMesh(obj) {
+  // (in world space: the city's ground layers are, most often, already)
+  const placed = !obj.matrixWorld.equals(_identity);
+  const world = placed ? obj.geometry.clone().applyMatrix4(obj.matrixWorld) : obj.geometry;
+  const draped = drapeGeometry(world, { undersides: false });
+  if (placed) {
+    draped.applyMatrix4(_inverse.copy(obj.matrixWorld).invert());
+    world.dispose();
   }
+  obj.geometry.dispose();
+  obj.geometry = draped;
+}
+
+/** A geometry (world space) cut in FLAT_CELL squares from the origin: a new, non-indexed geometry */
+function cutOnCells(geo) {
+  const names = Object.keys(geo.attributes).sort((a, b) => (a === 'position' ? -1 : b === 'position' ? 1 : 0));
+  const attrs = names.map((name) => geo.attributes[name]);
+  const out = clipToLattice(attrs.map((a) => a.array), attrs.map((a) => a.itemSize), geo.index ? geo.index.array : null,
+    { x0: 0, z0: 0, cell: FLAT_CELL });
+  const cut = new THREE.BufferGeometry();
+  names.forEach((name, k) => cut.setAttribute(name, new THREE.BufferAttribute(out[k], attrs[k].itemSize, attrs[k].normalized)));
+  geo.dispose();
+  return cut;
 }
 
 /** Every plain (not instanced) mesh under `root` but those in `skip` laid on the town's floor, without its undersides */
@@ -76,18 +73,47 @@ function drapeMeshes(root, skip = null) {
   if (!SLOPES || !LATTICE) return;
   root.updateMatrixWorld(true);
   root.traverse((obj) => {
-    if (!obj.isMesh || obj.isInstancedMesh || (skip && skip.has(obj))) return;
-    // (in world space: the city's ground layers are, most often, already)
-    const placed = !obj.matrixWorld.equals(_identity);
-    const world = placed ? obj.geometry.clone().applyMatrix4(obj.matrixWorld) : obj.geometry;
-    const draped = drapeGeometry(world, { undersides: false });
-    if (placed) {
-      draped.applyMatrix4(_inverse.copy(obj.matrixWorld).invert());
-      world.dispose();
-    }
-    obj.geometry.dispose();
-    obj.geometry = draped;
+    if (obj.isMesh && !obj.isInstancedMesh && !(skip && skip.has(obj))) drapeMesh(obj);
   });
 }
 
-export { drapeGeometry, drapeMeshes };
+/**
+ * Every plain (not instanced) mesh under `root` but those in `skip` handed to the tile streamer (streaming.js) instead
+ * of laid whole: taken out of the scene, put in world space and merged by material (one layer each, without their
+ * undersides), so they are laid on the floor tile by tile around the camera. `covers`: the materials of the layers that
+ * cover all the ground under them (the road deck); `cutHoles`: those opened over the river channels once laid.
+ */
+function streamMeshes(root, streamer, { skip = null, covers = new Set(), cutHoles = new Set() } = {}) {
+  root.updateMatrixWorld(true);
+  const groups = new Map(); // material + attribute names -> { material, geos, castShadow, receiveShadow, renderOrder }
+  const meshes = [];
+  const several = []; // (meshes of several materials: laid whole, as drapeMeshes would)
+  root.traverse((obj) => {
+    if (!obj.isMesh || obj.isInstancedMesh || (skip && skip.has(obj))) return;
+    (Array.isArray(obj.material) ? several : meshes).push(obj);
+  });
+  if (SLOPES && LATTICE) several.forEach(drapeMesh);
+  for (const obj of meshes) {
+    let geo = obj.geometry.index ? obj.geometry.toNonIndexed() : obj.geometry.clone();
+    if (!obj.matrixWorld.equals(_identity)) geo.applyMatrix4(obj.matrixWorld);
+    const key = obj.material.uuid + ':' + Object.keys(geo.attributes).sort().join(',');
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = { material: obj.material, geos: [], castShadow: false, receiveShadow: false, renderOrder: obj.renderOrder, name: obj.name }));
+    g.geos.push(geo);
+    g.castShadow ||= obj.castShadow;
+    g.receiveShadow ||= obj.receiveShadow;
+    obj.parent.remove(obj);
+    obj.geometry.dispose();
+  }
+  for (const g of groups.values()) {
+    const merged = g.geos.length > 1 ? mergeGeometries(g.geos, false) : g.geos[0];
+    if (g.geos.length > 1) for (const geo of g.geos) geo.dispose();
+    if (!merged) continue;
+    streamer.addLayer(merged, g.material, {
+      name: g.name || root.name, castShadow: g.castShadow, receiveShadow: g.receiveShadow, renderOrder: g.renderOrder,
+      undersides: false, covers: covers.has(g.material), cutHoles: cutHoles.has(g.material)
+    });
+  }
+}
+
+export { drapeGeometry, drapeMeshes, streamMeshes, cutOnCells, FLAT_CELL };

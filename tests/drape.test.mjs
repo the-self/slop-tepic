@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
-import { clipToLattice } from '../js/world/ground.js';
+import { visibleTriangles, layOnFloor } from '../js/world/lattice.js';
 
 const require = createRequire(import.meta.url);
 const { loadModule } = require('./helpers/module.cjs');
@@ -24,14 +24,19 @@ const THREE = { BufferAttribute, BufferGeometry, Matrix4: class {} };
 
 // The town floor rising 0.1 m per metre east, on a 10 m lattice
 const floor = (x) => 100 + 0.1 * x;
-function drape(slopes = true) {
+// (merged geometries: their parts, to look at)
+const mergeGeometries = (geos) => Object.assign(new BufferGeometry(), { parts: geos });
+function drapeModule(slopes = true) {
   return loadModule(source, {
     imports: {
       'three/webgpu': THREE,
-      './ground.js': { SLOPES: slopes, LATTICE: { x0: 0, z0: 0, cell: 10 }, clipToLattice, townHeight: floor }
+      'three/addons/utils/BufferGeometryUtils.js': { mergeGeometries },
+      './ground.js': { SLOPES: slopes, LATTICE: { x0: 0, z0: 0, cell: 10 }, townHeight: floor },
+      './lattice.js': { visibleTriangles, layOnFloor }
     }
-  }).drapeGeometry;
+  });
 }
+const drape = (slopes = true) => drapeModule(slopes).drapeGeometry;
 
 // A 20 m square at y = 0.2 facing up (two triangles wound counter-clockwise from above) and one triangle under it
 function slab() {
@@ -72,4 +77,49 @@ test('a draped layer is cut on the lattice, raised by the floor under each verte
 test('in the flat city (?slopes=0) a layer is left as built', () => {
   const geo = slab();
   assert.equal(drape(false)(geo), geo);
+});
+
+test('the ground layers go to the streamer merged by material, in world space, taken out of the scene', () => {
+  const identity = { equals: (m) => m instanceof THREE.Matrix4 }; // (drape.js compares with a new Matrix4)
+  const moved = { equals: () => false };
+  const geometry = (tag, indexed = false) => Object.assign(new BufferGeometry(), {
+    tag, index: indexed ? {} : null, disposed: false,
+    toNonIndexed() { return geometry(tag + '>flat'); },
+    clone() { return geometry(tag + '>copy'); },
+    applyMatrix4() { this.tag += '>world'; return this; },
+    dispose() { this.disposed = true; }
+  });
+  const root = {
+    name: 'CityGrid', children: [], updateMatrixWorld() {},
+    traverse(fn) { for (const c of [...this.children]) fn(c); },
+    remove(o) { this.children = this.children.filter((c) => c !== o); }
+  };
+  const mesh = (geo, material, extra = {}) => {
+    const m = { isMesh: true, geometry: geo, material, matrixWorld: identity, renderOrder: 0, castShadow: false, receiveShadow: true, name: '', parent: root, ...extra };
+    root.children.push(m);
+    return m;
+  };
+  const road = { uuid: 'road' }, curb = { uuid: 'curb' };
+  const deck = mesh(Object.assign(geometry('deck'), { attributes: { position: {} } }), road);
+  const c1 = mesh(Object.assign(geometry('c1', true), { attributes: { position: {}, uv: {} } }), curb, { castShadow: true });
+  const c2 = mesh(Object.assign(geometry('c2'), { attributes: { position: {}, uv: {} } }), curb, { matrixWorld: moved });
+  const valley = mesh(geometry('valley'), road);
+  const props = mesh(geometry('lamps'), curb, { isInstancedMesh: true });
+  const added = [];
+  drapeModule().streamMeshes(root, { addLayer: (geo, material, options) => added.push({ geo, material, options }) },
+    { skip: new Set([valley]), covers: new Set([road]), cutHoles: new Set([road]) });
+  assert.deepEqual(root.children, [valley, props], 'the streamed meshes leave the scene');
+  assert.ok(deck.geometry.disposed && c1.geometry.disposed && c2.geometry.disposed);
+  assert.equal(added.length, 2);
+  const [a, b] = added;
+  assert.equal(a.material, road);
+  assert.equal(a.options.covers, true);
+  assert.equal(a.options.cutHoles, true);
+  assert.equal(a.geo.tag, 'deck>copy');
+  assert.equal(b.material, curb);
+  assert.equal(b.options.covers, false);
+  assert.equal(b.options.cutHoles, false);
+  assert.equal(b.options.castShadow, true);
+  assert.equal(b.options.undersides, false);
+  assert.equal(b.geo.parts.map((g) => g.tag).join(' '), 'c1>flat c2>copy>world');
 });

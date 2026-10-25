@@ -1,4 +1,5 @@
 import { GEO } from './city-geodata.js';
+import { insidePoly } from './rings.js';
 
 // js/world/city-config.js
 // City spatial configuration & street database at true 1:1 scale, derived from the real geography in
@@ -153,21 +154,13 @@ for (const b of BLOCKS) {
     }
   }
 }
-function pointInPoly(poly, x, z) {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const a = poly[i], b = poly[j];
-    if ((a.z > z) !== (b.z > z) && x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x) inside = !inside;
-  }
-  return inside;
-}
 /** The block (curb island) under (x, z), or null on the roadway */
 function blockAt(x, z) {
   const list = BLOCK_GRID.get(Math.floor(x / BLOCK_CELL) * 100000 + Math.floor(z / BLOCK_CELL));
   if (!list) return null;
   for (const b of list) {
     if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) continue;
-    if (b.rect || pointInPoly(b.poly, x, z)) return b;
+    if (b.rect || insidePoly(b.poly, x, z)) return b; // (rings.js: the big fields' outlines by bands)
   }
   return null;
 }

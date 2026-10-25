@@ -1,7 +1,8 @@
 import * as THREE from 'three/webgpu';
-import { float, color, mix, smoothstep, positionWorld, normalWorld, vec2, sin, fract, dot, floor, attribute } from 'three/tsl';
+import { float, color, mix, smoothstep, positionWorld, normalWorld, vec2, sin, fract, dot, floor, attribute, texture, uniform } from 'three/tsl';
 import { GEO } from './city-geodata.js';
 import { cityUniforms } from '../render/tsl-materials.js';
+import { farGroundColor } from './far-ground.js';
 import { ISLAND_BOUNDS } from './city-config.js';
 import { SINK, SLOPES, hillHeights, terrainHeight, hillGround, townHeight } from './ground.js';
 
@@ -27,7 +28,13 @@ const vnoise = (p) => {
   return mix(mix(hash(i), hash(i.add(vec2(1, 0))), u.x), mix(hash(i.add(vec2(0, 1))), hash(i.add(vec2(1, 1))), u.x), u.y);
 };
 
-function buildTerrain(scene) {
+/**
+ * `mask` (streaming.js createTileMask): the streamed tiles' state. With it, the hills' flat cells inside the detailed
+ * box (left out for the road deck that covers them) are drawn as a floor under the deck wherever its tile isn't
+ * loaded, so the city beyond the streamed tiles stands on ground, not over a hole: painted with `far` (far-ground.js
+ * paintFarGround), the streets, lots and parks it stands in for.
+ */
+function buildTerrain(scene, { mask = null, far = null } = {}) {
   const group = new THREE.Group();
   group.name = 'Hills';
   if (!heights) {
@@ -41,7 +48,7 @@ function buildTerrain(scene) {
   // which cast no shadow, go apart: a mesh over the whole grid is never out of a cascade's view
   const G = SLOPES && GEO.ground ? GEO.ground : null;
   const gx1 = G ? G.x0 + (G.w - 1) * G.cell : 0, gz1 = G ? G.z0 + (G.h - 1) * G.cell : 0;
-  const position = [], hill = [], rising = [], flat = [];
+  const position = [], hill = [], rising = [], flat = [], under = [];
   const addGrid = (x0, z0, cell, w, h, hillAt, skip) => {
     const base = position.length / 3;
     for (let j = 0; j < h; j++) {
@@ -57,7 +64,10 @@ function buildTerrain(scene) {
         if (skip && skip(cx0, cz0, cx1, cz1)) continue;
         const k = base + j * w + i;
         const rises = Math.max(hill[k], hill[k + 1], hill[k + w], hill[k + w + 1]) >= 0.15;
-        if (!rises && (!SLOPES || (inBox(cx0, cz0) && inBox(cx1, cz1)))) continue;
+        if (!rises && (!SLOPES || (inBox(cx0, cz0) && inBox(cx1, cz1)))) {
+          if (SLOPES && mask) under.push(k, k + w, k + 1, k + 1, k + w, k + w + 1);
+          continue;
+        }
         (rises ? rising : flat).push(k, k + w, k + 1, k + 1, k + w, k + w + 1);
       }
     }
@@ -109,6 +119,25 @@ function buildTerrain(scene) {
     const floorMesh = new THREE.Mesh(flatGeo, mat);
     floorMesh.receiveShadow = true;
     group.add(floorMesh);
+  }
+
+  if (under.length) {
+    // the floor under the deck: the hills' colours (the valley floor's, there), cut where the tile mask says the tile's
+    // layers are drawn. (It covers the river channels too: opening it over them as the deck is opened took seconds
+    // at start-up, and beyond the streamed tiles they are too far off to see into.)
+    const underGeo = new THREE.BufferGeometry();
+    for (const name of Object.keys(geo.attributes)) underGeo.setAttribute(name, geo.attributes[name]);
+    underGeo.setIndex(new THREE.Uint32BufferAttribute(under, 1));
+    underGeo.computeBoundingSphere();
+    const underMat = new THREE.MeshStandardNodeMaterial({ roughness: 0.96, metalness: 0.0 });
+    underMat.colorNode = far ? farGroundColor(far, mat.colorNode).mul(vnoise(p.mul(0.25)).mul(0.1).add(0.95)) : mat.colorNode;
+    const uv = positionWorld.xz.sub(uniform(mask.origin)).div(uniform(mask.span));
+    underMat.opacityNode = float(1).sub(texture(mask.texture, uv).r);
+    underMat.alphaTest = 0.5;
+    const underMesh = new THREE.Mesh(underGeo, underMat);
+    underMesh.name = 'UnderFloor';
+    underMesh.receiveShadow = true;
+    group.add(underMesh);
   }
 
   buildHillPaths(group);

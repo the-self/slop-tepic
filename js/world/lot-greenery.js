@@ -8,6 +8,7 @@
 //   edges of a lot and in the yards, sparse out in the middle of a big field (where the kids play football)
 
 import { hash } from './hash.js';
+import { insidePoly } from './rings.js';
 
 const TREE_SPACING = 9; // m between the candidate tree sites (jittered)
 const WALL_CLEAR = 2.4; // m a trunk stands at least from any wall
@@ -54,14 +55,8 @@ function indexHouses(houses, stride = 8) {
   return { boxes, wallDistance };
 }
 
-function inPolygon(x, z, pts) {
-  let inside = false;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    const a = pts[i], b = pts[j];
-    if ((a.z > z) !== (b.z > z) && x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x) inside = !inside;
-  }
-  return inside;
-}
+// (rings.js: the big lots' outlines tested by bands)
+const inPolygon = (x, z, pts) => insidePoly(pts, x, z);
 
 // Distance (m) from (x, z) to the curb island's outline
 function edgeDistance(x, z, pts) {

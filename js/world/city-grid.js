@@ -15,10 +15,11 @@ import {
 } from '../render/tsl-materials.js';
 import { GEO } from './city-geodata.js';
 import { SLOPES, liftAt, groundSlope } from './ground.js';
-import { drapeMeshes } from './drape.js';
+import { drapeMeshes, streamMeshes, cutOnCells } from './drape.js';
 import { cutRiverHoles } from './river-channels.js';
 import { openness } from './lot-greenery.js';
 import { cyclewayRuns, CYCLEWAY_HALF } from './medians.js';
+import { insidePoly, insideRing } from './rings.js';
 
 // Live construction data consumed by the building and street-detail builders after buildCityGrid().
 let parkTreeSites;
@@ -211,7 +212,9 @@ function setPavingStyle(geo, style) {
   return geo;
 }
 
-function buildCityGrid(scene) {
+// With `streamer` (streaming.js) the flat ground layers go to it, laid tile by tile around the camera, instead of
+// laid on the slopes whole here
+function buildCityGrid(scene, streamer = null) {
   const group = new THREE.Group();
   group.name = 'CityGrid';
 
@@ -425,15 +428,6 @@ function buildCityGrid(scene) {
   //    scattered trees, lampposts on the perimeter; the open country around the city as meadow
   const PARK_Y = 0.26; // hex-paver walks (sidewalk tops are at 0.22)
   const BED_Y = 0.41; // lawn top inside the granite bed copings
-  const inPolygon = (x, z, pts) => {
-    let inside = false;
-    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-      const a = pts[i];
-      const b = pts[j];
-      if ((a.z > z) !== (b.z > z) && x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x) inside = !inside;
-    }
-    return inside;
-  };
   const prand = (x, z, k = 0) => {
     const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453;
     return s - Math.floor(s);
@@ -474,7 +468,7 @@ function buildCityGrid(scene) {
         const tz = gz + (prand(gz, gx, 1) - 0.5) * SP * 0.7;
         if (prand(tx, tz, 9) < 0.3) continue; // glades
         const inner = lawnTop || bed;
-        if (!inPolygon(tx, tz, inner)) continue;
+        if (!insidePoly(inner, tx, tz)) continue;
         // Tepic's park trees (trees.js): laureles de la India most, then mangos, jacarandas, tabachines & a few palms
         const r = prand(tx, tz, 2);
         const species = r < 0.45 ? 0 : r < 0.6 ? 2 : r < 0.75 ? 1 : r < 0.9 ? 3 : 4;
@@ -568,13 +562,6 @@ function buildCityGrid(scene) {
       }
     }
     const planted = new Set(genericParks);
-    const inRing = (x, z, r) => {
-      let inside = false;
-      for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) {
-        if ((r[i + 1] > z) !== (r[j + 1] > z) && x < ((r[j] - r[i]) * (z - r[i + 1])) / (r[j + 1] - r[i + 1]) + r[i]) inside = !inside;
-      }
-      return inside;
-    };
     let n = 0;
     for (const p of GEO.parks || []) {
       const g = GREEN[p.cat];
@@ -593,7 +580,7 @@ function buildCityGrid(scene) {
             const jit = p.cat === 'orchard' ? 0.1 : 0.75;
             const tx = gx + (prand(gx, gz, 4) - 0.5) * SP * jit;
             const tz = gz + (prand(gz, gx, 5) - 0.5) * SP * jit;
-            if (prand(tx, tz, 6) < glade || !inRing(tx, tz, r)) continue;
+            if (prand(tx, tz, 6) < glade || !insideRing(r, tx, tz)) continue;
             if (woods && !town.has(Math.floor(tx / C) * 100003 + Math.floor(tz / C))) continue;
             const b = blockAt(tx, tz);
             if (!b || !(b.park > 0.6 || b.rural) || planted.has(b)) continue;
@@ -687,17 +674,28 @@ function buildCityGrid(scene) {
 
   // Batch static sub-meshes by material to reduce per-frame WebGPU draw calls
   batchStaticGroupMeshes(group, new Set([roadMat, meadowMat, lotMat, parkLawnMat, pitchMat, cyclewayMat]));
-  // ...and lay them on the town's slopes; the valley floor beyond the hills' grid stays flat
-  drapeMeshes(group, new Set([valleyMesh]));
-  // ...and open the deck over the river channels (river-channels.js draws them sunk into the ground)
-  roadMesh.geometry = cutRiverHoles(roadMesh.geometry);
+  if (streamer) {
+    // ...or they all go to the streamer: the deck as the layer covering the ground, opened over the river channels
+    // (river-channels.js draws them sunk into the ground) once each tile is laid; the valley floor beyond the hills'
+    // grid stays
+    streamMeshes(group, streamer, { skip: new Set([valleyMesh]), covers: new Set([roadMat]), cutHoles: new Set([roadMat]) });
+  } else {
+    // ...and lay them on the town's slopes; the valley floor beyond the hills' grid stays flat
+    drapeMeshes(group, new Set([valleyMesh]));
+    // ...and open the deck over the river channels (river-channels.js draws them sunk into the ground): in the flat
+    // city, cut in small cells first like the slopes' lattice cuts it (the holes cut out of its few triangles kilometres
+    // across would split them into pieces without end)
+    if (!SLOPES) roadMesh.geometry = cutOnCells(roadMesh.geometry);
+    roadMesh.geometry = cutRiverHoles(roadMesh.geometry);
+  }
 
   scene.add(group);
 
   // Raised sidewalk blocks bound the roads (the planted medians are obstacles in the roadway, handed over with the
   // footprints). No shore highways or viaducts here: no highway lanes, no extra colliders
   const sidewalks = roadSidewalks;
-  return { group, sidewalks, footprints, highwayLanes: [], colliders: [] };
+  // (the valley floor and how open each block's lot lies, for the far ground: far-ground.js)
+  return { group, sidewalks, footprints, highwayLanes: [], colliders: [], valley: valleyMesh, open };
 }
 
 export {

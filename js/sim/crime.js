@@ -6,6 +6,7 @@ import { WEAPONS, Arsenal, pickTarget, rayCircle, rayBox, boxOverlap, roundBox, 
 import { Wanted, POLICE, GANGS, NARCO, gangTurf } from './crime-rules.js';
 import { GunfireFX } from './gunfire-fx.js';
 import { BODY_SPECS, buildCarGeometry, createLoftedCarMaterial, buildLightbarGeometry, createLightbarMaterial } from '../actors/actor-models.js';
+import { WEAPON_MODELS, buildWeaponGeometry, createWeaponMaterial } from '../actors/weapon-models.js';
 import { createContactShadowMaterial } from '../render/tsl-materials.js';
 import { isTypingInField } from '../world/city-config.js';
 
@@ -42,6 +43,8 @@ const DOWN_TIME = 3.5; // s someone knocked down but alive lies before getting u
 const DEAD_TIME = 30; // s a body stays
 const DESPAWN = 200; // m from the player: gone
 const MUZZLE_Y = 1.38; // m: a gun held out at shoulder height
+const GRIP_REACH = 0.045; // m from the rig's wrist on to the middle of the grip in its hand
+const DRAW_TIME = 0.32; // s to put one weapon away and bring the next up (the arsenal's own 0.25 s holds its fire)
 const RESPAWN_TIME = 4.2; // s on the WASTED / BUSTED screen
 const COP_SIGHT = 45; // m an officer sees the player from (a patrol car: 70)
 const CRUISER_SIGHT = 70;
@@ -141,6 +144,8 @@ class CrimeSystem {
     this.lastHit = { x: 0, z: 0 };
     this.mouseFire = false;
     this.aimHold = 0; // s the player keeps the gun up after a shot
+    this.drawn = this.arsenal.current; // the weapon in hand, and the time left bringing it up after a change
+    this.drawT = 0;
     this.lockTarget = null;
     this.punchT = 0;
     this.aimPoint = { x: 0, y: 0, z: 0 }; // where the crosshair's ray meets something (free aim)
@@ -175,53 +180,32 @@ class CrimeSystem {
   // 1. MODELS: guns, patrol cars, pickups
   // =========================================================================
   buildGuns() {
-    const metal = new THREE.MeshStandardNodeMaterial({ color: 0x1b1c1e, roughness: 0.4, metalness: 0.75 });
-    const olive = new THREE.MeshStandardNodeMaterial({ color: 0x4d5338, roughness: 0.7, metalness: 0.2 });
-    // in the hand's frame: +z along the barrel, the grip at the origin
-    const pistol = new THREE.Group();
-    pistol.add(
-      new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.035, 0.19).translate(0, 0.045, 0.06), metal),
-      new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.1, 0.045).translate(0, -0.01, 0), metal)
-    );
-    const smg = new THREE.Group();
-    smg.add(
-      new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.07, 0.36).translate(0, 0.045, 0.1), metal),
-      new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.14, 0.045).translate(0, -0.04, 0.12), metal),
-      new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.1, 0.04).translate(0, -0.01, 0), metal)
-    );
-    const bazooka = new THREE.Group();
-    bazooka.add(
-      new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 1.15, 12).rotateX(Math.PI / 2).translate(0, 0.12, 0.12), olive),
-      new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.12, 0.05).translate(0, 0.02, 0), metal)
-    );
-    this.playerGuns = { pistol, smg, bazooka };
-    for (const g of Object.values(this.playerGuns)) {
+    // (actors/weapon-models.js: one material, the finish in each gun's vertices)
+    const material = createWeaponMaterial();
+    // the player's: one of each, its grip a hand's breadth on from the rig's wrist
+    this.playerGuns = {};
+    for (const id of WEAPON_MODELS) {
+      const g = new THREE.Group();
+      const mesh = new THREE.Mesh(buildWeaponGeometry(id), material);
+      mesh.position.set(0, -0.012, GRIP_REACH);
+      mesh.castShadow = true;
+      g.add(mesh);
       g.position.y = PARKED_Y;
-      g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
       this.scene.add(g);
+      this.playerGuns[id] = g;
     }
-    // everyone else's guns: one instanced draw
-    const parts = [
-      new THREE.BoxGeometry(0.04, 0.05, 0.3).translate(0, 0.045, 0.08),
-      new THREE.BoxGeometry(0.03, 0.1, 0.045).translate(0, -0.01, 0)
-    ];
-    const geo = new THREE.BufferGeometry();
-    const pos = [];
-    const nor = [];
-    for (const p of parts) {
-      const g = p.toNonIndexed();
-      pos.push(...g.attributes.position.array);
-      nor.push(...g.attributes.normal.array);
+    // everyone else's: one instanced draw per kind of gun they carry
+    this.npcGuns = {};
+    for (const id of Object.keys(NPC_GUN)) {
+      const mesh = new THREE.InstancedMesh(buildWeaponGeometry(id).translate(0, -0.012, GRIP_REACH), material, MAX_AGENTS);
+      mesh.name = `CrimeGuns-${id}`;
+      mesh.frustumCulled = false;
+      mesh.castShadow = true;
+      mesh.count = 1;
+      mesh.setMatrixAt(0, zero);
+      this.scene.add(mesh);
+      this.npcGuns[id] = { mesh, count: 0 };
     }
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-    this.npcGuns = new THREE.InstancedMesh(geo, metal, MAX_AGENTS);
-    this.npcGuns.name = 'CrimeGuns';
-    this.npcGuns.frustumCulled = false;
-    this.npcGuns.castShadow = true;
-    this.npcGuns.count = 1;
-    this.npcGuns.setMatrixAt(0, zero);
-    this.scene.add(this.npcGuns);
   }
 
   buildCruisers() {
@@ -432,12 +416,14 @@ class CrimeSystem {
 
     this.updateRockets(dt);
     this.crowd.begin();
-    this.gunCount = 0;
+    for (const guns of Object.values(this.npcGuns)) guns.count = 0;
     for (let i = this.agents.length - 1; i >= 0; i--) this.updateAgent(this.agents[i], dt);
     this.crowd.end();
-    this.npcGuns.count = Math.max(1, this.gunCount);
-    if (!this.gunCount) this.npcGuns.setMatrixAt(0, zero);
-    this.npcGuns.instanceMatrix.needsUpdate = true;
+    for (const { mesh, count } of Object.values(this.npcGuns)) {
+      mesh.count = Math.max(1, count);
+      if (!count) mesh.setMatrixAt(0, zero);
+      mesh.instanceMatrix.needsUpdate = true;
+    }
     for (const cr of this.cruisers) if (cr.active) this.updateCruiser(cr, dt);
     this.collideCruisers();
     this.updatePickups(dt, elapsed);
@@ -486,6 +472,17 @@ class CrimeSystem {
     const mouse = free ? this.aim.fire : this.mouseFire && (this.mode !== 'person' || !this.aim);
     const held = Boolean(c.keys.fire) || mouse;
     const w = this.arsenal.weapon;
+    // a change of weapon (the keys, the wheel, the mouse wheel, or out of rounds): the last one put away, this one
+    // brought up, with the rack of its slide
+    if (w.id !== this.drawn) {
+      this.drawn = w.id;
+      this.drawT = DRAW_TIME;
+      if (!w.melee) {
+        const hand = p.rig.handPosition;
+        this.audio?.gunfire?.('draw', this.mode === 'person' ? hand.x : this.px, this.mode === 'person' ? hand.y : this.player.position.y + 1, this.mode === 'person' ? hand.z : this.pz);
+      }
+    }
+    this.drawT = Math.max(0, this.drawT - dt);
     // what this weapon can do from here: no guns from the helicopter, no fists or bazooka from a car or a bicycle
     const usable = this.mode === 'person' || (this.mode !== 'helicopter' && !w.melee && !w.rocket);
     const shots = this.arsenal.trigger(held && usable && this.onStreet, dt);
@@ -519,7 +516,8 @@ class CrimeSystem {
     // the arms: raised while aiming, a jab for a punch
     const rig = p.rig;
     this.punchT = Math.max(0, this.punchT - dt);
-    const aimWant = this.mode === 'person' ? (w.melee ? (this.punchT > 0 ? 1 : 0) : this.aimHold > 0 || free ? 1 : 0) : 0;
+    let aimWant = this.mode === 'person' ? (w.melee ? (this.punchT > 0 ? 1 : 0) : this.aimHold > 0 || free ? 1 : 0) : 0;
+    if (this.drawT > DRAW_TIME * 0.45) aimWant = 0; // (the arms come down for the change, then up with the new one)
     rig.aim += (aimWant - rig.aim) * Math.min(1, dt * (aimWant ? 14 : 6));
     rig.aimYaw = this.lockTarget && this.mode === 'person' ? Math.atan2(this.lockTarget.x - this.px, this.lockTarget.z - this.pz) : p.heading;
     rig.aimBoth = w.id === 'smg' || w.id === 'rifle' || w.id === 'bazooka';
@@ -535,8 +533,11 @@ class CrimeSystem {
         g.position.y = PARKED_Y;
         continue;
       }
+      // (a gun just drawn comes up from lower down, its muzzle to the ground)
+      const k = (this.drawT / DRAW_TIME) ** 2;
       g.position.copy(p.rig.handPosition);
-      g.rotation.set((1 - p.rig.aim) * 1.25, p.rig.aimYaw, 0, 'YXZ');
+      g.position.y -= k * 0.12;
+      g.rotation.set((1 - p.rig.aim) * 1.25 + k * 1.1, p.rig.aimYaw, 0, 'YXZ');
     }
   }
 
@@ -1214,12 +1215,13 @@ class CrimeSystem {
     rig.update(dt, a.x, a.z, a.heading, this.personGround, a, 0, draw);
     if (!draw) return;
     this.crowd.add(rig, dist);
-    if (a.weapon && rig.aim > 0.05 && this.gunCount < MAX_AGENTS) {
+    const guns = a.weapon && (this.npcGuns[a.weapon] || this.npcGuns.pistol);
+    if (guns && rig.aim > 0.05 && guns.count < MAX_AGENTS) {
       dummy.position.copy(rig.handPosition);
       dummy.rotation.set((1 - rig.aim) * 1.25, rig.aimYaw, 0, 'YXZ');
-      dummy.scale.set(1, 1, a.weapon === 'rifle' ? 2.1 : a.weapon === 'smg' ? 1.3 : 0.75);
+      dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
-      this.npcGuns.setMatrixAt(this.gunCount++, dummy.matrix);
+      guns.mesh.setMatrixAt(guns.count++, dummy.matrix);
     }
   }
 
