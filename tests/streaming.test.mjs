@@ -61,33 +61,37 @@ function streamerModule() {
 const lattice = { x0: 0, z0: 0, cell: 10 };
 const reply = (worker, data) => worker.onmessage({ data });
 
-test('a layer goes to every worker, the last one taking its arrays; the tiles it reaches are known once all reply', async () => {
+test('a layer is bucketed by tile, each worker sent only its own tiles\' triangles, each of them once', () => {
   const { TileStreamer } = streamerModule();
   const scene = new Object3D();
   const streamer = new TileStreamer({ scene, lattice, ground: null, workers: 2 });
   assert.ok(scene.children.includes(streamer.root));
   assert.deepEqual(workers.map((w) => w.sent[0].msg.type), ['init', 'init']);
-  const position = new Float32Array([0, 0, 0, 10, 0, 0, 0, 0, 10]);
+  const g = streamer.grid;
+  // an indexed quad across tiles (0, 0) and (1, 0) (120 m tiles), a triangle in (0, 0) and one in (0, 1)
+  const position = new Float32Array([100, 0, 10, 140, 0, 10, 140, 0, 20, 100, 0, 20, 10, 0, 10, 20, 0, 10, 10, 0, 20, 10, 0, 130, 20, 0, 130, 10, 0, 140]);
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(position, 3));
-  const material = {};
-  const id = streamer.addLayer(geometry, material, { name: 'Paint' });
+  geometry.index = { array: new Uint16Array([0, 3, 2, 0, 2, 1, 4, 6, 5, 7, 9, 8]) };
+  const id = streamer.addLayer(geometry, {}, { name: 'Paint' });
   assert.ok(geometry.disposed);
-  const [a, b] = workers.map((w) => w.sent[1]);
-  assert.notEqual(a.msg.arrays[0], position, 'a copy for the first');
-  assert.equal(b.msg.arrays[0], position, 'the arrays themselves for the last');
-  assert.equal(b.transfer.length, 1);
-  assert.equal(b.transfer[0], position.buffer);
-  let ready = false;
-  streamer.ready().then(() => { ready = true; });
-  const key = streamer.grid.key(0, 0);
-  reply(workers[0], { type: 'layer', id, keys: [key] });
-  await null;
-  assert.equal(ready, false, 'not until both have bucketed it');
-  reply(workers[1], { type: 'layer', id, keys: [key] });
-  await null;
-  assert.equal(ready, true);
-  assert.ok(streamer.candidates.has(key));
+  assert.deepEqual([...streamer.layers[id].keys].sort(), [g.key(0, 0), g.key(0, 1), g.key(1, 0)].sort());
+  assert.deepEqual([...streamer.candidates].sort(), [...streamer.layers[id].keys].sort());
+  let total = 0;
+  workers.forEach((w, n) => {
+    const { msg, transfer } = w.sent[1];
+    assert.equal(msg.type, 'layer');
+    const tris = msg.arrays[0].length / 9;
+    total += tris;
+    for (const [key, list] of msg.buckets) {
+      assert.equal(key % 2, n, 'its own tiles only');
+      assert.ok(list.every((t) => t < tris), 'numbered in its own copy');
+    }
+    assert.equal(transfer.length, msg.arrays.length + msg.buckets.length);
+  });
+  // the quad's two triangles go to both its tiles' workers (if they differ); the others once
+  const owners = new Set([g.key(0, 0) % 2, g.key(1, 0) % 2]);
+  assert.equal(total, 2 * owners.size + 2);
 });
 
 test('tiles are asked for nearest first a few at a time, shown as they come, and dropped once left behind', () => {
@@ -96,10 +100,9 @@ test('tiles are asked for nearest first a few at a time, shown as they come, and
   const g = streamer.grid;
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(new Float32Array(9), 3));
-  streamer.addLayer(geometry, {}, { name: 'Deck' });
-  const keys = [];
-  for (let i = 0; i < 20; i++) for (let j = 0; j < 20; j++) keys.push(g.key(i, j));
-  reply(workers[0], { type: 'layer', id: 0, keys });
+  streamer.addLayer(geometry, {}, { name: 'Deck', covers: true });
+  for (let i = 0; i < 20; i++) for (let j = 0; j < 20; j++) streamer.candidates.add(g.key(i, j));
+  streamer.layers[0].keys = new Set(streamer.candidates);
   // the camera over tile (5, 5)
   streamer.update({ x: 660, z: 660 }, 0, 0.016);
   const asked = workers[0].sent.filter((s) => s.msg.type === 'tile').map((s) => s.msg.key);
@@ -143,4 +146,28 @@ test('the radius grows with the camera\'s height, and its velocity looks ahead b
   const vx = streamer.focus.vx;
   streamer.update({ x: 5000, z: 0 }, 0, 0.1);
   assert.equal(streamer.focus.vx, vx * 0.8, 'a jump counts as standing still');
+});
+
+test('a tile its worker could not lay is let go, not waited on, and its worker freed', async () => {
+  const { TileStreamer } = streamerModule();
+  const streamer = new TileStreamer({ scene: new Object3D(), lattice, ground: null, workers: 1 });
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(new Float32Array([10, 0, 10, 20, 0, 10, 10, 0, 20]), 3));
+  streamer.addLayer(geometry, {}, { covers: true });
+  const errors = [];
+  const error = console.error;
+  console.error = (...args) => errors.push(args.join(' '));
+  try {
+    const done = streamer.preload(15, 15);
+    const asked = workers[0].sent.filter((s) => s.msg.type === 'tile');
+    assert.equal(asked.length, 1);
+    reply(workers[0], { type: 'tile', key: asked[0].msg.key, parts: [], error: 'RangeError' });
+    await done;
+  } finally {
+    console.error = error;
+  }
+  assert.equal(streamer.tiles.get(streamer.grid.key(0, 0)).state, 'failed');
+  assert.equal(streamer.workers[0].busy, 0);
+  assert.equal(errors.length, 1);
+  assert.equal(JSON.stringify(streamer.stats), JSON.stringify({ loading: 0, shown: 0, layers: 1 }));
 });

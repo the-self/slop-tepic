@@ -1,14 +1,15 @@
 import * as THREE from 'three/webgpu';
-import { TILE_CELLS, createTileGrid, tilesAround } from './tiles.js';
+import { TILE_CELLS, createTileGrid, bucketTriangles, tilesAround } from './tiles.js';
 
 // js/world/streaming.js
 // Streams the city's heaviest layers tile by tile around the camera, the way GTA streams its map: the flat ground
 // layers (the road deck, sidewalks & curbs, lots, paint, empedrado: built at y = 0 in world space) are handed over
 // once with addLayer(); from then on only the tiles within DETAIL_RADIUS of the camera, and of where it is heading
 // LOOKAHEAD seconds on, are laid on the slopes and drawn, and those left behind are dropped. Laying a tile (cutting it
-// out and onto the ground's lattice) is the costly part: Web Workers do it (tile-worker.js), and the main thread
-// only puts what they send back in the scene, a few milliseconds' worth a frame. Beyond the tiles the hills' mesh
-// draws a plain floor where they are not loaded (terrain.js, through `mask`), so nothing is ever a hole.
+// out and onto the ground's lattice) is the costly part: Web Workers do it (tile-worker.js), each for its share of the
+// tiles, and the main thread only puts what they send back in the scene, a few milliseconds' worth a frame. Where the
+// tiles of a layer that covers the ground (the road deck) are not drawn, the hills' mesh draws a plain floor
+// (terrain.js, through `mask`), so nothing is ever a hole.
 
 const DETAIL_RADIUS = 1100; // m around the camera at street level...
 const ALTITUDE_RADIUS = 1.0; // ...and this much more per metre it is over the ground (to DETAIL_RADIUS * 2)
@@ -20,8 +21,9 @@ const SHOW_BUDGET = 3; // ms a frame of putting arrived tiles in the scene
 const PLAN_EVERY = 0.2; // s between the plans of what to load & drop
 
 /**
- * The tiles' state for the hills' floor (terrain.js): a texel per tile, 1 where its layers are drawn. Covers the tiles
- * of the rectangle { x0, x1, z0, z1 } (the detailed city's box), `uniforms` locating it in the world.
+ * The tiles' state for the hills' floor (terrain.js): a texel per tile, 1 where a layer covering the ground is drawn.
+ * Covers the tiles of the rectangle { x0, x1, z0, z1 } (the detailed city's box), `origin` & `span` placing it in the
+ * world.
  */
 function createTileMask(grid, box) {
   const i0 = Math.floor((box.x0 - grid.x0) / grid.size), i1 = Math.floor((box.x1 - grid.x0) / grid.size);
@@ -60,12 +62,11 @@ class TileStreamer {
     this.mask = box ? createTileMask(this.grid, box) : null;
     this.layers = [];
     this.candidates = new Set(); // tiles any layer has something in
-    this.tiles = new Map(); // key -> { key, state: 'loading' | 'arrived' | 'shown', group, parts, d }
+    // key -> { key, state: 'loading' | 'arrived' | 'shown' | 'failed', group, parts, d, covered }
+    this.tiles = new Map();
     this.arrived = []; // tiles back from the workers, waiting their turn to be shown
-    this.focus = { x: 0, z: 0, vx: 0, vz: 0, radius: DETAIL_RADIUS, primed: false };
+    this.focus = { x: 0, z: 0, vx: 0, vz: 0, dt: 0, radius: DETAIL_RADIUS, primed: false };
     this.sincePlan = Infinity;
-    this.acks = new Map(); // layer id -> workers still to bucket it
-    this.waiting = [];
     this.workers = [];
     for (let n = 0; n < workers; n++) {
       const worker = new Worker(new URL('./tile-worker.js', import.meta.url), { type: 'module' });
@@ -78,11 +79,14 @@ class TileStreamer {
   }
 
   /**
-   * Hands a flat layer to the workers: `geometry` in world space (indexed or not; its arrays go to the workers and
-   * it is disposed), drawn with `material` in every tile it reaches. Options: name, castShadow, receiveShadow,
-   * undersides (false leaves out the triangles facing down), renderOrder.
+   * Hands a flat layer to the workers: `geometry` in world space (indexed or not; it is disposed), drawn with
+   * `material` in every tile it reaches. Its triangles are bucketed by tile here, and each worker is sent only those
+   * of the tiles it answers for (a tile's key, modulo the workers), so the layer is held once however many there are.
+   * Options: name, castShadow, receiveShadow, renderOrder; undersides (false leaves out the triangles facing down);
+   * covers (it covers all the ground of the tiles it reaches, like the road deck: where its tiles are drawn, the hills'
+   * floor under them is not).
    */
-  addLayer(geometry, material, { name = '', castShadow = false, receiveShadow = true, undersides = true, renderOrder = 0 } = {}) {
+  addLayer(geometry, material, { name = '', castShadow = false, receiveShadow = true, undersides = true, renderOrder = 0, covers = false } = {}) {
     const names = Object.keys(geometry.attributes).sort((a, b) => (a === 'position' ? -1 : b === 'position' ? 1 : 0));
     const attrs = names.map((n) => geometry.attributes[n]);
     const arrays = attrs.map((a) => (a.isInterleavedBufferAttribute
@@ -90,40 +94,53 @@ class TileStreamer {
       : a.array));
     const sizes = attrs.map((a) => a.itemSize);
     const index = geometry.index ? geometry.index.array : null;
+    const buckets = bucketTriangles(arrays[0], index, this.grid, { undersides });
     const id = this.layers.length;
     this.layers.push({
-      id, name, material, castShadow, receiveShadow, renderOrder, names, sizes,
-      normalized: attrs.map((a) => a.normalized), keys: new Set()
+      id, name, material, castShadow, receiveShadow, renderOrder, covers, names, sizes,
+      normalized: attrs.map((a) => a.normalized), keys: new Set(buckets.keys())
     });
-    this.acks.set(id, this.workers.length);
+    for (const key of buckets.keys()) this.candidates.add(key);
+    const N = this.workers.length;
     this.workers.forEach((slot, n) => {
-      // (the last worker takes the arrays themselves, the others copies)
-      const last = n === this.workers.length - 1;
-      const send = last ? arrays : arrays.map((a) => a.slice());
-      const sendIndex = index && (last ? index : index.slice());
-      const transfer = send.map((a) => a.buffer);
-      if (sendIndex) transfer.push(sendIndex.buffer);
-      slot.worker.postMessage({ type: 'layer', id, arrays: send, sizes, index: sendIndex, normalAt: names.indexOf('normal'), undersides }, transfer);
+      // this worker's tiles' triangles, each once, renumbered in the order they are copied out
+      const local = new Map();
+      const share = [];
+      for (const [key, tris] of buckets) {
+        if (key % N !== n) continue;
+        share.push([key, Uint32Array.from(tris, (t) => {
+          let k = local.get(t);
+          if (k === undefined) local.set(t, (k = local.size));
+          return k;
+        })]);
+      }
+      const out = sizes.map((size) => new Float32Array(local.size * 3 * size));
+      for (const [t, k] of local) {
+        for (let c = 0; c < 3; c++) {
+          const v = index ? index[t * 3 + c] : t * 3 + c;
+          for (let a = 0; a < arrays.length; a++) {
+            const size = sizes[a];
+            out[a].set(arrays[a].subarray(v * size, v * size + size), (k * 3 + c) * size);
+          }
+        }
+      }
+      slot.worker.postMessage({ type: 'layer', id, arrays: out, sizes, normalAt: names.indexOf('normal'), buckets: share },
+        [...out.map((a) => a.buffer), ...share.map(([, tris]) => tris.buffer)]);
     });
     geometry.dispose();
+    // (tiles in hand were asked for without it: they come again with it)
+    for (const tile of [...this.tiles.values()]) this.drop(tile);
     return id;
-  }
-
-  /** A promise that every layer added so far is bucketed by every worker (so the tiles with anything are known) */
-  ready() {
-    if (![...this.acks.values()].some((n) => n > 0)) return Promise.resolve();
-    return new Promise((resolve) => this.waiting.push(resolve));
   }
 
   /**
    * Loads and shows every tile within the radius of (x, z) before the game starts (the first frame must not open on
-   * holes): a promise, resolved once they are all in the scene
+   * holes): a promise, resolved once none is still being laid
    */
   async preload(x, z) {
-    await this.ready();
     this.place(x, z, 0, true);
     this.plan();
-    while ([...this.tiles.values()].some((t) => t.state !== 'shown')) {
+    while ([...this.tiles.values()].some((t) => t.state === 'loading' || t.state === 'arrived')) {
       await new Promise((resolve) => setTimeout(resolve, 16));
       this.plan();
       this.showArrived(Infinity);
@@ -137,8 +154,7 @@ class TileStreamer {
       Object.assign(f, { x, z, vx: 0, vz: 0, primed: true });
     } else if (f.dt > 0) {
       let vx = (x - f.x) / f.dt, vz = (z - f.z) / f.dt;
-      const speed = Math.hypot(vx, vz);
-      if (speed > MAX_SPEED) vx = vz = 0; // (a teleport)
+      if (Math.hypot(vx, vz) > MAX_SPEED) vx = vz = 0; // (a teleport)
       const k = Math.min(1, f.dt * 2);
       f.vx += (vx - f.vx) * k;
       f.vz += (vz - f.vz) * k;
@@ -149,8 +165,9 @@ class TileStreamer {
   }
 
   /**
-   * Per frame: `position` the camera's, `altitude` its height over the ground there, `dt` the frame's seconds. Plans
-   * what to load and drop now and then, and shows what the workers sent back within the frame's budget.
+   * Per frame: `position` where the tiles should be laid round (the camera's, or the street outside a room the player
+   * is in), `altitude` its height over the ground there, `dt` the frame's seconds. Plans what to load and drop now and
+   * then, and shows what the workers sent back within the frame's budget.
    */
   update(position, altitude, dt) {
     this.focus.dt = dt;
@@ -169,39 +186,35 @@ class TileStreamer {
     const ax = x + vx * LOOKAHEAD, az = z + vz * LOOKAHEAD;
     const wanted = tilesAround(this.grid, this.candidates, radius, x, z, ax, az);
     const keep = new Set(tilesAround(this.grid, this.candidates, radius + DROP_MARGIN, x, z, ax, az).map((t) => t.key));
-    for (const tile of this.tiles.values()) if (!keep.has(tile.key)) this.drop(tile);
+    for (const tile of [...this.tiles.values()]) if (!keep.has(tile.key)) this.drop(tile);
     for (const { key, d } of wanted) {
       const tile = this.tiles.get(key);
       if (tile) {
         tile.d = d;
         continue;
       }
-      const slot = this.workers.reduce((a, b) => (b.busy < a.busy ? b : a));
-      if (slot.busy >= MAX_IN_FLIGHT) break;
+      const slot = this.workers[key % this.workers.length]; // (the one holding its triangles)
+      if (slot.busy >= MAX_IN_FLIGHT) continue;
       slot.busy++;
-      this.tiles.set(key, { key, state: 'loading', group: null, parts: null, d });
+      this.tiles.set(key, { key, state: 'loading', group: null, parts: null, d, covered: false });
       slot.worker.postMessage({ type: 'tile', key, layers: this.layers.filter((l) => l.keys.has(key)).map((l) => l.id) });
     }
   }
 
   receive(slot, msg) {
-    if (msg.type === 'layer') {
-      const layer = this.layers[msg.id];
-      for (const key of msg.keys) {
-        layer.keys.add(key);
-        this.candidates.add(key);
-      }
-      const left = this.acks.get(msg.id) - 1;
-      this.acks.set(msg.id, left);
-      if (![...this.acks.values()].some((n) => n > 0)) this.waiting.splice(0).forEach((resolve) => resolve());
-    } else if (msg.type === 'tile') {
-      slot.busy--;
-      const tile = this.tiles.get(msg.key);
-      if (!tile || tile.state !== 'loading') return; // (dropped meanwhile)
-      tile.state = 'arrived';
-      tile.parts = msg.parts;
-      this.arrived.push(tile);
+    if (msg.type !== 'tile') return;
+    slot.busy--;
+    const tile = this.tiles.get(msg.key);
+    if (!tile || tile.state !== 'loading') return; // (dropped meanwhile)
+    if (msg.error) {
+      // (not asked again while it stays in range: it would fail again)
+      console.error(`[streaming] tile ${this.grid.i(msg.key)},${this.grid.j(msg.key)} could not be laid:`, msg.error);
+      tile.state = 'failed';
+      return;
     }
+    tile.state = 'arrived';
+    tile.parts = msg.parts;
+    this.arrived.push(tile);
   }
 
   // Puts the arrived tiles in the scene, nearest first, for up to `budget` ms
@@ -214,12 +227,17 @@ class TileStreamer {
       const group = new THREE.Group();
       group.name = `Tile ${this.grid.i(tile.key)},${this.grid.j(tile.key)}`;
       group.matrixAutoUpdate = false;
-      for (const part of tile.parts) if (part) group.add(this.layerMesh(this.layers[part.id], part.arrays, part.bounds));
+      for (const part of tile.parts) {
+        if (!part) continue;
+        const layer = this.layers[part.id];
+        group.add(this.layerMesh(layer, part.arrays, part.bounds));
+        tile.covered ||= layer.covers;
+      }
       tile.parts = null;
       tile.group = group;
       this.root.add(group);
       tile.state = 'shown';
-      this.mask?.set(tile.key, true);
+      if (tile.covered) this.mask?.set(tile.key, true);
     }
   }
 
@@ -258,7 +276,7 @@ class TileStreamer {
     if (tile.group) {
       this.root.remove(tile.group);
       this.disposeGroup(tile.group);
-      this.mask?.set(tile.key, false);
+      if (tile.covered) this.mask?.set(tile.key, false);
     }
     tile.state = 'dropped';
   }
@@ -272,7 +290,7 @@ class TileStreamer {
     let loading = 0, shown = 0;
     for (const t of this.tiles.values()) {
       if (t.state === 'shown') shown++;
-      else loading++;
+      else if (t.state !== 'failed') loading++;
     }
     return { loading, shown, layers: this.layers.length };
   }

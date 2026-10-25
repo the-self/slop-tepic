@@ -1108,8 +1108,11 @@ async function initApp() {
     audioSystem.update(dt, elapsed, cameraSystem.camera, lightingSystem.isNight);
     if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
     if (streamer) {
+      // (in a room the camera is in its pocket high over the map: the tiles stay laid round the door)
+      const door = interiors.inside?.venue;
       const eye = cameraSystem.camera.position;
-      streamer.update(eye, eye.y - groundHeight(eye.x, eye.z), Math.max(0, rawDt));
+      if (door) streamer.update(door, 0, Math.max(0, rawDt));
+      else streamer.update(eye, eye.y - groundHeight(eye.x, eye.z), Math.max(0, rawDt));
     }
     // The clustered lighting takes the first 256 point & spot lights it finds: those switched off (intensity 0: the
     // traffic's by day, the pools waiting) are hidden, so they don't take the places of the ones on
