@@ -205,6 +205,23 @@ function buildCatedral(group, colliders) {
     box(0.22, 2.4, 0.22, tx, y + top * 0.38 + 5.2, tz, dark);
     box(1.2, 0.22, 0.22, tx, y + top * 0.38 + 5.6, tz, dark);
   }
+  // Merged into one mesh per material (and shadow casting), in the church's frame: drawn part by part, its ~140 pieces
+  // cost ~270 draws a frame in the shadow cascades alone from the plaza
+  const parts = new Map();
+  for (const m of root.children) {
+    m.updateMatrix();
+    const geo = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry).applyMatrix4(m.matrix);
+    const key = `${m.material.uuid}:${m.castShadow}`;
+    if (!parts.has(key)) parts.set(key, { mat: m.material, cast: m.castShadow, geos: [] });
+    parts.get(key).geos.push(geo);
+  }
+  root.clear();
+  for (const { mat, cast, geos } of parts.values()) {
+    const mesh = new THREE.Mesh(geos.length > 1 ? mergeGeometries(geos) : geos[0], mat);
+    mesh.castShadow = cast;
+    mesh.receiveShadow = true;
+    root.add(mesh);
+  }
   group.add(root);
   // a collider over the church
   const hx = W / 2, hz = L / 2;

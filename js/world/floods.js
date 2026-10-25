@@ -104,7 +104,13 @@ class Floods {
       this.riverMeshes = [];
       this.scene.traverse((o) => { if (o.isMesh && o.material === this.riverMaterial) this.riverMeshes.push([o, o.position.y]); });
     }
-    for (const [mesh, y] of this.riverMeshes || []) mesh.position.y = y + Math.min(stage, 2.5);
+    // (the river is static city, its world matrices frozen (scene-culling.js): each is brought up to date by hand)
+    for (const [mesh, y] of this.riverMeshes || []) {
+      const to = y + Math.min(stage, 2.5);
+      if (mesh.position.y === to) continue;
+      mesh.position.y = to;
+      mesh.updateMatrixWorld();
+    }
     const flooding = this.level > 0.01;
     this.mesh.visible = flooding;
     if (!flooding) return;
