@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { color, mix, positionWorld, fract, step, smoothstep, sin, time } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GEO } from './city-geodata.js';
+import { blockAt } from './city-config.js';
 import { cityUniforms } from '../render/tsl-materials.js';
 import { liftAt, landHeight } from './ground.js';
 import { MODEL_RESERVES, geoToWorld } from './landmark-models.js';
@@ -42,7 +43,9 @@ function orientedBox(flat) {
 
 // The Catedral's frame. OpenStreetMap's outline (`ring`) takes in the church and the casona north of it: the facade is
 // the outline's edge furthest towards the plaza (the casona's front stands 9 m back), `x, z` its middle, f its normal
-// (towards the plaza), `width` its length.
+// (towards the plaza), `width` its length. The facade's south corner reaches past the curb of Av. México as its
+// OpenStreetMap line is drawn, so the whole church stands back as far as it takes (`setback`, ~2 m). `curb` is the
+// outline of the curb island it stands on (city-config.js), in the church's frame.
 const CATEDRAL = (() => {
   const site = GEO.landmarks && GEO.landmarks.Catedral;
   if (!site || !site.ring) return null;
@@ -62,7 +65,18 @@ const CATEDRAL = (() => {
     if (!facade || reach > facade.reach) facade = { x, z, f: [fx, fz], width: len, reach };
   }
   if (!facade) return null;
-  return { x: facade.x, z: facade.z, f: facade.f, width: facade.width, yaw: Math.atan2(facade.f[0], facade.f[1]), ring: r };
+  const [fx, fz] = facade.f, local = (x, z, s = 0) => [(x - facade.x) * fz - (z - facade.z) * fx, (x - facade.x) * fx + (z - facade.z) * fz + s];
+  const block = blockAt(facade.x - fx * 15, facade.z - fz * 15);
+  let curb = block && block.poly ? block.poly.map((q) => local(q.x, q.z)) : null;
+  let setback = 0;
+  if (curb) {
+    for (const x of [-facade.width / 2 - 0.6, 0, facade.width / 2 + 0.6]) setback = Math.max(setback, 0.6 - curbFront(curb, x));
+    curb = curb.map(([x, z]) => [x, z + setback]);
+  }
+  return {
+    x: facade.x - fx * setback, z: facade.z - fz * setback, f: facade.f, width: facade.width,
+    yaw: Math.atan2(fx, fz), ring: r, curb, setback
+  };
 })();
 
 // The church & its neighbours in the church's frame (metres; the facade's middle at the origin, the church towards -z,
@@ -75,11 +89,47 @@ const PLAN = {
   cross: [-16.5, 10.4, -67.5, -49],
   apse: [-9.5, 3.7, -72.8, -67.5],
   dome: [0, -58.2], // x, z over the crossing
-  casona: [-37.4, -8.9, -49, -9],
-  atrium: [-37.2, -0.4], // the balustrade's corner: x along Amado Nervo, z along Av. México
-  pink: [8.9, 17.5, -12, 0],
-  portales: [17.5, 50, -12, 0]
+  casona: [-35.8, -8.9, -49, -9], // (its side 2.2 m in from Amado Nervo's curb)
+  atrium: [-35.6, -0.4], // the balustrade's corner: x along Amado Nervo, z along Av. México
+  pink: [8.9, 17.5], // x0, x1 along the plaza: their fronts follow the curb (frontRuns)
+  portales: [17.5, 49.4]
 };
+
+// How far towards the plaza the curb reaches at x (the church's frame): the front-most edge of the curb island there
+function curbFront(curb, x) {
+  let z = -Infinity;
+  for (let i = 0; i < curb.length; i++) {
+    const [ax, az] = curb[i], [bx, bz] = curb[(i + 1) % curb.length];
+    if ((ax - x) * (bx - x) > 0 || ax === bx) continue;
+    z = Math.max(z, az + ((x - ax) * (bz - az)) / (bx - ax));
+  }
+  return z;
+}
+
+// The building line along the plaza from x0 to x1 (the church's frame), `sidewalk` m in from the curb: a run per edge of
+// the curb island there, each { ox, oz, th, len } (its start, the turn of a frame whose +x runs along it and +z faces
+// the street, its length)
+function frontRuns(x0, x1, sidewalk = (GEO.frame && GEO.frame.sidewalk) || 2.2) {
+  const curb = CATEDRAL.curb, runs = [];
+  if (!curb) return [{ ox: x0, oz: 0, th: 0, len: x1 - x0 }];
+  let area = 0;
+  for (let i = 0; i < curb.length; i++) {
+    const [ax, az] = curb[i], [bx, bz] = curb[(i + 1) % curb.length];
+    area += ax * bz - bx * az;
+  }
+  for (let i = 0; i < curb.length; i++) {
+    const [ax, az] = curb[i], [bx, bz] = curb[(i + 1) % curb.length];
+    const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz);
+    if (len < 1) continue;
+    const s = area > 0 ? 1 : -1, nx = (s * dz) / len, nz = (-s * dx) / len; // (outward)
+    if (nz < 0.7) continue; // (not the plaza's side)
+    const lo = Math.max(x0, Math.min(ax, bx)), hi = Math.min(x1, Math.max(ax, bx));
+    if (hi - lo < 1) continue;
+    const zAt = (x) => az + ((x - ax) * dz) / dx;
+    runs.push({ ox: lo - nx * sidewalk, oz: zAt(lo) - nz * sidewalk, th: Math.atan2(nx, nz), len: (hi - lo) / nz });
+  }
+  return runs.sort((a, b) => a.ox - b.ox);
+}
 
 // A rectangle of PLAN in the world: { contains(x, z) }, `margin` metres wider all round
 function churchRect([x0, x1, z0, z1], margin = 0) {
@@ -108,7 +158,7 @@ if (CATEDRAL) {
     }
   });
   LANDMARK_RESERVES.push(churchRect([PLAN.atrium[0], PLAN.casona[1], PLAN.casona[3], PLAN.atrium[1]], 2));
-  LANDMARK_RESERVES.push(churchRect([PLAN.pink[0], PLAN.portales[1], PLAN.pink[2], PLAN.pink[3]], 2));
+  LANDMARK_RESERVES.push(churchRect([PLAN.pink[0], PLAN.portales[1], -24, 2], 2));
 }
 
 function stoneMaterial(tint) {
@@ -151,9 +201,14 @@ function buildCatedral(group, colliders) {
   const W = CATEDRAL_MODEL ? CATEDRAL_MODEL.width : C.width;
   const cs = Math.cos(C.yaw), sn = Math.sin(C.yaw);
   const toWorld = (x, z) => [C.x + x * cs + z * sn, C.z - x * sn + z * cs];
+  // (`frame`, while it is set: a run along the plaza, see frontRuns, that positions are given in)
+  let frame = null;
+  const here = (x, z) => (frame
+    ? [frame.ox + x * Math.cos(frame.th) + z * Math.sin(frame.th), frame.oz - x * Math.sin(frame.th) + z * Math.cos(frame.th)]
+    : [x, z]);
   // on the ground at the lowest corner of the church, a little into it (the town's slopes); each neighbour at its own
   // lowest corner (`rise`, from the church's), every wall reaching 1.5 m into the ground
-  const lowest = ([x0, x1, z0, z1]) => Math.min(...[[x0, z0], [x1, z0], [x1, z1], [x0, z1]].map(([x, z]) => liftAt(...toWorld(x, z))));
+  const lowest = ([x0, x1, z0, z1]) => Math.min(...[[x0, z0], [x1, z0], [x1, z1], [x0, z1]].map(([x, z]) => liftAt(...toWorld(...here(x, z)))));
   let base = Math.min(lowest([-W / 2, W / 2, -9.5, 0]), lowest(PLAN.nave), lowest(PLAN.cross), lowest(PLAN.apse));
   base = base > 0 ? base - 0.15 : 0;
   const rise = (rect) => Math.max(-3, lowest(rect) - 0.15 - base);
@@ -176,8 +231,9 @@ function buildCatedral(group, colliders) {
   const canvas = plaster(0x6b2b2c);
   const add = (geo, mat, x, y, z, ry = 0) => {
     const m = new THREE.Mesh(geo, mat);
-    m.position.set(x, y, z);
-    m.rotation.y = ry;
+    const [px, pz] = here(x, z);
+    m.position.set(px, y, pz);
+    m.rotation.y = ry + (frame ? frame.th : 0);
     m.castShadow = m.receiveShadow = true;
     root.add(m);
     return m;
@@ -186,6 +242,13 @@ function buildCatedral(group, colliders) {
   const arch = (w, h, x, y, z, ry, mat = dark) => add(new THREE.ShapeGeometry(pointedArch(w, h)), mat, x, y, z, ry);
   const FRONT_H = 20, WALL_H = 17.5;
   const fz = 0; // the facade's plane
+  // a collider over a rectangle (of the current frame), y0..y0 + h over the church's base
+  const collide = ([x0, x1, z0, z1], y0, h) => {
+    const th = frame ? frame.th : 0, c = Math.cos(C.yaw + th), s = Math.sin(C.yaw + th);
+    const [ox, oz] = toWorld(...here((x0 + x1) / 2, (z0 + z1) / 2)), hx = (x1 - x0) / 2, hz = (z1 - z0) / 2;
+    const ex = Math.abs(c) * hx + Math.abs(s) * hz, ez = Math.abs(s) * hx + Math.abs(c) * hz;
+    colliders.push({ minX: ox - ex, maxX: ox + ex, minZ: oz - ez, maxZ: oz + ez, minY: base + y0, maxY: base + y0 + h, obb: { cx: ox, cz: oz, hx, hz, cs: c, sn: s } });
+  };
   // a box on an axis-aligned face: `face` = [x, z, along x?, normal sign]; u along it, `out` from it, w wide, d deep
   const fbox = ([fx, fzz, alongX, n], u, y, w, h, d, mat, out = 0) => (alongX
     ? box(w, h, d, fx + u, y, fzz + n * (out + d / 2), mat)
@@ -368,13 +431,13 @@ function buildCatedral(group, colliders) {
     return spring;
   };
   // the pink building: three storeys over three arches, windows in white frames, iron balconies on the first floor
-  {
-    const [x0, x1, z0, z1] = PLAN.pink, y0 = rise(PLAN.pink), H = 12.2, G = 4.6;
+  const pinkBuilding = (rect) => {
+    const [x0, x1, z0, z1] = rect, y0 = rise(rect), H = 12.2, G = 4.6;
     const w = x1 - x0, cx = (x0 + x1) / 2;
     box(w, G + 1.5, z1 - 3.5 - z0, cx, y0 + (G - 1.5) / 2, (z0 + z1 - 3.5) / 2, salmon);
     box(w, H - G, z1 - z0, cx, y0 + (G + H) / 2, (z0 + z1) / 2, pink);
     box(w + 0.4, 0.4, z1 - z0 + 0.3, cx, y0 + H, (z0 + z1) / 2, lime);
-    arcade(PLAN.pink, 3, y0, G, lime, false);
+    arcade(rect, Math.max(1, Math.round((x1 - x0) / 2.9)), y0, G, lime, false);
     const front = [cx, z1, true, 1];
     for (const y of [G + 1.9, G + 5.1]) {
       for (const u of [-w / 3, 0, w / 3]) {
@@ -386,18 +449,19 @@ function buildCatedral(group, colliders) {
         }
       }
     }
-  }
+    collide([x0, x1, z0, z1 - 3.5], y0, 13);
+  };
   // the portales: an arcade of round arches on white columns, the shops behind; above, the restaurant's terrace under
   // maroon awnings in an upper arcade, a balustraded parapet
-  {
-    const [x0, x1, z0, z1] = PLAN.portales, y0 = rise(PLAN.portales), G = 4.6, H = 9.4, n = 8;
+  const portales = (rect) => {
+    const [x0, x1, z0, z1] = rect, y0 = rise(rect), G = 4.6, H = 9.4, n = Math.max(1, Math.round((x1 - x0) / 4.1));
     const w = x1 - x0, cx = (x0 + x1) / 2, step = w / n;
     box(w, G + 1.5, z1 - 3.6 - z0, cx, y0 + (G - 1.5) / 2, (z0 + z1 - 3.6) / 2, salmon);
     for (let k = 0; k < n; k++) box(step * 0.55, 3.0, 0.1, x0 + (k + 0.5) * step, y0 + 1.5, z1 - 3.6, dark);
     box(w, 0.45, z1 - z0, cx, y0 + G + 0.2, (z0 + z1) / 2, lime);
     box(w, H - G, z1 - 4.2 - z0, cx, y0 + (G + H) / 2, (z0 + z1 - 4.2) / 2, lime);
-    arcade(PLAN.portales, n, y0, G, lime, true);
-    const spring = arcade(PLAN.portales, n, y0 + G + 0.4, H - G - 0.4, lime, false);
+    arcade(rect, n, y0, G, lime, true);
+    const spring = arcade(rect, n, y0 + G + 0.4, H - G - 0.4, lime, false);
     // (a quarter sphere of canvas in each upper arch, bulging out over the street)
     for (let k = 0; k < n; k++) {
       const awning = add(new THREE.SphereGeometry(step / 2 - 0.35, 14, 6, 0, Math.PI, 0, Math.PI / 2), canvas, x0 + (k + 0.5) * step, y0 + G + 0.4 + spring, z1 - 0.05);
@@ -407,7 +471,16 @@ function buildCatedral(group, colliders) {
     fbox(front, 0, y0 + G + 1.05, w, 0.14, 0.35, lime, -0.1);
     for (let u = -w / 2 + 0.2; u < w / 2; u += 0.32) fbox(front, u, y0 + G + 0.7, 0.09, 0.62, 0.09, lime, 0.02);
     box(w + 0.4, 0.5, z1 - z0 + 0.3, cx, y0 + H + 0.2, (z0 + z1) / 2, lime);
+    collide([x0, x1, z0, z1 - 3.6], y0, 10);
+  };
+  // along the curb, a run per edge of it (each a little longer, so the corners where the street turns close)
+  for (const [x0, x1, build] of [[...PLAN.pink, pinkBuilding], [...PLAN.portales, portales]]) {
+    for (const run of frontRuns(x0, x1)) {
+      frame = run;
+      build([-0.3, run.len + 0.3, -12, 0]);
+    }
   }
+  frame = null;
   const STAYS = root.children.length; // (everything after them is the front, which the model replaces)
 
   // the front block, its plinth & string courses
@@ -503,7 +576,8 @@ function buildCatedral(group, colliders) {
   group.add(root);
   // the model in the background (a 3.7 MB file, not preloaded), standing on the drawn front's plane
   if (CATEDRAL_MODEL) {
-    import('three/addons/loaders/GLTFLoader.js').then(({ GLTFLoader }) => {
+    const loading = import('three/addons/loaders/GLTFLoader.js');
+    loading.then(({ GLTFLoader }) => {
       new GLTFLoader().load(CATEDRAL_MODEL.file, (gltf) => {
         const model = gltf.scene;
         model.position.z = fz;
@@ -518,18 +592,11 @@ function buildCatedral(group, colliders) {
     });
   }
   // colliders over the church, its neighbours (the arcades' walkways open) and the balustrade
-  const collide = ([x0, x1, z0, z1], y0, h) => {
-    const [ox, oz] = toWorld((x0 + x1) / 2, (z0 + z1) / 2), hx = (x1 - x0) / 2, hz = (z1 - z0) / 2;
-    const ex = Math.abs(cs) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
-    colliders.push({ minX: ox - ex, maxX: ox + ex, minZ: oz - ez, maxZ: oz + ez, minY: base + y0, maxY: base + y0 + h, obb: { cx: ox, cz: oz, hx, hz, cs, sn } });
-  };
   collide([-W / 2, W / 2, -9.5, 0], 0, 45);
   collide(PLAN.nave, 0, WALL_H + 3);
   collide(PLAN.cross, 0, 40);
   collide(PLAN.apse, 0, 16);
   collide(PLAN.casona, rise(PLAN.casona), 15);
-  collide([PLAN.pink[0], PLAN.pink[1], PLAN.pink[2], PLAN.pink[3] - 3.5], rise(PLAN.pink), 13);
-  collide([PLAN.portales[0], PLAN.portales[1], PLAN.portales[2], PLAN.portales[3] - 3.6], rise(PLAN.portales), 10);
   const [xa, za] = PLAN.atrium, [cx0, cx1, , cz1] = PLAN.casona, gate = (cx0 + cx1) / 2, ya = rise([xa, cx1, cz1, za]);
   collide([xa, gate - 1.3, za - 0.25, za + 0.25], ya, 2);
   collide([gate + 1.3, cx1, za - 0.25, za + 0.25], ya, 2);
@@ -761,4 +828,4 @@ function buildTepicLandmarks(scene) {
   return { group, colliders };
 }
 
-export { buildTepicLandmarks, LANDMARK_RESERVES, CATEDRAL };
+export { buildTepicLandmarks, LANDMARK_RESERVES, CATEDRAL, PLAN, curbFront, frontRuns };
