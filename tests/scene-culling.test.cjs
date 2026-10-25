@@ -189,3 +189,22 @@ test('the static city drops the CPU copies the GPU already holds, keeping what i
   assert.equal(release(renderer), 0);
   assert.equal(ctx.state.pendingRelease.length, 0);
 });
+
+test('the shadow stand-ins are shown to the cascades only, and visible again between renders', () => {
+  const showOnlyTo = vm.runInNewContext(`(${topLevel('showOnlyTo')})`, {});
+  const calls = [];
+  const scene = { onBeforeRender: () => calls.push('before'), onAfterRender: () => calls.push('after') };
+  const group = { visible: true };
+  const proxyLayers = { layer: 3 };
+  showOnlyTo(scene, group, proxyLayers);
+  // (a camera sees the stand-ins' layers if it has layer 3 enabled: the cascades do, the view doesn't)
+  const camera = (enabled) => ({ layers: { test: (l) => l === proxyLayers && enabled.includes(l.layer) } });
+  const view = camera([0]), cascade = camera([0, 3]);
+  scene.onBeforeRender({}, scene, view);
+  assert.equal(group.visible, false, 'hidden from the view');
+  scene.onAfterRender({}, scene, view);
+  assert.equal(group.visible, true, 'visible again after it');
+  scene.onBeforeRender({}, scene, cascade);
+  assert.equal(group.visible, true, 'shown to a cascade');
+  assert.deepEqual(calls, ['before', 'after', 'before'], 'the hooks set before are still called');
+});

@@ -42,3 +42,11 @@ test('a big outline tested by bands answers as the plain loop does, everywhere',
   assert.equal(insidePoly(pts, 0, 5000), false);
   assert.equal(insidePoly(pts, 0, -5000), false);
 });
+
+test('an outline that grows after its first test is indexed again', () => {
+  const pts = outline(40);
+  assert.equal(insidePoly(pts, 2000, 0), false);
+  // (pushed out to take in (2000, 0): a long spike from the vertex nearest it)
+  pts.splice(1, 0, { x: 2100, z: -10 }, { x: 2100, z: 10 });
+  assert.equal(insidePoly(pts, 2000, 0), plain(pts, 2000, 0));
+});

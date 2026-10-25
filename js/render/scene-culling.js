@@ -202,6 +202,22 @@ function replaceWithChunks(mesh, cell) {
 }
 
 /**
+ * Shows `group` only to the cameras that see `layers`, render by render (scene.onBeforeRender), and visible again
+ * after each (onAfterRender), so whatever walks the scene between renders (main.js's shader warm-up) still finds it
+ */
+function showOnlyTo(scene, group, layers) {
+  const before = scene.onBeforeRender, after = scene.onAfterRender;
+  scene.onBeforeRender = function (renderer, scn, camera, target) {
+    before.call(this, renderer, scn, camera, target);
+    group.visible = camera.layers.test(layers);
+  };
+  scene.onAfterRender = function (renderer, scn, camera, target) {
+    after.call(this, renderer, scn, camera, target);
+    group.visible = true;
+  };
+}
+
+/**
  * Sets up the culling of the static city under `roots` (Object3Ds). `shadow` is the SunLightShadow whose cascade
  * cameras render the shadow stand-ins (none are made without it). Per-frame culling runs in updateSceneCulling().
  */
@@ -347,11 +363,7 @@ function setupSceneCulling(scene, roots, shadow = null) {
     scene.add(proxies);
     const proxyLayers = new THREE.Layers();
     proxyLayers.set(SHADOW_PROXY_LAYER);
-    const before = scene.onBeforeRender;
-    scene.onBeforeRender = function (renderer, scn, camera, target) {
-      before.call(this, renderer, scn, camera, target);
-      proxies.visible = camera.layers.test(proxyLayers);
-    };
+    showOnlyTo(scene, proxies, proxyLayers);
     const firstProxy = new Map(); // material + kind -> the stand-in that compiles their shared pipeline
     const addProxy = (mesh) => {
       mesh.name = 'ShadowProxy';
@@ -506,4 +518,4 @@ function releaseStaticArrays(renderer) {
   return bytes;
 }
 
-export { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices, releaseStaticArrays, SHADOW_PROXY_LAYER };
+export { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices, releaseStaticArrays, showOnlyTo, SHADOW_PROXY_LAYER };

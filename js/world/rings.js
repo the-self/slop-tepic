@@ -7,7 +7,7 @@
 
 const BAND = 16; // m: the bands' height
 const MIN_EDGES = 24; // fewer than this, the plain loop is quicker than any index
-const indexes = new WeakMap(); // outline -> its bands
+const indexes = new WeakMap(); // outline -> its bands (an outline is not to change once tested: its length is checked)
 
 // The bands of an outline given by accessors x(i), z(i) over n vertices: { z0, bands: [edge starts, ...] }
 function buildBands(n, x, z) {
@@ -21,7 +21,7 @@ function buildBands(n, x, z) {
     const lo = Math.min(z(i), z(j)), hi = Math.max(z(i), z(j));
     for (let k = Math.floor((lo - z0) / BAND); k <= Math.floor((hi - z0) / BAND); k++) bands[k].push(i);
   }
-  return { z0, bands: bands.map((b) => Int32Array.from(b)) };
+  return { n, z0, bands: bands.map((b) => Int32Array.from(b)) };
 }
 
 /** (x, z) inside the polygon `pts` ([{ x, z }, ...], either winding; even-odd) */
@@ -36,7 +36,7 @@ function insidePoly(pts, x, z) {
     return inside;
   }
   let index = indexes.get(pts);
-  if (!index) indexes.set(pts, (index = buildBands(n, (i) => pts[i].x, (i) => pts[i].z)));
+  if (!index || index.n !== n) indexes.set(pts, (index = buildBands(n, (i) => pts[i].x, (i) => pts[i].z)));
   const band = index.bands[Math.floor((z - index.z0) / BAND)];
   if (!band) return false;
   let inside = false;
@@ -58,7 +58,7 @@ function insideRing(r, x, z) {
     return inside;
   }
   let index = indexes.get(r);
-  if (!index) indexes.set(r, (index = buildBands(n, (i) => r[i * 2], (i) => r[i * 2 + 1])));
+  if (!index || index.n !== n) indexes.set(r, (index = buildBands(n, (i) => r[i * 2], (i) => r[i * 2 + 1])));
   const band = index.bands[Math.floor((z - index.z0) / BAND)];
   if (!band) return false;
   let inside = false;
