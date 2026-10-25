@@ -1,11 +1,47 @@
 import * as THREE from 'three/webgpu';
+import type { PlayerEntity, ThirdPersonControllerManager } from './controllers.ts';
+import type { AimControl } from './aim.ts';
 
-// js/player/cameras.js
+// js/player/cameras.ts
 // Multi-camera system supporting Third-Person Chase (with mouse/touch orbit + zoom),
 // Low-Angle Action Cam, POV/Cockpit Cam, the scenic cameras over Tepic's landmarks, and Auto-Director Drone.
-// (The scenic preset ids are the New York game's; main.js anchors each one on a spot of the city.)
+// (The scenic preset ids are the New York game's; main.ts anchors each one on a spot of the city.)
 
-const CAMERA_PRESETS = [
+export type CameraPresetId = 'chase' | 'action' | 'pov' | 'centralPark' | 'fifthAve' | 'timesSquare' | 'chryslerGCT'
+  | 'observatory' | 'bryantPark' | 'waterfront' | 'drone';
+/** A camera: its id, its names (the menu's, the HUD's short one), whether it follows the player, its fov (degrees) */
+export interface CameraPreset {
+  id: CameraPresetId;
+  name: string;
+  short: string;
+  category: 'follow' | 'scenic';
+  fov: number;
+}
+/** A spot a scenic camera frames: where (m) and which way it faces (rad, 0 facing +z) */
+export interface ScenicAnchor {
+  x: number;
+  z: number;
+  heading: number;
+}
+/** A room the camera stays inside (interiors.ts): its walls and ceiling, m */
+export interface CameraRoom {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  maxY: number;
+}
+/** What the cameras read of the controllers (player/controllers.ts): the entity they follow */
+export type CameraTarget = Pick<ThirdPersonControllerManager, 'getActiveEntity'>;
+// (the free aim, player/aim.ts: whether it is on, how far the shoulder view has come in, its pitch)
+type CameraAim = Pick<AimControl, 'active' | 'blend' | 'pitch'>;
+interface DragPointer {
+  x: number;
+  y: number;
+  type: string;
+}
+
+const CAMERA_PRESETS: CameraPreset[] = [
   { id: 'chase',       name: '3rd-Person Chase',         short: 'Chase',       category: 'follow', fov: 56 },
   { id: 'action',      name: 'Low-Angle Action',         short: 'Action',      category: 'follow', fov: 60 },
   { id: 'pov',         name: 'First-Person / Cockpit',   short: 'POV / Dash',  category: 'follow', fov: 68 },
@@ -19,10 +55,55 @@ const CAMERA_PRESETS = [
   { id: 'drone',       name: 'Auto-Director Aerial',     short: 'Director',    category: 'scenic', fov: 50 }
 ];
 
-const SCENIC_ORIGIN = { x: 0, z: 0, heading: Math.PI };
+const SCENIC_ORIGIN: ScenicAnchor = { x: 0, z: 0, heading: Math.PI };
 
 class CameraSystem {
-  constructor(domElement, controllerManager) {
+  domElement: HTMLElement;
+  controllerManager: CameraTarget;
+  camera: THREE.PerspectiveCamera;
+  activePresetId: CameraPresetId;
+  orbitYawOffset: number; // rad
+  orbitPitchOffset: number; // rad
+  zoomMultiplier: number;
+  wheelZooms: ((event: WheelEvent) => boolean) | null;
+  isDragging: boolean;
+  userOrbitTimer: number; // s
+  currentPos: THREE.Vector3;
+  currentLookAt: THREE.Vector3;
+  initialized: boolean;
+  followEntity: PlayerEntity | null;
+  followOffset: THREE.Vector3;
+  followLookOffset: THREE.Vector3;
+  followBaseY: number;
+  orbitEntity: PlayerEntity | null;
+  orbitYaw: number; // rad
+  orbitHoriz: number; // m
+  orbitHeight: number; // m
+  orbitBaseY: number;
+  orbitLookFrom: THREE.Vector3;
+  orbitLookBlend: number;
+  smoothedSpeed: number; // m/s
+  _desiredPos: THREE.Vector3;
+  _desiredLook: THREE.Vector3;
+  scenicAnchors: Partial<Record<string, ScenicAnchor>> | null;
+  aim: CameraAim | null;
+  aimWas: boolean;
+  _aimPos: THREE.Vector3;
+  _aimLook: THREE.Vector3;
+  _lookAt: THREE.Vector3;
+  _shake: THREE.Vector3;
+  shakeAmp: number; // m
+  speedRush: number;
+  // the chase framing update() works out each frame, which orbitChase() eases towards (rad, m)
+  declare _chaseYaw: number;
+  declare _chaseHoriz: number;
+  declare _chaseHeight: number;
+  declare _chaseLookY: number;
+  declare _clearPointers: () => void; // (bindPointerControls)
+  groundAt?: ((x: number, z: number) => number) | null;
+  interior?: CameraRoom | null;
+
+  constructor(domElement: HTMLElement, controllerManager: CameraTarget) {
     this.domElement = domElement;
     this.controllerManager = controllerManager;
 
@@ -37,7 +118,7 @@ class CameraSystem {
     this.orbitYawOffset = 0.0;
     this.orbitPitchOffset = 0.09;
     this.zoomMultiplier = 1.0;
-    this.wheelZooms = null; // (event) => whether the mouse wheel zooms (main.js: not while it switches weapons)
+    this.wheelZooms = null; // (event) => whether the mouse wheel zooms (main.ts: not while it switches weapons)
     this.isDragging = false;
     this.userOrbitTimer = 0;
 
@@ -61,9 +142,9 @@ class CameraSystem {
     this.smoothedSpeed = 0;
     this._desiredPos = new THREE.Vector3();
     this._desiredLook = new THREE.Vector3();
-    // Scenic anchors { presetId: { x, z, heading } }: the spots the scenic cameras frame (main.js sets them)
+    // Scenic anchors { presetId: { x, z, heading } }: the spots the scenic cameras frame (main.ts sets them)
     this.scenicAnchors = null;
-    // Free aim on foot (player/aim.js, main.js sets it): the follow cameras ease in over the right shoulder
+    // Free aim on foot (player/aim.ts, main.ts sets it): the follow cameras ease in over the right shoulder
     this.aim = null;
     this.aimWas = false;
     this._aimPos = new THREE.Vector3();
@@ -76,18 +157,18 @@ class CameraSystem {
     this.bindPointerControls();
   }
 
-  setScenicAnchors(anchors) {
-    this.scenicAnchors = anchors || null;
+  setScenicAnchors(anchors: Partial<Record<string, ScenicAnchor>> | null): void {
+    this.scenicAnchors = anchors ?? null;
   }
 
   // A scenic shot framed on an anchor spot: `back` metres behind it along its heading, `side` to its right, `up` high,
   // looking `ahead` metres past it (heading 0 faces +z; right is -x). Without an anchor: the frame's origin (the plaza)
-  scenicFromAnchor(id, elapsed, desiredPos, desiredLook) {
-    const a = (this.scenicAnchors && this.scenicAnchors[id]) || SCENIC_ORIGIN;
+  scenicFromAnchor(id: string, elapsed: number, desiredPos: THREE.Vector3, desiredLook: THREE.Vector3): void {
+    const a = this.scenicAnchors?.[id] ?? SCENIC_ORIGIN;
     const sx = Math.sin(a.heading), cz = Math.cos(a.heading);
     // heights over the ground at the spot (the town's slopes put it well over y = 0)
     const g = this.groundAt ? this.groundAt(a.x, a.z) : 0;
-    const at = (ahead, right, y) => [a.x + sx * ahead - cz * right, y + g, a.z + cz * ahead + sx * right];
+    const at = (ahead: number, right: number, y: number): [number, number, number] => [a.x + sx * ahead - cz * right, y + g, a.z + cz * ahead + sx * right];
     if (id === 'observatory') {
       // high over the spot, slowly panning across the roofs towards the hills
       const pan = Math.sin(elapsed * 0.18) * 120.0;
@@ -106,15 +187,15 @@ class CameraSystem {
     }
   }
 
-  bindPointerControls() {
+  bindPointerControls(): void {
     const canvas = this.domElement;
-    const pointers = new Map();
+    const pointers = new Map<number, DragPointer>();
     canvas.style.touchAction = 'none';
 
     canvas.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || pointers.size >= 2) return;
       // Only two touch pointers may share a gesture; mouse and pen drags stay independent.
-      if (pointers.size && (e.pointerType !== 'touch' || pointers.values().next().value.type !== 'touch')) return;
+      if (pointers.size && (e.pointerType !== 'touch' || pointers.values().next().value?.type !== 'touch')) return;
       e.preventDefault();
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
       canvas.setPointerCapture(e.pointerId);
@@ -151,13 +232,13 @@ class CameraSystem {
       this.userOrbitTimer = 4.0;
     });
 
-    const releasePointer = (id) => {
+    const releasePointer = (id: number) => {
       if (!pointers.delete(id)) return;
       this.isDragging = pointers.size > 0;
       if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
     };
-    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-      canvas.addEventListener(type, (e) => releasePointer(e.pointerId));
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) {
+      canvas.addEventListener(type, (e) => { releasePointer(e.pointerId); });
     }
     const clearPointers = () => {
       for (const id of pointers.keys()) releasePointer(id);
@@ -170,12 +251,12 @@ class CameraSystem {
 
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      if (this.wheelZooms && !this.wheelZooms(e)) return; // (on foot it switches weapons instead: ui/weapon-wheel.js)
+      if (this.wheelZooms && !this.wheelZooms(e)) return; // (on foot it switches weapons instead: ui/weapon-wheel.ts)
       this.zoomMultiplier = Math.max(0.45, Math.min(2.4, this.zoomMultiplier + e.deltaY * 0.001));
     }, { passive: false });
   }
 
-  setCameraPreset(presetId, snapImmediately = false) {
+  setCameraPreset(presetId: string, snapImmediately = false): void {
     const preset = CAMERA_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
     this.activePresetId = preset.id;
@@ -186,7 +267,7 @@ class CameraSystem {
     }
   }
 
-  applyGamepadInput(lookX, lookY, zoom, dt) {
+  applyGamepadInput(lookX: number, lookY: number, zoom: number, dt: number): void {
     if (!(dt > 0) || !Number.isFinite(dt)) return;
     if (this.activePresetId !== 'chase' && this.activePresetId !== 'pov') return;
     // POV uses the orbit angles, but only chase renders a zoomed camera distance.
@@ -198,14 +279,14 @@ class CameraSystem {
     this.userOrbitTimer = 4.0;
   }
 
-  resetOrbit() {
+  resetOrbit(): void {
     this.orbitYawOffset = 0;
     this.orbitPitchOffset = 0.09;
     this.zoomMultiplier = 1;
     this.userOrbitTimer = 0;
   }
 
-  resetForTeleport() {
+  resetForTeleport(): void {
     // Arrive with a fresh chase view, without carrying a previous drive or gesture into the destination.
     this._clearPointers();
     this.isDragging = false;
@@ -219,16 +300,16 @@ class CameraSystem {
     this.setCameraPreset('chase', true);
   }
 
-  getActivePreset() {
-    return CAMERA_PRESETS.find((p) => p.id === this.activePresetId) || CAMERA_PRESETS[0];
+  getActivePreset(): CameraPreset {
+    return CAMERA_PRESETS.find((p) => p.id === this.activePresetId) ?? CAMERA_PRESETS[0];
   }
 
-  onResize(width, height) {
+  onResize(width: number, height: number): void {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
   }
 
-  update(dt, elapsed) {
+  update(dt: number, elapsed: number): void {
     const entity = this.controllerManager.getActiveEntity();
     const desiredPos = this._desiredPos;
     const desiredLook = this._desiredLook;
@@ -316,6 +397,8 @@ class CameraSystem {
         break;
       }
 
+      case 'centralPark': case 'fifthAve': case 'timesSquare': case 'chryslerGCT': case 'observatory': case 'bryantPark':
+      case 'waterfront': case 'drone':
       default:
         // the scenic cameras, framed on the city's spots
         this.scenicFromAnchor(this.activePresetId, elapsed, desiredPos, desiredLook);
@@ -360,14 +443,14 @@ class CameraSystem {
       this.currentLookAt.lerp(desiredLook, k);
     }
 
-    // never under the hills (terrain.js): over the ground where the camera is, and over the ground halfway to its
+    // never under the hills (terrain.ts): over the ground where the camera is, and over the ground halfway to its
     // target so a ridge between them doesn't hide the player
     if (this.groundAt) {
       const p = this.currentPos, t = this.currentLookAt;
       const g = Math.max(this.groundAt(p.x, p.z), this.groundAt((p.x + t.x) / 2, (p.z + t.z) / 2) - 0.5);
       if (p.y < g + 1.2) p.y = g + 1.2;
     }
-    // inside a room (interiors.js): the camera stays between its walls and under its ceiling
+    // inside a room (interiors.ts): the camera stays between its walls and under its ceiling
     const room = this.interior;
     if (room) {
       const p = this.currentPos;
@@ -405,9 +488,9 @@ class CameraSystem {
 
   // Speed, GTA-style, in a car or on a moto on the follow cameras: the view widens as it goes faster (more of the road
   // rushing past at the edges; the nitro's push widens it further) and shakes from ~90 km/h, harder the faster, as the
-  // wind and the road's roughness do to a fast car; a crash jolts it (entity.cameraKick, 0..1, controllers.js). Returns
+  // wind and the road's roughness do to a fast car; a crash jolts it (entity.cameraKick, 0..1, controllers.ts). Returns
   // the widening (0..1, eased); leaves the shake's offset in this._shake
-  speedEffects(entity, preset, dt, elapsed) {
+  speedEffects(entity: PlayerEntity, preset: CameraPreset, dt: number, elapsed: number): number {
     const vehicle = (entity.type === 'car' || entity.type === 'moto') && preset.category === 'follow';
     const kmh = vehicle ? Math.abs(entity.speed) * 3.6 : 0;
     const target = Math.min(1, Math.max(0, (kmh - 60) / 170)) + (vehicle && entity.drive?.nitroOn ? 0.35 : 0);
@@ -431,10 +514,10 @@ class CameraSystem {
   }
 
   // The aiming view: over the right shoulder (from the eyes in POV), along the player's heading tilted by the aim's
-  // pitch; the crosshair in the middle of the screen is where crime.js sends the shots
-  shoulderView(entity, pos, look) {
+  // pitch; the crosshair in the middle of the screen is where crime.ts sends the shots
+  shoulderView(entity: PlayerEntity, pos: THREE.Vector3, look: THREE.Vector3): void {
     const h = entity.heading;
-    const pitch = this.aim.pitch;
+    const pitch = this.aim ? this.aim.pitch : 0; // (only called aiming)
     const cp = Math.cos(pitch);
     const dx = Math.sin(h) * cp, dy = Math.sin(pitch), dz = Math.cos(h) * cp;
     const pov = this.activePresetId === 'pov';
@@ -452,7 +535,7 @@ class CameraSystem {
   // as a position: easing the position cut straight across the circle, so a drag or a sharp turn pulled the camera in
   // towards the player and swung the view sideways. It is placed from the entity's current position every frame, so
   // a steady drive keeps it steady whatever the frame time, and it always looks over the entity along its own yaw.
-  orbitChase(entity, dt) {
+  orbitChase(entity: PlayerEntity, dt: number): void {
     const p = entity.position;
     if (!this.initialized || this.orbitEntity !== entity) {
       this.orbitEntity = entity;
@@ -500,13 +583,13 @@ class CameraSystem {
     );
   }
 
-  // Inside a room ({ minX, maxX, minZ, maxZ, maxY }, interiors.js) or out of it (null)
-  setInterior(room) {
-    this.interior = room || null;
+  // Inside a room ({ minX, maxX, minZ, maxZ, maxY }, interiors.ts) or out of it (null)
+  setInterior(room: CameraRoom | null | undefined): void {
+    this.interior = room ?? null;
   }
 
   // Height of the ground (the hills over the flat city) at (x, z): the cameras keep above it
-  setGroundQuery(fn) {
+  setGroundQuery(fn: ((x: number, z: number) => number) | null | undefined): void {
     this.groundAt = typeof fn === 'function' ? fn : null;
   }
 }

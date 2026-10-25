@@ -1,9 +1,9 @@
-// js/player/car-physics.js
+// js/player/car-physics.ts
 // The player's car as a rigid body on four (or more) sprung wheels, in Jolt Physics (WASM, MIT; jolt-physics on
 // jsDelivr): suspension travel and damping per wheel, anti-roll bars, a tyre model with slip curves for grip, the body's
 // weight shifting under braking, power and cornering, and real contacts with the city: walls stop it and spin it, it
 // flies off crests, lands on its springs and can roll over. Jolt drives nothing itself: the engine, gearbox, brakes and
-// drag stay drivetrain.js's (its maker-calibrated 0-100 km/h, nitro, gears and revs), its force pushed through the
+// drag stay drivetrain.ts's (its maker-calibrated 0-100 km/h, nitro, gears and revs), its force pushed through the
 // tyres' contact patches, never more than each tyre's grip under the weight on it; Jolt's wheels roll free, and its
 // handbrake locks the rear ones.
 //
@@ -12,14 +12,171 @@
 //   the deck of a bridge it is on, or the channel under one it is down in), the kerbs included; rebuilt every 6 m;
 // - the walls: `collidersNear(x, z, r)`'s boxes (buildings, poles, parapets, parked cars) within 45 m, as static boxes,
 //   looked at again every 2 m.
-// The traffic still shoves the car itself (traffic.js collideWithPlayer, moving its position and velocity): the shove is
+// The traffic still shoves the car itself (traffic.ts collideWithPlayer, moving its position and velocity): the shove is
 // carried over to the body on the next step.
-// The same Jolt world holds the people thrown about as ragdolls (sim/ragdolls.js, through `world` and addSystem): they
+// The same Jolt world holds the people thrown about as ragdolls (sim/ragdolls.ts, through `world` and addSystem): they
 // meet the car, the walls, its ground and their own.
 //
 // Frame: as the game's (metres, y up), the car's own +z ahead and +x its left, its origin on the ground under it at rest.
 // Plain numbers and Jolt only, no three.js: node --test can run it with a local Jolt. Jolt's objects live on the WASM
 // heap: the ones made here for a moment are reused (tmp*) or destroyed, never left to the garbage collector.
+
+import type Jolt from 'jolt-physics';
+
+/** An initialised jolt-physics module */
+export type JoltApi = typeof Jolt;
+
+/** A wall the car meets (collidersNear): a world box in m (y from its foot to its top, when it has them) and its oriented box */
+export interface WallCollider {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  minY?: number;
+  maxY?: number;
+  obb?: { cx: number; cz: number; hx: number; hz: number; cs: number; sn: number };
+}
+/** The game's world as the car meets it: the height of what a car stands on at (x, z) from fromY, the walls near (x, z) */
+export interface CarWorld {
+  groundAt: (x: number, z: number, fromY: number) => number;
+  collidersNear: (x: number, z: number, r: number) => Iterable<WallCollider>;
+}
+/** A wheel at rest on the body: its centre (local x, z, m), radius (m), whether it steers */
+export interface WheelRest {
+  x: number;
+  z: number;
+  radius: number;
+  front: boolean;
+}
+/** ...laid out on its spring (wheelLayout): where it attaches (m over the floor) and its spring's travel (m) */
+export interface WheelMount {
+  x: number;
+  z: number;
+  radius: number;
+  front: boolean;
+  left: boolean;
+  attachY: number;
+  minLength: number;
+  maxLength: number;
+}
+/**
+ * The car's body (build): mass (kg), half width & length, height and centre of mass over the ground (m), its wheels,
+ * steering lock (rad), drive; the springs' frequency (Hz), the anti-roll bars' stiffness (N·m/rad per kg), the
+ * bonnet's height as a share of the body's, and the cabin's front & back as shares of the half length
+ */
+export interface CarBodyDef {
+  mass: number;
+  halfW: number;
+  halfL: number;
+  height: number;
+  cg: number;
+  wheels: WheelRest[];
+  steerLock: number;
+  drive: string; // 'fwd' | 'rwd' | 'awd'
+  springHz?: number;
+  roll?: number;
+  hood?: number;
+  cabin?: [number, number];
+}
+/** One step's inputs (step) */
+export interface CarStepInput {
+  force: number; // N along the car
+  airDrag?: number; // N
+  steer?: number; // -1 left .. 1 right
+  handbrake?: boolean;
+  hold?: boolean;
+  grip?: number;
+  spinning?: boolean;
+  focus?: { x: number; y: number; z: number };
+}
+/** A wheel after the step: on the ground, its spin (rad), its centre over the car's floor (m) */
+export interface WheelOut {
+  contact: boolean;
+  spin: number;
+  y: number;
+}
+/** The hardest knock the body itself took in a step: the approach speed (m/s, 0: none) and the normal out of what it hit */
+export interface CarHit {
+  speed: number;
+  nx: number;
+  ny: number;
+  nz: number;
+}
+/**
+ * The body's state (read, step): its origin (m), rotation, velocity (m/s), angular velocity (rad/s), its own ahead (f)
+ * and up (u) in the world, heading (rad), speed along itself (m/s), wheels on the ground, the wheels and the step's knock
+ */
+export interface CarPhysicsOut {
+  x: number;
+  y: number;
+  z: number;
+  qx: number;
+  qy: number;
+  qz: number;
+  qw: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  wx: number;
+  wy: number;
+  wz: number;
+  fx: number;
+  fy: number;
+  fz: number;
+  ux: number;
+  uy: number;
+  uz: number;
+  heading: number;
+  forward: number;
+  contacts: number;
+  wheels: WheelOut[];
+  hit: CarHit;
+}
+/** What else lives in the car's Jolt world (sim/ragdolls.ts): before(dt) each step, after(dt) once it has run */
+export interface PhysicsSystemHooks {
+  before?(dt: number): void;
+  after?(dt: number): void;
+}
+/** The Jolt world the car's physics shares with the ragdolls (sim/ragdolls.ts) */
+export interface PhysicsWorld {
+  Jolt: JoltApi;
+  system: Jolt.PhysicsSystem;
+  bodies: Jolt.BodyInterface;
+  groundAt: CarWorld['groundAt'];
+  layers: { ragdoll: number; ragdollGround: number };
+  // a static body of ground n samples cell m apart a side round (cx, cz), sampled from fromY; or `body` reshaped
+  groundField(body: Jolt.Body | null, cx: number, cz: number, fromY: number, n: number, cell: number): Jolt.Body;
+  dropBody(body: Jolt.Body): void;
+}
+/** The player's car in Jolt (build) */
+export interface PhysicsCar {
+  body: Jolt.Body;
+  id: number;
+  constraint: Jolt.VehicleConstraint;
+  controller: Jolt.WheeledVehicleController;
+  listener: Jolt.VehicleConstraintStepListener;
+  tyres: Jolt.WheeledVehicleControllerCallbacksJS;
+  state: { grip: number; handbrake: boolean; spinning: boolean };
+  layout: WheelMount[];
+  def: CarBodyDef;
+  driven: boolean[];
+  wheels: Jolt.WheelWV[];
+  upsideDown: number; // s on its roof or side, all but stopped
+}
+/** The car's physics (createCarPhysics) */
+export interface CarPhysics {
+  build(def: CarBodyDef, x: number, y: number, z: number, yaw: number): PhysicsCar;
+  place(x: number, y: number, z: number, yaw: number): void;
+  step(input: CarStepInput, dt: number): CarPhysicsOut | null;
+  shove(dvx: number, dvy: number, dvz: number, dwx: number, dwy: number, dwz: number, dx?: number, dz?: number): void;
+  confine(x: number, z: number, vx: number, vz: number): void;
+  read(): CarPhysicsOut;
+  dropCar(): void;
+  readonly car: PhysicsCar | null;
+  wallCount(): number;
+  world: PhysicsWorld;
+  addSystem(sys: PhysicsSystemHooks): number;
+}
 
 const LAYER_STATIC = 0; // the walls and the ground under the car
 const LAYER_MOVING = 1; // the car
@@ -39,7 +196,7 @@ const TRAVEL = 0.26; // m of suspension travel
 const FLIP_RESCUE = 2.5; // s on its roof or side, all but stopped, before it is set back on its wheels
 
 /** Pure: where the wheels attach and how far they hang, from their resting centres (local x, y = radius, z) */
-function wheelLayout(wheels, springHz = SPRING_HZ, gravity = 9.81) {
+function wheelLayout(wheels: readonly WheelRest[], springHz = SPRING_HZ, gravity = 9.81): WheelMount[] {
   const sag = gravity / (2 * Math.PI * springHz) ** 2; // static deflection under the car's weight
   return wheels.map((w) => ({
     x: w.x, z: w.z, radius: w.radius, front: w.front, left: w.x > 0,
@@ -55,7 +212,7 @@ function wheelLayout(wheels, springHz = SPRING_HZ, gravity = 9.81) {
  * (ux, uy, uz): its nose's direction on the ground or, pointing nearly straight down (up), where its roof (floor) faces.
  * Never the flip by π that reading it off its Euler angles gives as the nose passes the vertical
  */
-function headingOf(fx, fy, fz, ux, uz) {
+function headingOf(fx: number, fy: number, fz: number, ux: number, uz: number): number {
   if (Math.hypot(fx, fz) > 0.25) return Math.atan2(fx, fz);
   return fy < 0 ? Math.atan2(ux, uz) : Math.atan2(-ux, -uz);
 }
@@ -64,7 +221,7 @@ function headingOf(fx, fy, fz, ux, uz) {
  * Pure: whether a force `force` (N, along the car) on a car moving at `forward` (m/s, along itself) drives it (on the
  * driven wheels: pulling away, speeding up, or backing) rather than slows it (on all of them: brakes, drag)
  */
-function isDrive(force, forward) {
+function isDrive(force: number, forward: number): boolean {
   return force !== 0 && (Math.abs(forward) < 0.3 || Math.sign(force) === Math.sign(forward));
 }
 
@@ -72,7 +229,7 @@ function isDrive(force, forward) {
  * The car's physics in `Jolt` (an initialised jolt-physics module). `world`: { groundAt(x, z, fromY) → the height of
  * what a car stands on there, collidersNear(x, z, r) → [{ minX, maxX, minZ, maxZ, minY?, maxY?, obb? }] }.
  */
-function createCarPhysics(Jolt, world) {
+function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
   const settings = new Jolt.JoltSettings();
   const pairs = new Jolt.ObjectLayerPairFilterTable(4);
   pairs.EnableCollision(LAYER_STATIC, LAYER_MOVING);
@@ -102,25 +259,30 @@ function createCarPhysics(Jolt, world) {
   const tmpV2 = new Jolt.Vec3(0, 0, 0);
   const tmpR = new Jolt.RVec3(0, 0, 0);
   const tmpQ = new Jolt.Quat(0, 0, 0, 1);
-  const vec = (x, y, z, v = tmpV) => { v.Set(x, y, z); return v; };
-  const rvec = (x, y, z) => { tmpR.Set(x, y, z); return tmpR; };
-  const yawQuat = (yaw) => { tmpQ.Set(0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)); return tmpQ; };
+  const vec = (x: number, y: number, z: number, v = tmpV) => { v.Set(x, y, z); return v; };
+  const rvec = (x: number, y: number, z: number) => { tmpR.Set(x, y, z); return tmpR; };
+  const yawQuat = (yaw: number) => { tmpQ.Set(0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)); return tmpQ; };
   system.SetGravity(vec(0, -9.81, 0));
 
-  // What else lives in this world (sim/ragdolls.js): before(dt) each step, after(dt) once it has run
-  const systems = [];
-  const shared = {
+  // What else lives in this world (sim/ragdolls.ts): before(dt) each step, after(dt) once it has run
+  const systems: PhysicsSystemHooks[] = [];
+  const shared: PhysicsWorld = {
     Jolt, system, bodies, groundAt: world.groundAt,
-    layers: { ragdoll: LAYER_RAGDOLL, ragdollGround: LAYER_RAGDOLL_GROUND }
+    layers: { ragdoll: LAYER_RAGDOLL, ragdollGround: LAYER_RAGDOLL_GROUND },
+    groundField: (body, cx, cz, fromY, n, cell) => groundField(body, cx, cz, fromY, n, cell, LAYER_RAGDOLL_GROUND),
+    dropBody: (body) => {
+      bodies.RemoveBody(body.GetID());
+      bodies.DestroyBody(body.GetID());
+    }
   };
 
   // ---- The ground patch -----------------------------------------------------------------------------------------
-  const patch = { body: null, cx: NaN, cz: NaN, level: NaN };
+  const patch: { body: Jolt.Body | null; cx: number; cz: number; level: number } = { body: null, cx: NaN, cz: NaN, level: NaN };
   /**
    * A static body of ground `n` samples `cell` m apart a side round (cx, cz), sampled at level `fromY`, on `layer`; or
    * `body` given that shape anew. Returns the body
    */
-  function groundField(body, cx, cz, fromY, n, cell, layer) {
+  function groundField(body: Jolt.Body | null, cx: number, cz: number, fromY: number, n: number, cell: number, layer: number): Jolt.Body {
     const s = new Jolt.HeightFieldShapeSettings();
     const x0 = Math.round(cx / cell) * cell - (n / 2) * cell;
     const z0 = Math.round(cz / cell) * cell - (n / 2) * cell;
@@ -149,13 +311,7 @@ function createCarPhysics(Jolt, world) {
     Jolt.destroy(result); // (the body holds the shape now)
     return body;
   }
-  shared.groundField = (body, cx, cz, fromY, n, cell) => groundField(body, cx, cz, fromY, n, cell, LAYER_RAGDOLL_GROUND);
-  shared.dropBody = (body) => {
-    bodies.RemoveBody(body.GetID());
-    bodies.DestroyBody(body.GetID());
-  };
-
-  function samplePatch(cx, cz, fromY) {
+  function samplePatch(cx: number, cz: number, fromY: number): void {
     patch.body = groundField(patch.body, cx, cz, fromY, PATCH_SAMPLES, PATCH_CELL, LAYER_STATIC);
     patch.cx = cx;
     patch.cz = cz;
@@ -163,10 +319,10 @@ function createCarPhysics(Jolt, world) {
   }
 
   // ---- The walls ------------------------------------------------------------------------------------------------
-  const walls = new Map(); // collider -> Body
+  const walls = new Map<WallCollider, Jolt.Body & { _stamp?: number }>(); // collider -> Body (stamped by the last look)
   const fed = { x: NaN, z: NaN };
   let wallStamp = 0;
-  function feedWalls(x, z, y) {
+  function feedWalls(x: number, z: number, y: number): void {
     const stamp = ++wallStamp;
     for (const c of world.collidersNear(x, z, WALL_REACH)) {
       // (the list covers whole cells around (x, z): only what really comes within reach)
@@ -175,10 +331,10 @@ function createCarPhysics(Jolt, world) {
       let body = walls.get(c);
       if (!body) {
         const ground = world.groundAt((c.minX + c.maxX) / 2, (c.minZ + c.maxZ) / 2, y);
-        const minY = Number.isFinite(c.minY) ? c.minY : ground - 4;
-        const maxY = Number.isFinite(c.maxY) ? Math.min(c.maxY, ground + 80) : ground + 60;
+        const minY = c.minY !== undefined && Number.isFinite(c.minY) ? c.minY : ground - 4;
+        const maxY = c.maxY !== undefined && Number.isFinite(c.maxY) ? Math.min(c.maxY, ground + 80) : ground + 60;
         if (maxY - minY < 0.05) continue;
-        let hx, hz, cx, cz, yaw;
+        let hx: number, hz: number, cx: number, cz: number, yaw: number;
         if (c.obb) {
           ({ hx, hz, cx, cz } = c.obb);
           yaw = Math.atan2(c.obb.sn, c.obb.cs);
@@ -213,11 +369,11 @@ function createCarPhysics(Jolt, world) {
   }
 
   // ---- The car --------------------------------------------------------------------------------------------------
-  let car = null; // { body, id, constraint, controller, listener, tyres, wheels, layout, def, ... }
+  let car: PhysicsCar | null = null;
 
   // A hit on the body itself (not on its tyres: a landing or a slide is no crash): the fastest approach into anything
   // this step, and the normal out of what it hit
-  const hit = { speed: 0, nx: 0, ny: 0, nz: 0 };
+  const hit: CarHit = { speed: 0, nx: 0, ny: 0, nz: 0 };
   const contacts = new Jolt.ContactListenerJS();
   contacts.OnContactValidate = () => Jolt.ValidateResult_AcceptAllContactsForThisBodyPair;
   contacts.OnContactAdded = (body1, body2, manifold) => {
@@ -235,11 +391,11 @@ function createCarPhysics(Jolt, world) {
       hit.nx = nx; hit.ny = ny; hit.nz = nz;
     }
   };
-  contacts.OnContactPersisted = () => {};
-  contacts.OnContactRemoved = () => {};
+  contacts.OnContactPersisted = () => { /* (a touch that goes on is no new knock) */ };
+  contacts.OnContactRemoved = () => { /* (nor one that ends) */ };
   system.SetContactListener(contacts);
 
-  function dropCar() {
+  function dropCar(): void {
     if (!car) return;
     system.RemoveStepListener(car.listener);
     system.RemoveConstraint(car.constraint);
@@ -255,7 +411,7 @@ function createCarPhysics(Jolt, world) {
    * steerLock (rad), drive: 'fwd' | 'rwd' | 'awd', springHz?, roll? (the anti-roll bars' stiffness, N·m/rad per kg:
    * ~0.1 lets a road car lean ~3° a g in a corner, 0.6 holds a supercar nearly flat) }
    */
-  function build(def, x, y, z, yaw) {
+  function build(def: CarBodyDef, x: number, y: number, z: number, yaw: number): PhysicsCar {
     dropCar();
     const springHz = def.springHz || SPRING_HZ;
     const layout = wheelLayout(def.wheels, springHz);
@@ -280,7 +436,7 @@ function createCarPhysics(Jolt, world) {
     const bcs = new Jolt.BodyCreationSettings(result.Get(), rvec(x, y, z), yawQuat(yaw), Jolt.EMotionType_Dynamic, LAYER_MOVING);
     bcs.mOverrideMassProperties = Jolt.EOverrideMassProperties_CalculateInertia;
     bcs.mMassPropertiesOverride.mMass = def.mass;
-    bcs.mLinearDamping = 0; // (drivetrain.js's drag and rolling resistance)
+    bcs.mLinearDamping = 0; // (drivetrain.ts's drag and rolling resistance)
     bcs.mAngularDamping = 0.15;
     bcs.mFriction = 0.4;
     bcs.mRestitution = 0.05;
@@ -315,12 +471,12 @@ function createCarPhysics(Jolt, world) {
     }
     // anti-roll bars between the first pair at each end
     vs.mAntiRollBars.clear();
-    const pairOf = (front) => {
+    const pairOf = (front: boolean) => {
       const l = layout.findIndex((w) => w.front === front && w.left);
       const r = layout.findIndex((w) => w.front === front && !w.left);
       return l >= 0 && r >= 0 ? [l, r] : null;
     };
-    for (const [front, k] of [[true, 1.3], [false, 0.9]]) {
+    for (const [front, k] of [[true, 1.3], [false, 0.9]] as const) {
       const p = pairOf(front);
       if (!p) continue;
       const bar = new Jolt.VehicleAntiRollBar();
@@ -371,7 +527,7 @@ function createCarPhysics(Jolt, world) {
   }
 
   // Sets the car down at (x, y, z) heading `yaw` (y: the ground under it), at rest
-  function place(x, y, z, yaw) {
+  function place(x: number, y: number, z: number, yaw: number): void {
     if (!car) return;
     bodies.SetPositionAndRotation(car.body.GetID(), rvec(x, y, z), yawQuat(yaw), Jolt.EActivation_Activate);
     bodies.SetLinearAndAngularVelocity(car.body.GetID(), vec(0, 0, 0), vec(0, 0, 0, tmpV2));
@@ -379,13 +535,14 @@ function createCarPhysics(Jolt, world) {
     patch.cx = fed.x = NaN; // (the ground & walls fed in again where it now is)
   }
 
-  const out = {
+  const out: CarPhysicsOut = {
     x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0,
     fx: 0, fy: 0, fz: 1, ux: 0, uy: 1, uz: 0, heading: 0, forward: 0, contacts: 0, wheels: [], hit
   };
 
   // The body's state into `out` (world position of its origin, rotation, velocity, angular velocity, its own axes)
-  function read() {
+  function read(): CarPhysicsOut {
+    if (!car) return out; // (no car yet: as it was)
     const p = car.body.GetPosition(), q = car.body.GetRotation();
     const v = car.body.GetLinearVelocity(), w = car.body.GetAngularVelocity();
     out.x = p.GetX(); out.y = p.GetY(); out.z = p.GetZ();
@@ -401,10 +558,10 @@ function createCarPhysics(Jolt, world) {
     return out;
   }
 
-  const negligible = (a, b, c) => Math.abs(a) + Math.abs(b) + Math.abs(c) < 1e-6;
+  const negligible = (a: number, b: number, c: number) => Math.abs(a) + Math.abs(b) + Math.abs(c) < 1e-6;
 
   /** Pushes on the body: a velocity change (the traffic's shove), an angular one, a move (dx, dz) */
-  function shove(dvx, dvy, dvz, dwx, dwy, dwz, dx = 0, dz = 0) {
+  function shove(dvx: number, dvy: number, dvz: number, dwx: number, dwy: number, dwz: number, dx = 0, dz = 0): void {
     if (!car) return;
     const id = car.body.GetID();
     if (!negligible(dvx, dvy, dvz)) bodies.AddLinearVelocity(id, vec(dvx, dvy, dvz));
@@ -419,7 +576,7 @@ function createCarPhysics(Jolt, world) {
   }
 
   /** Holds the car to (x, z) with its velocity along the ground (vx, vz): a map edge it may not drive past */
-  function confine(x, z, vx, vz) {
+  function confine(x: number, z: number, vx: number, vz: number): void {
     if (!car) return;
     const id = car.body.GetID();
     const p = car.body.GetPosition(), v = car.body.GetLinearVelocity();
@@ -428,17 +585,17 @@ function createCarPhysics(Jolt, world) {
   }
 
   /**
-   * Steps the car `dt` s. `input`: { force (N along the car: drivetrain.js's net drive & resistance, the drive on the
+   * Steps the car `dt` s. `input`: { force (N along the car: drivetrain.ts's net drive & resistance, the drive on the
    * driven wheels and the braking on all of them, each no more than its tyre's grip under the weight on it), airDrag (N,
    * against its motion while airborne), steer (-1 left .. 1 right of the full lock), handbrake, hold (brakes on to keep
    * it standing), grip (the tyres' grip, 1 dry), spinning, focus ({ x, y, z }: where the walls are fed in round, the
    * player; the car by default) }. Returns `out` after the step; `out.hit` holds the hardest knock the body itself took
    * meanwhile (speed 0: none).
    */
-  function step(input, dt) {
+  function step(input: CarStepInput, dt: number): CarPhysicsOut | null {
     if (!car) {
       // (nobody's car yet: the rest of the world goes on)
-      const f = input?.focus;
+      const f = input.focus;
       if (f && !(Math.hypot(f.x - fed.x, f.z - fed.z) < WALL_REFRESH)) feedWalls(f.x, f.z, f.y);
       for (const sys of systems) sys.before?.(dt);
       const n = Math.max(1, Math.ceil(dt / STEP - 1e-6));
@@ -446,12 +603,13 @@ function createCarPhysics(Jolt, world) {
       for (const sys of systems) sys.after?.(dt);
       return null;
     }
+    const c = car; // (the callbacks below see it as it is now)
     read();
     // the ground under the car & the walls round the player, fed in as they go
     if (!(Math.hypot(out.x - patch.cx, out.z - patch.cz) < PATCH_RECENTRE) || Math.abs(out.y - patch.level) > PATCH_RELEVEL) {
       samplePatch(out.x, out.z, out.y);
     }
-    const f = input.focus || out;
+    const f = input.focus ?? out;
     if (!(Math.hypot(f.x - fed.x, f.z - fed.z) < WALL_REFRESH)) feedWalls(f.x, f.z, f.y);
     for (const sys of systems) sys.before?.(dt);
     car.state.grip = input.grip ?? 1;
@@ -469,13 +627,13 @@ function createCarPhysics(Jolt, world) {
       // the force split over the tyres on the ground that take it (the driven ones under power), at their contact
       // patches along the car, each no more than its grip under the weight it carried in the last step
       let takers = 0;
-      car.wheels.forEach((w, i) => { if (w.HasContact() && (!drive || car.driven[i])) takers++; });
+      car.wheels.forEach((w, i) => { if (w.HasContact() && (!drive || c.driven[i])) takers++; });
       if (takers && input.force) {
         const share = input.force / takers;
         car.wheels.forEach((w, i) => {
-          if (!w.HasContact() || (drive && !car.driven[i])) return;
+          if (!w.HasContact() || (drive && !c.driven[i])) return;
           const load = Math.max(0, w.GetSuspensionLambda()) / h; // N pressing it on the ground
-          const f = Math.sign(share) * Math.min(Math.abs(share), car.state.grip * load * 1.1);
+          const f = Math.sign(share) * Math.min(Math.abs(share), c.state.grip * load * 1.1);
           const p = w.GetContactPosition(), nrm = w.GetContactNormal();
           // the car's heading laid on the ground's plane
           const d = out.fx * nrm.GetX() + out.fy * nrm.GetY() + out.fz * nrm.GetZ();
@@ -496,11 +654,11 @@ function createCarPhysics(Jolt, world) {
     let onGround = 0;
     out.wheels.length = car.wheels.length;
     car.wheels.forEach((w, i) => {
-      const o = (out.wheels[i] ??= {});
+      const o = (out.wheels[i] ??= { contact: false, spin: 0, y: 0 });
       o.contact = w.HasContact();
       if (o.contact) onGround++;
       o.spin = w.GetRotationAngle();
-      o.y = car.layout[i].attachY - w.GetSuspensionLength(); // the wheel's centre over the car's floor
+      o.y = c.layout[i].attachY - w.GetSuspensionLength(); // the wheel's centre over the car's floor
     });
     out.contacts = onGround;
     // on its roof or its side, all but stopped, for a while: back on its wheels (no rocking it back by hand)

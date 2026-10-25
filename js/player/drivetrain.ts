@@ -1,4 +1,4 @@
-// js/player/drivetrain.js
+// js/player/drivetrain.ts
 // The player's car as a machine: engine torque curve, gearbox (automatic or manual), clutch launch, rev limiter,
 // nitro, brakes, tyre traction, aerodynamic drag and rolling resistance, built from each car model's real figures. It turns the driver's inputs
 // into the car's speed along its heading, its engine revs and the gear it is in (the HUD's tachometer, the engine's
@@ -7,13 +7,88 @@
 // Units: metres, seconds, kilograms, newtons, newton-metres, rpm. Speeds in m/s along the car's heading (negative
 // in reverse).
 
+import type { CarBody, CarClass, CarModel } from '../models/cars/index.ts';
+
+/** A car or moto model (js/models/cars/README.md) with the drivetrain buildSpec memoized on it */
+export type DriveModel = CarModel & { _spec?: DriveSpec };
+
+/** A class's tyres, brakes & gearbox: friction coefficient, ABS braking (m/s²), s an automatic takes to shift */
+export interface DriveClass {
+  grip: number;
+  brake: number;
+  shift: number;
+}
+
+/** A car's drivetrain, built from its model (buildSpec). Units as the header's */
+export interface DriveSpec {
+  name: string; // the model's id
+  label: string; // its name, for the HUD
+  electric: boolean;
+  mass: number; // kg
+  rolling: number; // rolling resistance coefficient
+  wheelRadius: number; // m
+  driven: number; // share of the weight on the driven wheels while accelerating
+  grip: number; // tyre friction coefficient
+  brake: number; // m/s² of ABS braking
+  shiftTime: number; // s
+  idle: number; // rpm
+  redline: number; // rpm
+  launch: number; // rpm the clutch slips at pulling away
+  torque: [number, number][]; // the torque curve: [rpm, N·m] points
+  gears: number[]; // gearbox ratios, first to top
+  reverse: number; // ratio
+  final: number; // final drive ratio
+  efficiency: number; // of the driveline, 0..1
+  wheelbase: number; // m
+  steerLock: number; // rad
+  engineBrake: number; // N·m at the redline off the throttle
+  regen: number; // N of an electric car's regenerative braking
+  vmax: number; // m/s behind a limiter, Infinity without one
+  dragArea: number; // m², Cd·A
+  nitro: boolean;
+  pull: number; // the drive force's calibration (calibratePull)
+  drive: CarModel['drive'];
+  cls: CarClass;
+}
+
+/** The drivetrain's running state (createDriveState): gear (-1 reverse, 0 neutral, 1..n), revs, nitro tank 0..1 */
+export interface DriveState {
+  gear: number;
+  rpm: number;
+  manual: boolean; // the manual gearbox (E / Q, T)
+  shift: number; // s left of the shift under way (no drive meanwhile)
+  lock: number; // s before an automatic may shift again
+  nitro: number;
+  nitroOn: boolean;
+  load: number; // 0..1, the engine sound's
+  limiter: boolean;
+  wheelspin: boolean;
+  braking: boolean;
+  reversing: boolean;
+  power: number; // 0..1, what the damage leaves of the engine
+}
+
+/** One step's inputs to stepDrive (see there) */
+export interface DriveInput {
+  throttle?: number;
+  brake?: number;
+  handbrake?: boolean;
+  nitro?: boolean;
+  shift?: number;
+  slope?: number;
+  power?: number;
+  grip?: number;
+}
+
+
 const G = 9.81;
 const AIR = 1.2; // kg/m³, air density near sea level (Tepic sits at ~920 m: ~1.08, close enough)
 const RPM_PER_RAD_S = 60 / (2 * Math.PI);
 
 // Tyres, brakes & gearbox by class (friction coefficient, ABS braking in m/s², s an automatic takes to shift): economy
 // tyres, family cars, trucks, premium sedans, sports cars, supercars on semi-slicks
-const CLASSES = {
+// (a class the table leaves out drives on economy tyres)
+const CLASSES: Readonly<Partial<Record<CarClass, DriveClass>>> & { readonly economy: DriveClass } = {
   economy: { grip: 0.9, brake: 8.3, shift: 0.28 },
   family: { grip: 0.93, brake: 8.6, shift: 0.26 },
   truck: { grip: 0.85, brake: 7.8, shift: 0.3 },
@@ -23,15 +98,15 @@ const CLASSES = {
   moto: { grip: 1.0, brake: 7.5, shift: 0.14 }
 };
 // Dynamic tyre radius (m) by body shape
-const WHEEL_RADIUS = { moto: 0.29, sedan: 0.31, taxi: 0.29, hatch: 0.3, coupe: 0.34, fastback: 0.34, suv: 0.36, pickup: 0.38, van: 0.33, wedge: 0.44,
+const WHEEL_RADIUS: Readonly<Partial<Record<CarBody, number>>> = { moto: 0.29, sedan: 0.31, taxi: 0.29, hatch: 0.3, coupe: 0.34, fastback: 0.34, suv: 0.36, pickup: 0.38, van: 0.33, wedge: 0.44,
   crossover: 0.37, supercar: 0.34, offroad: 0.46 };
 // Weight on the driven wheels while accelerating: a front-drive car's ~60 % on the front lightens as it squats, a
 // rear-drive car's rear gains it, all-wheel drive uses all of it
-const DRIVEN = { fwd: 0.56, rwd: 0.62, awd: 1.0 };
-const EFFICIENCY = { fwd: 0.9, rwd: 0.88, awd: 0.85 };
+const DRIVEN: Readonly<Record<CarModel['drive'], number>> = { fwd: 0.56, rwd: 0.62, awd: 1.0 };
+const EFFICIENCY: Readonly<Record<CarModel['drive'], number>> = { fwd: 0.9, rwd: 0.88, awd: 0.85 };
 
 // Gear ratios for an n-speed box: a short first, an overdrive top, the steps closing up towards the top
-function gearRatios(n) {
+function gearRatios(n: number): number[] {
   if (n <= 1) return [1];
   const first = n <= 5 ? 3.45 : n === 6 ? 3.6 : n <= 8 ? 4.4 : 4.7;
   const top = n <= 5 ? 0.78 : n === 6 ? 0.72 : n === 7 ? 0.68 : n === 8 ? 0.67 : 0.62;
@@ -41,13 +116,13 @@ function gearRatios(n) {
 // The engine's torque curve from its data-sheet peaks: rising to peak torque (a turbo holds it on a plateau), then
 // falling off as power peaks and the revs reach the redline. An electric motor: full torque from 0 rpm up to where it
 // reaches full power, constant power from there
-function torqueCurve(m, idle) {
+function torqueCurve(m: DriveModel, idle: number): [number, number][] {
   const [kW, powerRpm] = m.power;
   const [peak, peakRpm] = m.torque;
-  const atPower = (rpm, k = 1) => k * kW * 1000 / (rpm / RPM_PER_RAD_S);
+  const atPower = (rpm: number, k = 1) => k * kW * 1000 / (rpm / RPM_PER_RAD_S);
   if (m.electric) {
     const base = Math.min(m.redline * 0.6, kW * 1000 / peak * RPM_PER_RAD_S);
-    const pts = [[0, peak], [base, peak]];
+    const pts: [number, number][] = [[0, peak], [base, peak]];
     for (const f of [0.25, 0.5, 0.75, 1]) {
       const rpm = base + (m.redline - base) * f;
       pts.push([rpm, atPower(rpm, f === 1 ? 0.9 : 1)]);
@@ -55,7 +130,7 @@ function torqueCurve(m, idle) {
     return pts;
   }
   const tq = Math.min(peakRpm, powerRpm * 0.85);
-  const pts = [[idle, peak * 0.6], [(idle + tq) / 2, peak * 0.86], [tq, peak]];
+  const pts: [number, number][] = [[idle, peak * 0.6], [(idle + tq) / 2, peak * 0.86], [tq, peak]];
   if (tq < powerRpm * 0.5) pts.push([powerRpm * 0.75, Math.min(peak, atPower(powerRpm * 0.75, 0.97))]); // (a turbo)
   pts.push([powerRpm, Math.min(peak, atPower(powerRpm))]);
   if (m.redline > powerRpm + 100) pts.push([m.redline, Math.min(peak, atPower(m.redline, 0.9))]);
@@ -67,9 +142,9 @@ function torqueCurve(m, idle) {
  * & final drive geared so its top gear reaches the top speed, and the drag area that makes its power hold it there,
  * so each car tops out at its maker's top speed (or its limiter). Memoized on the model.
  */
-function buildSpec(m) {
+function buildSpec(m: DriveModel): DriveSpec {
   if (m._spec) return m._spec;
-  const cls = CLASSES[m.class] || CLASSES.economy;
+  const cls = CLASSES[m.class] ?? CLASSES.economy;
   const r = m.wheelRadius || WHEEL_RADIUS[m.body] || 0.32;
   const idle = m.electric ? 0 : m.redline > 7000 ? 900 : 750;
   const vmax = m.top / 3.6;
@@ -80,7 +155,7 @@ function buildSpec(m) {
   const final = m.redline / RPM_PER_RAD_S * r / (reach * gears[n - 1]);
   const efficiency = m.electric ? 0.92 : EFFICIENCY[m.drive] || 0.88;
   const rolling = m.class === 'truck' ? 0.014 : 0.012;
-  const spec = {
+  const spec: DriveSpec = {
     name: m.id, label: m.name, electric: Boolean(m.electric), mass: m.mass, rolling, wheelRadius: r,
     driven: DRIVEN[m.drive] || 0.6, grip: cls.grip, brake: cls.brake, shiftTime: cls.shift,
     idle, redline: m.redline, launch: m.electric ? 0 : Math.min(m.redline * 0.5, Math.max(2000, m.torque[1] * 0.8)),
@@ -95,14 +170,14 @@ function buildSpec(m) {
     drive: m.drive, cls: m.class
   };
   fitDrag(spec, m);
-  if (m.accel) calibratePull(spec, m);
+  if (m.accel) calibratePull(spec, m, m.accel);
   m._spec = spec;
   return spec;
 }
 
 // Drag area so that the power at the top-speed revs (in top gear) just holds the top speed (or a little over the
 // limiter): P·η = (Crr·m·g + ½ρ·CdA·v²)·v
-function fitDrag(spec, m) {
+function fitDrag(spec: DriveSpec, m: DriveModel): void {
   const vmax = m.top / 3.6;
   const v = m.limited ? vmax * 1.06 : vmax;
   const rpm = wheelRpm(spec, spec.gears.length, v);
@@ -112,7 +187,7 @@ function fitDrag(spec, m) {
 }
 
 // Seconds from a standstill to 100 km/h at full throttle (no nitro), or Infinity
-function zeroTo100(spec, dt = 1 / 30) {
+function zeroTo100(spec: DriveSpec, dt = 1 / 30): number {
   const d = createDriveState(spec);
   const input = { throttle: 1, power: 1 };
   let v = 0;
@@ -128,12 +203,12 @@ function zeroTo100(spec, dt = 1 / 30) {
 // part-throttle maps): `pull` scales the drive force (and the tyres' launch grip, never below the class's) until the car
 // does its maker's 0-100 km/h (`accel`, s), with the drag refitted each time so it still tops out where it should
 const PULL_MIN = 0.3, PULL_MAX = 4;
-function calibratePull(spec, m) {
+function calibratePull(spec: DriveSpec, m: DriveModel, accel: number): void {
   let lo = PULL_MIN, hi = PULL_MAX;
   for (let i = 0; i < 16; i++) {
     spec.pull = (lo + hi) / 2;
     fitDrag(spec, m);
-    if (zeroTo100(spec) > m.accel) lo = spec.pull;
+    if (zeroTo100(spec) > accel) lo = spec.pull;
     else hi = spec.pull;
   }
   spec.pull = (lo + hi) / 2;
@@ -146,7 +221,7 @@ const NITRO_POWER = 1.65; // engine torque multiplier while it flows
 const SHIFT_TIME = { auto: 0.28, manual: 0.16 }; // s with the clutch out (no drive)
 const SHIFT_LOCK = 0.55; // s an automatic waits before shifting again (no hunting around a shift point)
 
-function torqueAt(spec, rpm) {
+function torqueAt(spec: DriveSpec, rpm: number): number {
   const t = spec.torque;
   if (rpm <= t[0][0]) return t[0][1];
   for (let i = 1; i < t.length; i++) {
@@ -159,22 +234,22 @@ function torqueAt(spec, rpm) {
 }
 
 // Overall ratio (gearbox × final drive) in gear g: -1 reverse, 0 neutral, 1..n
-function ratioOf(spec, gear) {
+function ratioOf(spec: DriveSpec, gear: number): number {
   if (gear === 0) return 0;
   return (gear < 0 ? spec.reverse : spec.gears[gear - 1]) * spec.final;
 }
 
 // Engine rpm with the clutch closed in gear g at speed v
-function wheelRpm(spec, gear, v) {
+function wheelRpm(spec: DriveSpec, gear: number, v: number): number {
   return Math.abs(v) / spec.wheelRadius * ratioOf(spec, gear) * RPM_PER_RAD_S;
 }
 
 // The speed (m/s) the engine reaches in gear g at its redline: the top of each gear
-function gearTopSpeed(spec, gear) {
+function gearTopSpeed(spec: DriveSpec, gear: number): number {
   return spec.redline / RPM_PER_RAD_S * spec.wheelRadius / ratioOf(spec, gear);
 }
 
-function createDriveState(spec = VEHICLE_SPECS.taxi) {
+function createDriveState(spec: DriveSpec): DriveState {
   return {
     gear: 1, rpm: spec.idle, manual: false, shift: 0, lock: 0, nitro: spec.nitro ? 1 : 0, nitroOn: false,
     load: 0, limiter: false, wheelspin: false, braking: false, reversing: false, power: 1
@@ -182,7 +257,7 @@ function createDriveState(spec = VEHICLE_SPECS.taxi) {
 }
 
 // Engages gear g if the engine can take it (a manual downshift that would over-rev it is refused)
-function selectGear(d, spec, gear, v) {
+function selectGear(d: DriveState, spec: DriveSpec, gear: number, v: number): boolean {
   const n = spec.gears.length;
   gear = Math.max(-1, Math.min(n, gear));
   if (gear === d.gear) return false;
@@ -195,7 +270,7 @@ function selectGear(d, spec, gear, v) {
 
 // The automatic's shift schedule: up near the redline under full throttle and early when cruising, down when the
 // revs sag (kickdown under full throttle), never into a gear that would over-rev
-function autoShift(d, spec, v, throttle) {
+function autoShift(d: DriveState, spec: DriveSpec, v: number, throttle: number): void {
   if (d.gear < 1 || d.lock > 0) return;
   const n = spec.gears.length;
   const rpm = wheelRpm(spec, d.gear, v);
@@ -209,9 +284,9 @@ function autoShift(d, spec, v, throttle) {
  * One step of the car along its heading. `input`: throttle 0..1 (W), brake 0..1 (S), handbrake, nitro (booleans),
  * shift (+1 / -1 for a manual shift this frame, 0 otherwise), slope (m/s² the hill adds along the heading), power
  * (0..1, what the damage leaves of the engine), grip (0..1, what the road leaves of the tyres' dry grip: a wet one
- * ~0.7, see weather.js wetGrip). Returns the new speed; d holds the gear, revs and the rest.
+ * ~0.7, see weather.ts wetGrip). Returns the new speed; d holds the gear, revs and the rest.
  */
-function stepDrive(d, spec, input, v, dt) {
+function stepDrive(d: DriveState, spec: DriveSpec, input: DriveInput, v: number, dt: number): number {
   const throttleKey = input.throttle || 0;
   const brakeKey = input.brake || 0;
   d.lock = Math.max(0, d.lock - dt);
@@ -249,12 +324,12 @@ function stepDrive(d, spec, input, v, dt) {
   // Drive force at the wheels, cut while shifting and by the rev limiter, limited by what the tyres can put down
   let drive = 0;
   if (!d.shift && !d.limiter && throttle > 0 && !(d.gear > 0 && v >= spec.vmax)) {
-    const torque = torqueAt(spec, Math.min(rpm, spec.redline)) * (spec.pull ?? 1) * throttle * (d.nitroOn ? NITRO_POWER : 1) * d.power;
+    const torque = torqueAt(spec, Math.min(rpm, spec.redline)) * spec.pull * throttle * (d.nitroOn ? NITRO_POWER : 1) * d.power;
     drive = torque * ratio * spec.efficiency / spec.wheelRadius;
   }
   // Traction control holds the tyres at their limit; with far more torque than that they still break loose
   const grip = input.grip ?? 1;
-  const traction = spec.grip * grip * spec.mass * G * spec.driven * Math.max(1, spec.pull ?? 1);
+  const traction = spec.grip * grip * spec.mass * G * spec.driven * Math.max(1, spec.pull);
   d.wheelspin = drive > traction * 1.25;
   if (d.wheelspin) rpm = Math.min(spec.redline, rpm + Math.min(1, drive / traction - 1.25) * 1500); // the engine flares
   if (drive > traction) drive = traction * (d.wheelspin ? 0.88 : 0.97);
@@ -291,8 +366,8 @@ function stepDrive(d, spec, input, v, dt) {
 }
 
 // What the HUD shows for the gear: R, D (an electric car's one gear) or the gear's number
-function gearLabel(d, spec = null) {
-  return d.gear < 0 ? 'R' : spec && spec.electric ? 'D' : String(d.gear);
+function gearLabel(d: DriveState, spec: DriveSpec | null = null): string {
+  return d.gear < 0 ? 'R' : spec?.electric ? 'D' : String(d.gear);
 }
 
 export {

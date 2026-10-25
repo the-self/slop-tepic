@@ -1,22 +1,53 @@
-// js/player/aim.js
+// js/player/aim.ts
 // Free aim on foot, GTA-style: hold the right mouse button (or press Z to toggle it, for a trackpad) and the camera
-// comes in over the player's right shoulder (cameras.js) with a crosshair in the middle of the screen. The mouse turns
-// the player and tilts the aim (pointer lock), the left button (or X) fires along the crosshair (crime.js), and WASD
-// walks and strafes (controllers.js). The crosshair turns red over someone or something the shot would hit.
+// comes in over the player's right shoulder (cameras.ts) with a crosshair in the middle of the screen. The mouse turns
+// the player and tilts the aim (pointer lock), the left button (or X) fires along the crosshair (crime.ts), and WASD
+// walks and strafes (controllers.ts). The crosshair turns red over someone or something the shot would hit.
 // No three.js: only the DOM, the controllers' person entity and its keys.
+
+import type { ThirdPersonControllerManager } from './controllers.ts';
+
+/** What the aim uses of the game's canvas: some browsers have no pointer lock, or a requestPointerLock returning nothing */
+export interface AimCanvas extends EventTarget {
+  requestPointerLock?: () => Promise<void> | undefined;
+}
+/** ...and of the document (the body may be missing before it is parsed, exitPointerLock in an old browser) */
+export type AimDocument = Pick<Document, 'addEventListener' | 'hidden' | 'pointerLockElement' | 'getElementById'> & {
+  body: HTMLElement | null;
+  exitPointerLock?: () => void;
+};
+/** ...and of the controllers (player/controllers.ts): the mode, the person's heading, and its aiming flag */
+export type AimControllers = Pick<ThirdPersonControllerManager, 'activeMode' | 'entities' | 'aiming'>;
+
+export interface AimOptions {
+  canvas: AimCanvas; // the game's, which takes the pointer lock
+  controllers: AimControllers;
+  doc?: AimDocument;
+}
 
 const SENSITIVITY = 0.0024; // rad per pixel of mouse movement
 const PITCH_MIN = -0.85; // rad, looking down at the street
 const PITCH_MAX = 0.7; // rad, looking up at the rooftops
 const BLEND_RATE = 14; // 1/s: how fast the shoulder view comes in and goes
 
-const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
 class AimControl {
-  /**
-   * @param {object} o - canvas (the game's, which takes the pointer lock), controllers (player/controllers.js)
-   */
-  constructor({ canvas, controllers, doc = document }) {
+  canvas: AimCanvas;
+  controllers: AimControllers;
+  doc: AimDocument;
+  held: boolean;
+  toggled: boolean;
+  active: boolean;
+  fire: boolean;
+  pitch: number;
+  blend: number;
+  onTarget: boolean;
+  allowed: boolean;
+  crosshair: HTMLElement | null;
+  shown: { visible: boolean | null; target: boolean | null };
+
+  constructor({ canvas, controllers, doc = document }: AimOptions) {
     this.canvas = canvas;
     this.controllers = controllers;
     this.doc = doc;
@@ -26,14 +57,14 @@ class AimControl {
     this.fire = false; // the left button, while aiming
     this.pitch = 0; // rad, up positive
     this.blend = 0; // 0..1 into the shoulder view
-    this.onTarget = false; // (crime.js: the shot would hit someone or a vehicle)
-    this.allowed = true; // on foot and in play (main.js, every frame)
+    this.onTarget = false; // (crime.ts: the shot would hit someone or a vehicle)
+    this.allowed = true; // on foot and in play (main.ts, every frame)
     this.crosshair = doc.getElementById('hud-crosshair');
     this.shown = { visible: null, target: null };
     this.bind();
   }
 
-  bind() {
+  bind(): void {
     const canvas = this.canvas;
     const doc = this.doc;
     const onFoot = () => this.controllers.activeMode === 'person' && this.allowed;
@@ -63,7 +94,7 @@ class AimControl {
       if (e.button === 2) this.held = false;
       if (e.button === 0) this.fire = false;
     });
-    window.addEventListener('blur', () => this.release());
+    window.addEventListener('blur', () => { this.release(); });
     doc.addEventListener('visibilitychange', () => {
       if (doc.hidden) this.release();
     });
@@ -86,29 +117,29 @@ class AimControl {
 
   // The pointer locked to the canvas, so the mouse turns without a cursor running off the screen (it needs the press
   // that asked for it; where it is refused the mouse still turns while it moves)
-  lock() {
+  lock(): void {
     const canvas = this.canvas;
     if (!canvas.requestPointerLock || this.doc.pointerLockElement === canvas) return;
     try {
       const pending = canvas.requestPointerLock();
-      pending?.catch?.(() => {});
+      pending?.catch(() => { /* (refused: as below) */ });
     } catch {
       // (refused: an embedded page, or too soon after Esc)
     }
   }
 
-  unlock() {
+  unlock(): void {
     if (this.doc.pointerLockElement === this.canvas) this.doc.exitPointerLock?.();
   }
 
-  release() {
+  release(): void {
     this.held = false;
     this.toggled = false;
     this.fire = false;
   }
 
   // Every frame, before the camera: whether the player is aiming, the shoulder view eased in or out, the crosshair
-  update(dt) {
+  update(dt: number): void {
     const onFoot = this.controllers.activeMode === 'person' && this.allowed;
     if (!onFoot) this.toggled = false;
     const was = this.active;
@@ -134,9 +165,12 @@ class AimControl {
   }
 }
 
-function isTyping(e) {
+// (the key's target may be any EventTarget: an element being typed in has these)
+function isTyping(e: Event): boolean {
   const t = e.target;
-  return Boolean(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '')));
+  if (!t) return false;
+  if ('isContentEditable' in t && t.isContentEditable) return true;
+  return 'tagName' in t && typeof t.tagName === 'string' && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
 }
 
 export { AimControl, PITCH_MIN, PITCH_MAX };

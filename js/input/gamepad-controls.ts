@@ -1,31 +1,73 @@
+// js/input/gamepad-controls.ts
+// A standard-mapping gamepad: the sticks drive and look, the triggers are the throttle and brake (or the collective),
+// the buttons board, fire, change the camera and the weapon, and LB held opens the weapon wheel.
 import { isTypingInField } from '../world/city-config.ts';
+import type { ThirdPersonControllerManager } from '../player/controllers.ts';
+import type { CameraSystem } from '../player/cameras.ts';
+
+/** What the pad drives of the controllers (player/controllers.ts) and of the cameras (player/cameras.ts) */
+export type GamepadTarget = Pick<ThirdPersonControllerManager, 'activeMode' | 'setGamepadInput' | 'clearGamepadInput'>;
+export type GamepadCamera = Pick<CameraSystem, 'applyGamepadInput' | 'resetOrbit'>;
+/** The weapon wheel's steps (ui/weapon-wheel.ts): opened, closed taking the weapon pointed at, shut as it was, pointed */
+export type WheelPhase = 'open' | 'close' | 'cancel' | 'aim';
+/** What main.ts does on the pad's buttons; `step` is +1 / -1 */
+export interface GamepadCallbacks {
+  onToggleMap?: () => void;
+  onCloseMap?: () => void;
+  onBoard?: () => void;
+  onCycleCamera?: (step: number) => void;
+  onCycleWeapon?: (step: number) => void;
+  // the right stick's (x, y) with 'aim'
+  onWeaponWheel?: (phase: WheelPhase, x?: number, y?: number) => void;
+}
+// (a pad as some browsers give it: no axes or buttons, or fewer buttons than the standard's 17)
+interface LoosePad {
+  axes?: readonly number[];
+  buttons?: readonly (GamepadButton | undefined)[];
+}
 
 const DEAD_ZONE = 0.15;
 const BUTTON_COUNT = 17;
 const WHEEL_HOLD = 0.22; // s LB is held before it opens the weapon wheel rather than going back a camera
 
-function axis(value) {
-  return Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0;
+function axis(value: number | undefined): number {
+  return value !== undefined && Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0;
 }
 
-function stick(pad, offset) {
+function stick(pad: LoosePad, offset: number): { x: number; y: number } {
   const x = axis(pad.axes?.[offset]), y = axis(pad.axes?.[offset + 1]);
   const distance = Math.hypot(x, y);
   const strength = Math.max(0, (Math.min(distance, 1) - DEAD_ZONE) / (1 - DEAD_ZONE));
   return distance ? { x: x / distance * strength, y: y / distance * strength } : { x: 0, y: 0 };
 }
 
-function buttonValue(pad, index) {
+function buttonValue(pad: LoosePad, index: number): number {
   const button = pad.buttons?.[index];
-  return Number.isFinite(button?.value) ? Math.max(0, Math.min(1, button.value)) : button?.pressed ? 1 : 0;
+  return button && Number.isFinite(button.value) ? Math.max(0, Math.min(1, button.value)) : button?.pressed ? 1 : 0;
 }
 
-function buttons(pad) {
+function buttons(pad: LoosePad): boolean[] {
   return Array.from({ length: BUTTON_COUNT }, (_, i) => Boolean(pad.buttons?.[i]?.pressed) || buttonValue(pad, i) > 0.5);
 }
 
 class GamepadControls {
-  constructor(controllerManager, cameraSystem, callbacks = {}) {
+  controller: GamepadTarget;
+  camera: GamepadCamera;
+  callbacks: GamepadCallbacks;
+  connected: boolean;
+  enabled: boolean;
+  padIndex: number | null;
+  padId: string | null;
+  previousButtons: boolean[];
+  suppressedButtons: boolean[];
+  syncButtons: boolean;
+  revision: number;
+  wheelHold: number;
+  wheelOpen: boolean;
+  lbHeld: boolean;
+  focused: boolean;
+
+  constructor(controllerManager: GamepadTarget, cameraSystem: GamepadCamera, callbacks: GamepadCallbacks = {}) {
     this.controller = controllerManager;
     this.camera = cameraSystem;
     this.callbacks = callbacks;
@@ -50,20 +92,20 @@ class GamepadControls {
       this.focused = true;
       this.reset();
     });
-    document.addEventListener('visibilitychange', () => this.reset());
+    document.addEventListener('visibilitychange', () => { this.reset(); });
   }
 
-  readPad() {
+  readPad(): Gamepad | null {
     // Some browsers expose the API but reject it through Permissions Policy.
     try {
       if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return null;
       const pads = navigator.getGamepads();
       let first = null;
-      for (let i = 0; i < (pads?.length || 0); i++) {
+      for (let i = 0; i < (pads.length || 0); i++) {
         const pad = pads[i];
         if (!pad?.connected || pad.mapping !== 'standard') continue;
         if (pad.index === this.padIndex && pad.id === this.padId) return pad;
-        if (!first) first = pad;
+        first ??= pad;
       }
       return first;
     } catch {
@@ -72,19 +114,19 @@ class GamepadControls {
   }
 
   // The weapon wheel shut as it was (focus lost, the pad changed, the map opened)
-  cancelWheel() {
+  cancelWheel(): void {
     if (this.wheelOpen) this.callbacks.onWeaponWheel?.('cancel');
     this.wheelOpen = false;
     this.wheelHold = 0;
     this.lbHeld = false;
   }
 
-  reset() {
+  reset(): void {
     this.revision++;
     this.cancelWheel();
     this.controller.clearGamepadInput();
     const pad = this.readPad();
-    if (pad && pad.index === this.padIndex && pad.id === this.padId) {
+    if (pad?.index === this.padIndex && pad.id === this.padId) {
       this.previousButtons = buttons(pad);
       this.suppressedButtons = this.previousButtons.slice();
       this.syncButtons = false;
@@ -93,14 +135,13 @@ class GamepadControls {
     }
   }
 
-  setEnabled(enabled) {
-    enabled = Boolean(enabled);
+  setEnabled(enabled: boolean): void {
     if (enabled === this.enabled) return;
     this.enabled = enabled;
     this.reset();
   }
 
-  update(dt) {
+  update(dt: number): void {
     const pad = this.readPad();
     const connected = Boolean(pad);
     const changedPad = pad ? pad.index !== this.padIndex || pad.id !== this.padId : this.connected;
@@ -121,18 +162,18 @@ class GamepadControls {
       this.syncButtons = false;
     }
     for (let i = 0; i < BUTTON_COUNT; i++) if (!pressed[i]) this.suppressedButtons[i] = false;
-    const edge = (i) => pressed[i] && !this.previousButtons[i] && !this.suppressedButtons[i];
-    const held = (i) => pressed[i] && !this.suppressedButtons[i];
+    const edge = (i: number) => pressed[i] && !this.previousButtons[i] && !this.suppressedButtons[i];
+    const held = (i: number) => pressed[i] && !this.suppressedButtons[i];
     // Capture edges before callbacks: changing mode or opening the map may synchronously call reset().
     const toggleMap = edge(9), closeMap = edge(1);
     const board = edge(3); // Y: get in or out, as in GTA
-    let cycleCamera = Number(Boolean(edge(5)));
+    let cycleCamera = Number(edge(5));
     const recenter = edge(11);
-    const cycleWeapon = Number(Boolean(edge(15))) - Number(Boolean(edge(14))); // d-pad right / left
+    const cycleWeapon = Number(edge(15)) - Number(edge(14)); // d-pad right / left
     this.previousButtons = pressed;
 
     const target = document.activeElement;
-    const typing = isTypingInField({ target }) || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+    const typing = isTypingInField({ target }) || target?.tagName === 'TEXTAREA' || (target !== null && 'isContentEditable' in target && target.isContentEditable);
     if (!this.focused || document.hidden || (typeof document.hasFocus === 'function' && !document.hasFocus()) || typing) {
       this.suppressedButtons = pressed.slice();
       this.controller.clearGamepadInput();
@@ -153,11 +194,11 @@ class GamepadControls {
       if (closeMap) this.callbacks.onCloseMap?.();
       return;
     }
-    // LB: a tap goes back a camera; held, it opens the weapon wheel (ui/weapon-wheel.js), the right stick points at a
+    // LB: a tap goes back a camera; held, it opens the weapon wheel (ui/weapon-wheel.ts), the right stick points at a
     // weapon and letting go takes it
-    const lb = Boolean(held(4));
+    const lb = held(4);
     const wheels = Boolean(this.callbacks.onWeaponWheel);
-    let wheel = null;
+    let wheel: WheelPhase | null = null;
     if (lb) {
       this.wheelHold += Number.isFinite(dt) ? dt : 0;
       if (wheels && !this.wheelOpen && this.wheelHold >= WHEEL_HOLD) {
@@ -178,11 +219,11 @@ class GamepadControls {
     if (revision !== this.revision) return;
     if (recenter) this.camera.resetOrbit();
     if (cycleWeapon) this.callbacks.onCycleWeapon?.(cycleWeapon);
-    if (wheel) this.callbacks.onWeaponWheel(wheel);
+    if (wheel) this.callbacks.onWeaponWheel?.(wheel); // (a wheel only opens with the callback there)
 
     const movement = stick(pad, 0), look = stick(pad, 2);
     // (the right stick chooses on the wheel instead of turning the camera)
-    if (this.wheelOpen) this.callbacks.onWeaponWheel('aim', look.x, look.y);
+    if (this.wheelOpen) this.callbacks.onWeaponWheel?.('aim', look.x, look.y);
     const mode = this.controller.activeMode;
     let drive = -movement.y;
     let vertical = 0;
@@ -195,14 +236,14 @@ class GamepadControls {
     this.controller.setGamepadInput('backward', Math.max(0, -drive));
     this.controller.setGamepadInput('left', Math.max(0, -movement.x));
     this.controller.setGamepadInput('right', Math.max(0, movement.x));
-    this.controller.setGamepadInput('up', mode === 'person' ? Number(Boolean(held(0))) : Math.max(0, vertical));
+    this.controller.setGamepadInput('up', mode === 'person' ? Number(held(0)) : Math.max(0, vertical));
     this.controller.setGamepadInput('down', Math.max(0, -vertical));
-    this.controller.setGamepadInput('boost', Number(Boolean(held(2))));
-    this.controller.setGamepadInput('handbrake', mode === 'car' ? Number(Boolean(held(0))) : 0); // A: the car's handbrake
+    this.controller.setGamepadInput('boost', Number(held(2)));
+    this.controller.setGamepadInput('handbrake', mode === 'car' ? Number(held(0)) : 0); // A: the car's handbrake
     // fire: the right trigger on foot (in a vehicle it is the throttle), B from a car or a bicycle
-    const fire = mode === 'person' ? Number(buttonValue(pad, 7) > 0.5) : Number(Boolean(held(1)));
+    const fire = mode === 'person' ? Number(buttonValue(pad, 7) > 0.5) : Number(held(1));
     this.controller.setGamepadInput('fire', this.wheelOpen ? 0 : fire);
-    const zoom = Number(Boolean(held(13))) - Number(Boolean(held(12)));
+    const zoom = Number(held(13)) - Number(held(12));
     const free = !this.wheelOpen;
     this.camera.applyGamepadInput(free ? look.x : 0, free ? look.y : 0, zoom, Number.isFinite(dt) ? Math.max(0, Math.min(0.1, dt)) : 0);
   }
