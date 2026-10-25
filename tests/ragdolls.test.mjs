@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { throwVelocity, bleedOf, partLayout, poseFromParts, PARTS, PART_OF_BONE, qmul, qrot } from '../js/sim/ragdolls.js';
+import { throwVelocity, bleedOf, partLayout, poseFromParts, PARTS, PART_OF_BONE, qmul, qrot } from '../js/sim/ragdolls.ts';
 
 // pedestrians.js's bind joints for a man (1.75 m, facing +z, +x his left), as plain points
 const V = (x, y, z) => ({ x, y, z });

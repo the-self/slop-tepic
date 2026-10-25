@@ -3,10 +3,11 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
+const { stripTypes } = require('./helpers/module.cjs');
 
-const source = readFileSync(join(__dirname, '../js/render/scene-culling.js'), 'utf8');
+const source = stripTypes(readFileSync(join(__dirname, '../js/render/scene-culling.ts'), 'utf8'));
 const topLevel = (name) => {
-  const match = source.match(new RegExp(`^function ${name}\\([^]*?\\n\\}`, 'm'));
+  const match = source.match(new RegExp(`^function ${name}\\s*\\([^]*?\\n\\}`, 'm'));
   assert.ok(match, `${name} is present`);
   return match[0];
 };
@@ -50,7 +51,7 @@ class Mesh extends Object3D {
 }
 const THREE = { BufferAttribute, BufferGeometry, Mesh };
 const context = { THREE, Math, Map, Object, Float64Array, _a: new Vector3(), _b: new Vector3(), _c: new Vector3() };
-const splitMesh = vm.runInNewContext(`${topLevel('copyObjectState')}\n(${topLevel('splitMesh')})`, context);
+const splitMesh = vm.runInNewContext(`${topLevel('emptyLike')}\n${topLevel('copyObjectState')}\n(${topLevel('splitMesh')})`, context);
 
 test('a large merged mesh is split into squares by where its triangles are, every triangle kept once', () => {
   const parent = new Object3D();
@@ -132,7 +133,8 @@ test('the frozen static city is left out of the per-frame matrix updates, everyt
 
 test('the static city drops the CPU copies the GPU already holds, keeping what it may still need', () => {
   const ctx = { state: { culled: [], frozen: new Set(), pendingRelease: null }, Set, Map, Object, RELEASE_MIN_VERTICES: 2048 };
-  const release = vm.runInNewContext(`(${topLevel('releaseStaticArrays')})`, ctx);
+  const helpers = ['isMesh', 'isInstancedMesh', 'emptyLike', 'isBackendData'].map(topLevel).join('\n');
+  const release = vm.runInNewContext(`${helpers}\n(${topLevel('releaseStaticArrays')})`, ctx);
   const uploaded = new Set();
   const renderer = { backend: { has: (a) => uploaded.has(a), get: () => ({ buffer: {} }) } };
   const attr = (n, itemSize, extra = {}) => Object.assign(new BufferAttribute(new Float32Array(n * itemSize), itemSize), extra);
@@ -207,4 +209,73 @@ test('the shadow stand-ins are shown to the cascades only, and visible again bet
   scene.onBeforeRender({}, scene, cascade);
   assert.equal(group.visible, true, 'shown to a cascade');
   assert.deepEqual(calls, ['before', 'after', 'before'], 'the hooks set before are still called');
+});
+
+test('a root\'s children that cast nothing gather in one group the cascades can skip, the casters and lights stay', () => {
+  class Group extends Object3D {
+    constructor() { super(); this.isGroup = true; }
+  }
+  const { gather } = vm.runInNewContext(
+    `${topLevel('castsOrLights')}\n${topLevel('gatherQuietChildren')}\n({ gather: gatherQuietChildren })`,
+    { THREE: { Group } }
+  );
+  const mesh = (castShadow) => Object.assign(new Mesh({}, {}), { isMesh: true, castShadow });
+  const root = new Group();
+  root.name = 'StreetDetails';
+  root.renderOrder = 2;
+  const pole = mesh(true), paint = mesh(false), wires = mesh(false);
+  const cell = new Object3D(); // (a tree cell: one caster among non-casters keeps it whole)
+  cell.add(mesh(false));
+  cell.add(mesh(true));
+  const lamps = new Object3D();
+  lamps.add(Object.assign(new Object3D(), { isLight: true }));
+  for (const o of [pole, paint, cell, wires, lamps]) root.add(o);
+  const group = gather(root);
+  assert.equal(group.name, 'StreetDetailsNoShadow');
+  assert.equal(group.renderOrder, 2, 'the render order three.js hands down from groups');
+  assert.deepEqual(group.children, [paint, wires]);
+  assert.ok(group.children.every((c) => c.parent === group));
+  assert.deepEqual([...root.children], [pole, cell, lamps, group]); // (the array comes from the module's context)
+  // nothing to gather (or a single mesh): no group
+  const plain = new Group();
+  plain.add(mesh(true));
+  plain.add(mesh(false));
+  assert.equal(gather(plain), null);
+  assert.equal(plain.children.length, 2);
+});
+
+test('the cascades skip the quiet groups, the stand-in regions off their frustum, and the far one the small props', () => {
+  const inFrustum = new Set();
+  const ctx = {
+    Uint8Array,
+    _pm: { multiplyMatrices() {} },
+    _frustum: { setFromProjectionMatrix() {}, intersectsSphere: (s) => inFrustum.has(s) }
+  };
+  const cull = vm.runInNewContext(`(${topLevel('cullForCascades')})`, ctx);
+  const calls = [];
+  const scene = { onBeforeRender: () => calls.push('before'), onAfterRender: () => calls.push('after') };
+  const near = { name: 'near' }, far = { name: 'far' }, view = { name: 'view' };
+  const quiet = [{ visible: true }, { visible: true }];
+  const regions = [{ group: { visible: true }, sphere: {} }, { group: { visible: true }, sphere: {} }];
+  inFrustum.add(regions[0].sphere);
+  const bin = { visible: true }, culledBin = { visible: false }; // (one hidden already by its draw distance)
+  let live = false;
+  cull(scene, [near, far], regions, quiet, [bin, culledBin], () => live);
+  const state = () => [...quiet, ...regions.map((r) => r.group), bin, culledBin].map((o) => (o.visible ? 1 : 0)).join('');
+  scene.onBeforeRender({}, scene, view);
+  assert.equal(state(), '111110', 'the view is left alone');
+  scene.onAfterRender({}, scene, view);
+  scene.onBeforeRender({}, scene, near);
+  assert.equal(state(), '001110', 'no region culling before the warm-up frame is done');
+  scene.onAfterRender({}, scene, near);
+  live = true;
+  scene.onBeforeRender({}, scene, near);
+  assert.equal(state(), '001010', 'the near cascade: quiet groups and the region off its frustum out, the props in');
+  scene.onAfterRender({}, scene, near);
+  assert.equal(state(), '111110');
+  scene.onBeforeRender({}, scene, far);
+  assert.equal(state(), '001000', 'the far cascade: the small props out too');
+  scene.onAfterRender({}, scene, far);
+  assert.equal(state(), '111110', 'everything as it was, the culled prop still hidden');
+  assert.equal(calls.length, 8, 'the hooks set before are still called');
 });

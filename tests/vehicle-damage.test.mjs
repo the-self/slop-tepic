@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { MIN_IMPACT, createDamage, applyImpact, enginePower, condition, deformBody } from '../js/player/vehicle-damage.js';
+import { MIN_IMPACT, createDamage, applyImpact, enginePower, condition, deformBody } from '../js/player/vehicle-damage.ts';
 
 test('light knocks bend nothing', () => {
   const dmg = createDamage();

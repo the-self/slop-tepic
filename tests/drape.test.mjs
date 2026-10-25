@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
-import { visibleTriangles, layOnFloor } from '../js/world/lattice.js';
+import { visibleTriangles, layOnFloor } from '../js/world/lattice.ts';
 
 const require = createRequire(import.meta.url);
 const { loadModule } = require('./helpers/module.cjs');
-const source = readFileSync(new URL('../js/world/drape.js', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../js/world/drape.ts', import.meta.url), 'utf8');
 
 // Just enough of three.js for drapeGeometry
 class BufferAttribute {
@@ -31,8 +31,8 @@ function drapeModule(slopes = true) {
     imports: {
       'three/webgpu': THREE,
       'three/addons/utils/BufferGeometryUtils.js': { mergeGeometries },
-      './ground.js': { SLOPES: slopes, LATTICE: { x0: 0, z0: 0, cell: 10 }, townHeight: floor },
-      './lattice.js': { visibleTriangles, layOnFloor }
+      './ground.ts': { SLOPES: slopes, LATTICE: { x0: 0, z0: 0, cell: 10 }, townHeight: floor },
+      './lattice.ts': { visibleTriangles, layOnFloor }
     }
   });
 }

@@ -10,7 +10,7 @@ An image-to-3D model is only good on the side the image shows. Meshy invents eve
 roofs), and it brings along whatever stood next to the subject. So:
 
 - Use the model only for the side that was photographed. Cut the rest off and draw it in code, as
-  `tepic-landmarks.js` does with the Catedral's nave, dome and apse.
+  `tepic-landmarks.ts` does with the Catedral's nave, dome and apse.
 - People judge a landmark by the whole block, from street level: its neighbours, its atrium, the street in
   front of it. A perfect front on an empty lot still looks wrong. Draw the neighbours too: the casona, the
   portales.
@@ -77,24 +77,24 @@ Use `--keep-width` for props that stand alone.
 
 ## 4. Putting it in the game
 
-- **Simple landmarks** go in `LANDMARK_MODELS` (`js/world/landmark-models.js`). A model with drawn parts gets
-  its own builder, like `CATEDRAL_MODEL` and `PLAN` in `js/world/tepic-landmarks.js`. Keep the drawn version
+- **Simple landmarks** go in `LANDMARK_MODELS` (`js/world/landmark-models.ts`). A model with drawn parts gets
+  its own builder, like `CATEDRAL_MODEL` and `PLAN` in `js/world/tepic-landmarks.ts`. Keep the drawn version
   until the file loads, so the place is never empty if it fails.
 - **OpenStreetMap outlines** take in annexes (the Catedral's includes the casona). Don't centre on the outline's
   box. Find the real front: the outline's edge furthest towards the street or plaza. Then measure the plan in
   the building's own frame.
 - **Streets are not square to buildings.** Check the curb island the building stands on
-  (`blockAt(x, z).poly`, from `js/world/city-config.js`). Keep every front at least the sidewalk's width
+  (`blockAt(x, z).poly`, from `js/world/city-config.ts`). Keep every front at least the sidewalk's width
   (`GEO.frame.sidewalk`, 2.2 m) behind it. `frontRuns()` lays buildings along a curb that turns, and the church
   stands back (`setback`) when its OpenStreetMap front crosses the curb.
 - **Generic houses**: `LANDMARK_RESERVES` keeps them off. A house is dropped if its centre is inside a reserve,
-  and so is any house part that reaches more than ~1.2 m into one (`buildings.js`). Make each reserve the exact
+  and so is any house part that reaches more than ~1.2 m into one (`world/buildings/houses.ts`). Make each reserve the exact
   footprint, not a big box: a box also deletes the real neighbours.
 - **Late-loading models**: the landmarks' world matrices are frozen once the city is built
-  (`freezeStaticMatrices`, `render/scene-culling.js`). Call `model.updateMatrixWorld(true)` after adding the
+  (`freezeStaticMatrices`, `render/scene-culling.ts`). Call `model.updateMatrixWorld(true)` after adding the
   model, or it draws at the origin, under the ground.
 - **Uploaded geometry**: after the first frames, the renderer releases the CPU copies of static geometry
-  (`scene-culling.js`). Calling `computeBoundingBox()` on such a mesh then gives NaN bounds, and the mesh is
+  (`scene-culling.ts`). Calling `computeBoundingBox()` on such a mesh then gives NaN bounds, and the mesh is
   culled for good. Don't, not even while debugging.
 - **Merging**: when you merge drawn pieces, clone non-indexed geometries before `applyMatrix4`. A geometry
   shared by several pieces, such as a balustrade panel or an arch band, is otherwise transformed once per piece.
@@ -125,12 +125,12 @@ Use `--keep-width` for props that stand alone.
   credits each), then prepared with `prepare.mjs --length <its real length> --yaw 90 --wheel <tyre radius> --ratio 1 --texture 1024`.
   Meshy's front view has every car's nose at -x, and the game's cars face +z.
   - **Data**: a car model's `glb` field (`js/models/cars/`) names its file.
-  - **Traffic**: `sim/traffic.js` loads those files in the background. Near the camera (`CAR_PROXY_DISTANCE`) such
+  - **Traffic**: `sim/traffic/meshes.ts` loads those files in the background (`render.ts` draws them). Near the camera (`CAR_PROXY_DISTANCE`) such
     a car is drawn with its own instanced mesh, at scale 1, with its wheels in it. Beyond that distance it is
     its body shape's ~250-triangle stand-in, as before.
   - **Paint mask**: `prepare.mjs` bakes one into each car's metallic-roughness texture (R: the mask, G: the
     roughness). The mask is the texture's white areas, minus the wheels, grown 3 px over edges and seams.
-    `createModelCarMaterial` (`actors/actor-models.js`) paints the instance's colour through it, following the
+    `createModelCarMaterial` (`actors/vehicles/car-material.ts`) paints the instance's colour through it, following the
     texture's brightness, and lights the red lamps at the back with the brake.
   - **Two mistakes not to repeat**: a plain "paint where it's white" threshold left pale stripes along every
     edge and seam, and it painted the silver rims too. The wheels are found where the tyres touch the ground;
@@ -139,7 +139,7 @@ Use `--keep-width` for props that stand alone.
     but Nano Banana still drew some on the grilles.
   - **Adding one**: a job, the preparation, the `glb` field. Check that the nose faces +z (`.claude/cars.html`
     shows the prepared cars side by side) and that the paint takes.
-- **People**: pedestrians are one instanced, GPU-skinned crowd on a 15-bone skeleton (`sim/pedestrians.js`), with
+- **People**: pedestrians are one instanced, GPU-skinned crowd on a 15-bone skeleton (`sim/pedestrians.ts`), with
   outfits from a per-person seed. A Meshy person in A-pose has to be skinned to those bones: two bones and a
   weight per vertex, from the bind pose. Each model is one fixed look, and the morphs (build, female
   proportions, hair) are lost. The pilot is `tools/models/jobs/person.json`.

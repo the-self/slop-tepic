@@ -1,0 +1,88 @@
+// js/sim/crime/models.ts
+// The street crime's models (sim/crime.ts), built once and parked out of sight until used: the guns in the player's
+// and everyone else's hands, and the patrol cars and the cartel's trucks.
+import * as THREE from 'three/webgpu';
+import type { StreetGun } from '../crime-rules.ts';
+import { BODY_SPECS, buildCarGeometry, createLoftedCarMaterial, buildLightbarGeometry, createLightbarMaterial } from '../../actors/actor-models.ts';
+import { WEAPON_MODELS, buildWeaponGeometry, createWeaponMaterial } from '../../actors/weapon-models.ts';
+import { createContactShadowMaterial } from '../../render/tsl-materials.ts';
+import { MAX_AGENTS, MAX_CRUISERS, MAX_TRUCKS, PARKED_Y, GRIP_REACH, CRUISER, NPC_GUN, zero } from './constants.ts';
+import type { CrimeSystem } from '../crime.ts';
+
+export function buildGuns(crime: CrimeSystem): void {
+  // (actors/weapon-models.ts: one material, the finish in each gun's vertices)
+  const material = createWeaponMaterial();
+  // the player's: one of each, its grip a hand's breadth on from the rig's wrist
+  crime.playerGuns = {};
+  for (const id of WEAPON_MODELS) {
+    const g = new THREE.Group();
+    const mesh = new THREE.Mesh(buildWeaponGeometry(id), material);
+    mesh.position.set(0, -0.012, GRIP_REACH);
+    mesh.castShadow = true;
+    g.add(mesh);
+    g.position.y = PARKED_Y;
+    crime.scene.add(g);
+    crime.playerGuns[id] = g;
+  }
+  // everyone else's: one instanced draw per kind of gun they carry
+  crime.npcGuns = {};
+  // (NPC_GUN's keys are the StreetGuns)
+  for (const id of Object.keys(NPC_GUN) as StreetGun[]) {
+    const mesh = new THREE.InstancedMesh(buildWeaponGeometry(id).translate(0, -0.012, GRIP_REACH), material, MAX_AGENTS);
+    mesh.name = `CrimeGuns-${id}`;
+    mesh.frustumCulled = false;
+    mesh.castShadow = true;
+    mesh.count = 1;
+    mesh.setMatrixAt(0, zero);
+    crime.scene.add(mesh);
+    crime.npcGuns[id] = { mesh, count: 0 };
+  }
+}
+
+export function buildCruisers(crime: CrimeSystem): void {
+  const spec = BODY_SPECS.sedan;
+  // (a paint of its own: the material cache shares a colour's material, and the player's stolen cruiser sets its
+  // brake lights on the one it gets)
+  const mat = createLoftedCarMaterial(spec, 0xf6f9fd);
+  // (the uniform createLoftedCarMaterial keeps in userData for a car of a colour of its own)
+  const carState = mat.userData.carState as { value: THREE.Vector4 } | undefined;
+  if (carState) carState.value.set(0, 0, 0, 1); // police livery
+  // the cartel's black SUVs, without a light bar
+  const truckSpec = Object.hasOwn(BODY_SPECS, 'suv') ? BODY_SPECS.suv : spec; // (a Record: TS takes any key to be there)
+  const truckMat = createLoftedCarMaterial(truckSpec, 0x0c0d0f);
+  const truckBody = buildCarGeometry(truckSpec, true);
+  const body = buildCarGeometry(spec, true);
+  const bar = buildLightbarGeometry(spec);
+  const barMat = createLightbarMaterial();
+  const shadowGeo = new THREE.PlaneGeometry(2.3, 5.2).rotateX(-Math.PI / 2);
+  const shadowMat = createContactShadowMaterial();
+  for (let i = 0; i < MAX_CRUISERS + 1 + MAX_TRUCKS; i++) {
+    const truck = i > MAX_CRUISERS;
+    const root = new THREE.Group();
+    root.name = truck ? 'CartelTruck' : 'PoliceCruiser';
+    const tiltPivot = new THREE.Group();
+    root.add(tiltPivot);
+    // the last one is never driven: a burnt-out wreck parked out of sight, so that material compiles at load too
+    const bodyMesh = new THREE.Mesh(truck ? truckBody : body, i === MAX_CRUISERS ? crime.burnt : truck ? truckMat : mat);
+    bodyMesh.castShadow = true;
+    bodyMesh.receiveShadow = true;
+    const lightbar = new THREE.Mesh(bar, barMat);
+    const shadow = new THREE.Mesh(shadowGeo, shadowMat);
+    shadow.position.y = 0.02;
+    shadow.renderOrder = 998;
+    tiltPivot.add(bodyMesh);
+    if (!truck) tiltPivot.add(lightbar);
+    root.add(shadow);
+    root.position.y = PARKED_Y;
+    crime.scene.add(root);
+    if (i === MAX_CRUISERS) continue;
+    crime.cruisers.push({
+      active: false, mesh: root, tiltPivot, bodyMesh, lightbar, paint: truck ? truckMat : mat, faction: truck ? 'narco' : 'police',
+      x: 0, y: 0, z: 0, heading: 0, speed: 0, vx: 0, vz: 0, halfW: CRUISER.halfW, halfL: CRUISER.halfL,
+      mass: CRUISER.mass, type: 'car', police: !truck, hp: truck ? 140 : 100, wreck: 0, state: 'chase', path: null, pathI: 0,
+      replan: 0, stuckT: 0, checkX: 0, checkZ: 0, reverseT: 0, deployed: false, life: 0, pitch: 0, roll: 0,
+      hw: CRUISER.halfW, hl: CRUISER.halfL, stuckCount: 0, slowT: 0, startX: 0, startZ: 0, goalX: 0, goalZ: 0, passSide: 0, lift: 0, vy: 0,
+      position: new THREE.Vector3() // (for the audio: crashes & sirens)
+    });
+  }
+}

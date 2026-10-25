@@ -1,0 +1,250 @@
+// js/player/controllers/car-drive.ts
+// The car in Jolt Physics (car-physics.ts): its drive (drivetrain.ts) and steering set before the world's step,
+// its body read back after it, its crashes, brake lamps and smoke; its body's definition, and the gearbox keys
+import { createDriveState, stepDrive } from '../drivetrain.ts';
+import { enginePower } from '../vehicle-damage.ts';
+import { wash } from '../car-blood.ts';
+import { suspensionOf } from '../car-physics.ts';
+import { EJECT_SPEED } from './constants.ts';
+import type { DriveInput, DriveSpec, DriveState } from '../drivetrain.ts';
+import type { CarDamage } from '../vehicle-damage.ts';
+import type { CarBodyDef, CarPhysics, PhysicsVehicle, VehicleOut } from '../car-physics.ts';
+import type { HeldGearKeys, CarWheel, CarEntity, CyclistEntity, MotoEntity } from './types.ts';
+import type { ThirdPersonControllerManager } from '../controllers.ts';
+
+// The car: a rigid body on its sprung wheels in Jolt Physics (car-physics.ts, set up by main.ts before the first
+// frame). Before the world's step (stepVehicles): what the traffic did to it since the last one carried over, and
+// drivetrain.ts's drive for its tyres. Not `driving`, it stands (or rolls on, its driver thrown out) on its own
+export function driveCar(ctl: ThirdPersonControllerManager, dt: number, driving: boolean): void {
+  const c = ctl.entities.car;
+  const P = ctl.carPhysics;
+  if (!P) return;
+  const spec = c.spec;
+  const d = (c.drive ??= createDriveState(spec));
+  const dmg = c.damage;
+  // what hit it since the last frame (the traffic and the street furniture push it about after it has moved); with
+  // nobody in it, nothing to compare with when someone gets back in
+  if (driving) ctl.checkImpact(c);
+  else c.impactArmed = false;
+
+  const throttle = driving ? Number(ctl.keys.forward) || 0 : 0;
+  const brake = driving ? Number(ctl.keys.backward) || 0 : 0;
+  const handbrake = driving && Boolean(ctl.keys.handbrake);
+  const shift = driving ? ctl.gearKeys(c, d) : 0;
+
+  const sn0 = Math.sin(c.heading), cs0 = Math.cos(c.heading);
+  if (!c.vehicle || c.physicsLook !== c.look) {
+    if (c.vehicle) P.remove(c.vehicle);
+    c.vehicle = P.add(ctl.carBodyDef(c, spec), c.position.x, c.position.y, c.position.z, c.heading);
+    c.physicsLook = c.look;
+    c.physicsPlaced = false;
+  }
+  const v = c.vehicle;
+  const out = (c.bodyOut ??= { x: 0, z: 0, vx: 0, vz: 0, qx: 0, qy: 0, qz: 0, qw: 1 });
+  if (!c.physicsPlaced) {
+    // set down where it stands (on the kerb if it is on one: the ground Jolt is given), moving as it was
+    const y = ctl.getGroundHeight(c.position.x, c.position.z, 'person', c.position.y + 0.5);
+    P.place(v, c.position.x, y, c.position.z, c.heading);
+    P.shove(v, sn0 * c.speed + c.vx, 0, cs0 * c.speed + c.vz, 0, 0, 0);
+    c.physicsPlaced = true;
+  } else if (driving) {
+    // the traffic's shove (traffic.ts collideWithPlayer moves the car and changes its velocity, spin & sway)
+    const dvx = sn0 * c.speed + c.vx - out.vx, dvz = cs0 * c.speed + c.vz - out.vz;
+    const pitch = (c.pitchVel || 0) * 0.35, roll = (c.rollVel || 0) * 0.35;
+    // (the sway about the car's own axes: its left (cos h, 0, -sin h) and its nose (sin h, 0, cos h))
+    P.shove(v, dvx, Math.min(1.5, (c.heaveVel || 0) * 0.3), dvz,
+      cs0 * pitch + sn0 * roll, c.angularVel || 0, -sn0 * pitch + cs0 * roll,
+      c.position.x - out.x, c.position.z - out.z);
+  }
+  c.angularVel = c.pitchVel = c.rollVel = c.heaveVel = 0;
+
+  const u = P.read(v).forward;
+  const input: DriveInput = (c.driveInput ??= {});
+  input.throttle = throttle;
+  input.brake = brake;
+  input.handbrake = false; // (Jolt's own: it locks the rear wheels)
+  input.nitro = driving && Boolean(ctl.keys.boost);
+  input.shift = shift;
+  input.slope = 0; // (gravity is Jolt's)
+  // in a flood: over ~0.55 m the water is in the air intake and the engine dies until it is out of it
+  const water = ctl.waterAt && !c.flying ? ctl.waterAt(c.position.x, c.position.z) : 0;
+  c.drowned = water > 0.55;
+  input.power = c.drowned ? 0 : enginePower(dmg);
+  input.grip = ctl.roadGrip * (water > 0.15 ? 0.75 : 1);
+  const force = ctl.driveForce(d, spec, input, u, water, dt);
+
+  let steerInput = 0;
+  if (driving && ctl.keys.left) steerInput = Number(ctl.keys.left);
+  if (driving && ctl.keys.right) steerInput = -Number(ctl.keys.right);
+  // speed-sensitive steering: the wheels turn less the faster it goes; a bent front corner pulls it to one side
+  const lock = spec.steerLock / (1 + Math.abs(u) / 16);
+  c.steerAngle += (steerInput * lock - c.steerAngle) * Math.min(1, dt * 10);
+  const steer = c.steerAngle + dmg.pull * Math.min(1, Math.abs(u) / 5);
+
+  const body = v.out;
+  const before = (c.before ??= { vx: 0, vy: 0, vz: 0 });
+  before.vx = body.vx; before.vy = body.vy; before.vz = body.vz;
+  const speed = Math.hypot(body.vx, body.vy, body.vz);
+  const go = (v.input ??= { force: 0 });
+  go.force = force;
+  go.airDrag = 0.5 * 1.2 * spec.dragArea * speed * speed;
+  go.steer = Math.max(-1, Math.min(1, -steer / spec.steerLock)); // (Jolt's: +1 full right)
+  go.handbrake = handbrake;
+  go.hold = !throttle && !brake && Math.abs(u) < 0.5;
+  go.grip = spec.grip * input.grip;
+  go.spinning = d.wheelspin;
+  const frame = (c.frame ??= { throttle: 0, steer: 0, water: 0 });
+  frame.throttle = throttle;
+  frame.steer = steer;
+  frame.water = water;
+}
+
+// drivetrain.ts's step for a vehicle moving at `u` m/s along itself, as the force (N) that makes it: its drive and
+// what slows it, and the water's drag on it pushing through a flood (its depth & the speed squared)
+export function driveForce(d: DriveState, spec: DriveSpec, input: DriveInput, u: number, water: number, dt: number): number {
+  let next = stepDrive(d, spec, input, u, dt);
+  if (water > 0.03) next -= Math.sign(next) * Math.min(Math.abs(next), 0.09 * Math.min(water, 1) * next * next * dt + water * 2.5 * dt);
+  return spec.mass * (next - u) / dt;
+}
+
+// One step of Jolt's world (the car, the moto, the people thrown about), the walls fed in round the player
+export function stepVehicles(ctl: ThirdPersonControllerManager, dt: number): void {
+  const P = ctl.carPhysics;
+  if (!P) return;
+  const focus = (ctl._physicsFocus ??= { x: 0, y: 0, z: 0 });
+  const at = ctl.getActiveEntity().position;
+  focus.x = at.x;
+  focus.y = at.y;
+  focus.z = at.z;
+  P.step(dt, focus);
+}
+
+// Where Jolt's step left vehicle `ent` (the car or the moto, its body `v`): held inside the map's edges and the shore,
+// as everyone is (keepInBounds), then its position, heading and velocity in the game's terms (speed along it, slip
+// across it), and its pose for its mesh
+export function followBody(ctl: ThirdPersonControllerManager, ent: CarEntity | CyclistEntity | MotoEntity, v: PhysicsVehicle): VehicleOut {
+  const o = v.out;
+  const pos = (ctl._bodyBounds ??= { x: 0, z: 0 });
+  pos.x = o.x;
+  pos.z = o.z;
+  if (ctl.keepInBounds(pos)) ctl.carPhysics?.confine(v, pos.x, pos.z, o.vx * 0.4, o.vz * 0.4);
+  ent.position.set(o.x, o.y, o.z);
+  ent.heading = o.heading;
+  const sn = Math.sin(ent.heading), cs = Math.cos(ent.heading);
+  ent.speed = o.vx * sn + o.vz * cs;
+  ent.vx = o.vx - sn * ent.speed;
+  ent.vz = o.vz - cs * ent.speed;
+  ent.vy = o.vy;
+  ent.flying = o.contacts === 0;
+  const out = (ent.bodyOut ??= { x: 0, z: 0, vx: 0, vz: 0, qx: 0, qy: 0, qz: 0, qw: 1 });
+  out.x = o.x; out.z = o.z; out.vx = o.vx; out.vz = o.vz;
+  out.qx = o.qx; out.qy = o.qy; out.qz = o.qz; out.qw = o.qw;
+  return o;
+}
+
+// After the step: the car's body's pose, speed and wheels read back; a knock the body itself took is a crash
+export function carMoved(ctl: ThirdPersonControllerManager, dt: number, driving: boolean): void {
+  const c = ctl.entities.car;
+  const v = c.vehicle;
+  // (frame, drive & before: set by driveCar with the body)
+  if (!v || !c.frame || !c.drive || !c.before) return;
+  const { throttle, steer, water } = c.frame;
+  const o = ctl.followBody(c, v);
+  const sn = Math.sin(c.heading), cs = Math.cos(c.heading);
+  const slip = Math.hypot(c.vx, c.vz);
+  c.drifting = slip > 2.2 && Math.abs(c.speed) > 5 && !c.flying;
+
+  // A crash: the body itself (not its tyres) struck something, a wall, a pole, a parked car or the ground (on its
+  // roof), coming at it ctl fast
+  const hit = o.hit;
+  if (hit.speed > 1.5) {
+    const hx = c.position.x - hit.nx * c.halfL * 0.9, hz = c.position.z - hit.nz * c.halfL * 0.9;
+    // (it hurts whoever is in it: nobody, when it rolls on alone; a car of the traffic thrown about in Jolt, traffic.ts
+    // crash, as hard as a car)
+    const other = hit.other?.owner;
+    if (driving) ctl.reportCollision(c, other || (ctl._wall ??= { type: 'building' }), other ? 'vehicle' : 'building', hx, c.position.y + 0.56, hz, hit.nx, 0, hit.nz, hit.speed);
+    ctl.impactCar(c, hit.nx * hit.speed, hit.nz * hit.speed);
+    c.cameraKick = Math.max(c.cameraKick || 0, Math.min(1, (hit.speed - 1.5) / 14)); // (cameras.ts speedEffects)
+    if (hit.speed > 2.2) c.lastCollisionSpark = { x: hx, y: 0.56, z: hz, nx: hit.nx, nz: hit.nz, speed: hit.speed };
+    // head on (what it hit faces its nose) and hard: out through the windscreen
+    if (driving && hit.speed > EJECT_SPEED && hit.nx * sn + hit.nz * cs < -0.7) ctl.ejectDriver(c, c.before, hit.speed);
+  }
+
+  // the wheels: on their springs, steered, rolling
+  o.wheels.forEach((w, i) => {
+    const wheel = c.wheels[i] as CarWheel | undefined; // (Jolt's may outnumber the drawn ones)
+    if (!wheel) return;
+    wheel.steerPivot.position.y = w.y;
+    wheel.tire.rotation.x = w.spin;
+    if (wheel.isFront) wheel.steerPivot.rotation.y = steer;
+  });
+  ctl.carEffects(c, c.drive, c.damage, throttle, c.speed, slip, water, dt);
+  // heavy rain washing its stains off (ctl.rain: main.ts, the rain falling, 0..1)
+  if (c.bloody && c.blood && (ctl.rain || 0) > 0.35) {
+    c.bloody = wash(c.stains, dt, ctl.rain);
+    ctl.showBlood(c);
+  }
+}
+
+// The brake lamps, and the smoke: the engine's once it is damaged (grey, then black), the tyres' when they slide or
+// spin, the spray off a wet road; `u` the car's speed along itself, `slip` across it (m/s)
+export function carEffects(ctl: ThirdPersonControllerManager, c: CarEntity, d: DriveState, dmg: CarDamage, throttle: number, u: number, slip: number, water: number, dt: number): void {
+  const braking = d.braking || (c.speed === 0 && !throttle) ? 1 : 0;
+  if (c.carState) c.carState.value.x = braking;
+  const lamps = c.kit?.lamps;
+  if (lamps && lamps.array[0] !== braking) {
+    lamps.array[0] = braking;
+    lamps.needsUpdate = true;
+  }
+  const e = dmg.engine;
+  if (e > 0.4) ctl.emitSmoke(c, 0, 0.95, (c.zFront || 2.2) - 0.75, dt * (e >= 1 ? 16 : (e - 0.4) * 22), e >= 0.85 ? 0.1 : 0.5 - e * 0.4, 0.9);
+  if ((c.drifting || d.wheelspin) && Math.abs(u) > 1.5) {
+    const rate = dt * (d.wheelspin ? 18 : Math.min(26, slip * 4));
+    for (const side of [-0.75, 0.75]) ctl.emitSmoke(c, side, 0.18, -1.35, rate * 0.5, 0.86, 1.25);
+  }
+  // On a wet road the tyres throw up a spray behind them, more the faster it goes
+  if (water > 0.05 && Math.abs(u) > 2) {
+    const rate = dt * Math.min(30, Math.abs(u) * 2.2) * Math.min(1, water * 3);
+    for (const side of [-0.95, 0.95]) ctl.emitSmoke(c, side, 0.2, 1.6, rate * 0.5, 0.78, 1.1);
+  }
+  if ((ctl.roadWet || 0) > 0.25 && !c.flying && Math.abs(u) > 6) {
+    const rate = dt * Math.min(14, (Math.abs(u) - 6) * 0.9) * ctl.roadWet;
+    for (const side of [-0.8, 0.8]) ctl.emitSmoke(c, side, 0.12, -1.5, rate * 0.5, 0.94, 0.8);
+  }
+}
+
+// Jolt's vehicles (car-physics.ts), from main.ts before the game starts
+export function setCarPhysics(ctl: ThirdPersonControllerManager, physics: CarPhysics | null | undefined): void {
+  ctl.carPhysics = physics ?? null;
+  ctl.entities.car.vehicle = null;
+  ctl.entities.moto.vehicle = null;
+}
+
+// What the car's body is: its model's mass, its footprint & height, its wheels where they stand on the body, and
+// springs & anti-roll bars by its class (trucks & SUVs soft and leaning, sports cars & supercars flat)
+export function carBodyDef(c: CarEntity, spec: DriveSpec): CarBodyDef {
+  const [springHz, roll] = suspensionOf(spec.cls);
+  const height = c.bodyHeight || 1.45;
+  return {
+    kind: 'car', mass: spec.mass, halfW: c.halfW, halfL: c.halfL, height, cg: height * (c.kit?.wheels ? 0.4 : 0.36),
+    steerLock: spec.steerLock, drive: spec.drive, springHz, roll,
+    wheels: c.wheels.map((w) => ({
+      x: w.steerPivot.position.x, z: w.steerPivot.position.z, radius: (w.restY ??= w.steerPivot.position.y), front: w.isFront
+    }))
+  };
+}
+
+// E / Q shift (and switch to the manual gearbox), T goes back and forth between automatic and manual: the shift
+// ctl frame (+1, -1 or 0), from the keys' presses (not their holding)
+export function gearKeys(ctl: ThirdPersonControllerManager, ent: CarEntity | MotoEntity, d: DriveState): number {
+  const held = (ent.heldKeys ??= { shiftUp: false, shiftDown: false, gearbox: false });
+  const pressed = (key: keyof HeldGearKeys) => {
+    const now = Boolean(ctl.keys[key]);
+    const edge = now && !held[key];
+    held[key] = now;
+    return edge;
+  };
+  const shift = (pressed('shiftUp') ? 1 : 0) - (pressed('shiftDown') ? 1 : 0);
+  if (pressed('gearbox')) d.manual = !d.manual;
+  return shift;
+}

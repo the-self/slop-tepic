@@ -3,6 +3,7 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
+const { stripTypes } = require('./helpers/module.cjs');
 
 // Evaluate the production TSL expressions numerically, without a browser or Three dependency.
 const f = Math.fround;
@@ -31,15 +32,18 @@ function matrix(elements) {
     return new Node([0, 3, 6].map(i => f(f(f(elements[i] * a[0]) + f(elements[i + 1] * a[1])) + f(elements[i + 2] * a[2]))));
   } };
 }
-const source = readFileSync(join(__dirname, '../js/render/tsl-materials.js'), 'utf8');
+// (the TypeScript's types blanked out, so the slices run as the JavaScript the bundle ships)
+const read = (path) => stripTypes(readFileSync(join(__dirname, '../js/render/materials', path), 'utf8'));
+const source = read('facade-cell.ts');
+const interiorSource = read('apartment-interior.ts');
 const frame = source.match(/const facadeNormalVertex =[\s\S]*?const facadeAlongZ =[\s\S]*?\.setInterpolation\([\s\S]*?\);/);
 assert.ok(frame, 'the shared camera-independent facade frame must exist');
 const projectionStart = source.indexOf('function facadeCell(');
 const projection = source.slice(source.indexOf('{', projectionStart) + 1, source.indexOf('let bayWidth', projectionStart));
-const interiorStart = source.indexOf('const rayWorld =', source.indexOf('const evaluateApartmentInterior'));
-const interior = source.slice(interiorStart, source.indexOf('// Slab intersection', interiorStart));
+const interiorStart = interiorSource.indexOf('const rayWorld =', interiorSource.indexOf('const evaluateApartmentInterior'));
+const interior = interiorSource.slice(interiorStart, interiorSource.indexOf('// Slab intersection', interiorStart));
 const buildFrame = vm.runInNewContext(`(function (normalLocal, modelNormalMatrix, normalWorldGeometry, cameraViewMatrix) {
-  ${frame[0]}
+  ${frame[0].replace(/^export /gm, '')}
   return {
     normal: facadeWorldNormal, axis: facadeAlongZ,
     project(boxLocal, normalGeometry, positionWorld) { ${projection} return { alongZ, uCoord, isRoof }; },

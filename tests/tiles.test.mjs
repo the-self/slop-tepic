@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createTileGrid, bucketTriangles, drapeTile, tilesAround } from '../js/world/tiles.js';
-import { clipToRect } from '../js/world/lattice.js';
+import { createTileGrid, bucketTriangles, drapeTile, tilesAround } from '../js/world/tiles.ts';
+import { clipToRect } from '../js/world/lattice.ts';
 
 // A 10 m lattice from (-5, -5): tiles of 4 cells, 40 m a side
 const lattice = { x0: -5, z0: -5, cell: 10 };

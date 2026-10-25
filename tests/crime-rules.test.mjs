@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Wanted, STAR_HEAT, POLICE, GANGS, gangTurf, evadeTime, starsFor } from '../js/sim/crime-rules.js';
+import { Wanted, STAR_HEAT, POLICE, GANGS, gangTurf, evadeTime, starsFor } from '../js/sim/crime-rules.ts';
 
 test('running people over brings the police: a star at once, two by the third', () => {
   const w = new Wanted();

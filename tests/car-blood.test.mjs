@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createStains, bloodFrame, addHit, wash, clean, FRONT_SLOTS, TOP_SLOTS, MAX_SIZE } from '../js/player/car-blood.js';
+import { createStains, bloodFrame, addHit, wash, clean, FRONT_SLOTS, TOP_SLOTS, MAX_SIZE } from '../js/player/car-blood.ts';
 
 const frame = bloodFrame({ zFront: 2.2, bumpers: [[0.46, 0.03]], bumperLine: [0.775], cabin: { cowl: 1.0, roofFront: 0.3 } }, 0.88);
 const still = () => 0.5;

@@ -1,16 +1,36 @@
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
-const { join } = require('node:path');
+const { join, posix } = require('node:path');
 const test = require('node:test');
-const { loadModule } = require('./helpers/module.cjs');
+const { loadModule, stripTypes } = require('./helpers/module.cjs');
 
-const source = readFileSync(join(__dirname, '../js/player/controllers.js'), 'utf8');
+// The controllers are a facade (js/player/controllers.ts) over its pieces (js/player/controllers/*.ts): each one loaded
+// under the harness with its imports resolved by their path in the repo, a stub's or another piece's (the type-only
+// imports, the pieces' of the facade among them, are stripped)
+function loadControllers(stubs, globals) {
+  const loaded = new Map();
+  const load = (file) => {
+    if (loaded.has(file)) return loaded.get(file);
+    const source = readFileSync(join(__dirname, '..', file), 'utf8');
+    const imports = {};
+    for (const [, specifier] of stripTypes(source).matchAll(/^import\s+[^;]*?\s+from\s+'([^']+)';/gm)) {
+      const path = specifier.startsWith('.') ? posix.join(posix.dirname(file), specifier) : specifier;
+      if (Object.hasOwn(stubs, path)) imports[specifier] = stubs[path];
+      else if (path.startsWith('js/player/controllers/')) imports[specifier] = load(path);
+      else throw new Error(`Missing import stub: ${path} (${file})`);
+    }
+    const module = loadModule(source, { globals, imports, filename: file });
+    loaded.set(file, module);
+    return module;
+  };
+  return load('js/player/controllers.ts');
+}
 // The car's drivetrain & damage are plain modules without imports: the real ones run under the harness
 const realModule = (path) => loadModule(readFileSync(join(__dirname, path), 'utf8'));
-const drivetrain = realModule('../js/player/drivetrain.js');
-const vehicleDamage = realModule('../js/player/vehicle-damage.js');
+const drivetrain = realModule('../js/player/drivetrain.ts');
+const vehicleDamage = realModule('../js/player/vehicle-damage.ts');
 // ...and two of the car models' files stand in for the registry (js/models/cars/index.js)
-const carModels = [...realModule('../js/models/cars/nissan.js').CARS, ...realModule('../js/models/cars/stellantis.js').CARS];
+const carModels = [...realModule('../js/models/cars/nissan.ts').CARS, ...realModule('../js/models/cars/stellantis.ts').CARS];
 const carModelById = Object.fromEntries(carModels.map((m) => [m.id, m]));
 const carRegistry = {
   CAR_MODEL_BY_ID: carModelById,
@@ -36,30 +56,29 @@ function keyboardHarness(nyc = {}) {
   const window = eventTarget();
   const document = { ...eventTarget(), hidden: false };
   const config = {
+    CITY: { start: { x: 0, z: 0, heading: 0 } }, // (the player's start, city-geodata.js frame.start)
     streetZ: () => 0,
     isTypingInField: (event) => ['INPUT', 'SELECT'].includes(event.target?.tagName),
     ...nyc
   };
-  const { ThirdPersonControllerManager } = loadModule(source, {
-    globals: { window, document },
-    imports: {
-      'three/webgpu': {},
-      '../world/city-config.js': config,
-      '../render/tsl-materials.js': {},
-      '../actors/actor-models.js': {},
-      '../sim/pedestrians.js': {},
-      '../actors/vehicle-lights.js': {},
-      './drivetrain.js': drivetrain,
-      './vehicle-damage.js': vehicleDamage,
-      '../models/cars/index.js': carRegistry,
-      '../models/motos/index.js': realModule('../js/models/motos/index.js'),
-      './car-blood.js': realModule('../js/player/car-blood.js'),
-      './car-physics.js': realModule('../js/player/car-physics.js'),
-      '../sim/ragdolls.js': realModule('../js/sim/ragdolls.js')
-    }
-  });
+  const { ThirdPersonControllerManager } = loadControllers({
+    'three/webgpu': {},
+    'js/world/city-config.ts': config,
+    'js/render/tsl-materials.ts': {},
+    'js/actors/actor-models.ts': {},
+    'js/sim/pedestrians.ts': {},
+    'js/actors/vehicle-lights.ts': {},
+    'js/player/drivetrain.ts': drivetrain,
+    'js/player/vehicle-damage.ts': vehicleDamage,
+    'js/models/cars/index.ts': carRegistry,
+    'js/models/motos/index.ts': realModule('../js/models/motos/index.ts'),
+    'js/player/car-blood.ts': realModule('../js/player/car-blood.ts'),
+    'js/player/car-physics.ts': realModule('../js/player/car-physics.ts'),
+    'js/sim/ragdolls.ts': realModule('../js/sim/ragdolls.ts')
+  }, { window, document });
   // Exercise the production event handlers without constructing the scene's 3D models.
   const controller = Object.create(ThirdPersonControllerManager.prototype);
+  controller.leftCars = []; // (as the constructor leaves it: no cars left behind yet)
   controller.keys = Object.fromEntries(['forward', 'backward', 'left', 'right', 'up', 'down', 'boost'].map((action) => [action, false]));
   controller.bindKeyboard();
   return {
@@ -176,7 +195,9 @@ function advanceWithTouch(mode, strength, reverse) {
   if (mode === 'Person') Object.assign(entity, { verticalVel: 0 });
   if (mode === 'Car') Object.assign(entity, {
     vx: 0, vz: 0, angularVel: 0, steerAngle: 0, pitchVel: 0, rollVel: 0, heaveVel: 0,
-    chassisPivot: { rotation: { x: 0, z: 0 }, position: { y: 0 } }, wheels: []
+    chassisPivot: { rotation: { x: 0, z: 0 }, position: { y: 0 } }, wheels: [],
+    // (the taxi's drive and its damage, as the real car always has them)
+    spec: drivetrain.buildSpec(carRegistry.TAXI_MODEL), damage: vehicleDamage.createDamage()
   });
   if (mode === 'Cyclist') Object.assign(entity, {
     type: 'cyclist', vx: 0, vz: 0, steerInput: 0, leanAngle: 0, leanPivot: { rotation: { z: 0 } },
@@ -252,7 +273,13 @@ function teleportHarness(mode, colliders = [], shore = () => ({ westX: -500, eas
     crowd: { begin() {}, add() {}, end() {} }
   };
   controller.activeMode = mode;
-  controller.entities = { [mode]: ent };
+  // (the others as the real manager always has them, as far as a teleport looks at them, parked far off: the walker,
+  // the car's length)
+  const far = () => position(1e5, 0, 1e5);
+  controller.entities = {
+    person: { type: 'person', position: far(), ragdoll: null }, car: { type: 'car', position: far(), halfL: 2.18 },
+    [mode]: ent
+  };
   controller.colliders = colliders;
   controller._colliderCells = null;
   controller.getGroundHeight = (x, z, mode) => mode === 'person' ? (x < 0 ? 1.24 : 0.22) : 0;
@@ -563,8 +590,13 @@ test('one key feeds every action bound to it: Space jumps on foot and pulls the 
 
 test('a car crash is the sudden change in its velocity: it dents the side it was hit on and costs engine power', () => {
   const { controller } = keyboardHarness();
+  // (its body mesh's geometry, one vertex, for the dents pressed into its own copy of it)
+  const geometry = () => ({
+    attributes: { position: { array: new Float32Array(3) }, normal: { array: new Float32Array([0, 1, 0]) } },
+    clone: geometry
+  });
   const car = {
-    heading: 0, speed: 0, vx: 0, vz: 0, wheels: [],
+    heading: 0, speed: 0, vx: 0, vz: 0, wheels: [], bodyMesh: { geometry: geometry() },
     damage: vehicleDamage.createDamage()
   };
   // a gentle shove: nothing
@@ -574,14 +606,14 @@ test('a car crash is the sudden change in its velocity: it dents the side it was
   assert.ok(car.damage.front > 0 && car.damage.rear === 0);
   assert.ok(vehicleDamage.enginePower(car.damage) < 1);
   // facing +x (its left is -z), pushed towards -z: hit from +z, on its right
-  const turned = { heading: Math.PI / 2, speed: 0, vx: 0, vz: 0, wheels: [], damage: vehicleDamage.createDamage() };
+  const turned = { heading: Math.PI / 2, speed: 0, vx: 0, vz: 0, wheels: [], bodyMesh: { geometry: geometry() }, damage: vehicleDamage.createDamage() };
   controller.impactCar(turned, 0, -12);
   assert.ok(turned.damage.right > 0 && turned.damage.left === 0);
 });
 
 test('running someone down with the nose bloodies it; backing over them or clipping them with a flank does not', () => {
   const { controller } = keyboardHarness();
-  const blood = realModule('../js/player/car-blood.js');
+  const blood = realModule('../js/player/car-blood.ts');
   const slot = () => ({ value: { v: [0, 0, 0, 0], fromArray(a, o) { this.v = Array.from(a.slice(o, o + 4)); } } });
   const car = {
     position: { x: 0, y: 0, z: 0 }, heading: 0, halfL: 2.2, speed: 12, scale: { x: 1, z: 1 },

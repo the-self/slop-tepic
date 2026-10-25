@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSignSlots } from '../js/world/sign-slots.js';
+import { createSignSlots } from '../js/world/sign-slots.ts';
 
 test('a name keeps its slot while it stays near, and is drawn once', () => {
   const slots = createSignSlots(2, 4);

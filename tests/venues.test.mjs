@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { venueKind, signKind, venueName, isOpen, frontDoor, findVenues, NAMED_VENUES } from '../js/world/venues.js';
+import { venueKind, signKind, venueName, isOpen, frontDoor, findVenues, NAMED_VENUES } from '../js/world/venues.ts';
 
 test('signs read as the places they are', () => {
   assert.equal(venueKind('TACOS'), 'tacos');

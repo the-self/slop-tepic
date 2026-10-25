@@ -1,7 +1,7 @@
 # Landmark models
 
 3D models of Tepic's landmarks, each standing on its real lot in place of the generic houses
-(`js/world/landmark-models.js`). Everything else in the city stays procedural.
+(`js/world/landmark-models.ts`). Everything else in the city stays procedural.
 
 ## Making one
 
@@ -18,7 +18,7 @@
 
 ## Placing it
 
-Add an entry to `LANDMARK_MODELS` in `js/world/landmark-models.js`:
+Add an entry to `LANDMARK_MODELS` in `js/world/landmark-models.ts`:
 
 ```js
 { name: 'Presidencia Municipal', file: 'assets/models/presidencia-municipal.glb',
@@ -41,7 +41,7 @@ An image-to-3D service (Meshy, Hunyuan3D, TRELLIS) makes a model from a single p
 few minutes. The side it sees comes out well; the back and the sides are guessed, and the
 buildings next door come along. `catedral.glb` was made this way, from a photograph of the
 facade, so it replaces only the Catedral's front and towers (`CATEDRAL_MODEL` in
-`js/world/tepic-landmarks.js`) and the church behind them stays drawn. Clean such a model up as above:
+`js/world/tepic-landmarks.ts`) and the church behind them stays drawn. Clean such a model up as above:
 crop the neighbours, scale it to a known height, and simplify it.
 
 ## Credits

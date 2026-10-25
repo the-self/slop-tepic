@@ -6,11 +6,17 @@ The city lies on its real ground: its streets climb and fall with the valley flo
 
 ## Run it
 
-Serve the folder with any static server and open it in a WebGPU browser:
+The game is written in TypeScript (`js/**/*.ts`) and bundled by esbuild into `dist/`. With Node 24 or later:
 
 ```bash
-python3 -m http.server 8000
+npm install
+npm run dev
 ```
+
+Then open http://localhost:8765 in a WebGPU browser. `npm run dev` rebuilds on every change. For the page as it is
+published, `npm run build` writes `dist/`; then serve the folder with any static server (`python3 -m http.server 8000`).
+
+`npm run check` type-checks (strict), lints (typescript-eslint's strict type-aware rules) and runs the tests.
 
 ## Rebuild the city data
 
@@ -36,7 +42,7 @@ tools/data/tepic/fetch-routes.sh
 node --max-old-space-size=12000 tools/build-tepic-geodata.mjs
 ```
 
-The streets that are not asphalt (`js/world/pavement-data.js`: empedrado, adoquín, tierra, concreto) come from OpenStreetMap's `surface` tags, plus the colonias known to be cobbled that OpenStreetMap leaves untagged (`COBBLED` in the tool: add a colonia there, or tag its streets in OpenStreetMap):
+The streets that are not asphalt (`js/world/pavement-data.ts`: empedrado, adoquín, tierra, concreto) come from OpenStreetMap's `surface` tags, plus the colonias known to be cobbled that OpenStreetMap leaves untagged (`COBBLED` in the tool: add a colonia there, or tag its streets in OpenStreetMap):
 
 ```bash
 node tools/build-tepic-pavements.mjs
@@ -50,7 +56,7 @@ near the Plaza Principal, so the game guesses them. Three ways to fix that, best
 1. **Edit OpenStreetMap.** Tag `building:levels`, `building:colour`, `roof:shape` and shop names.
    The next run of `tools/data/tepic/fetch.sh` and the builder picks them up, and every other map
    of Tepic improves too.
-2. **Overrides from photographs:** `js/world/building-overrides.js` pins storeys and a facade
+2. **Overrides from photographs:** `js/world/building-overrides.ts` pins storeys and a facade
    colour to a point on a building (`{ lat, lon, storeys, paint }`). Then rebuild
    `city-geodata.js`. The building is drawn whole, as it really is.
 3. **Landmark models:** a `.glb` from phone photogrammetry or Blender replaces the generic houses

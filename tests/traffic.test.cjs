@@ -2,27 +2,23 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const test = require('node:test');
-const vm = require('node:vm');
 
-const source = readFileSync(join(__dirname, '../js/sim/traffic.js'), 'utf8');
+const { loadModule, stripTypes } = require('./helpers/module.cjs');
+
+// A part of the traffic (js/sim/traffic/<name>.ts), its imports stubbed: those given, an empty namespace for the rest
+function trafficModule(name, imports = {}, globals = {}) {
+  const source = readFileSync(join(__dirname, `../js/sim/traffic/${name}.ts`), 'utf8');
+  const stubs = {};
+  for (const [, specifier] of stripTypes(source).matchAll(/^import\s[^;]*?\sfrom\s+'([^']+)';/gm)) stubs[specifier] = imports[specifier] ?? {};
+  return loadModule(source, { imports: stubs, globals });
+}
+const constants = trafficModule('constants');
+
 // Exercise the production lane query and player snapshot without creating the WebGPU scene.
-const laneQuery = source.match(/  function playerInLane\(lane, pl\) \{[\s\S]*?\n  \}/)?.[0];
-const playerSnapshot = source.match(/    const pl = entity[\s\S]*?\n    \} : null;/)?.[0];
-assert.ok(laneQuery, 'traffic lane query is present');
-assert.ok(playerSnapshot, 'traffic player snapshot is present');
-const { playerInLane, snapshot } = vm.runInNewContext(`
-  ${laneQuery}
-  function snapshot(entity, mode) {
-    ${playerSnapshot}
-    return pl;
-  }
-  ({ playerInLane, snapshot });
-`);
+const { playerInLane, highwayPlayer: snapshot } = trafficModule('highway');
 
 // The player-vs-vehicle box test, also used for cyclists and motorcyclists over their whole bike (contactRider)
-const overlapSource = source.match(/  const satHit = [\s\S]*?\n  function overlapWithPlayer\([\s\S]*?\n  \}/)?.[0];
-assert.ok(overlapSource, 'traffic player overlap test is present');
-const overlapWithPlayer = vm.runInNewContext(`${overlapSource}; overlapWithPlayer`);
+const { overlapWithPlayer } = trafficModule('overlap');
 
 function lane(points) {
   const cum = [0];
@@ -92,12 +88,6 @@ test('underground lanes and helicopters remain excluded', () => {
   assert.equal(snapshot(null, 'car'), null);
 });
 
-function trafficFunction(name, context) {
-  const match = source.match(new RegExp(`  function ${name}\\([^]*?\\n  \\}`));
-  assert.ok(match, `${name} is present`);
-  return vm.runInNewContext(`(${match[0].trim()})`, context);
-}
-
 function intersectionHarness() {
   const n = { signal: true, in: [] };
   const exit = { lanes: [0], outSide: 1 };
@@ -105,23 +95,25 @@ function intersectionHarness() {
   const car = { edge, move: { to: exit, out: [0], turn: 'S' }, lane: 0, s: 80, speed: 4,
     driver: { b: 3 }, half: 2.25, wait: 0, commit: null, isPolice: false };
   const state = { phase: 'red', occupied: false, pedestrians: false, space: true, conflict: false };
-  const context = {
-    LOOKAHEAD: 70,
-    phaseOf: () => state.phase,
-    canStopBefore: () => true,
-    stopAt: () => -3,
-    boxBusy: () => state.occupied,
-    ahead: () => null,
-    connector: () => ({ len: 20 }),
-    yieldToCrossTraffic: () => state.conflict,
-    pedestrianOn: () => state.pedestrians,
-    laneCoord: () => 0,
-    timeTo: () => 1,
-    room: () => state.space,
-    alongside: () => false,
-    mergingAhead: () => null
+  const ts = { connector: () => ({ len: 20 }) };
+  const junctions = trafficModule('junctions', {
+    './constants.ts': constants,
+    './signals.ts': { phaseOf: () => state.phase },
+    './idm.ts': { canStopBefore: () => true, stopAt: () => -3, timeTo: () => 1 },
+    './occupancy.ts': { boxBusy: () => state.occupied, ahead: () => null, laneCoord: () => 0 },
+    './right-of-way.ts': {
+      yieldToCrossTraffic: () => state.conflict,
+      pedestrianOn: () => state.pedestrians,
+      room: () => state.space,
+      alongside: () => false,
+      mergingAhead: () => null
+    }
+  });
+  return {
+    car, state,
+    mayEnter: (v, d) => junctions.mayEnter(ts, v, d),
+    signalAhead: (v, f, d) => junctions.signalAhead(ts, v, f, d)
   };
-  return { car, state, mayEnter: trafficFunction('mayEnter', context), signalAhead: trafficFunction('signalAhead', context) };
 }
 
 test('police pass red and amber signals while ordinary cars stop', () => {
@@ -154,13 +146,12 @@ test('police running a red yield to fast cross traffic regardless of how long th
   const lead = { s: 85, v: { speed: 10 } };
   const side = { axisIndex: 1, occ: [[lead]], len: 100 };
   const node = { signal: true, in: [{ axisIndex: 0, occ: [[lead]] }, side] };
-  const context = {
-    leadOf: (list) => list.at(-1),
-    canStopBefore: () => true
-  };
+  const rightOfWay = trafficModule('right-of-way', {
+    './occupancy.ts': { leadOf: (list) => list.at(-1) },
+    './idm.ts': { canStopBefore: () => true }
+  });
   lead.v.half = 2.25;
-  context.canStop = trafficFunction('canStop', context);
-  const yieldToCrossTraffic = trafficFunction('yieldToCrossTraffic', context);
+  const yieldToCrossTraffic = (v, at) => rightOfWay.yieldToCrossTraffic({}, v, at);
   assert.equal(yieldToCrossTraffic(car, node), true);
   lead.v.speed = 0;
   assert.equal(yieldToCrossTraffic(car, node), false);
@@ -173,9 +164,11 @@ test('left turns account for oncoming police even when their signal is red', () 
   const edge = { to: { signal: true }, through: 0, len: 100, occ: [] };
   const car = { edge, move: { turn: 'S', out: [0] }, lane: 0, speed: 10, half: 2.25, isPolice: false };
   edge.occ.push([{ v: car, s: 85 }]);
-  const context = { phaseOf: () => 'red', leadOf: (list) => list.at(-1) };
-  context.canStop = trafficFunction('canStop', context);
-  const yieldOncoming = trafficFunction('yieldOncoming', context);
+  const rightOfWay = trafficModule('right-of-way', {
+    './signals.ts': { phaseOf: () => 'red' },
+    './occupancy.ts': { leadOf: (list) => list.at(-1) }
+  });
+  const yieldOncoming = (o, impatient) => rightOfWay.yieldOncoming({}, o, impatient);
   assert.equal(yieldOncoming(edge, false), false);
   car.isPolice = true;
   assert.equal(yieldOncoming(edge, false), true);
@@ -183,25 +176,45 @@ test('left turns account for oncoming police even when their signal is red', () 
   assert.equal(yieldOncoming(edge, false), false);
 });
 
+// The traffic's state round the focus (ts), as spawning.ts and near.ts read it, with the stubs of the parts they call:
+// a test changes ts.visible, ts.sidewalkTrack or ts.crosswalkTrack to steer them
 function populationContext() {
-  const context = {
-    Math: Object.assign(Object.create(Math), { random: () => 0.5 }),
-    clamp: (x, lo, hi) => Math.max(lo, Math.min(hi, x)),
-    hasView: true, camX: 0, camY: 10, camZ: 0, visible: () => true, hillAt: () => 0,
+  const ts = {
+    hasView: true, camX: 0, camY: 10, camZ: 0, visible: () => true,
     focusX: 0, focusZ: 0, player: { active: false },
-    clock: 0,
-    VEHICLE_SPAWN_DISTANCE: 250, PED_SPAWN_DISTANCE: 150, NEAR_RADIUS: 350,
-    nearEdges: [], nearTransitEdges: [], nearSignals: [], track: {}, KERB: 1.6, QUEUE_GAP: 0.62,
-    transit: { paths: [] }, fleetRoutes: [],
-    atCurb: () => {}, laneClear: () => true, drawModel: () => {},
-    vehicleAt: () => false, wallAt: null,
+    clock: 0, hour: 14,
+    nearEdges: [], nearTransitEdges: [], nearSignals: [], track: {},
+    transit: { paths: [] }, vehicles: [], wallAt: null,
     // (the hour's weighing, traffic-demand.js: uniform here)
-    nearCarWeights: [], nearPedWeights: [], weighNear: () => {},
-    pickWeighted: (list) => list[Math.floor(Math.random() * list.length)],
-    place: (v, e, lane, s) => Object.assign(v, { edge: e, lane, s })
+    nearCarWeights: [], nearPedWeights: [],
+    sidewalkTrack: () => false, crosswalkTrack: () => false
   };
-  context.nearView = trafficFunction('nearView', context);
-  return context;
+  const globals = { Math: Object.assign(Object.create(Math), { random: () => 0.5 }) };
+  const near = trafficModule('near', {
+    './constants.ts': constants,
+    '../traffic-demand.ts': { roadClass: () => 'street', carDensity: () => 0, peopleDensity: () => 0, busyFactor: () => 1 }
+  }, globals);
+  const spawning = trafficModule('spawning', {
+    './constants.ts': constants,
+    './surface.ts': { hillAt: () => 0 },
+    './view.ts': { visible: (...args) => ts.visible(...args) },
+    './near.ts': { pickWeighted: (list) => list[Math.floor(Math.random() * list.length)] },
+    './occupancy.ts': { laneClear: () => true },
+    './fleet.ts': { drawModel: () => {} },
+    './bodies.ts': { vehicleAt: () => false },
+    './motion.ts': { place: (_ts, v, e, lane, s) => Object.assign(v, { edge: e, lane, s }) },
+    './sidewalks.ts': {
+      KERB: 1.6, QUEUE_GAP: 0.62, atCurb: () => {},
+      sidewalkTrack: (...args) => ts.sidewalkTrack(...args),
+      crosswalkTrack: (...args) => ts.crosswalkTrack(...args)
+    }
+  }, globals);
+  return {
+    ts,
+    spawnVehicle: (v, rMin, rMax, protectView) => spawning.spawnVehicle(ts, v, rMin, rMax, protectView),
+    spawnPed: (p, rMin, rMax, protectView) => spawning.spawnPed(ts, p, rMin, rMax, protectView),
+    refreshNear: () => near.refreshNear(ts)
+  };
 }
 
 function straightEdge(z, len = 20) {
@@ -209,10 +222,9 @@ function straightEdge(z, len = 20) {
 }
 
 test('cars replenish the road ahead while nearby visible spawning stays blocked', () => {
-  const context = populationContext();
+  const { ts: context, spawnVehicle } = populationContext();
   const edge = straightEdge(140);
   context.nearEdges.push(edge);
-  const spawnVehicle = trafficFunction('spawnVehicle', context);
   const car = { half: 2.25 };
   assert.equal(spawnVehicle(car, 100, 350, true), false);
   edge.sz = 290;
@@ -224,14 +236,13 @@ test('cars replenish the road ahead while nearby visible spawning stays blocked'
 });
 
 test('pedestrians replenish visible sidewalks ahead without appearing nearby', () => {
-  const context = populationContext();
+  const { ts: context, spawnPed } = populationContext();
   context.nearEdges.push(straightEdge(0));
   let z = 100;
   context.sidewalkTrack = () => {
     Object.assign(context.track, { ax: 0, az: z - 10, ux: 0, uz: 1, len: 20, node: null });
     return true;
   };
-  const spawnPed = trafficFunction('spawnPed', context);
   const ped = { crossesStreets: false, speed: 1.4, rig: {} };
   assert.equal(spawnPed(ped, 60, 280, true), false);
   z = 220;
@@ -241,19 +252,19 @@ test('pedestrians replenish visible sidewalks ahead without appearing nearby', (
 });
 
 test('long roads are available near their ends and spawn only in the local section', () => {
-  const context = populationContext();
+  const { ts: context, refreshNear, spawnVehicle } = populationContext();
   const edge = straightEdge(100, 2000);
   Object.assign(context, { edges: [edge, straightEdge(2000)], nodes: [], nearX: Infinity, nearZ: Infinity });
-  trafficFunction('refreshNear', context)();
+  refreshNear();
   assert.deepEqual(context.nearEdges, [edge]);
   const car = { half: 2.25 };
-  assert.equal(trafficFunction('spawnVehicle', context)(car, 0, 350, false), true);
+  assert.equal(spawnVehicle(car, 0, 350, false), true);
   assert.ok(edge.sz + car.s <= 350);
   assert.ok(car.s >= car.half + 5);
 });
 
 test('combis and buses spawn on the roads of routes their fleet serves, joining the route there', () => {
-  const context = populationContext();
+  const { ts: context, spawnVehicle } = populationContext();
   const shared = { fleet: '', routeIndex: 3, name: 'Insurgentes' };
   const busOnly = { fleet: 'bus', routeIndex: 5, name: 'Progreso 4' };
   const offRoute = straightEdge(100, 400);
@@ -261,12 +272,6 @@ test('combis and buses spawn on the roads of routes their fleet serves, joining 
   const busRoad = Object.assign(straightEdge(100, 400), { transit: [{ path: busOnly, s: 40 }] });
   context.nearEdges.push(offRoute, onRoute, busRoad);
   context.transit.paths.push(shared, busOnly);
-  context.vehicles = [];
-  context.ROUTE_HEADWAY = 320;
-  context.routeFree = trafficFunction('routeFree', context);
-  context.routeOn = trafficFunction('routeOn', context);
-  context.joinRoute = trafficFunction('joinRoute', context);
-  const spawnVehicle = trafficFunction('spawnVehicle', context);
 
   context.nearTransitEdges.push(onRoute);
   const combi = { half: 2.45, fleet: 'combi', path: null };
@@ -296,7 +301,7 @@ test('combis and buses spawn on the roads of routes their fleet serves, joining 
 });
 
 test('crossing pedestrians fall back to a sidewalk when nearby crosswalks are unusable', () => {
-  const context = populationContext();
+  const { ts: context, spawnPed } = populationContext();
   context.nearSignals.push({});
   context.nearEdges.push(straightEdge(200));
   let crossings = 0;
@@ -306,7 +311,7 @@ test('crossing pedestrians fall back to a sidewalk when nearby crosswalks are un
     return true;
   };
   const ped = { crossesStreets: true, speed: 1.4, rig: {} };
-  assert.equal(trafficFunction('spawnPed', context)(ped, 60, 280, true), true);
+  assert.equal(spawnPed(ped, 60, 280, true), true);
   assert.equal(crossings, 5);
   assert.equal(ped.node, null);
   assert.equal(ped.z, 210);
@@ -323,7 +328,8 @@ test('a car hitting the end of a bicycle touches the bicycle, not just its middl
 
 test('vehicles pitch with the ground between their axles', () => {
   // the ground rising 0.1 m per metre north (-z)
-  const groundPitch = trafficFunction('groundPitch', { Math, hillAt: (x, z) => 50 - 0.1 * z, roadLift: () => 0 });
+  const motion = trafficModule('motion', { './surface.ts': { hillAt: (_ts, x, z) => 50 - 0.1 * z, roadLift: () => 0 } });
+  const groundPitch = (v) => motion.groundPitch({}, v);
   const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} should equal ${b}`);
   close(groundPitch({ x: 0, z: 0, tx: 0, tz: -1, axle: 1.4 }), -Math.atan(0.1)); // heading uphill: nose up
   close(groundPitch({ x: 0, z: 0, tx: 0, tz: 1, axle: 1.4 }), Math.atan(0.1)); // downhill: nose down
@@ -332,14 +338,14 @@ test('vehicles pitch with the ground between their axles', () => {
 
 test('a vehicle on a ramp pitches with the deck as well as the ground', () => {
   // flat ground, a ramp rising 0.07 m per metre ahead (+z)
-  const groundPitch = trafficFunction('groundPitch', { Math, hillAt: () => 0, roadLift: (v, x, z) => 0.07 * z });
+  const motion = trafficModule('motion', { './surface.ts': { hillAt: () => 0, roadLift: (v, x, z) => 0.07 * z } });
+  const groundPitch = (v) => motion.groundPitch({}, v);
   assert.ok(Math.abs(groundPitch({ x: 0, z: 10, tx: 0, tz: 1, axle: 1.4 }) + Math.atan(0.07)) < 1e-9);
 });
 
 test('an edge carries its lift profile: interpolated along it, held past its ends, 0 without one', () => {
-  const { loadModule } = require('./helpers/module.cjs');
-  const { edgeLift } = loadModule(readFileSync(join(__dirname, '../js/world/road-network.js'), 'utf8'), {
-    imports: { './city-config.js': { ISLAND_BOUNDS: { minX: 0, maxX: 0, minZ: 0, maxZ: 0 } }, './city-geodata.js': { GEO: {} } }
+  const { edgeLift } = loadModule(readFileSync(join(__dirname, '../js/world/road-network.ts'), 'utf8'), {
+    imports: { './city-config.ts': { ISLAND_BOUNDS: { minX: 0, maxX: 0, minZ: 0, maxZ: 0 } }, './city-geodata.js': { GEO: {} } }
   });
   const e = { lift: [[0, 0], [40, 2.8], [60, 6], [100, 6]] };
   const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} should equal ${b}`);
@@ -349,4 +355,43 @@ test('an edge carries its lift profile: interpolated along it, held past its end
   close(edgeLift(e, -5), 0);
   close(edgeLift(e, 130), 6);
   close(edgeLift({ lift: null }, 50), 0);
+});
+
+test('a vehicle bumped or caught in a blast on a bridge reports and sparks over the deck, not the ground under it', () => {
+  const GROUND = 5, DECK = 12;
+  const reported = [];
+  const sparks = [];
+  const effects = {
+    './hooks.ts': { reportCollision: (...args) => reported.push(args.at(-1)) },
+    './sparks.ts': { spawnCollisionSparks: (...args) => sparks.push(args.at(-1)) },
+    './surface.ts': { hillAt: () => GROUND },
+    './motion.ts': { shove() {} }
+  };
+  const vehicle = (hy) => ({
+    x: 0, z: 0, yaw: 0, yawOffset: 0, halfWidth: 1, half: 2.2, tx: 0, tz: 1, speed: 0, vx: 0, vz: 0,
+    yawVel: 0, rollVel: 0, pitchVel: 0, edge: {}, crash: null, hy
+  });
+
+  const { bumpBody } = trafficModule('collisions', {
+    ...effects,
+    './constants.ts': { KNOCK_SPEED: 3, CRASH_SPEED: 99, onRoad: () => true, massOf: () => 1200, clamp: (x, lo, hi) => Math.max(lo, Math.min(hi, x)) },
+    './overlap.ts': { overlapWithPlayer: () => ({ nx: 1, nz: 0, pen: 0.1 }) }
+  });
+  // the player's car driving into it from +x at 10 m/s
+  const body = () => ({ x: 1, z: 0, heading: -Math.PI / 2, halfW: 0.9, halfL: 2.2, speed: 10, vx: 0, vz: 0, mass: 1300 });
+  bumpBody({ vehicles: [vehicle(DECK)] }, body());
+  bumpBody({ vehicles: [vehicle(undefined)] }, body());
+  assert.deepEqual(reported, [DECK, GROUND], 'over its road, the ground until it has been placed');
+  assert.deepEqual(sparks, [DECK, GROUND]);
+
+  sparks.length = 0;
+  const { blast } = trafficModule('gunfire', {
+    ...effects,
+    '../weapons.ts': { blastFalloff: () => 1 },
+    './constants.ts': { KNOCK_SPEED: 3, MASS: { sedan: 1200 }, massOf: () => 1200 },
+    './collisions.ts': { hurtVehicle() {} },
+    './crashes.ts': { crash: () => null }
+  });
+  blast({ peds: [], vehicles: [vehicle(DECK)] }, 3, 0, 10, 20);
+  assert.deepEqual(sparks, [DECK]);
 });

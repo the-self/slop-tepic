@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { insidePoly, insideRing } from '../js/world/rings.js';
+import { insidePoly, insideRing } from '../js/world/rings.ts';
 
 // The plain even-odd loop the city's builders used before
 function plain(pts, x, z) {

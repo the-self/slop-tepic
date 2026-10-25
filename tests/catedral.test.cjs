@@ -4,17 +4,17 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { loadModule } = require('./helpers/module.cjs');
 
-// js/world/tepic-landmarks.js's frame & plan (no three.js needed: only the drawing uses it)
+// js/world/tepic-landmarks.ts's frame & plan (no three.js needed: only the drawing uses it)
 async function landmarks() {
   const { GEO } = await import('../js/world/city-geodata.js');
-  const { blockAt } = await import('../js/world/city-config.js');
-  const source = readFileSync(join(__dirname, '../js/world/tepic-landmarks.js'), 'utf8');
+  const { blockAt } = await import('../js/world/city-config.ts');
+  const source = readFileSync(join(__dirname, '../js/world/tepic-landmarks.ts'), 'utf8');
   const tsl = new Proxy({}, { get: () => () => ({}) });
   return loadModule(source, {
     imports: {
       'three/webgpu': {}, 'three/tsl': tsl, 'three/addons/utils/BufferGeometryUtils.js': {},
-      './city-geodata.js': { GEO }, './city-config.js': { blockAt }, '../render/tsl-materials.js': { cityUniforms: {} },
-      './ground.js': { liftAt: () => 0, landHeight: () => 0 }, './landmark-models.js': { MODEL_RESERVES: [], geoToWorld: () => [0, 0] }
+      './city-geodata.js': { GEO }, './city-config.ts': { blockAt }, '../render/tsl-materials.ts': { cityUniforms: {} },
+      './ground.ts': { liftAt: () => 0, landHeight: () => 0 }, './landmark-models.ts': { MODEL_RESERVES: [], geoToWorld: () => [0, 0] }
     },
     globals: { Math, console, Proxy }
   });
