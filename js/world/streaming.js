@@ -19,6 +19,8 @@ const MAX_SPEED = 120; // m/s of velocity taken for the lookahead (faster is a t
 const MAX_IN_FLIGHT = 2; // tiles a worker is laying at once
 const SHOW_BUDGET = 3; // ms a frame of putting arrived tiles in the scene
 const PLAN_EVERY = 0.2; // s between the plans of what to load & drop
+const RUSH_BUDGET = 12; // ms a frame of showing tiles just after a teleport, while those round the player come in...
+const RUSH_RADIUS = 300; // ...as far as this (m)
 
 /**
  * The tiles' state for the hills' floor (terrain.js): a texel per tile, 1 where a layer covering the ground is drawn.
@@ -68,6 +70,7 @@ class TileStreamer {
     this.arrived = []; // tiles back from the workers, waiting their turn to be shown
     this.focus = { x: 0, z: 0, vx: 0, vz: 0, dt: 0, radius: DETAIL_RADIUS, primed: false };
     this.sincePlan = Infinity;
+    this.rush = false; // just teleported: the tiles round the player shown with a larger budget
     this.workers = [];
     for (let n = 0; n < workers; n++) {
       const worker = new Worker(new URL('./tile-worker.js', import.meta.url), { type: 'module' });
@@ -155,7 +158,13 @@ class TileStreamer {
       Object.assign(f, { x, z, vx: 0, vz: 0, primed: true });
     } else if (f.dt > 0) {
       let vx = (x - f.x) / f.dt, vz = (z - f.z) / f.dt;
-      if (Math.hypot(vx, vz) > MAX_SPEED) vx = vz = 0; // (a teleport)
+      if (Math.hypot(vx, vz) > MAX_SPEED) {
+        // a teleport: no velocity, the tiles round the new place asked for now and shown as soon as they come
+        vx = vz = 0;
+        f.vx = f.vz = 0;
+        this.sincePlan = Infinity;
+        this.rush = true;
+      }
       const k = Math.min(1, f.dt * 2);
       f.vx += (vx - f.vx) * k;
       f.vz += (vz - f.vz) * k;
@@ -178,7 +187,9 @@ class TileStreamer {
       this.sincePlan = 0;
       this.plan();
     }
-    if (this.arrived.length) this.showArrived(SHOW_BUDGET);
+    if (this.arrived.length) this.showArrived(this.rush ? RUSH_BUDGET : SHOW_BUDGET);
+    // (the rush lasts until nothing near is still being laid)
+    if (this.rush && ![...this.tiles.values()].some((t) => t.d < RUSH_RADIUS && (t.state === 'loading' || t.state === 'arrived'))) this.rush = false;
   }
 
   // Ask the workers for the wanted tiles not in hand, nearest first; drop the ones left behind

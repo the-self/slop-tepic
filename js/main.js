@@ -1176,7 +1176,10 @@ async function initApp() {
         markInit('gpu');
         // What the warm-up drew of the static city is on the GPU now: its CPU-side copies go, and the rest's as it
         // gets drawn (below)
-        if (streamWarmup) scene.remove(streamWarmup);
+        if (streamWarmup) {
+          scene.remove(streamWarmup);
+          for (const mesh of streamWarmup.children) mesh.geometry.dispose();
+        }
         const released = releaseStaticArrays(renderer);
         markInit(`release ${Math.round(released / 1e6)}MB`);
         nextRelease = performance.now() + 3000;

@@ -145,9 +145,9 @@ test('the radius grows with the camera\'s height, and its velocity looks ahead b
   assert.equal(streamer.focus.radius, DETAIL_RADIUS * 2);
   for (let k = 1; k <= 20; k++) streamer.update({ x: k * 3, z: 0 }, 0, 0.1); // 30 m/s east
   assert.ok(streamer.focus.vx > 25 && streamer.focus.vx <= 30);
-  const vx = streamer.focus.vx;
   streamer.update({ x: 5000, z: 0 }, 0, 0.1);
-  assert.equal(streamer.focus.vx, vx * 0.8, 'a jump counts as standing still');
+  assert.equal(streamer.focus.vx, 0, 'a jump is a teleport: no velocity to look ahead along');
+  assert.equal(streamer.rush, false, 'nothing to rush for where nothing is to be laid');
 });
 
 test('a tile its worker could not lay is let go, not waited on, and its worker freed', async () => {
@@ -231,4 +231,25 @@ test('in the flat city the worker cuts a deck tile in small cells before its hol
   for (let t = 0; t < p.length; t += 9) a += Math.abs((p[t + 3] - p[t]) * (p[t + 8] - p[t + 2]) - (p[t + 6] - p[t]) * (p[t + 5] - p[t + 2])) / 2;
   assert.ok(Math.abs(a - (450 * 450 - 600)) < 0.05);
   for (let v = 0; v < p.length; v += 3) assert.equal(p[v + 1], 0, 'left at its height');
+});
+
+test('after a teleport the tiles round the player are asked for at once and shown with a larger budget', () => {
+  const { TileStreamer } = streamerModule();
+  const streamer = new TileStreamer({ scene: new Object3D(), lattice: lattice10, ground: null, workers: 1 });
+  const g = streamer.grid;
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(new Float32Array(9), 3));
+  streamer.addLayer(geometry, {});
+  for (let i = 0; i < 60; i++) for (let j = 0; j < 4; j++) streamer.candidates.add(g.key(i, j));
+  streamer.layers[0].keys = new Set(streamer.candidates);
+  streamer.update({ x: 60, z: 60 }, 0, 0.016);
+  streamer.update({ x: 60, z: 60 }, 0, 0.016);
+  const before = workers[0].sent.filter((s) => s.msg.type === 'tile').length;
+  // (the worker answers what it was asked, then the player is somewhere else, mid-plan-interval)
+  for (const { msg } of workers[0].sent.filter((s) => s.msg.type === 'tile')) reply(workers[0], { type: 'tile', key: msg.key, parts: [] });
+  streamer.sincePlan = 0;
+  streamer.update({ x: 6000, z: 60 }, 0, 0.016);
+  const asked = workers[0].sent.filter((s) => s.msg.type === 'tile').slice(before).map((s) => s.msg.key);
+  assert.ok(asked.includes(g.key(50, 0)), 'the tile under the new place, this very frame');
+  assert.equal(streamer.rush, true);
 });
