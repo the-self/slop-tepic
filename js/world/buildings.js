@@ -42,9 +42,10 @@ import {
 } from '../render/tsl-materials.js';
 import { GEO } from './city-geodata.js';
 import { STOREFRONTS } from './storefronts/index.js';
-import { venueKind, VENUE_KINDS } from './venues.js';
+import { signKind, VENUE_KINDS } from './venues.js';
 import { LANDMARK_RESERVES as TEPIC_RESERVES } from './tepic-landmarks.js';
 import { isEnterableStore, storeReserve } from './store-interiors.js';
+import { createSignSlots } from './sign-slots.js';
 import { SLOPES, groundHeight, liftAt } from './ground.js';
 import { pavedPlazaRects, parkTreeSites, sidewalkBlocks } from './city-grid.js';
 
@@ -1972,7 +1973,7 @@ function buildCityBlocks(scene) {
         const side = big || strip ? WALL_KINDS.bigSide : WALL_KINDS.rear;
         const faces = [side, side, side, side];
         // (a taquería's, a bar's front: WALL_KINDS.shop + 0.25, its shutter up at night, tsl-materials.js)
-        const nightShop = hasSign && !chain && VENUE_KINDS[venueKind(sign.text)]?.night ? 0.25 : 0;
+        const nightShop = hasSign && !chain && VENUE_KINDS[signKind(sign, SIGNS)]?.night ? 0.25 : 0;
         faces[front] = chain ? WALL_KINDS.chainStore + sign.store : big || strip ? WALL_KINDS.bigFront : shop ? WALL_KINDS.shop + nightShop : WALL_KINDS.entry;
         const hx = w * 0.5, hz = d * 0.5;
         const ex = Math.abs(cs) * hx + Math.abs(sn) * hz;
@@ -2345,58 +2346,71 @@ function buildCityBlocks(scene) {
     return sInst;
   });
 
-  // 5B. Shop sign atlas (city-geodata.js `signs`: chains under parody names, local businesses, trades): every sign face
-  //     drawn once into one canvas, each sign box picking its slot per instance
+  // 5B. Shop sign atlas (city-geodata.js `signs`: chains under parody names, trades, local businesses), in pages of
+  //     one canvas texture each, each sign box picking its page (its mesh) and slot (per instance). Page 0 holds the
+  //     chains & trades for good; the businesses' own names (some 6,600) come and go in the other pages, drawn in as
+  //     they come within NAME_RADIUS (js/world/sign-slots.js), and past it or with the pages full show their trade
   const ATLAS_COLS = 8;
-  const ATLAS_ROWS = 102;
   const SLOT_W = 256;
   const SLOT_H = 40;
-  let atlasInst = null;
-  let atlasSlots = null;
-  if (SIGNS.length) {
+  const NAME_PAGES = 6;
+  const NAME_PAGE_ROWS = 16; // 128 names a page (2048 x 640 px)
+  const NAME_RADIUS = 220; // m (a 0.6 m sign is a few pixels high further out: its trade's sign reads the same)
+  let fixedSigns = SIGNS.findIndex((sg) => sg.trade);
+  if (fixedSigns < 0) fixedSigns = SIGNS.length;
+  const atlasPages = [];
+  const signSlots = createSignSlots(NAME_PAGES, ATLAS_COLS * NAME_PAGE_ROWS);
+  function drawSign(ctx, sg, slot) {
+    const x0 = (slot % ATLAS_COLS) * SLOT_W;
+    const y0 = Math.floor(slot / ATLAS_COLS) * SLOT_H;
+    ctx.fillStyle = sg.bg;
+    ctx.fillRect(x0, y0, SLOT_W, SLOT_H);
+    if (sg.stripe) {
+      // a logo between two stripes (OKSO)
+      ctx.fillStyle = sg.stripe;
+      ctx.fillRect(x0, y0, SLOT_W, 6);
+      ctx.fillRect(x0, y0 + SLOT_H - 6, SLOT_W, 6);
+    } else {
+      ctx.strokeStyle = sg.border || sg.fg;
+      ctx.lineWidth = sg.chain ? 4 : 2;
+      ctx.strokeRect(x0 + 3, y0 + 3, SLOT_W - 6, SLOT_H - 6);
+    }
+    ctx.fillStyle = sg.fg;
+    let px = sg.chain ? 26 : 22;
+    const weight = sg.chain ? '900' : '800';
+    do {
+      ctx.font = `${weight} ${px}px Inter, Arial, sans-serif`;
+      px--;
+    } while (px > 9 && ctx.measureText(sg.text).width > SLOT_W - 18);
+    ctx.fillText(sg.text, x0 + SLOT_W / 2, y0 + SLOT_H / 2 + 1);
+  }
+  function atlasPage(rows) {
     const c = document.createElement('canvas');
     c.width = ATLAS_COLS * SLOT_W;
-    c.height = ATLAS_ROWS * SLOT_H;
+    c.height = rows * SLOT_H;
     const ctx = c.getContext('2d');
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    SIGNS.forEach((sg, k) => {
-      if (k >= ATLAS_COLS * ATLAS_ROWS) return;
-      const x0 = (k % ATLAS_COLS) * SLOT_W;
-      const y0 = Math.floor(k / ATLAS_COLS) * SLOT_H;
-      ctx.fillStyle = sg.bg;
-      ctx.fillRect(x0, y0, SLOT_W, SLOT_H);
-      if (sg.stripe) {
-        // a logo between two stripes (OKSO)
-        ctx.fillStyle = sg.stripe;
-        ctx.fillRect(x0, y0, SLOT_W, 6);
-        ctx.fillRect(x0, y0 + SLOT_H - 6, SLOT_W, 6);
-      } else {
-        ctx.strokeStyle = sg.border;
-        ctx.lineWidth = sg.chain ? 4 : 2;
-        ctx.strokeRect(x0 + 3, y0 + 3, SLOT_W - 6, SLOT_H - 6);
-      }
-      ctx.fillStyle = sg.fg;
-      let px = sg.chain ? 26 : 22;
-      const weight = sg.chain ? '900' : '800';
-      do {
-        ctx.font = `${weight} ${px}px Inter, Arial, sans-serif`;
-        px--;
-      } while (px > 9 && ctx.measureText(sg.text).width > SLOT_W - 18);
-      ctx.fillText(sg.text, x0 + SLOT_W / 2, y0 + SLOT_H / 2 + 1);
-    });
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 4;
     const geo = unitBox.clone();
-    atlasSlots = new THREE.InstancedBufferAttribute(new Float32Array(MAX_AWNINGS), 1);
-    geo.setAttribute('signSlot', atlasSlots);
+    const slots = new THREE.InstancedBufferAttribute(new Float32Array(MAX_AWNINGS), 1);
+    geo.setAttribute('signSlot', slots);
     const mat = new THREE.MeshBasicNodeMaterial();
-    mat.colorNode = texture(tex, atlasSlotUV(attribute('signSlot', 'float'), ATLAS_COLS, ATLAS_ROWS));
-    atlasInst = new THREE.InstancedMesh(geo, mat, MAX_AWNINGS);
-    atlasInst.frustumCulled = false;
-    atlasInst.count = 0;
-    group.add(atlasInst);
+    mat.colorNode = texture(tex, atlasSlotUV(attribute('signSlot', 'float'), ATLAS_COLS, rows));
+    const inst = new THREE.InstancedMesh(geo, mat, MAX_AWNINGS);
+    inst.frustumCulled = false;
+    inst.count = 0;
+    group.add(inst);
+    return { ctx, tex, inst, slots, count: 0 };
+  }
+  if (SIGNS.length) {
+    const fixed = atlasPage(Math.max(1, Math.ceil(fixedSigns / ATLAS_COLS)));
+    for (let k = 0; k < fixedSigns; k++) drawSign(fixed.ctx, SIGNS[k], k);
+    atlasPages.push(fixed);
+    if (fixedSigns < SIGNS.length) for (let p = 0; p < NAME_PAGES; p++) atlasPages.push(atlasPage(NAME_PAGE_ROWS));
+    const mat = fixed.inst.material;
 
     // 5C. Chain stores' pole signs: a tall pole at the corner of the front with the logo box on top (both faces)
     if (pylons.length) {
@@ -2505,7 +2519,8 @@ function buildCityBlocks(scene) {
     let awningCount = 0;
     let shedCount = 0;
     const signCounts = signInsts.map(() => 0);
-    let atlasCount = 0;
+    for (const page of atlasPages) page.count = 0;
+    signSlots.begin();
 
     for (let bIdx = 0; bIdx < nearbyBlocks.length; bIdx++) {
       const blk = nearbyBlocks[bIdx];
@@ -2572,13 +2587,24 @@ function buildCityBlocks(scene) {
         awningInst.setColorAt(awningCount, awningPalette[a.colorIdx % awningPalette.length]);
 
         const themeIdx = a.sign !== undefined ? a.sign % storeThemeColors.length : awningCount % signInsts.length;
-        if (a.sign !== undefined && atlasInst) {
-          // the shop's own sign (atlas slot), flat on its facade above the awning (or the chain's fascia band)
+        if (a.sign !== undefined && atlasPages.length) {
+          // the shop's own sign (atlas slot), flat on its facade above the awning (or the chain's fascia band): a
+          // business's name near the camera from the name pages, else its trade's (or the chain's) from page 0
+          let page = atlasPages[0], slot = a.sign;
+          const trade = SIGNS[a.sign].trade;
+          if (trade) {
+            const ex = a.x - focusX, ez = a.z - focusZ;
+            const s = ex * ex + ez * ez < NAME_RADIUS * NAME_RADIUS ? signSlots.acquire(a.sign) : -1;
+            if (s >= 0) {
+              page = atlasPages[1 + Math.floor(s / signSlots.perPage)];
+              slot = s % signSlots.perPage;
+            } else slot = trade - 1;
+          }
           dummy.position.set(a.signPX ?? a.x, a.signY ?? 4.68 + (a.g || 0), a.signPZ ?? a.z);
           dummy.scale.set(a.signW ?? 0.28, a.signH ?? 0.86, a.d * 0.92);
           dummy.updateMatrix();
-          atlasInst.setMatrixAt(atlasCount, dummy.matrix);
-          atlasSlots.setX(atlasCount++, a.sign);
+          page.inst.setMatrixAt(page.count, dummy.matrix);
+          page.slots.setX(page.count++, slot);
         } else if (!a.noSign && a.sign === undefined && signCounts[themeIdx] < MAX_SIGNS_PER_THEME) {
           dummy.position.set(a.x, a.signY ?? 4.68 + (a.g || 0), a.z);
           dummy.scale.set(0.28, 0.86, a.d * 0.92);
@@ -2625,10 +2651,16 @@ function buildCityBlocks(scene) {
       sInst.count = signCounts[idx];
       flagRange(sInst.instanceMatrix, signCounts[idx]);
     });
-    if (atlasInst) {
-      atlasInst.count = atlasCount;
-      flagRange(atlasInst.instanceMatrix, atlasCount);
-      flagRange(atlasSlots, atlasCount);
+    // the names that came near: drawn into their slots, and only their pages uploaded again
+    for (let k = 0; k < signSlots.drawn.length; k += 2) {
+      const s = signSlots.drawn[k];
+      drawSign(atlasPages[1 + Math.floor(s / signSlots.perPage)].ctx, SIGNS[signSlots.drawn[k + 1]], s % signSlots.perPage);
+    }
+    for (const p of signSlots.dirty) atlasPages[1 + p].tex.needsUpdate = true;
+    for (const page of atlasPages) {
+      page.inst.count = page.count;
+      flagRange(page.inst.instanceMatrix, page.count);
+      flagRange(page.slots, page.count);
     }
 
     shedInst.count = shedCount;

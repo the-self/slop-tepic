@@ -34,6 +34,11 @@ function venueKind(text) {
   return null;
 }
 
+// A sign's kind: by its own text, else (a business's name that says nothing of it: "EL RINCONCITO") by its trade's sign
+function signKind(sign, signs) {
+  return venueKind(sign.text) || (sign.trade && signs[sign.trade - 1] ? venueKind(signs[sign.trade - 1].text) : null);
+}
+
 // Open at `hour` (0..24, fractional)? Hours past midnight belong to the night before
 function isOpen(kind, hour) {
   const k = VENUE_KINDS[kind];
@@ -109,7 +114,7 @@ function findVenues(houses, signs, stride = 8) {
     const named = claimed.get(i);
     const sign = houses[i + 7] ? signs[houses[i + 7] - 1] : null;
     if (!named && (!sign || sign.chain)) continue;
-    const kind = named ? named.kind : venueKind(sign.text);
+    const kind = named ? named.kind : signKind(sign, signs);
     if (!kind) continue;
     const h = decodeHouse(houses, i);
     if (h.kindBits & 8 && !named) continue; // (a hall's own name: a supermarket, a warehouse)
@@ -122,4 +127,4 @@ function findVenues(houses, signs, stride = 8) {
   return out;
 }
 
-export { VENUE_KINDS, NAMED_VENUES, venueKind, venueName, isOpen, decodeHouse, frontDoor, findVenues };
+export { VENUE_KINDS, NAMED_VENUES, venueKind, signKind, venueName, isOpen, decodeHouse, frontDoor, findVenues };
