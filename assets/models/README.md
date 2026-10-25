@@ -41,7 +41,7 @@ An image-to-3D service (Meshy, Hunyuan3D, TRELLIS) makes a model from a single p
 few minutes. The side it sees comes out well; the back and the sides are guessed, and the
 buildings next door come along. `catedral.glb` was made this way, from a photograph of the
 facade, so it replaces only the Catedral's front and towers (`CATEDRAL_MODEL` in
-`js/world/tepic-landmarks.js`) and the nave behind stays drawn. Clean such a model up as above:
+`js/world/tepic-landmarks.js`) and the church behind them stays drawn. Clean such a model up as above:
 crop the neighbours, scale it to a known height, and simplify it.
 
 ## Credits
@@ -49,7 +49,8 @@ crop the neighbours, scale it to a known height, and simplify it.
 - `catedral.glb`: made with [Meshy](https://www.meshy.ai/) (Meshy 7.1) from
   [a photograph by Nheyob](https://commons.wikimedia.org/wiki/File:Catedral_de_la_Pur%C3%ADsima_Concepci%C3%B3n_(Tepic,_Nayarit)_-_facade.jpg),
   Wikimedia Commons, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). The
-  model is shared under the same licence. Scaled to 40 m at the crosses of the towers.
+  model is shared under the same licence. Scaled to 40 m at the crosses of the towers, and cut
+  9.5 m behind the facade: the rest of the church, the casona and the portales are drawn.
 
 Models taken from Google Maps, Street View or Google's 3D tiles can't be used: their licence
 doesn't allow copying them.
