@@ -53,7 +53,7 @@ export interface CityGrid {
   footprints: Bounds[];
   highwayLanes: never[];
   colliders: never[];
-  valley: THREE.Mesh;
+  valley: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardNodeMaterial>;
   open: Map<CityBlock, number>;
 }
 type Vec3 = [x: number, y: number, z: number];
@@ -271,7 +271,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   // =========================================================================
   // 1. THE VALLEY FLOOR
   // =========================================================================
-  let valleyMesh: THREE.Mesh;
+  let valleyMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardNodeMaterial>;
   {
     // Dry valley floor out to the horizon around the detailed box (the roads deck sits on it). On the town's slopes the
     // hills' mesh (terrain.ts) is the ground over all of its grid, and the floor rings it at the far floor's height

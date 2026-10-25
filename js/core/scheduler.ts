@@ -63,13 +63,13 @@ export class Scheduler {
       return;
     }
     const { smoothed } = this;
-    systems.forEach((system, i) => {
+    for (let i = 0; i < systems.length; i++) {
       const t0 = performance.now();
-      system.update(step);
+      systems[i]?.update(step);
       const ms = performance.now() - t0;
       const was = smoothed[i] ?? Number.NaN;
       smoothed[i] = Number.isNaN(was) ? ms : was + (ms - was) * SMOOTHING;
-    });
+    }
   }
 
   /** The systems' smoothed timings, slowest first (only measured with { profile: true }) */
