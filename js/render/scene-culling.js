@@ -379,7 +379,7 @@ function setupSceneCulling(scene, roots, shadow = null) {
   state.culled = culled;
 }
 
-const state = { culled: [] };
+const state = { culled: [], frozen: new Set() };
 
 // Per frame (after the warm-up frame, which must see everything): hide the chunks beyond their cull distance
 function updateSceneCulling(cameraPosition) {
@@ -392,4 +392,28 @@ function updateSceneCulling(cameraPosition) {
   }
 }
 
-export { setupSceneCulling, updateSceneCulling, SHADOW_PROXY_LAYER };
+/**
+ * Computes the world matrices of the static city under `roots` (and of the shadow stand-ins) once, for good. three.js
+ * calls scene.updateMatrixWorld() in every scene render (the view and each shadow cascade: three a frame), and as the
+ * scene's own matrix auto-updates, that recomputes every object's world matrix each time: ~42k objects (the tree
+ * field's dormant cells are most of them) cost ~18 ms a frame. Nothing under these roots moves after the build (their
+ * props change through instance matrices & visibility). Rendering stops updating the scene; updateDynamicMatrices()
+ * updates the rest of it, once a frame.
+ */
+function freezeStaticMatrices(scene, roots) {
+  scene.updateMatrixWorld(true);
+  scene.matrixWorldAutoUpdate = false;
+  state.frozen = new Set(roots);
+  for (const child of scene.children) if (child.userData.shadowProxy) state.frozen.add(child);
+}
+
+// Per frame, before rendering: the world matrices of everything else in the scene (the player, the traffic, the
+// lights that follow the camera...), including whatever was added since
+function updateDynamicMatrices(scene) {
+  const children = scene.children;
+  for (let i = 0; i < children.length; i++) {
+    if (!state.frozen.has(children[i])) children[i].updateMatrixWorld();
+  }
+}
+
+export { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices, SHADOW_PROXY_LAYER };

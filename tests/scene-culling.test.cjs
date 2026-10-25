@@ -89,3 +89,23 @@ test('a large merged mesh is split into squares by where its triangles are, ever
   assert.equal(tris, 9);
   assert.equal(seen.size, 9);
 });
+
+test('the frozen static city is left out of the per-frame matrix updates, everything else (even added later) is not', () => {
+  const state = { culled: [], frozen: new Set() };
+  const ctx = { state, Set };
+  const { freeze, update } = vm.runInNewContext(
+    `${topLevel('freezeStaticMatrices')}\n${topLevel('updateDynamicMatrices')}\n({ freeze: freezeStaticMatrices, update: updateDynamicMatrices })`,
+    ctx
+  );
+  const updated = [];
+  const node = (name, userData = {}) => ({ name, userData, updateMatrixWorld() { updated.push(name); } });
+  const city = node('CityBlocks'), proxy = node('ShadowProxy', { shadowProxy: true }), player = node('Player');
+  let sceneUpdates = 0;
+  const scene = { children: [city, proxy, player], matrixWorldAutoUpdate: true, updateMatrixWorld() { sceneUpdates++; } };
+  freeze(scene, [city]);
+  assert.equal(sceneUpdates, 1, 'the static matrices are computed once');
+  assert.equal(scene.matrixWorldAutoUpdate, false, 'rendering no longer walks the scene');
+  scene.children.push(node('Rocket'));
+  update(scene);
+  assert.deepEqual(updated, ['Player', 'Rocket']);
+});

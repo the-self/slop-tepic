@@ -251,6 +251,11 @@ class ThirdPersonControllerManager {
     // the tyres' dry grip (wetGrip)
     this.roadWet = 0;
     this.roadGrip = 1;
+    // A flood's water (m deep) at (x, z) (floods.js, main.js): wading slows the walk, a car pushes the water aside,
+    // and deep enough it drowns the engine
+    this.waterAt = null;
+    // Inside a restaurant, bar or antro (interiors.js setInterior): its room's own floor & walls
+    this.interior = null;
     // Taking aim on foot (player/aim.js sets it every frame): the player walks and strafes instead of turning
     this.aiming = false;
 
@@ -1438,7 +1443,14 @@ class ThirdPersonControllerManager {
     return !!b && !(b.park > 0.6 && !b.median);
   }
 
+  // Into (a room: { minX, maxX, minZ, maxZ, floorAt(x, z, fromY), colliders }) or out of (null) an interior
+  setInterior(room) {
+    this.interior = room || null;
+  }
+
   getGroundHeight(x, z, mode = 'person', fromY = undefined) {
+    const room = this.interior;
+    if (room && x >= room.minX && x <= room.maxX && z >= room.minZ && z <= room.maxZ) return room.floorAt(x, z, fromY);
     // the ground (ground.js): the town's floor, the hills over it & the river channels cut into it (under a bridge
     // for a body coming from `fromY` down in the channel); everyone stands on it, a walker on the curbs over the
     // town's floor (unless a hill rises above them, or it is down in a channel). With `fromY`, a road bridge's deck
@@ -1535,6 +1547,15 @@ class ThirdPersonControllerManager {
     for (const left of this.leftCars || NO_CARS) {
       const k = left.collider;
       if (k.maxX >= x - r && k.minX <= x + r && k.maxZ >= z - r && k.minZ <= z + r) out.push(k);
+    }
+    // (an interior's walls & furniture: after the city's, which never come near it)
+    if (this.interior) {
+      for (const k of this.interior.colliders) {
+        if (k.maxX >= x - r && k.minX <= x + r && k.maxZ >= z - r && k.minZ <= z + r) {
+          k._order ??= 1e9;
+          out.push(k);
+        }
+      }
     }
     if (out.length > 1) out.sort((a, b) => a._order - b._order);
     return out;
@@ -1790,7 +1811,8 @@ class ThirdPersonControllerManager {
 
   updatePerson(dt) {
     const p = this.entities.person;
-    const maxWalk = this.keys.boost && this.canSprint ? 8.2 : 4.4;
+    const wading = this.waterAt ? Math.min(0.6, this.waterAt(p.position.x, p.position.z) * 1.3) : 0;
+    const maxWalk = (this.keys.boost && this.canSprint ? 8.2 : 4.4) * (1 - wading);
     const turnRate = 2.6;
 
     let targetSpeed = 0;
@@ -1852,9 +1874,14 @@ class ThirdPersonControllerManager {
     input.nitro = Boolean(this.keys.boost);
     input.shift = shift;
     input.slope = c.flying ? 0 : this.slopeAcceleration(c.position.x, c.position.z, c.heading, c.position.y);
-    input.power = enginePower(dmg);
-    input.grip = this.roadGrip ?? 1;
-    const driven = stepDrive(d, spec, input, c.speed, dt);
+    // in a flood: over ~0.55 m the water is in the air intake and the engine dies until it is out of it
+    const water = this.waterAt && !c.flying ? this.waterAt(c.position.x, c.position.z) : 0;
+    c.drowned = water > 0.55;
+    input.power = c.drowned ? 0 : enginePower(dmg);
+    input.grip = (this.roadGrip ?? 1) * (water > 0.15 ? 0.75 : 1);
+    let driven = stepDrive(d, spec, input, c.speed, dt);
+    // the water's drag on the body pushing through it, as its depth & the speed squared
+    if (water > 0.03) driven -= Math.sign(driven) * Math.min(Math.abs(driven), 0.09 * Math.min(water, 1) * driven * driven * dt + water * 2.5 * dt);
     // in the air the wheels push on nothing (the engine still revs): only the air slows it
     c.speed = c.flying ? previousSpeed / (1 + CAR_AIR.drag * Math.abs(previousSpeed) * dt) : driven;
     const acceleration = dt > 0 && !c.flying ? (c.speed - previousSpeed) / dt : 0;
@@ -1958,6 +1985,10 @@ class ThirdPersonControllerManager {
         for (const side of [-0.75, 0.75]) this.emitSmoke(c, side, 0.18, -1.35, rate * 0.5, 0.86, 1.25);
       }
       // On a wet road the tyres throw up a spray behind them, more the faster it goes
+      if (water > 0.05 && Math.abs(u) > 2) {
+        const rate = dt * Math.min(30, Math.abs(u) * 2.2) * Math.min(1, water * 3);
+        for (const side of [-0.95, 0.95]) this.emitSmoke(c, side, 0.2, 1.6, rate * 0.5, 0.78, 1.1);
+      }
       if ((this.roadWet || 0) > 0.25 && !c.flying && Math.abs(u) > 6) {
         const rate = dt * Math.min(14, (Math.abs(u) - 6) * 0.9) * this.roadWet;
         for (const side of [-0.8, 0.8]) this.emitSmoke(c, side, 0.12, -1.5, rate * 0.5, 0.94, 0.8);
@@ -2177,6 +2208,8 @@ class ThirdPersonControllerManager {
     wetBicycle.brake = BICYCLE_DRIVE.brake * (this.roadGrip ?? 1);
     b.speed = driveSpeed(b.speed, throttle, this.keys.boost && this.canSprint, dt, wetBicycle);
     if (throttle || Math.abs(b.speed) > 0.3) b.speed += this.slopeAcceleration(b.position.x, b.position.z, b.heading, b.position.y) * dt;
+    // (pedalling through a flood's water)
+    if (this.waterAt) b.speed *= Math.exp(-dt * 4 * Math.min(0.6, this.waterAt(b.position.x, b.position.z)));
 
     let turnInput = 0;
     if (this.keys.left) turnInput = this.keys.left;
@@ -2224,9 +2257,13 @@ class ThirdPersonControllerManager {
     input.nitro = Boolean(this.keys.boost);
     input.shift = shift;
     input.slope = this.slopeAcceleration(m.position.x, m.position.z, m.heading, m.position.y);
-    input.power = 1;
+    // (a moto in a flood: the water drags at it, and over its exhaust, ~0.4 m, the engine dies until it is out)
+    const water = this.waterAt ? this.waterAt(m.position.x, m.position.z) : 0;
+    m.drowned = water > 0.4;
+    input.power = m.drowned ? 0 : 1;
     input.grip = this.roadGrip ?? 1;
     m.speed = stepDrive(d, spec, input, m.speed, dt);
+    if (water > 0.03) m.speed *= Math.exp(-dt * (m.drowned ? 3 : water * 4));
 
     let turnInput = 0;
     if (this.keys.left) turnInput = this.keys.left;
