@@ -42,6 +42,20 @@ The streets that are not asphalt (`js/world/pavement-data.js`: empedrado, adoqu√
 node tools/build-tepic-pavements.mjs
 ```
 
+## Making the centro look like Tepic
+
+Neither OpenStreetMap nor Overture records a height, a storey count or a colour for any building
+near the Plaza Principal, so the game guesses them. Three ways to fix that, best first:
+
+1. **Edit OpenStreetMap.** Tag `building:levels`, `building:colour`, `roof:shape` and shop names.
+   The next run of `tools/data/tepic/fetch.sh` and the builder picks them up, and every other map
+   of Tepic improves too.
+2. **Overrides from photographs:** `js/world/building-overrides.js` pins storeys and a facade
+   colour to a point on a building (`{ lat, lon, storeys, paint }`). Then rebuild
+   `city-geodata.js`. The building is drawn whole, as it really is.
+3. **Landmark models:** a `.glb` from phone photogrammetry or Blender replaces the generic houses
+   on a landmark's lot. See [assets/models/README.md](assets/models/README.md).
+
 ## License and data
 
 The project code is available under the [MIT License](LICENSE).

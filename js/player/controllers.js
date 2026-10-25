@@ -1611,12 +1611,17 @@ class ThirdPersonControllerManager {
           if (vn > 0.5) {
             const headOn = Math.abs(sinH * nx + cosH * nz);
             const sideDot = cosH * nx - sinH * nz;
-            carEntity.vx = (carEntity.vx || 0) + nx * vn * 0.42;
-            carEntity.vz = (carEntity.vz || 0) + nz * vn * 0.42;
-            if (headOn > 0.72) {
-              carEntity.speed = -carEntity.speed * 0.25;
-            } else {
-              carEntity.speed *= (1.0 - 0.62 * headOn);
+            // The crumpling soaks up the blow: the harder the hit, the less of it comes back (restitution ~0.3 for a
+            // knock, 0.05 from ~25 m/s: at full speed the car stops dead against the wall, as a real one does, instead
+            // of being thrown back). Along the wall it keeps going, less what scraping along it takes
+            const restitution = Math.max(0.05, 0.32 - vn * 0.011);
+            const scrape = Math.max(0.3, 1 - vn * 0.035) * (1 - 0.6 * headOn);
+            const tx = totalVx + nx * vn, tz = totalVz + nz * vn; // (the velocity along the wall)
+            const outVx = tx * scrape + nx * vn * restitution, outVz = tz * scrape + nz * vn * restitution;
+            carEntity.speed = outVx * sinH + outVz * cosH;
+            carEntity.vx = outVx - sinH * carEntity.speed;
+            carEntity.vz = outVz - cosH * carEntity.speed;
+            if (headOn <= 0.72) {
               carEntity.angularVel = (carEntity.angularVel || 0) + sideDot * (sinH * nx + cosH * nz >= 0 ? -1 : 1) * Math.min(3.2, vn * 0.22);
             }
             carEntity.pitchVel = (carEntity.pitchVel || 0) + (sinH * nx + cosH * nz) * Math.min(14.0, vn) * 0.16;
