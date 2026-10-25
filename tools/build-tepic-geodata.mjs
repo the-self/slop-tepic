@@ -1600,7 +1600,7 @@ const transit = { groups: [], routes: [] };
       drawn += r.samples;
       on += r.matched;
       if (!r.pieces.length) { log(`route ${name}: not on the map`); continue; }
-      const fleet = (ROUTE_FLEET.find(([re]) => re.test(name)) || [, ''])[1];
+      const fleet = (ROUTE_FLEET.find(([re]) => re.test(name)) || [null, ''])[1];
       // [name, group index, the map's line colour, 'bus' | 'combi' | '' (both), loops 1 | 0, pieces: signed link refs]
       transit.routes.push([name, Math.max(0, groups.findIndex((g) => g.id === f.properties.group)), f.properties.stroke || '#5a5a5a',
         fleet, r.loop ? 1 : 0, r.pieces]);

@@ -365,6 +365,27 @@ function stepDrive(d: DriveState, spec: DriveSpec, input: DriveInput, v: number,
   return next;
 }
 
+// A bicycle's rider: the legs' power (W: a fit commuter's steady pace, and their sprint), the hardest push on the
+// pedals pulling away (N: ~0.35 g with the bike, short of lifting its front wheel), rim brakes (m/s² dry), the tyres'
+// rolling resistance and the drag of a rider sitting up (m²); walking it backwards at BACK m/s
+const PEDALS = { cruise: 250, sprint: 900, push: 330, brake: 4.5, rolling: 0.006, dragArea: 0.55, back: 1.2 };
+
+/**
+ * The force (N, along the bicycle) its rider puts through it moving at `v` m/s: pedalling (`pedal` 0..1, `sprint`)
+ * up to their push, no more than their power can keep up at that speed; braking (`pedal` < 0 going forwards, to
+ * `grip` of the dry road's bite); walking it back (`pedal` < 0 from a standstill); and against it always, rolling
+ * resistance and the air. A bicycle of `mass` kg with its rider
+ */
+function pedalForce(pedal: number, sprint: boolean, v: number, mass: number, grip = 1): number {
+  const speed = Math.abs(v);
+  let force = 0;
+  if (pedal > 0) force = pedal * Math.min(PEDALS.push, (sprint ? PEDALS.sprint : PEDALS.cruise) / Math.max(0.5, v));
+  else if (pedal < 0 && v > 0.3) force = pedal * PEDALS.brake * grip * mass;
+  else if (pedal < 0) force = mass * 2 * (pedal * PEDALS.back - v);
+  if (speed > 0.05) force -= Math.sign(v) * (PEDALS.rolling * mass * G + 0.5 * AIR * PEDALS.dragArea * speed * speed);
+  return force;
+}
+
 // What the HUD shows for the gear: R, D (an electric car's one gear) or the gear's number
 function gearLabel(d: DriveState, spec: DriveSpec | null = null): string {
   return d.gear < 0 ? 'R' : spec?.electric ? 'D' : String(d.gear);
@@ -382,5 +403,7 @@ export {
   selectGear,
   stepDrive,
   gearLabel,
-  zeroTo100
+  zeroTo100,
+  PEDALS,
+  pedalForce
 };

@@ -1076,6 +1076,8 @@ interface TreeType {
   geo: THREE.BufferGeometry;
   name: string;
   windPadding: number;
+  /** whether its meshes cast shadows (the far LOD's whole-crown cards don't) */
+  castShadow: boolean;
   meshes: THREE.InstancedMesh[];
 }
 
@@ -1145,20 +1147,22 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
 
   // Shared geometry types: lod 0 & 1 per species & variant, lod 2 per species
   const types: TreeType[] = [];
-  const makeType = (geo: THREE.BufferGeometry, name: string) => {
+  const makeType = (geo: THREE.BufferGeometry, name: string, castShadow = true) => {
     const box = geo.boundingBox; // (TreeGeometryBuilder.build computes it)
     if (!box) throw new Error(`trees: ${name} has no bounding box`);
     const height = Math.max(Math.abs(box.min.y), Math.abs(box.max.y));
     // The material adds wind after the instance transform: height-squared lean/rock, plus bob and flutter.
     const windPadding = Math.hypot(0.2, 0.06) * Math.hypot(0.86, 0.51) * (height / 11) ** 2 + 2;
-    const type: TreeType = { geo, name, windPadding, meshes: [] };
+    const type: TreeType = { geo, name, windPadding, castShadow, meshes: [] };
     types.push(type);
     return type;
   };
   const meshIndex = SPECIES.map((sp, s) => ({
     l0: [0, 1].map((v) => makeType(geos[s][v][0], `Trees_${sp.name}_v${v}_lod0`)),
     l1: [0, 1].map((v) => makeType(geos[s][v][1], `Trees_${sp.name}_v${v}_lod1`)),
-    l2: makeType(geos[s][0][2], `Trees_${sp.name}_lod2`)
+    // (the whole-crown cards from LOD_MID out cast none: the sun's cascades reach 300 m from a street-level view, and
+    // from the air their shadows are specks; every one of their cells in a cascade's box was a draw in each frame)
+    l2: makeType(geos[s][0][2], `Trees_${sp.name}_lod2`, false)
   }));
   const cells = new Map<string, TreeCell>();
   const meshes: { type: TreeType; cell: TreeCell; name: string; capacity: number }[] = [];
@@ -1232,7 +1236,7 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
     mesh.name = m.name;
     mesh.count = 0;
     mesh.visible = false;
-    mesh.castShadow = true;
+    mesh.castShadow = m.type.castShadow;
     mesh.receiveShadow = true;
     m.cell.group.add(mesh);
     m.type.meshes.push(mesh);

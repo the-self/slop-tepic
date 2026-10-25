@@ -169,41 +169,57 @@ function proxyableMaterial(mat: (THREE.Material & MaterialSlots) | THREE.Materia
 }
 
 // A plain mesh's triangles in `cell` x `cell` m squares (by where their centres are in the world), each square its own
-// mesh in the mesh's place, sharing its material (so the same shader pipeline)
+// mesh in the mesh's place, sharing its material (so the same shader pipeline). Straight on the arrays: the hills'
+// floors are a few hundred thousand triangles, which three.js's per-vertex accessors took most of a second over
 function splitMesh(mesh: THREE.Mesh, cell: number) {
-  const geo = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
-  const pos = geo.attributes.position;
-  const n = pos.count / 3;
-  const cells = new Map<string, number[]>();
+  const geo = mesh.geometry;
+  const index = geo.index ? geo.index.array : null;
+  const pos = geo.attributes.position.array;
+  const n = (index ? index.length : pos.length / 3) / 3;
+  const e = mesh.matrixWorld.elements;
+  const corner = (t: number, c: number) => (index ? (index[t * 3 + c] ?? 0) : t * 3 + c);
+  // each triangle's square (by its centre in the world), and how many each square holds
+  const cellOf = new Float64Array(n);
+  const counts = new Map<number, number>();
   for (let t = 0; t < n; t++) {
-    _a.fromBufferAttribute(pos, t * 3).add(_b.fromBufferAttribute(pos, t * 3 + 1)).add(_c.fromBufferAttribute(pos, t * 3 + 2));
-    _a.multiplyScalar(1 / 3).applyMatrix4(mesh.matrixWorld);
-    const key = `${Math.floor(_a.x / cell)},${Math.floor(_a.z / cell)}`;
-    let tris = cells.get(key);
-    if (!tris) cells.set(key, (tris = []));
-    tris.push(t);
+    const i0 = corner(t, 0) * 3, i1 = corner(t, 1) * 3, i2 = corner(t, 2) * 3;
+    const x = (pos[i0] + pos[i1] + pos[i2]) / 3, y = (pos[i0 + 1] + pos[i1 + 1] + pos[i2 + 1]) / 3, z = (pos[i0 + 2] + pos[i1 + 2] + pos[i2 + 2]) / 3;
+    const wx = e[0] * x + e[4] * y + e[8] * z + e[12], wz = e[2] * x + e[6] * y + e[10] * z + e[14];
+    const key = Math.floor(wx / cell) * 1048576 + Math.floor(wz / cell);
+    cellOf[t] = key;
+    counts.set(key, (counts.get(key) || 0) + 1);
   }
-  if (cells.size < 2) return;
+  if (counts.size < 2) return;
   const parent = mesh.parent;
   if (!parent) return;
-  for (const tris of cells.values()) {
-    const part = new THREE.BufferGeometry();
-    for (const [name, a] of Object.entries(geo.attributes)) {
-      const s = a.itemSize * 3;
-      const arr = emptyLike(a.array, tris.length * s);
-      tris.forEach((t, j) => { arr.set(a.array.subarray(t * s, t * s + s), j * s); });
-      part.setAttribute(name, new THREE.BufferAttribute(arr, a.itemSize, a.normalized));
+  const attrs = Object.entries(geo.attributes);
+  const parts = new Map<number, { arrays: THREE.TypedArray[]; used: number }>(); // square -> its arrays, triangles in them
+  for (const [key, count] of counts) {
+    parts.set(key, { arrays: attrs.map(([, a]) => emptyLike(a.array, count * 3 * a.itemSize)), used: 0 });
+  }
+  for (let t = 0; t < n; t++) {
+    const part = parts.get(cellOf[t]);
+    if (!part) continue;
+    for (let c = 0; c < 3; c++) {
+      const v = corner(t, c), w = part.used * 3 + c;
+      attrs.forEach(([, a], k) => {
+        const size = a.itemSize, src = a.array, dst = part.arrays[k];
+        for (let q = 0; q < size; q++) dst[w * size + q] = src[v * size + q];
+      });
     }
-    part.computeBoundingBox();
-    part.computeBoundingSphere();
-    const piece = new THREE.Mesh(part, mesh.material);
+    part.used++;
+  }
+  for (const part of parts.values()) {
+    const piece = new THREE.Mesh(new THREE.BufferGeometry(), mesh.material);
+    attrs.forEach(([name, a], k) => piece.geometry.setAttribute(name, new THREE.BufferAttribute(part.arrays[k], a.itemSize, a.normalized)));
+    piece.geometry.computeBoundingBox();
+    piece.geometry.computeBoundingSphere();
     copyObjectState(piece, mesh);
     piece.updateMatrixWorld(true);
     parent.add(piece);
   }
   parent.remove(mesh);
-  if (geo !== mesh.geometry) geo.dispose();
-  mesh.geometry.dispose();
+  geo.dispose();
 }
 
 function replaceWithChunks(mesh: THREE.InstancedMesh, cell: number) {
@@ -240,6 +256,23 @@ interface CulledChunk {
 interface FaceSide {
   side: THREE.Side;
   shadowSide: THREE.Side | null;
+}
+
+/**
+ * Shows `group` only to the cameras that see `layers`, render by render (scene.onBeforeRender), and visible again
+ * after each (onAfterRender), so whatever walks the scene between renders (main.js's shader warm-up) still finds it
+ */
+function showOnlyTo(scene: THREE.Scene, group: THREE.Object3D, layers: THREE.Layers): void {
+  // (three.js calls them on the scene: bound to it, as they were)
+  const before = scene.onBeforeRender.bind(scene), after = scene.onAfterRender.bind(scene);
+  scene.onBeforeRender = (...args: Parameters<THREE.Scene['onBeforeRender']>) => {
+    before(...args);
+    group.visible = args[2].layers.test(layers);
+  };
+  scene.onAfterRender = (...args: Parameters<THREE.Scene['onAfterRender']>) => {
+    after(...args);
+    group.visible = true;
+  };
 }
 
 /**
@@ -384,6 +417,16 @@ function setupSceneCulling(scene: THREE.Scene, roots: THREE.Object3D[], shadow: 
       o.castShadow = false;
     }
 
+    // All of them under one group, shown only to the cameras that draw them (the cascades): every scene render walks
+    // the scene's tree, and the view's would otherwise visit each of the ~2000 stand-ins only to find them on a layer
+    // it doesn't draw
+    const proxies = new THREE.Group();
+    proxies.name = 'ShadowProxies';
+    proxies.userData.shadowProxy = true;
+    scene.add(proxies);
+    const proxyLayers = new THREE.Layers();
+    proxyLayers.set(SHADOW_PROXY_LAYER);
+    showOnlyTo(scene, proxies, proxyLayers);
     const firstProxy = new Map<string, THREE.Mesh>(); // material + kind -> the stand-in that compiles their shared pipeline
     const addProxy = (mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicNodeMaterial>) => {
       mesh.name = 'ShadowProxy';
@@ -395,7 +438,7 @@ function setupSceneCulling(scene: THREE.Scene, roots: THREE.Object3D[], shadow: 
       const kind = mesh.material.uuid + (isInstancedMesh(mesh) ? ':i' : ':m');
       if (firstProxy.has(kind)) mesh.userData.sharesPipelineWith = firstProxy.get(kind);
       else firstProxy.set(kind, mesh);
-      scene.add(mesh);
+      proxies.add(mesh);
     };
     for (const entry of instancedBySig.values()) {
       for (const list of entry.cells.values()) {
@@ -561,4 +604,4 @@ function releaseStaticArrays(renderer: { backend: object }): number {
   return bytes;
 }
 
-export { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices, releaseStaticArrays, SHADOW_PROXY_LAYER };
+export { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices, releaseStaticArrays, showOnlyTo, SHADOW_PROXY_LAYER };

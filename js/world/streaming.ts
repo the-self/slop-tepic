@@ -189,25 +189,32 @@ class TileStreamer {
     });
     for (const key of buckets.keys()) this.candidates.add(key);
     const N = this.workers.length;
+    const local = new Int32Array((index ? index.length : arrays[0].length / sizes[0]) / 3);
     this.workers.forEach((slot, n) => {
-      // this worker's tiles' triangles, each once, renumbered in the order they are copied out
-      const local = new Map<number, number>();
+      // this worker's tiles' triangles, each once, renumbered in the order they are copied out (local: the layer's
+      // triangle -> its number in the copy, -1 for none)
+      local.fill(-1);
+      let used = 0;
       const share: [key: number, tris: Uint32Array][] = [];
       for (const [key, tris] of buckets) {
         if (key % N !== n) continue;
-        share.push([key, Uint32Array.from(tris, (t) => {
-          let k = local.get(t);
-          if (k === undefined) local.set(t, (k = local.size));
-          return k;
-        })]);
+        const mine = new Uint32Array(tris.length);
+        for (let k = 0; k < tris.length; k++) {
+          const t = tris[k];
+          if (local[t] < 0) local[t] = used++;
+          mine[k] = local[t];
+        }
+        share.push([key, mine]);
       }
-      const out = sizes.map((size) => new Float32Array(local.size * 3 * size));
-      for (const [t, k] of local) {
+      const out = sizes.map((size) => new Float32Array(used * 3 * size));
+      for (let t = 0; t < local.length; t++) {
+        const k = local[t];
+        if (k < 0) continue;
         for (let c = 0; c < 3; c++) {
           const v = index ? index[t * 3 + c] : t * 3 + c;
           for (let a = 0; a < arrays.length; a++) {
-            const size = sizes[a];
-            out[a].set(arrays[a].subarray(v * size, v * size + size), (k * 3 + c) * size);
+            const size = sizes[a], src = arrays[a], dst = out[a];
+            for (let e = 0, o = (k * 3 + c) * size, i = v * size; e < size; e++) dst[o + e] = src[i + e];
           }
         }
       }

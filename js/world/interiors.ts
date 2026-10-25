@@ -1,4 +1,6 @@
 import * as THREE from 'three/webgpu';
+import type { PlayerMode } from '../player/controllers.ts';
+import type { AmbientSource, AmbienceKind } from '../audio/audio-ambience.ts';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Fn, color, positionWorld, floor, fract, step, mix, sin, uniform } from 'three/tsl';
 import { isOpen } from './venues.ts';
@@ -80,8 +82,8 @@ interface RoomSpots {
 }
 
 /** A sound record for the audio's loops: its kind ('cumbia', 'crowd'...), a key it's known by, where (m), how loud */
-export interface InteriorSound {
-  kind: string;
+export interface InteriorSound extends AmbientSource {
+  kind: AmbienceKind;
   id: object;
   x: number;
   y: number;
@@ -120,8 +122,8 @@ interface Room {
 // system (sim/crime.ts)
 interface InteriorControllers {
   entities: { person: { position: THREE.Vector3 } };
-  activeMode: string;
-  getGroundHeight(x: number, z: number, mode: string, fromY: number): number;
+  activeMode: PlayerMode;
+  getGroundHeight(x: number, z: number, mode: PlayerMode, fromY: number): number;
   setInterior(room: InteriorRoomBounds | null): void;
   teleportActiveTo(x: number, z: number, heading: number): void;
   settle(entity: { position: THREE.Vector3 }): void;
@@ -601,7 +603,7 @@ class Interiors {
   }
 
   // The room's music & talk, for the audio's loops (inside it, nothing of the street's carries)
-  sounds(out: InteriorSound[]) {
+  sounds(out: AmbientSource[]) {
     if (this.inside) for (const snd of this.inside.sounds) out.push(snd);
     return out;
   }

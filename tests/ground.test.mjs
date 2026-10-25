@@ -90,7 +90,7 @@ test('triangles cut along the lattice keep their area & winding, each piece on o
     assert.ok(s * Math.sign(whole) >= -1e-6, 'winding kept');
     sum += s;
     // one lattice triangle: every vertex within the same unit band of each family
-    for (const f of [(x, z) => (x + 5) / 10, (x, z) => (z - 3) / 10, (x, z) => (x + 5 + z - 3) / 10]) {
+    for (const f of [(x, _z) => (x + 5) / 10, (_x, z) => (z - 3) / 10, (x, z) => (x + 5 + z - 3) / 10]) {
       const cx = (p[t] + p[t + 3] + p[t + 6]) / 3, cz = (p[t + 2] + p[t + 5] + p[t + 8]) / 3;
       const band = Math.floor(f(cx, cz));
       for (let v = 0; v < 3; v++) {

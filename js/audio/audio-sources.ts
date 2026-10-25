@@ -1,6 +1,7 @@
 // js/audio/audio-sources.ts
 // What the city's audio hears each control tick: the nearest motors, sirens, people and WALK signals around the
 // listener, read off the player's controllers, the traffic, the highway, the police and the street's signals.
+import type { KeyValue, PlayerMode } from '../player/controllers.ts';
 import { signalPhase, walkSignal } from '../world/city-config.ts';
 import type { AcousticCollider, Point3 } from './audio-acoustics.ts';
 import type { MotorKind } from './audio-synthesis.ts';
@@ -57,13 +58,13 @@ export interface AudioVehicleEntity extends AudioEntityBase {
 
 export type AudioEntity = AudioPersonEntity | AudioVehicleEntity;
 
-/** The keys the player drives with (player/controllers.ts `keys`) */
+/** The player's controls the motors follow (controllers.ts ControlKeys: true, or a gamepad's or touch stick's 0..1) */
 export interface DriveKeys {
-  forward: boolean;
-  backward: boolean;
-  up: boolean;
-  down: boolean;
-  boost: boolean;
+  forward: KeyValue;
+  backward: KeyValue;
+  up: KeyValue;
+  down: KeyValue;
+  boost: KeyValue;
 }
 
 /** A crash between two things (`a`, `b`: the entities, cars or props) at (x, y, z) m, closing at `speed` m/s */
@@ -85,11 +86,10 @@ export interface CollisionSource {
 export interface AudioControllers extends CollisionSource {
   entities: Readonly<Record<string, AudioEntity>>;
   keys: DriveKeys;
-  /** 'person' | 'car' | 'cyclist' | 'helicopter' | 'moto' */
-  activeMode: string;
+  activeMode: PlayerMode;
   getActiveEntity(): AudioEntity;
   /** The ground's height (m) under (x, z) for a mode */
-  getGroundHeight(x: number, z: number, mode: string): number;
+  getGroundHeight(x: number, z: number, mode: PlayerMode): number;
   /** The town's floor (m) under (x, z), which the helicopter's altitudes are reckoned from */
   floorHeight(x: number, z: number): number;
   nearColliders(x: number, z: number, r: number): Iterable<AcousticCollider>;
@@ -160,7 +160,8 @@ export interface AudioHighwayCar {
 /** A patrol car (or a gang's SUV) chasing the player (sim/crime.ts cruisers) */
 export interface AudioPursuer {
   active: boolean;
-  wreck?: boolean;
+  /** s left burning, once wrecked (0: not a wreck) */
+  wreck?: number;
   police?: boolean;
   x: number;
   y: number;

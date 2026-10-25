@@ -5,9 +5,10 @@ const test = require('node:test');
 const { loadModule } = require('./helpers/module.cjs');
 
 class Matrix4 {}
-const { boxHit, riderKnocked, startTopple, stepTopple, hideInstance } = loadModule(
+class Vector3 {}
+const { boxHit, riderKnocked, closingSpeed, hideInstance, PROP_BODIES } = loadModule(
   readFileSync(join(__dirname, '../js/sim/mayhem.ts'), 'utf8'),
-  { imports: { 'three/webgpu': { Matrix4 } }, filename: 'mayhem.ts' }
+  { imports: { 'three/webgpu': { Matrix4, Vector3 } }, filename: 'mayhem.ts' }
 );
 
 test('the player box hits bodies along its length and width only', () => {
@@ -34,12 +35,20 @@ test('a car or bicycle knocks a rider off when driven into them, whoever was mov
   assert.equal(riderKnocked('helicopter', 0, 9, 0, 1, 2.2), false);
 });
 
-test('a knocked pole falls over and comes to rest lying down', () => {
-  const f = startTopple(10, () => 0.5);
-  let rest = 0;
-  for (let t = 0; t < 6; t += 1 / 60) rest = stepTopple(f, 1 / 60, Math.PI / 2 - 0.04, 8.4);
-  assert.ok(rest > 1);
-  assert.ok(Math.abs(f.angle - (Math.PI / 2 - 0.04)) < 1e-9);
+test('the street furniture breaks loose at its own speeds: a loose bin at a nudge, a lamp mast only at a good knock', () => {
+  const { cobra, post, sign, hydrant, bin } = PROP_BODIES;
+  assert.ok(bin.breakAt < sign.breakAt && sign.breakAt <= post.breakAt && post.breakAt < cobra.breakAt);
+  assert.ok(hydrant.breakAt >= 2.5, 'a hydrant is bolted to its main');
+  // as heavy as the real thing: a steel cobra mast & arm well over a farol, a bin a few kilos
+  assert.ok(cobra.mass > post.mass && post.mass > sign.mass && bin.mass < 20);
+  for (const p of Object.values(PROP_BODIES)) assert.ok(p.cyl[0] > 0 && p.cyl[1] > 0.5 && p.reach > 0);
+});
+
+test('only the speed a vehicle closes on a prop at counts, not its speed past it', () => {
+  assert.equal(closingSpeed(0, 10, 0, 1), 10, 'head on');
+  assert.ok(Math.abs(closingSpeed(0, 10, Math.SQRT1_2, Math.SQRT1_2) - 10 * Math.SQRT1_2) < 1e-9);
+  assert.equal(closingSpeed(0, 10, 1, 0), 0, 'alongside');
+  assert.equal(closingSpeed(0, -10, 0, 1), 0, 'moving away');
 });
 
 test('hiding a prop clears its instance where culling moved it', () => {

@@ -83,7 +83,11 @@ interface RagdollPhysics {
     groundField(body: Jolt.Body | null, cx: number, cz: number, fromY: number, n: number, cell: number): Jolt.Body;
     dropBody(body: Jolt.Body): void;
   };
-  addSystem(sys: { before?(dt: number): void; after?(dt: number): void }): void;
+  addSystem(sys: {
+    before?(dt: number): void;
+    after?(dt: number): void;
+    foci?(out: Point3[], focus: { x: number; z: number }, far: number): void;
+  }): void;
 }
 // How someone is thrown: velocity (m/s), spin (rad/s) and how badly they bleed (0..1, bleedOf)
 interface ThrowOptions {
@@ -93,8 +97,8 @@ interface ThrowOptions {
   spin?: number;
   bleed?: number;
 }
-// A ragdoll: px, py, pz (the pelvis, m), rest (s it has lain still), settled; parts, joints & ground are null once it
-// is frozen
+// A ragdoll: px, py, pz (the pelvis, m; `at` the same as a point, handed out as a focus), x0, z0 (where it was thrown
+// from, m), rest (s it has lain still), settled; parts, joints & ground are null once it is frozen
 interface RagdollHandle {
   rig: RagdollRig;
   base: Float32Array;
@@ -112,6 +116,9 @@ interface RagdollHandle {
   px: number;
   py: number;
   pz: number;
+  at: Point3;
+  x0: number;
+  z0: number;
   age: number;
   still: number;
   rest: number;
@@ -126,6 +133,8 @@ interface Ragdolls {
   release(h: RagdollHandle | null | undefined): void;
   before(): void;
   after(dt: number): void;
+  // pushes on `out` the pelvis of each body moving out past `far` m from `focus` (the walls fed round it, car-physics.ts)
+  foci(out: Point3[], focus: { x: number; z: number }, far: number): void;
   count(): number;
 }
 
@@ -295,8 +304,9 @@ function poseFromParts(pose: Float32Array, base: ArrayLike<number>, rot0: readon
 /**
  * The ragdolls in the world of `physics` (player/car-physics.ts createCarPhysics). spawn(rig, { vx, vy, vz, bleed })
  * throws a PersonRig from its pose as it stands (its pose array then follows the physics); the handle it returns has
- * px, py, pz (the pelvis), rest (s it has lain still) and settled; release(handle) lets it go. `onSettle(handle)` is
- * called as one comes to rest (main.ts: a pool of blood under someone hit hard).
+ * px, py, pz (the pelvis), x0, z0 (where it was thrown from), rest (s it has lain still) and settled; release(handle)
+ * lets it go. `onSettle(handle)` is called as one comes to rest (main.ts: a pool of blood under someone hit hard, and
+ * their smear back to where they were struck).
  */
 function createRagdolls(physics: RagdollPhysics): Ragdolls {
   const { Jolt, system, bodies, layers } = physics.world;
@@ -313,7 +323,7 @@ function createRagdolls(physics: RagdollPhysics): Ragdolls {
   const quat = (q: Quat) => { tmpQ.Set(q[0], q[1], q[2], q[3]); return tmpQ; };
   const handles = new Set<RagdollHandle>();
   let group = 0;
-  const api: Ragdolls = { onSettle: null, spawn, release, before, after, count };
+  const api: Ragdolls = { onSettle: null, spawn, release, before, after, foci, count };
 
   // Takes its bodies out of the world, its pose kept; one come to rest on the ground (not one stopped short, mid-air)
   // is told to onSettle
@@ -411,7 +421,7 @@ function createRagdolls(physics: RagdollPhysics): Ragdolls {
       rig, base, parts, joints, ground: null, gx: NaN, gz: NaN, gy: NaN,
       rot0: layout.map((l) => l.rotation), pos0: layout.map((l) => l.position),
       rot: layout.map(() => [0, 0, 0, 1]), pos: layout.map(() => [0, 0, 0]), delta: layout.map(() => [0, 0, 0, 1]),
-      px: p[0], py: p[1], pz: p[2], age: 0, still: 0, rest: 0, speed: Infinity, settled: false, bleed
+      px: p[0], py: p[1], pz: p[2], at: { x: p[0], y: p[1], z: p[2] }, x0: p[0], z0: p[2], age: 0, still: 0, rest: 0, speed: Infinity, settled: false, bleed
     };
     handles.add(h);
     return h;
@@ -452,13 +462,18 @@ function createRagdolls(physics: RagdollPhysics): Ragdolls {
         fastest = Math.max(fastest, Math.hypot(v.GetX(), v.GetY(), v.GetZ()));
       }
       poseFromParts(h.rig.pose, h.base, h.rot0, h.pos0, h.rot, h.pos, h.delta);
-      h.px = h.pos[0][0]; h.py = h.pos[0][1]; h.pz = h.pos[0][2];
+      h.px = h.at.x = h.pos[0][0]; h.py = h.at.y = h.pos[0][1]; h.pz = h.at.z = h.pos[0][2];
       h.speed = fastest;
       h.still = fastest < SETTLE_SPEED ? h.still + dt : 0;
       h.rest = h.still;
       // still; or long after, only crawling along the ground; or very long after, whatever it is doing
       if (h.still > SETTLE_TIME || (h.age > MAX_LIFE && fastest <= SLOW) || h.age > MAX_LIFE_HARD) freeze(h);
     }
+  }
+
+  // The bodies moving out past `far` m from `focus` (the player), for the walls fed round them (car-physics.ts)
+  function foci(out: Point3[], focus: { x: number; z: number }, far: number): void {
+    for (const h of handles) if (h.parts && Math.hypot(h.px - focus.x, h.pz - focus.z) > far) out.push(h.at);
   }
 
   function count(): number {

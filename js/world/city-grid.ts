@@ -19,6 +19,7 @@ import { drapeMeshes, streamMeshes, cutOnCells } from './drape.ts';
 import { cutRiverHoles } from './river-channels.ts';
 import { openness } from './lot-greenery.ts';
 import { cyclewayRuns, CYCLEWAY_HALF } from './medians.ts';
+import { insidePoly, insideRing } from './rings.ts';
 import type { Bounds, CityBlock, PointXZ } from './city-config.ts';
 import type { CyclewayPoint } from './medians.ts';
 import type { TileStreamer } from './streaming.ts';
@@ -471,15 +472,6 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   //    scattered trees, lampposts on the perimeter; the open country around the city as meadow
   const PARK_Y = 0.26; // hex-paver walks (sidewalk tops are at 0.22)
   const BED_Y = 0.41; // lawn top inside the granite bed copings
-  const inPolygon = (x: number, z: number, pts: PointXZ[]) => {
-    let inside = false;
-    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-      const a = pts[i];
-      const b = pts[j];
-      if ((a.z > z) !== (b.z > z) && x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x) inside = !inside;
-    }
-    return inside;
-  };
   const prand = (x: number, z: number, k = 0) => {
     const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453;
     return s - Math.floor(s);
@@ -520,7 +512,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
         const tz = gz + (prand(gz, gx, 1) - 0.5) * SP * 0.7;
         if (prand(tx, tz, 9) < 0.3) continue; // glades
         const inner = lawnTop ?? bed;
-        if (!inPolygon(tx, tz, inner)) continue;
+        if (!insidePoly(inner, tx, tz)) continue;
         // Tepic's park trees (trees.ts): laureles de la India most, then mangos, jacarandas, tabachines & a few palms
         const r = prand(tx, tz, 2);
         const species = r < 0.45 ? 0 : r < 0.6 ? 2 : r < 0.75 ? 1 : r < 0.9 ? 3 : 4;
@@ -614,13 +606,6 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
       }
     }
     const planted = new Set(genericParks);
-    const inRing = (x: number, z: number, r: number[]) => {
-      let inside = false;
-      for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) {
-        if ((r[i + 1] > z) !== (r[j + 1] > z) && x < ((r[j] - r[i]) * (z - r[i + 1])) / (r[j + 1] - r[i + 1]) + r[i]) inside = !inside;
-      }
-      return inside;
-    };
     let n = 0;
     for (const p of GEO.parks) {
       const g = GREEN[p.cat], mix = MIX[p.cat];
@@ -639,7 +624,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
             const jit = p.cat === 'orchard' ? 0.1 : 0.75;
             const tx = gx + (prand(gx, gz, 4) - 0.5) * SP * jit;
             const tz = gz + (prand(gz, gx, 5) - 0.5) * SP * jit;
-            if (prand(tx, tz, 6) < glade || !inRing(tx, tz, r)) continue;
+            if (prand(tx, tz, 6) < glade || !insideRing(r, tx, tz)) continue;
             if (woods && !town.has(Math.floor(tx / C) * 100003 + Math.floor(tz / C))) continue;
             const b = blockAt(tx, tz);
             if (!b || !(b.park > 0.6 || b.rural) || planted.has(b)) continue;

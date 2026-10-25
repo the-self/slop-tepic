@@ -50,7 +50,7 @@ class Mesh extends Object3D {
   constructor(geometry, material) { super(); Object.assign(this, { geometry, material }); }
 }
 const THREE = { BufferAttribute, BufferGeometry, Mesh };
-const context = { THREE, Math, Map, Object, _a: new Vector3(), _b: new Vector3(), _c: new Vector3() };
+const context = { THREE, Math, Map, Object, Float64Array, _a: new Vector3(), _b: new Vector3(), _c: new Vector3() };
 const splitMesh = vm.runInNewContext(`${topLevel('emptyLike')}\n${topLevel('copyObjectState')}\n(${topLevel('splitMesh')})`, context);
 
 test('a large merged mesh is split into squares by where its triangles are, every triangle kept once', () => {
@@ -66,7 +66,7 @@ test('a large merged mesh is split into squares by where its triangles are, ever
   geo.setAttribute('uv', new BufferAttribute(new Float32Array(uv), 2));
   const material = {};
   const mesh = new Mesh(geo, material);
-  mesh.matrixWorld = { tx: 200, tz: 0 };
+  mesh.matrixWorld = { elements: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 200, 0, 0, 1] };
   mesh.name = 'Curbs';
   mesh.receiveShadow = true;
   parent.add(mesh);
@@ -89,6 +89,26 @@ test('a large merged mesh is split into squares by where its triangles are, ever
   }
   assert.equal(tris, 9);
   assert.equal(seen.size, 9);
+});
+
+test('an indexed mesh is split by its triangles\' corners, each piece non-indexed', () => {
+  const parent = new Object3D();
+  const geo = new BufferGeometry();
+  // two quads sharing their corners through the index, one each side of x = 1000
+  geo.setAttribute('position', new BufferAttribute(new Float32Array([
+    100, 0, 100, 200, 0, 100, 200, 0, 200, 100, 0, 200,
+    1100, 0, 100, 1200, 0, 100, 1200, 0, 200, 1100, 0, 200
+  ]), 3));
+  geo.index = new BufferAttribute(new Uint16Array([0, 2, 1, 0, 3, 2, 4, 6, 5, 4, 7, 6]), 1);
+  const mesh = new Mesh(geo, {});
+  mesh.matrixWorld = { elements: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] };
+  parent.add(mesh);
+  splitMesh(mesh, 1000);
+  assert.equal(parent.children.length, 2);
+  const xs = parent.children.map((p) => [...p.geometry.attributes.position.array].filter((_, i) => i % 3 === 0));
+  assert.deepEqual(xs.map((x) => x.length), [6, 6]);
+  assert.ok(xs[0].every((x) => x < 1000) && xs[1].every((x) => x > 1000));
+  assert.deepEqual(xs[0].slice(0, 3), [100, 200, 200], 'the corners the index names, in order');
 });
 
 test('the frozen static city is left out of the per-frame matrix updates, everything else (even added later) is not', () => {
@@ -170,4 +190,23 @@ test('the static city drops the CPU copies the GPU already holds, keeping what i
   assert.equal(pending.attributes.position.array.length, 0);
   assert.equal(release(renderer), 0);
   assert.equal(ctx.state.pendingRelease.length, 0);
+});
+
+test('the shadow stand-ins are shown to the cascades only, and visible again between renders', () => {
+  const showOnlyTo = vm.runInNewContext(`(${topLevel('showOnlyTo')})`, {});
+  const calls = [];
+  const scene = { onBeforeRender: () => calls.push('before'), onAfterRender: () => calls.push('after') };
+  const group = { visible: true };
+  const proxyLayers = { layer: 3 };
+  showOnlyTo(scene, group, proxyLayers);
+  // (a camera sees the stand-ins' layers if it has layer 3 enabled: the cascades do, the view doesn't)
+  const camera = (enabled) => ({ layers: { test: (l) => l === proxyLayers && enabled.includes(l.layer) } });
+  const view = camera([0]), cascade = camera([0, 3]);
+  scene.onBeforeRender({}, scene, view);
+  assert.equal(group.visible, false, 'hidden from the view');
+  scene.onAfterRender({}, scene, view);
+  assert.equal(group.visible, true, 'visible again after it');
+  scene.onBeforeRender({}, scene, cascade);
+  assert.equal(group.visible, true, 'shown to a cascade');
+  assert.deepEqual(calls, ['before', 'after', 'before'], 'the hooks set before are still called');
 });

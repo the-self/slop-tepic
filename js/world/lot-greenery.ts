@@ -8,6 +8,7 @@
 //   edges of a lot and in the yards, sparse out in the middle of a big field (where the kids play football)
 
 import { hash } from './hash.ts';
+import { insidePoly } from './rings.ts';
 import type { CityBlock, PointXZ } from './city-config.ts';
 import type { Numbers } from './lattice.ts';
 
@@ -82,14 +83,8 @@ function indexHouses(houses: Numbers, stride = 8): HouseIndex {
   return { boxes, wallDistance };
 }
 
-function inPolygon(x: number, z: number, pts: PointXZ[]): boolean {
-  let inside = false;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    const a = pts[i], b = pts[j];
-    if ((a.z > z) !== (b.z > z) && x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x) inside = !inside;
-  }
-  return inside;
-}
+// (rings.ts: the big lots' outlines tested by bands)
+const inPolygon = (x: number, z: number, pts: readonly PointXZ[]): boolean => insidePoly(pts, x, z);
 
 // Distance (m) from (x, z) to the curb island's outline
 function edgeDistance(x: number, z: number, pts: PointXZ[]): number {

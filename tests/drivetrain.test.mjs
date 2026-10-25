@@ -191,12 +191,13 @@ test('the registry: unique ids, sensible figures', () => {
   }
 });
 
-test('the Italika motos top out at their own speeds', async () => {
+test('the motos top out at their own speeds, and the MT-09 does its 0-100 km/h', async () => {
   const { MOTO_MODELS, PLAYER_MOTO } = await import('../js/models/motos/index.ts');
   assert.equal(PLAYER_MOTO.id, 'italika-ft150');
   for (const m of MOTO_MODELS) {
     const top = launch(buildSpec(m), 60).v * 3.6;
     assert.ok(Math.abs(top - m.top) <= m.top * 0.03, `${m.id} tops out at ${top.toFixed(0)} km/h, not ${m.top}`);
+    if (m.accel) assert.ok(Math.abs(zeroTo100(buildSpec(m)) - m.accel) < 0.15, m.id);
   }
 });
 
@@ -217,4 +218,20 @@ test('on a wet road a car stops in a longer distance and puts down less power', 
   const d = createDriveState(fast);
   stepDrive(d, fast, { throttle: 1, power: 1, grip: 0.7 }, 1, DT);
   assert.equal(d.wheelspin, true, 'the most powerful car spins its tyres pulling away in the wet');
+});
+
+test('a cyclist cruises at ~30 km/h, sprints to ~48, pulls away without lifting the front wheel and brakes on rims', async () => {
+  const { pedalForce, PEDALS } = await import('../js/player/drivetrain.ts');
+  const ride = (sprint) => {
+    let v = 0;
+    for (let t = 0; t < 120; t += DT) v += pedalForce(1, sprint, v, 95) / 95 * DT;
+    return v * 3.6;
+  };
+  const cruise = ride(false), sprint = ride(true);
+  assert.ok(cruise > 27 && cruise < 34, `cruising ${cruise.toFixed(1)} km/h`);
+  assert.ok(sprint > 44 && sprint < 52, `sprinting ${sprint.toFixed(1)} km/h`);
+  assert.ok(pedalForce(1, true, 0, 95) / 95 < 0.4 * 9.81, 'the hardest push stays short of a wheelie (~0.48 g)');
+  assert.ok(Math.abs(pedalForce(-1, false, 8, 95) / 95 + PEDALS.brake) < 0.5, 'rim brakes');
+  assert.ok(pedalForce(-1, false, 8, 95, 0.7) > pedalForce(-1, false, 8, 95), 'they bite less in the wet');
+  assert.ok(pedalForce(-1, false, 0, 95) < 0, 'walked back from a standstill');
 });

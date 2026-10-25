@@ -49,11 +49,24 @@ function lotColor(b: Pick<CityBlock, 'rural' | 'park' | 'median'>, open = 0.5): 
  * (city-grid.ts); `box`: { x0, x1, z0, z1 }. Returns { texture, origin, span }: world (x, z) to uv is
  * (x - origin) / span, v down the canvas as z runs south.
  */
+// A size² canvas to paint on: an OffscreenCanvas where there is one. (Each branch asks its own canvas for its context:
+// TypeScript resolves getContext's overloads on one canvas type at a time.)
+function canvas2d(size: number): { canvas: OffscreenCanvas | HTMLCanvasElement; ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D } {
+  if (typeof OffscreenCanvas !== 'undefined') {
+    const canvas = new OffscreenCanvas(size, size);
+    const ctx = canvas.getContext('2d');
+    if (ctx) return { canvas, ctx };
+  } else {
+    const canvas = Object.assign(document.createElement('canvas'), { width: size, height: size });
+    const ctx = canvas.getContext('2d');
+    if (ctx) return { canvas, ctx };
+  }
+  throw new Error('far ground: no 2D canvas');
+}
+
 function paintFarGround({ open = null, box, size = SIZE }: { open?: Map<CityBlock, number> | null; box: Rect; size?: number }): FarGround {
   const span = Math.max(box.x1 - box.x0, box.z1 - box.z0);
-  const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(size, size) : Object.assign(document.createElement('canvas'), { width: size, height: size });
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('far ground: no 2D canvas');
+  const { canvas, ctx } = canvas2d(size);
   const k = size / span;
   ctx.setTransform(k, 0, 0, k, -box.x0 * k, -box.z0 * k); // world metres in, texels out
   const ring = (pts: PointXZ[], path = new Path2D()) => {
@@ -139,7 +152,7 @@ function paintFarGround({ open = null, box, size = SIZE }: { open?: Map<CityBloc
 /**
  * The colour of the far ground at the fragment (TSL): the painted box's inside it, `outside` (a colour node) beyond it
  */
-function farGroundColor(far: FarGround, outside: Node<'vec3'>): Node<'vec3'> {
+function farGroundColor(far: FarGround, outside: Node<'vec3'> | Node<'color'>): Node<'vec3'> {
   const uv = positionWorld.xz.sub(uniform(far.origin)).div(uniform(far.span));
   const inside = step(0, uv.x).mul(step(uv.x, 1)).mul(step(0, uv.y)).mul(step(uv.y, 1));
   return mix(outside, texture(far.texture, uv).rgb, inside);

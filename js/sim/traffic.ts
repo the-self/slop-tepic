@@ -39,9 +39,12 @@ import { throwVelocity, bleedOf } from './ragdolls.ts';
 import type { Ragdolls, RagdollHandle } from './ragdolls.ts';
 import { TAXI_MODEL, POLICE_MODEL, BUS_MODEL, CAR_MODEL_BY_ID, BODY_SHARE, paintsOf, pickModel, pickBody } from '../models/cars/index.ts';
 import type { CarModel } from '../models/cars/index.ts';
+import { pickMoto } from '../models/motos/index.ts';
 import { rayCircle, rayBox, roundBox, blastFalloff } from './weapons.ts';
 import { MIN_IMPACT, createDamage, applyImpact } from '../player/vehicle-damage.ts';
 import type { CarDamage } from '../player/vehicle-damage.ts';
+import { suspensionOf } from '../player/car-physics.ts';
+import type { CarBodyDef, CarPhysics, PhysicsVehicle, CarStepInput } from '../player/car-physics.ts';
 import { roadClass, carDensity, peopleDensity, carDemand, busyFactor, ROUTE_PULL } from './traffic-demand.ts';
 import type { RoadClass } from './traffic-demand.ts';
 
@@ -76,6 +79,15 @@ const MASS = {
 const MASS_OF_BODY: Partial<Record<string, number>> = MASS;
 const massOf = (v: Vehicle): number => (v.bus ? MASS.bus : v.mass || MASS_OF_BODY[v.bodyType] || MASS.sedan);
 const DOWN_TIME = 9; // s a knocked-over person lies still before getting up (out of sight, see spawnPed)
+// A car of the traffic crashing within CRASH_RANGE m of the player (into the player, a car already thrown about, or
+// another car knocked into it) faster than CRASH_SPEED m/s becomes a body in Jolt (player/car-physics.ts) until it has
+// come to rest; at most MAX_CRASHED at once, the stillest back in the traffic first
+const CRASH_RANGE = 60;
+const CRASH_SPEED = 2;
+const MAX_CRASHED = 10;
+const CRASH_LOOKAHEAD = 0.06; // s ahead a crash is seen coming (the car is a body before it lands)
+const CRASH_STILL = 1.8; // s a crashed car lies still before it drives on or is left
+const CRASH_BRAKE = 6; // m/s² its driver brakes at (none left in it: it rolls)
 
 // Intelligent Driver Model: max acceleration, comfortable braking, time headway, standstill gap; and the sideways
 // acceleration drivers accept in bends, which sets how fast they take each turn or lane shift
@@ -370,6 +382,8 @@ interface VehicleBase {
   damage: CarDamage | null;
   wrecked: boolean;
   smokeCarry: number;
+  /** a car thrown about in a crash near the player: its body in Jolt (crash), or null */
+  crash: CarCrash | null;
   /** the road surface's height under it (the ground, or a bridge's deck, m) and the ground's pitch (rad), each frame */
   hy?: number;
   gp?: number;
@@ -409,6 +423,7 @@ interface Bus extends VehicleBase {
   bus: true;
   fleet: 'bus';
   livery: number;
+  crash: null;
   isPolice?: undefined;
   isTaxi?: undefined;
   bodyType?: undefined;
@@ -427,6 +442,7 @@ interface TwoWheelerBase extends VehicleBase {
   pedal: number;
   wreck: BikeWreck | null;
   rider: PersonRig;
+  crash: null;
   kit?: TwoWheelKit;
   isPolice?: undefined;
   isTaxi?: undefined;
@@ -437,17 +453,20 @@ interface Bike extends TwoWheelerBase {
   bike: true;
   moto?: undefined;
   bodyType: 'bike';
+  model?: undefined;
 }
+/** A motorcyclist, on one of the moto models (models/motos: drawn again on each spawn, by rarity) */
 interface Moto extends TwoWheelerBase {
   moto: true;
   bike?: undefined;
   bodyType: 'moto';
+  model: CarModel;
 }
 type TwoWheeler = Bike | Moto;
 
 type Vehicle = Car | Bus | TwoWheeler;
-/** What the player on foot can take (no motorcycles: vehicleNear) */
-type Hijackable = Car | Bus | Bike;
+/** What the player on foot can take (vehicleNear): any of the traffic's vehicles, motorcycles too */
+type Hijackable = Vehicle;
 type VehicleKind = 'car' | 'bike' | 'moto' | 'bus';
 const VEHICLE_KINDS: readonly VehicleKind[] = ['car', 'bike', 'moto', 'bus'];
 /** On the road: the edge it drives along and the move it makes at its end (place() and leave() give it both) */
@@ -462,6 +481,21 @@ const onRoad = (v: Vehicle): v is DrivenVehicle => v.edge !== null && v.move !==
 const onEdge = (v: Vehicle): v is OnEdge => v.edge !== null;
 // (a two-wheeler is given its kit as soon as it is made)
 const ridden = (v: Vehicle): v is TwoWheeler => v.kit !== undefined;
+
+/** A crashed car's body in Jolt (car-physics.ts add), and whose it is: the traffic's car (crash; read back off what
+ *  another body struck, its out.hit.other) */
+type CrashBody = PhysicsVehicle & { owner?: unknown };
+/** A car thrown about in a crash (crash): its body, s it has lain still, its speed (m/s), whether it was left in the
+ *  road (its driver out), the box the traffic steers round (crashedObstacles), and its driver's inputs */
+interface CarCrash {
+  body: CrashBody;
+  still: number;
+  speed: number;
+  left: boolean;
+  box: ParkedVehicle & { heading: number };
+  input: CarStepInput;
+}
+type CrashedCar = Car & { crash: CarCrash };
 
 /** A collision spark (m, m/s, s), bouncing on the road surface `floor` under where it was struck */
 interface Spark {
@@ -492,6 +526,8 @@ interface TrafficPlayer {
   heading: number;
   speed: number;
   knocks: boolean;
+  /** a body in Jolt itself (a vehicle, with the physics set): what it crashes into goes into Jolt too (crash) */
+  jolt: boolean;
 }
 
 /** What the traffic reads of (and pushes on) the player's entity (player/controllers.ts) */
@@ -507,12 +543,14 @@ interface TrafficPlayerEntity {
   halfL?: number;
   spec?: { mass?: number } | null;
   /** a car's body shape, or a bicycle's colour */
-  look?: { bodyType?: string; color?: number } | null;
+  look?: { bodyType?: string; color?: number; model?: string; paint?: number } | null;
   angularVel?: number;
   pitchVel?: number;
   rollVel?: number;
   heaveVel?: number;
   lastCollisionSpark?: { x: number; y: number; z: number; nx: number; nz: number; speed: number } | null;
+  /** its body in Jolt (car-physics.ts), while it has one */
+  vehicle?: object | null;
 }
 
 /** A vehicle of the player's left standing (main.ts setParked): drivers stop behind it */
@@ -599,6 +637,7 @@ interface RouteLook {
 /** What the player took (hijack): its kind, where, heading (rad), speed (m/s), its looks */
 type TakenVehicle =
   | { kind: 'cyclist'; x: number; z: number; heading: number; speed: number; color: number }
+  | { kind: 'moto'; x: number; z: number; heading: number; speed: number; model: string; paint: number }
   | {
     kind: 'car'; bus?: boolean; x: number; z: number; heading: number; speed: number; bodyType: string; police: boolean;
     model: string | undefined; paint: number; route: RouteLook | null;
@@ -753,7 +792,7 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
   // =========================================================================
   // 1. 3D LOFTED TAXIS, SEDANS, SUVS, PICKUPS, VANS, HATCHBACKS & POLICE CRUISERS (200 VEHICLES)
   // =========================================================================
-  function createVehicle<B extends boolean>(bus: B, half: number, halfWidth: number, axle: number, driver: DriverModel, v0: number): VehicleBase & { bus: B } {
+  function createVehicle<B extends boolean>(bus: B, half: number, halfWidth: number, axle: number, driver: DriverModel, v0: number): VehicleBase & { bus: B; crash: null } {
     return {
       bus, half, halfWidth, axle, driver, v0,
       edge: null, lane: 0, s: 0, speed: 0, acc: 0, gap: Infinity, leaderSpeed: 0,
@@ -768,6 +807,8 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
       pAhead: Infinity, pRight: 0, pSpeed: 0, pHalfW: 0.86, pHalfL: 2.18, wheelSpin: Math.random() * Math.PI * 2,
       // crash damage (vehicle-damage.ts createDamage, made on its first hit), and stopped for good once its engine is dead
       damage: null, wrecked: false, smokeCarry: 0,
+      // a car thrown about in a crash, a body in Jolt (crash)
+      crash: null,
       // its headlights this frame (renderCar, renderBus)
       _camDistSq: 0, _effDist: 0, _sinY: 0, _cosY: 1, _braking: 0
     };
@@ -994,7 +1035,7 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
   const motos: Moto[] = [];
   for (let i = 0; i < NUM_MOTOS; i++) {
     const moto: Moto = Object.assign(createVehicle(false, 1.05, 0.4, 0.68, MOTO_DRIVER, 10.5 + (i % 5) * 1.1), {
-      moto: true as const, bodyType: 'moto' as const, color: motoPalette[i % motoPalette.length], pedal: 0, wreck: null,
+      moto: true as const, bodyType: 'moto' as const, color: motoPalette[i % motoPalette.length], pedal: 0, wreck: null, model: pickMoto(),
       rider: riderLooks(700, i)
     });
     motos.push(moto);
@@ -1170,15 +1211,18 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
   const phaseOf = (e: TrafficEdge) => (e.axisIndex === 0 ? avePhase : stPhase);
   let focusX = 0;
   let focusZ = 140;
-  // (mode, heading, speed & knocks: set every update, before anything reads them)
+  // (mode, heading, speed, knocks & jolt: set every update, before anything reads them)
   const player: TrafficPlayer = {
     active: false, entity: null, x: 0, z: 0, vx: 0, vz: 0, halfW: 0.86, halfL: 2.18, mass: MASS.sedan,
-    mode: 'car', heading: 0, speed: 0, knocks: false
+    mode: 'car', heading: 0, speed: 0, knocks: false, jolt: false
   };
-  // The player's own vehicles left standing (main.ts): { x, z, halfW, halfL }, which drivers stop behind
-  let parked: ParkedVehicle[] = [];
+  // What stands in the road that isn't the traffic's (main.ts: the player's vehicles left there, the patrol cars),
+  // and the cars thrown about in a crash (crashedStep): all of it steered round, as `parked`
+  let parkedOutside: ParkedVehicle[] = [];
+  const crashedObstacles: ParkedVehicle[] = [];
+  const parked: ParkedVehicle[] = [];
   function setParked(list: ParkedVehicle[] | null): void {
-    parked = Array.isArray(list) ? list : [];
+    parkedOutside = Array.isArray(list) ? list : [];
   }
   // The weather on the street (main.ts, from weather.ts RoadWater): on a wet road drivers keep further back, go a
   // little slower and take the bends slower (the tyres' grip, wetGrip), and nobody brakes as hard; in the rain people
@@ -2086,6 +2130,11 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
       const nz = dz / dist;
       const relVn = (v.vx - o.vx) * nx + (v.vz - o.vz) * nz;
       if (relVn <= 0.5) continue;
+      // (near the player and hard: both into Jolt, which takes the crash from here)
+      if (relVn > CRASH_SPEED && crash(v)) {
+        crash(o);
+        return;
+      }
       const approachSpeed = (v.tx * v.speed + v.vx - o.tx * o.speed - o.vx) * nx
         + (v.tz * v.speed + v.vz - o.tz * o.speed - o.vz) * nz;
       const base = ((v.hy || 0) + (o.hy || 0)) / 2; // (their road's surface: the ground, or a bridge's deck)
@@ -2281,6 +2330,212 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     }
   }
 
+  // =========================================================================
+  // 5b. CRASHES IN JOLT
+  // =========================================================================
+  // A car of the traffic thrown about in a crash near the player is a body in Jolt's world, the player's car's
+  // (player/car-physics.ts): its body shape's bonnet & cabin, its model's weight, its wheels on springs; it spins, it
+  // shunts what it runs into, it rolls over hit from the side. Meanwhile the traffic only reads where the body is (to
+  // draw it, to steer round it, to dent it where it was struck) and its driver brakes. Once it lies still, upright and
+  // on a road it drives on from where it is; otherwise it is left there (its driver gets out) till the player is far
+  let physics: CarPhysics | null = null;
+  const crashed: CrashedCar[] = []; // the cars in Jolt
+  function setPhysics(p: CarPhysics | null): void {
+    physics = p ?? null;
+  }
+
+  // What v's body is in Jolt (car-physics.ts add): its model's weight & footprint, its body shape's height, its wheels
+  // where they are drawn (the left instance's on its right: see placeWheels), springs by its class; never set back on
+  // its wheels (rescue): a car on its roof stays there; asleep while still
+  function crashDef(v: Car): CarBodyDef {
+    const spec = BODY_SPECS[v.bodyType];
+    const [springHz, roll] = suspensionOf(v.model?.class ?? 'family'); // (no model: a family car's)
+    const hT = spec.wheelX * v.sx, hB = spec.wheelZ * v.sz, r = spec.wheelRadius * v.sw;
+    const height = v.model?.size[2] || 1.45;
+    const wheels: [x: number, z: number, front: boolean][] = [[-hT, hB, true], [hT, hB, true], [-hT, -hB, false], [hT, -hB, false]];
+    return {
+      kind: 'car', mass: massOf(v), halfW: v.halfWidth, halfL: v.half, height, cg: height * 0.38, springHz, roll,
+      steerLock: 0.55, drive: 'fwd', rescue: false, sleeps: true,
+      wheels: wheels.map(([x, z, front]) => ({ x, z, radius: r, front }))
+    };
+  }
+
+  // v into Jolt where it is, moving as it was, out of its lane (the traffic steers round it: crashedObstacles). Whether
+  // it went (its crash, or null): only a car, near the player, and room for it (the stillest of MAX_CRASHED makes way)
+  function crash(v: Vehicle): CarCrash | null {
+    if (!physics || v.crash || v.bus || v.bike || v.moto || !v.edge) return null;
+    if (Math.hypot(v.x - player.x, v.z - player.z) > CRASH_RANGE) return null;
+    if (crashed.length >= MAX_CRASHED) {
+      let stillest: CrashedCar | null = null;
+      for (const o of crashed) if (!o.crash.left && (!stillest || o.crash.speed < stillest.crash.speed)) stillest = o;
+      if (stillest) settleCrash(stillest, true);
+      if (crashed.length >= MAX_CRASHED) return null;
+    }
+    const rotY = v.yaw + v.yawOffset;
+    const body: CrashBody = physics.add(crashDef(v), v.x, v.hy || 0, v.z, rotY);
+    body.owner = v;
+    const vx = v.tx * v.speed + v.vx, vz = v.tz * v.speed + v.vz;
+    physics.shove(body, vx, 0, vz, 0, v.yawVel, 0);
+    const car = Object.assign(v, {
+      crash: {
+        body, still: 0, speed: Math.hypot(vx, vz), left: false,
+        box: { x: v.x, z: v.z, heading: rotY, halfW: v.halfWidth, halfL: v.half },
+        input: { force: 0, airDrag: 0, steer: 0, handbrake: false, hold: false, grip: roadGrip, spinning: false }
+      }
+    });
+    body.input = car.crash.input;
+    retireVehicle(car);
+    car.blink = 0;
+    crashed.push(car);
+    return car.crash;
+  }
+
+  // About to crash into the player's vehicle (a body in Jolt itself), or into a car already thrown about, faster than
+  // CRASH_SPEED: their boxes, grown by how far they close in CRASH_LOOKAHEAD s, overlap. (n from v towards the other)
+  function crashingInto(v: Vehicle, x: number, z: number, heading: number, halfW: number, halfL: number, ovx: number, ovz: number): boolean {
+    const relX = x - v.x, relZ = z - v.z;
+    if (Math.abs(relX) > 14 || Math.abs(relZ) > 14) return false;
+    const cvx = v.tx * v.speed + v.vx, cvz = v.tz * v.speed + v.vz;
+    const grow = Math.hypot(ovx - cvx, ovz - cvz) * CRASH_LOOKAHEAD + 0.1;
+    const hit = overlapWithPlayer(relX, relZ, v.yaw + v.yawOffset, v.halfWidth + grow, v.half + grow, heading, halfW, halfL);
+    return hit !== null && (ovx - cvx) * -hit.nx + (ovz - cvz) * -hit.nz > CRASH_SPEED;
+  }
+  function crashes(v: Vehicle): boolean {
+    if (player.jolt && crashingInto(v, player.x, player.z, player.heading, player.halfW, player.halfL, player.vx, player.vz)) return true;
+    for (const o of crashed) {
+      const b = o.crash.body.out;
+      if (crashingInto(v, o.x, o.z, o.yaw, o.halfWidth, o.half, b.vx, b.vz)) return true;
+    }
+    return false;
+  }
+
+  // Per frame, before the traffic drives: where Jolt's last step left each crashed car, the dents from what its body
+  // struck, its driver braking, the box the traffic steers round; those lying still drive on, or are left
+  const _q = new THREE.Quaternion();
+  function crashedStep(dt: number): void {
+    crashedObstacles.length = 0;
+    for (let i = crashed.length - 1; i >= 0; i--) {
+      const v = crashed[i], c = v.crash, o = c.body.out;
+      v.prevX = v.x;
+      v.prevZ = v.z;
+      v.x = o.x;
+      v.z = o.z;
+      v.hy = o.y;
+      v.yaw = o.heading;
+      v.yawOffset = 0;
+      v.tx = Math.sin(v.yaw);
+      v.tz = Math.cos(v.yaw);
+      v.speed = Math.max(0, o.forward);
+      v.acc = -1; // (its brake lamps on)
+      c.speed = Math.hypot(o.vx, o.vy, o.vz);
+      // dented where it was struck: the hit's side, in its own frame (n points out of what it hit, into it)
+      const h = o.hit, other: CrashBody | null = h.other;
+      if (h.speed > 1) {
+        const cs = Math.cos(v.yaw), sn = Math.sin(v.yaw);
+        hurtVehicle(v, h.nx * h.speed, h.nz * h.speed, -h.nx * cs + h.nz * sn, -h.nx * sn - h.nz * cs, v.halfWidth, v.half);
+        // (two of the traffic's: heard; the player's own crash reports itself, controllers.ts)
+        if (other?.owner && other.owner !== player.entity && h.speed > 1.5) {
+          reportCollision(v, other.owner, v.x - h.nx * v.halfWidth, 0.56, v.z - h.nz * v.halfWidth, h.nx, h.nz, h.speed, v.hy);
+          if (h.speed > 2.2) spawnCollisionSparks(v.x - h.nx * v.halfWidth, 0.56, v.z - h.nz * v.halfWidth, h.nx, h.nz, h.speed, v.hy);
+        }
+      }
+      if (v.damage) smokeFrom(v, dt);
+      // whoever it slides into, thrown (the people aren't bodies in Jolt)
+      if (c.speed > KNOCK_SPEED) knockBox(v.x, v.z, v.yaw, v.halfWidth, v.half, o.vx, o.vz);
+      // its driver brakes (none left in it: it rolls on)
+      const fwd = o.forward, m = massOf(v);
+      c.input.grip = roadGrip;
+      c.input.force = v.wrecked || Math.abs(fwd) < 0.3 ? 0 : -Math.sign(fwd) * Math.min(m * Math.abs(fwd) / dt, m * CRASH_BRAKE);
+      c.input.hold = !v.wrecked && Math.abs(fwd) < 0.3;
+      c.box.x = v.x;
+      c.box.z = v.z;
+      c.box.heading = v.yaw;
+      crashedObstacles.push(c.box);
+      const spin = Math.hypot(o.wx, o.wy, o.wz);
+      c.still = c.speed < 0.3 && spin < 0.3 ? c.still + dt : 0;
+      if (c.left) {
+        // left in the road: gone once the player is far and doesn't see it
+        if (Math.hypot(v.x - focusX, v.z - focusZ) > VEHICLE_RADIUS && !(hasView && visible(v.x, v.z, v.half + 2, (v.hy || 0) + 1))) uncrash(v);
+      } else if (c.still > CRASH_STILL) settleCrash(v, false);
+    }
+  }
+
+  // v at rest after its crash: upright, whole and by a lane going its way, back in the traffic from where it stands
+  // (easing back onto the lane's centre, its dents kept); otherwise left there, its driver getting out. `forced`: one
+  // more car crashed, and this one must make way: if it can't drive on and nobody sees it, it goes
+  function settleCrash(v: CrashedCar, forced: boolean): void {
+    const o = v.crash.body.out;
+    const spot = !v.wrecked && o.uy > 0.85 ? laneNear(v.x, v.z, v.yaw) : null;
+    if (spot) {
+      const { damage } = v;
+      const x = v.x, z = v.z, yaw = v.yaw;
+      uncrash(v);
+      place(v, spot.e, spot.lane, spot.s);
+      v.damage = damage;
+      v.speed = 0;
+      // (where it stands, off the lane's centre and turned from it: the driver eases back)
+      v.dl = -(x - v.x) * v.tz + (z - v.z) * v.tx;
+      if (onEdge(v)) locate(v); // (it is: just placed)
+      let dyaw = yaw - v.yaw;
+      dyaw -= Math.round(dyaw / (Math.PI * 2)) * Math.PI * 2;
+      v.yawOffset = clamp(dyaw, -0.65, 0.65);
+      return;
+    }
+    if (!v.crash.left) {
+      v.crash.left = true;
+      if (!v.wrecked) bail(v.x + Math.cos(v.yaw) * (v.halfWidth + 0.55), v.z - Math.sin(v.yaw) * (v.halfWidth + 0.55), v.yaw, null);
+    }
+    if (forced && !(hasView && visible(v.x, v.z, v.half + 2, (v.hy || 0) + 1))) uncrash(v);
+  }
+
+  // v out of Jolt (out of the traffic too, till placed again)
+  function uncrash(v: CrashedCar): void {
+    physics?.remove(v.crash.body);
+    const car: Car = v; // (no longer crashed)
+    car.crash = null;
+    crashed.splice(crashed.indexOf(v), 1);
+  }
+
+  // The lane nearest (x, z) on the roads round the player that runs along `yaw` (within ~45°), within 3 m of its
+  // centre and with room along it: { e, lane, s }, or null
+  function laneNear(x: number, z: number, yaw: number): { e: TrafficEdge; lane: number; s: number } | null {
+    let best: { e: TrafficEdge; lane: number; s: number } | null = null, bestOff = 3;
+    for (const e of nearEdges) {
+      if (!e.lanes.length || e.len < 12) continue;
+      const along = (x - e.sx) * e.dx + (z - e.sz) * e.dz;
+      if (along < 4 || along > e.len - 6) continue;
+      let dyaw = yaw - Math.atan2(e.dx, e.dz);
+      dyaw -= Math.round(dyaw / (Math.PI * 2)) * Math.PI * 2;
+      if (Math.abs(dyaw) > 0.8) continue;
+      const across = (x - e.sx) * e.rx + (z - e.sz) * e.rz;
+      for (let i = 0; i < e.lanes.length; i++) {
+        const off = Math.abs(across - e.lanes[i]);
+        if (off < bestOff) {
+          bestOff = off;
+          best = { e, lane: i, s: along };
+        }
+      }
+    }
+    return best;
+  }
+
+  // A crashed car's wheels where its body holds them, on their springs, spinning (i: its slot, as placeWheels)
+  const _wheelAt = new THREE.Vector3(), _spin = new THREE.Quaternion(), _xAxis = new THREE.Vector3(1, 0, 0);
+  function placeCrashedWheels(crash: CarCrash, i: number, radius: number, baseRadius = 0.35): void {
+    const o = crash.body.out, wheels = crash.body.def.wheels;
+    _q.set(o.qx, o.qy, o.qz, o.qw);
+    const scale = radius / baseRadius;
+    dummy.scale.set(scale, scale, scale);
+    for (let k = 0; k < 4; k++) {
+      const w = wheels[k], ow = o.wheels.at(k); // (none yet: at rest on the floor, still)
+      _wheelAt.set(w.x, ow ? ow.y : radius, w.z).applyQuaternion(_q);
+      dummy.position.set(o.x + _wheelAt.x, o.y + _wheelAt.y, o.z + _wheelAt.z);
+      dummy.quaternion.copy(_q).multiply(_spin.setFromAxisAngle(_xAxis, ow ? ow.spin : 0));
+      dummy.updateMatrix();
+      (k % 2 === 0 ? carWheelLeftInst : carWheelRightInst).setMatrixAt(i * 2 + (k < 2 ? 0 : 1), dummy.matrix);
+    }
+  }
+
   // Smoke from a damaged engine (grey, then black once it is about to die), through the player's smoke (main.ts)
   let smokeEmitter: SmokeEmitter | null = null;
   function setSmokeEmitter(emit: SmokeEmitter | null): void {
@@ -2359,7 +2614,8 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
   // Put v in a free lane around the focus. Normal replenishment protects the near view; teleports can fill it. Buses
   // & combis go on the roads of their routes (where the map has any).
   function spawnVehicle(v: Vehicle, rMin: number, rMax: number, protectView: boolean): boolean {
-    if (!v.bus && !v.bike && !v.moto) drawModel(v); // (a car comes back as another model)
+    if (!v.bus && !v.bike && !v.moto) drawModel(v); // (a car comes back as another model, a motorcyclist on another moto)
+    else if (v.moto) v.model = pickMoto();
     const onRoutes = !!v.fleet && transit.paths.length > 0;
     const pool = onRoutes ? nearTransitEdges : nearEdges;
     for (let attempt = 0; attempt < 12; attempt++) {
@@ -2754,7 +3010,9 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     const slot = bodyInst.count++;
 
     dummy.position.set(c.x, c.hy || 0, c.z);
-    dummy.rotation.set(c.pitch + (c.gp || 0), rotY, c.roll, 'YXZ');
+    // (a crashed car as its body lies in Jolt)
+    if (c.crash) dummy.quaternion.set(c.crash.body.out.qx, c.crash.body.out.qy, c.crash.body.out.qz, c.crash.body.out.qw);
+    else dummy.rotation.set(c.pitch + (c.gp || 0), rotY, c.roll, 'YXZ');
     dummy.scale.set(c.sx, c.sy, c.sz); // (the body shape stretched to the model's size)
     dummy.updateMatrix();
     bodyInst.setMatrixAt(slot, dummy.matrix);
@@ -2794,7 +3052,8 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     // Soft Under-Car Contact Shadow (AO) stays flat on the asphalt (on its slope)
     const visIdx = visibleCars++;
     dummy.rotation.set(c.gp || 0, rotY, 0, 'YXZ');
-    dummy.position.set(c.x, 0.018 + (c.hy || 0), c.z);
+    // (a crashed car's on what is under it: the street, a bridge's deck, whatever height it is flying at)
+    dummy.position.set(c.x, 0.018 + (c.crash ? surfaceAt(c.x, c.z, (c.hy || 0) + 0.5) : c.hy || 0), c.z);
     dummy.scale.set(c.halfWidth * 2 + 0.5, 1.0, c.half * 2 + 0.55);
     dummy.updateMatrix();
     carShadowInst.setMatrixAt(visIdx, dummy.matrix);
@@ -2817,7 +3076,8 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
       }
     }
 
-    if (near) {
+    if (near && c.crash) placeCrashedWheels(c.crash, wheelCars++, spec.wheelRadius * c.sw);
+    else if (near) {
       placeWheels(c, wheelCars++, rotY, c.roll, spec.wheelRadius * c.sw, spec.wheelX * c.sx, spec.wheelZ * c.sz, carWheelLeftInst, carWheelRightInst);
     }
   }
@@ -3324,7 +3584,7 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
       thrown++;
     }
     for (const v of vehicles) {
-      if (!v.edge) continue;
+      if (!v.edge && !v.crash) continue;
       const dx = v.x - x, dz = v.z - z;
       const d = Math.hypot(dx, dz);
       if (d > radius + v.half) continue;
@@ -3338,6 +3598,16 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
       }
       const heft = Math.min(1.5, MASS.sedan / massOf(v)); // a bus hardly moves
       const shove = power * k * heft;
+      // near the player, a car is thrown in Jolt: up, over, rolling
+      const thrownAbout = v.crash ?? crash(v);
+      if (thrownAbout) {
+        const across = Math.random() - 0.5;
+        physics?.shove(thrownAbout.body, nx * shove, (2 + power * 0.25) * k, nz * shove, nz * across * 3 * k, (Math.random() - 0.5) * 2 * k, -nx * across * 3 * k);
+        const yaw = v.yaw, cs = Math.cos(yaw), sn = Math.sin(yaw);
+        hurtVehicle(v, nx * shove * 1.6, nz * shove * 1.6, -(nx * cs - nz * sn), -(nx * sn + nz * cs), v.halfWidth, v.half);
+        spawnCollisionSparks(v.x, 0.6, v.z, -nx, -nz, 6 + shove);
+        continue;
+      }
       v.vx += nx * shove;
       v.vz += nz * shove;
       v.speed *= 1 - k;
@@ -3609,14 +3879,13 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
   const FLEE_SPEED = 4.6; // m/s running away
   const BAIL_TURN = 7; // rad/s
 
-  // The car, camión or bicycle the player on foot could take: the nearest whose body is within `reach` metres of
-  // (x, z), going slowly enough to be stopped (no motorcycles: the player has none of their own to ride yet), its
-  // engine not dead
+  // The car, camión, bicycle or moto the player on foot could take: the nearest whose body is within `reach` metres of
+  // (x, z), going slowly enough to be stopped, its engine not dead
   function vehicleNear(x: number, z: number, reach: number): Hijackable | null {
     let best: Hijackable | null = null;
     let bestDistance = reach;
     for (const v of vehicles) {
-      if (v.moto || v.wreck || v.wrecked || !v.edge || v.speed > 7) continue;
+      if (v.wreck || v.wrecked || !v.edge || v.speed > 7) continue;
       const dx = x - v.x;
       const dz = z - v.z;
       if (Math.abs(dx) > 10 || Math.abs(dz) > 10) continue;
@@ -3634,24 +3903,27 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
   }
 
   // Take v out of the traffic (it comes back elsewhere, out of sight, like any vehicle left behind) and put its
-  // driver out on the street: what the player's own car or bicycle needs to take its place
+  // driver out on the street: what the player's own car, bicycle or moto needs to take its place
   function hijack(v: Hijackable): TakenVehicle {
     const yaw = v.yaw + v.yawOffset;
     // (a camión or a combi keeps its route: its name on the glass or the roof, the camión its livery)
     const route = v.bus || (v.fleet === 'combi' && v.sign >= 0) ? { sign: Math.max(0, v.sign), livery: v.bus ? v.livery : 0 } : null;
     const taken: TakenVehicle = v.bike
       ? { kind: 'cyclist', x: v.x, z: v.z, heading: yaw, speed: v.speed, color: v.color.getHex() }
-      : v.bus
+      : v.moto
+        ? { kind: 'moto', x: v.x, z: v.z, heading: yaw, speed: v.speed, model: v.model.id, paint: v.color.getHex() }
+        : v.bus
         ? { kind: 'car', bus: true, x: v.x, z: v.z, heading: yaw, speed: v.speed, bodyType: 'bus', police: false, model: BUS_MODEL.id, paint: 0xffffff, route }
         : {
             kind: 'car', x: v.x, z: v.z, heading: yaw, speed: v.speed, bodyType: v.bodyType, police: v.isPolice, model: v.model?.id,
             paint: new THREE.Color().setRGB(v.paint[0], v.paint[1], v.paint[2]).getHex(), route
           };
     // out of the driver's door (on the left: heading 0 faces +z, left is +x; a camión's driver sits at its nose), or
-    // off the bicycle
-    const side = v.halfWidth + (v.bike ? 0.4 : 0.55);
-    const ahead = v.bike ? 0 : v.bus ? 4.6 : 0.35;
-    bail(v.x + Math.cos(yaw) * side + Math.sin(yaw) * ahead, v.z - Math.sin(yaw) * side + Math.cos(yaw) * ahead, yaw, v.bike ? v : null);
+    // off the bicycle or the moto
+    const two = v.bike || v.moto;
+    const side = v.halfWidth + (two ? 0.4 : 0.55);
+    const ahead = two ? 0 : v.bus ? 4.6 : 0.35;
+    bail(v.x + Math.cos(yaw) * side + Math.sin(yaw) * ahead, v.z - Math.sin(yaw) * side + Math.cos(yaw) * ahead, yaw, two ? v : null);
     v.edge = null;
     v.conn = null;
     v.trail = null;
@@ -3887,6 +4159,14 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     player.heading = playerEntity ? playerEntity.heading || 0 : 0;
     player.speed = Math.hypot(player.vx, player.vz);
     player.knocks = player.active && (activeMode === 'car' || activeMode === 'cyclist' || activeMode === 'moto') && player.speed > KNOCK_SPEED;
+    // (a body in Jolt itself: what it crashes into goes into Jolt too, crash)
+    player.jolt = Boolean(physics && player.active && playerEntity?.vehicle && activeMode !== 'person');
+
+    // the cars thrown about in a crash where Jolt left them, then everything the traffic steers round
+    crashedStep(dt);
+    parked.length = 0;
+    for (const o of parkedOutside) parked.push(o);
+    for (const o of crashedObstacles) parked.push(o);
 
     // 1. Cars & buses
     // Limit attempted placements, not just successes, and rotate through the pool so an awkward location
@@ -3899,7 +4179,7 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     for (let scanned = 0; scanned < vehicles.length && budget > 0; scanned++) {
       const v = vehicles[vehicleCursor];
       vehicleCursor = (vehicleCursor + 1) % vehicles.length;
-      if (v.wreck) continue; // a knocked-over cyclist stays where it fell for now
+      if (v.wreck || v.crash) continue; // a knocked-over cyclist stays where it fell for now, a crashed car in Jolt
       const k = kindOf(v);
       const d = v.edge ? Math.hypot(v.x - focusX, v.z - focusZ) : Infinity;
       if (d <= (jump ? NEAR_RADIUS : VEHICLE_RADIUS)) {
@@ -3936,6 +4216,10 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
         renderWreck(v, dt);
         continue;
       }
+      if (v.crash) {
+        renderCar(v);
+        continue;
+      }
       if (!onRoad(v)) continue;
 
       v.prevX = v.x;
@@ -3952,6 +4236,10 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
           renderWreck(v, 0);
           continue;
         }
+      } else if (!v.bus && (player.jolt || crashed.length) && crashes(v) && crash(v)) {
+        // (in Jolt from here: the crash itself is its contact with what it ran into)
+        renderCar(v);
+        continue;
       } else if (player.active) collideWithPlayer(v, v.yaw + v.yawOffset, v.bus ? 1.30 : v.halfWidth, v.bus ? 5.72 : v.half - 0.07);
       if (v.vx * v.vx + v.vz * v.vz > 0.36) knockOn(v);
       if (v.damage) smokeFrom(v, dt);
@@ -4092,6 +4380,7 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     setCollisionListener,
     setMayhemListener,
     setKnockListener,
+    setPhysics,
     setRagdolls,
     rayHit,
     shootPed,
@@ -4518,6 +4807,7 @@ type HighwayTraffic = ReturnType<typeof createHighwayTraffic>;
 export type {
   TrafficSystem, HighwayTraffic, Vehicle, Car, Bus, TwoWheeler, Bike, Moto, Hijackable, VehicleBase, VehicleKind, DrivenVehicle, Ped, Bail, Conversation, BikeWreck,
   TrafficNode, TrafficEdge, TrafficMove, TrafficNetwork, LaneEntry, DriverModel, TrafficPlayerEntity, ParkedVehicle, BumpBody,
+  CrashBody, CarCrash, CrashedCar,
   TrafficCollision, MayhemListener, KnockListener, SmokeEmitter, TrafficRayHit, RayAccept, BodyBox, RoadSpot, TakenVehicle,
   VehicleLook, RouteLook, LookKit, LookWheel, HighwayLaneSpec, HighwayLane, HighwayCar, HighwayKind
 };

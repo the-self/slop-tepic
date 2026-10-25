@@ -19,7 +19,8 @@ export interface AcousticCollider {
   minZ: number;
   maxZ: number;
   minY?: number;
-  maxY: number;
+  /** (a collider without one is never between the source and the ear, as before: NaN fails every comparison) */
+  maxY?: number;
   obb?: { cx: number; cz: number; hx: number; hz: number; cs: number; sn: number } | null;
 }
 
@@ -38,7 +39,7 @@ function thickness(c: AcousticCollider, ax: number, ay: number, az: number, bx: 
     bx = x1 * o.cs - z1 * o.sn; bz = x1 * o.sn + z1 * o.cs;
     minX = -o.hx; maxX = o.hx; minZ = -o.hz; maxZ = o.hz;
   }
-  const minY = c.minY ?? 0, maxY = c.maxY;
+  const minY = c.minY ?? 0, maxY = c.maxY ?? Number.NaN;
   // A chase camera can briefly enter a conservative collision box. Do not silence the entire city in that case.
   if (ax > minX && ax < maxX && az > minZ && az < maxZ && ay > minY && ay < maxY) return 0;
   if (!allowEndInside && bx > minX && bx < maxX && bz > minZ && bz < maxZ && by > minY && by < maxY) return 0;
@@ -94,7 +95,7 @@ class CityAcoustics {
     // Obstructions near the listener dominate street-level sound; distant geometry need not join this cache.
     for (const c of this.controllers.nearColliders(this.x, this.z, 200)) {
       // (over 3 m tall: from its base, which the town's slopes raise)
-      if (c.maxY - (c.minY ?? 0) > 3 && c.maxX - c.minX > 2 && c.maxZ - c.minZ > 2) this.buildings.push(c);
+      if ((c.maxY ?? Number.NaN) - (c.minY ?? 0) > 3 && c.maxX - c.minX > 2 && c.maxZ - c.minZ > 2) this.buildings.push(c);
     }
 
     // Eight rising probes estimate nearby reflective walls, including their height. Reuse the bounds cache

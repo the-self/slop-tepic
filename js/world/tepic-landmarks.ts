@@ -2,7 +2,6 @@ import * as THREE from 'three/webgpu';
 import { color, mix, positionWorld, fract, step, smoothstep, sin, time } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GEO } from './city-geodata.js';
-import type { Landmark } from './city-geodata.js';
 import { cityUniforms } from '../render/tsl-materials.ts';
 import { liftAt, landHeight } from './ground.ts';
 import { MODEL_RESERVES, geoToWorld } from './landmark-models.ts';
@@ -69,7 +68,7 @@ function orientedBox(flat: ArrayLike<number>): OrientedBox | null {
 
 // The Catedral's frame: centre, facade normal f (towards the plaza), across-axis r, facade width & depth
 const CATEDRAL = ((): CatedralFrame | null => {
-  const site = GEO.landmarks.Catedral as Landmark | undefined; // (a Record: the city may not have it)
+  const site = GEO.landmarks.Catedral; // (a Record: the city may not have it)
   if (!site) return null;
   const box = orientedBox(site.ring);
   if (!box) return null;

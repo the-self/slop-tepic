@@ -36,6 +36,7 @@ function keyboardHarness(nyc = {}) {
   const window = eventTarget();
   const document = { ...eventTarget(), hidden: false };
   const config = {
+    CITY: { start: { x: 0, z: 0, heading: 0 } }, // (the player's start, city-geodata.js frame.start)
     streetZ: () => 0,
     isTypingInField: (event) => ['INPUT', 'SELECT'].includes(event.target?.tagName),
     ...nyc
@@ -53,10 +54,14 @@ function keyboardHarness(nyc = {}) {
       './vehicle-damage.ts': vehicleDamage,
       '../models/cars/index.ts': carRegistry,
       '../models/motos/index.ts': realModule('../js/models/motos/index.ts'),
+      './car-blood.ts': realModule('../js/player/car-blood.ts'),
+      './car-physics.ts': realModule('../js/player/car-physics.ts'),
+      '../sim/ragdolls.ts': realModule('../js/sim/ragdolls.ts')
     }
   });
   // Exercise the production event handlers without constructing the scene's 3D models.
   const controller = Object.create(ThirdPersonControllerManager.prototype);
+  controller.leftCars = []; // (as the constructor leaves it: no cars left behind yet)
   controller.keys = Object.fromEntries(['forward', 'backward', 'left', 'right', 'up', 'down', 'boost'].map((action) => [action, false]));
   controller.bindKeyboard();
   return {
@@ -173,12 +178,13 @@ function advanceWithTouch(mode, strength, reverse) {
   if (mode === 'Person') Object.assign(entity, { verticalVel: 0 });
   if (mode === 'Car') Object.assign(entity, {
     vx: 0, vz: 0, angularVel: 0, steerAngle: 0, pitchVel: 0, rollVel: 0, heaveVel: 0,
-    chassisPivot: { rotation: { x: 0, z: 0 }, position: { y: 0 } }, wheels: []
+    chassisPivot: { rotation: { x: 0, z: 0 }, position: { y: 0 } }, wheels: [],
+    // (the taxi's drive and its damage, as the real car always has them)
+    spec: drivetrain.buildSpec(carRegistry.TAXI_MODEL), damage: vehicleDamage.createDamage()
   });
   if (mode === 'Cyclist') Object.assign(entity, {
-    leanAngle: 0, leanPivot: { rotation: { z: 0 } },
-    frontWheel: { rotation: { x: 0 } }, rearWheel: { rotation: { x: 0 } },
-    pedalPhase: 0, crankPivot: { rotation: { x: 0 } }, pedals: []
+    type: 'cyclist', vx: 0, vz: 0, steerInput: 0, leanAngle: 0, leanPivot: { rotation: { z: 0 } },
+    wheelSpots: { radius: 0.38, rear: -0.58, front: 0.58, caster: 0.3, travel: 0.05 }
   });
   if (mode === 'Helicopter') Object.assign(entity, {
     verticalSpeed: 0, pitchAngle: 0, rollAngle: 0,
@@ -190,6 +196,15 @@ function advanceWithTouch(mode, strength, reverse) {
   controller.setTouchInput(reverse ? 'backward' : 'forward', strength);
   controller.setTouchInput(reverse ? 'right' : 'left', strength);
   if (mode === 'Helicopter') controller.setTouchInput(reverse ? 'down' : 'up', strength);
+  if (mode === 'Car' || mode === 'Cyclist') {
+    // (Jolt stood in for: what the vehicle's drive asks of its body before the world's step, its force for its speed,
+    // and its steering)
+    const out = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, forward: 0 };
+    controller.carPhysics = { add: () => ({ out }), place() {}, shove() {}, read: (v) => v.out };
+    if (mode === 'Car') controller.driveCar(0.1, true);
+    else controller.driveTwoWheeler(entity, 0.1, true);
+    return { speed: entity.vehicle.input.force, steerAngle: entity.steerAngle, steerInput: entity.steerInput };
+  }
   controller[`update${mode}`](0.1, 0);
   return entity;
 }
@@ -197,11 +212,12 @@ function advanceWithTouch(mode, strength, reverse) {
 for (const mode of ['Person', 'Car', 'Cyclist', 'Helicopter']) {
   test(`analog ${mode.toLowerCase()} input proportionally scales movement and turning`, () => {
     for (const reverse of [false, true]) {
-      // (a car below its tyres' grip: at full throttle traction control caps its pull)
+      // (a car below its tyres' grip: at full throttle traction control caps its pull; a car's or bicycle's `speed`, its
+      // drive's force)
       const full = advanceWithTouch(mode, mode === 'Car' ? 0.5 : 1, reverse);
       const partial = advanceWithTouch(mode, mode === 'Car' ? 0.2 : 0.4, reverse);
       assert.ok(Math.abs(partial.speed - full.speed * 0.4) < 1e-10, 'movement should scale with joystick strength');
-      const turn = mode === 'Car' ? 'steerAngle' : 'heading';
+      const turn = mode === 'Car' ? 'steerAngle' : mode === 'Cyclist' ? 'steerInput' : 'heading';
       assert.ok(Math.abs(partial[turn] - full[turn] * 0.4) < 1e-10, 'turning should scale with joystick strength');
       if (mode === 'Helicopter') {
         assert.ok(Math.abs(partial.verticalSpeed - full.verticalSpeed * 0.4) < 1e-10);
@@ -218,7 +234,9 @@ function teleportHarness(mode, colliders = [], shore = () => ({ westX: -500, eas
     blockAt: () => null
   });
   const { controller } = harness;
-  const position = (x = 0, y = 0, z = 0) => ({ x, y, z, copy(p) { this.x = p.x; this.y = p.y; this.z = p.z; } });
+  const position = (x = 0, y = 0, z = 0) => ({
+    x, y, z, copy(p) { this.x = p.x; this.y = p.y; this.z = p.z; }, set(a, b, c) { this.x = a; this.y = b; this.z = c; }
+  });
   const pivot = () => ({ position: position(), rotation: { x: 0.1, y: 0, z: -0.2 } });
   const chase = { person: [4.3, 1.95], car: [6.9, 2.12], cyclist: [4.8, 2.05], helicopter: [11.4, 3.3] };
   const ent = {
@@ -229,15 +247,22 @@ function teleportHarness(mode, colliders = [], shore = () => ({ westX: -500, eas
     pitchVel: 3, rollVel: 4, heaveVel: 2, chassisPivot: pivot(),
     lastCollisionSpark: { speed: 5 }, carState: { value: { x: 0 } },
     wheels: [{ isFront: true, steerPivot: { rotation: { y: 0.4 } }, tire: { rotation: { x: 0 } } }],
-    leanAngle: 0.3, leanPivot: pivot(), pedalPhase: 0.7,
-    frontWheel: { rotation: { x: 0 } }, rearWheel: { rotation: { x: 0 } },
+    leanAngle: 0.3, leanPivot: pivot(), pedalPhase: 0.7, steerPivot: pivot(), shadow: pivot(),
+    wheelSpots: { radius: 0.38, rear: -0.58, front: 0.58, caster: 0.3, travel: 0.05 },
+    frontWheel: pivot(), rearWheel: pivot(),
     crankPivot: { rotation: { x: 0 } }, pedals: [],
     verticalSpeed: -8, pitchAngle: 0.2, rollAngle: -0.2, tiltPivot: pivot(),
     rig: { reset(...args) { this.resetArgs = args; } },
     crowd: { begin() {}, add() {}, end() {} }
   };
   controller.activeMode = mode;
-  controller.entities = { [mode]: ent };
+  // (the others as the real manager always has them, as far as a teleport looks at them, parked far off: the walker,
+  // the car's length)
+  const far = () => position(1e5, 0, 1e5);
+  controller.entities = {
+    person: { type: 'person', position: far(), ragdoll: null }, car: { type: 'car', position: far(), halfL: 2.18 },
+    [mode]: ent
+  };
   controller.colliders = colliders;
   controller._colliderCells = null;
   controller.getGroundHeight = (x, z, mode) => mode === 'person' ? (x < 0 ? 1.24 : 0.22) : 0;
@@ -279,7 +304,10 @@ for (const mode of ['person', 'car', 'cyclist', 'helicopter']) {
       assert.equal(ent.position.y, 120, 'keep the helicopter altitude when already above the minimum');
     }
     const before = [ent.position.x, ent.position.y, ent.position.z, ent.heading];
-    controller[`update${mode[0].toUpperCase()}${mode.slice(1)}`](0.1, 0);
+    // (no Jolt here: a vehicle's body stays where it was set down)
+    if (mode === 'car') controller.driveCar(0.1, true);
+    else if (mode === 'cyclist') controller.driveTwoWheeler(ent, 0.1, true);
+    else controller[`update${mode[0].toUpperCase()}${mode.slice(1)}`](0.1, 0);
     assert.deepEqual([ent.position.x, ent.position.y, ent.position.z, ent.heading], before, 'the first neutral frame stays at the arrival');
   });
 }
@@ -512,7 +540,7 @@ test('on the slopes a walker stands on the curb over the town floor, a hill abov
   near(hilly.getGroundHeight(10, 20, 'person'), floor(10, 20) + 3);
 });
 
-test('a vehicle tilts with the ground under its wheels and rolls down the slope', () => {
+test('a vehicle tilts with the ground under its wheels', () => {
   const { controller } = slopeHarness();
   const t = {};
   // heading 0 faces +z (uphill 0.1), its left is +x (up 0.05)
@@ -523,15 +551,12 @@ test('a vehicle tilts with the ground under its wheels and rolls down the slope'
   controller.groundTilt(0, 0, -Math.PI / 2, 1.35, 0.8, t);
   near(t.pitch, Math.atan(0.05));
   near(t.roll, Math.atan(0.1));
-  near(controller.slopeAcceleration(0, 0, 0), -9.81 * 0.1 / Math.hypot(1, 0.1));
-  near(controller.slopeAcceleration(0, 0, Math.PI), 9.81 * 0.1 / Math.hypot(1, 0.1));
   // flat ground: no tilt, no pull
   const flat = slopeHarness().controller;
   flat.terrainAt = () => 0;
   flat.groundTilt(5, 5, 1, 1, 1, t);
   near(t.pitch, 0);
   near(t.roll, 0);
-  near(flat.slopeAcceleration(5, 5, 1), 0);
 });
 
 test('one key feeds every action bound to it: Space jumps on foot and pulls the car\'s handbrake', () => {
@@ -548,8 +573,13 @@ test('one key feeds every action bound to it: Space jumps on foot and pulls the 
 
 test('a car crash is the sudden change in its velocity: it dents the side it was hit on and costs engine power', () => {
   const { controller } = keyboardHarness();
+  // (its body mesh's geometry, one vertex, for the dents pressed into its own copy of it)
+  const geometry = () => ({
+    attributes: { position: { array: new Float32Array(3) }, normal: { array: new Float32Array([0, 1, 0]) } },
+    clone: geometry
+  });
   const car = {
-    heading: 0, speed: 0, vx: 0, vz: 0, wheels: [],
+    heading: 0, speed: 0, vx: 0, vz: 0, wheels: [], bodyMesh: { geometry: geometry() },
     damage: vehicleDamage.createDamage()
   };
   // a gentle shove: nothing
@@ -559,7 +589,31 @@ test('a car crash is the sudden change in its velocity: it dents the side it was
   assert.ok(car.damage.front > 0 && car.damage.rear === 0);
   assert.ok(vehicleDamage.enginePower(car.damage) < 1);
   // facing +x (its left is -z), pushed towards -z: hit from +z, on its right
-  const turned = { heading: Math.PI / 2, speed: 0, vx: 0, vz: 0, wheels: [], damage: vehicleDamage.createDamage() };
+  const turned = { heading: Math.PI / 2, speed: 0, vx: 0, vz: 0, wheels: [], bodyMesh: { geometry: geometry() }, damage: vehicleDamage.createDamage() };
   controller.impactCar(turned, 0, -12);
   assert.ok(turned.damage.right > 0 && turned.damage.left === 0);
+});
+
+test('running someone down with the nose bloodies it; backing over them or clipping them with a flank does not', () => {
+  const { controller } = keyboardHarness();
+  const blood = realModule('../js/player/car-blood.ts');
+  const slot = () => ({ value: { v: [0, 0, 0, 0], fromArray(a, o) { this.v = Array.from(a.slice(o, o + 4)); } } });
+  const car = {
+    position: { x: 0, y: 0, z: 0 }, heading: 0, halfL: 2.2, speed: 12, scale: { x: 1, z: 1 },
+    blood: { front: [slot(), slot(), slot(), slot()], top: Array.from({ length: 6 }, slot) },
+    stains: blood.createStains(),
+    bloodFrame: blood.bloodFrame({ zFront: 2.2, bumpers: [[0.46, 0.03]], bumperLine: [0.775], cabin: { cowl: 1.0, roofFront: 0.3 } }, 0.88)
+  };
+  controller.entities = { car };
+  controller.activeMode = 'car';
+  controller.bloodyCar(0.3, -2.4, 12); // (behind it)
+  controller.bloodyCar(1.1, 0, 12); // (beside it)
+  assert.equal(car.blood.front[0].value.v[3], 0);
+  car.speed = -8;
+  controller.bloodyCar(0.3, 2.4, -8); // (backing: nose ahead, moving away)
+  assert.equal(car.blood.front[0].value.v[3], 0);
+  car.speed = 12;
+  controller.bloodyCar(0.3, 2.4, 12);
+  assert.ok(car.blood.front[0].value.v[3] > 0, 'on the nose');
+  assert.ok(car.blood.top.some((u) => u.value.v[3] > 0), 'and up the bonnet at 43 km/h');
 });

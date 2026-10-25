@@ -94,6 +94,8 @@ interface CrimeControllers {
   isSolidAt(x: number, z: number, height?: number, ground?: number): boolean;
   groundTilt(x: number, z: number, heading: number, along: number, across: number, out: { pitch: number; roll: number }): unknown;
   resetInput(): void;
+  // someone the player's car struck at (x, z), `speed` m/s: their blood on it (player/car-blood.ts)
+  bloodyCar?(x: number, z: number, speed: number): void;
 }
 // What crime uses of sim/traffic.ts's traffic: the road graph, its people & vehicles, and what shots, blasts and
 // patrol cars do to them (walking round its vehicles only where it can tell where they are)
@@ -450,6 +452,7 @@ class CrimeSystem {
       this.report('runOver');
       traffic.panic(x, z, 25);
       this.fx.splatter(x, this.groundAt(x, z) + 0.9, z, speed);
+      controllers.bloodyCar?.(x, z, speed); // (on the player's car, if it was the car)
     });
     this.ragdolls = null; // (sim/ragdolls.ts, from main.ts: who falls, falls as a body)
   }
@@ -1353,6 +1356,7 @@ class CrimeSystem {
         a.hp -= dmg;
         this.knockAgent(a, this.pvx, this.pvz, hit.nx, hit.nz, this.mode === 'car', bleedOf(this.pspeed));
         this.fx.splatter(a.x, this.groundAt(a.x, a.z) + 0.9, a.z, this.pspeed, hit.nx, hit.nz);
+        this.controllers.bloodyCar?.(a.x, a.z, this.pspeed);
         if (a.kind === 'cop') this.report(a.hp <= 0 ? 'killCop' : 'hitCop');
         else this.report('runOver');
         if (a.kind === 'gang') this.angerGang(a.gang);

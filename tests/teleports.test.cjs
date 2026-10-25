@@ -2,7 +2,6 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const test = require('node:test');
-const vm = require('node:vm');
 
 const read = (path) => readFileSync(join(__dirname, '..', path), 'utf8');
 let TELEPORT_LOCATIONS, LANDMARK_SITES, CITY, blockAt, nearestRoads, getIslandBoundsAtZ, getLocationLabel;
@@ -36,47 +35,41 @@ test('the city starts at the Plaza Principal, on a street, facing the Catedral',
   assert.ok(Math.hypot(catedral.x - start.x, catedral.z - start.z) < 260, 'the Catedral is next to the plaza');
 });
 
-test('preset and map teleports share arrival resets and leave no GPS waypoint', () => {
-  const main = read('js/main.ts');
-  const start = main.indexOf('  function teleportTo(');
-  const end = main.indexOf('  const openMapBtn', start);
+test('preset and map teleports share arrival resets and leave no GPS waypoint', async () => {
+  const { createTeleport, wireTeleportButtons } = await import('../js/app/teleport.ts');
   const handlers = new Map();
   const calls = [];
   const landed = { x: -57.8, z: 35.2 };
-  let map;
-  const environment = {
-    TELEPORT_LOCATIONS,
-    controllerManager: {
-      teleportActiveTo: (...args) => { calls.push(['teleport', ...args]); return landed; }
-    },
-    touchControls: { reset: () => calls.push(['touch']) },
-    gamepadControls: { reset: () => calls.push(['gamepad']) },
-    cameraSystem: { resetForTeleport: () => calls.push(['camera']) },
-    interiors: null, // (on the street: no room to leave, interiors.js)
-    selectCamera: (...args) => calls.push(['selectCamera', ...args]),
-    getLocationLabel: (x, z) => `${x}, ${z}`,
-    cityBlocks: { allBlocks: [] },
-    trafficSystem: {},
-    CityMapSystem: class {
-      constructor(options) { this.onTeleport = options.onTeleport; map = this; }
-    },
-    teleportButtons: Object.keys(TELEPORT_LOCATIONS).map((key) => ({
-      getAttribute: () => key,
-      addEventListener: (_event, handler) => handlers.set(key, handler)
-    })),
-    closePopovers: () => {}
-  };
-  vm.runInNewContext(main.slice(start, end), environment);
+  let room = null; // (on the street: no room to leave, world/interiors.ts)
+  const teleportTo = createTeleport({
+    controllers: { teleportActiveTo: (...args) => { calls.push(['teleport', ...args]); return landed; } },
+    touch: { reset: () => calls.push(['touch']) },
+    gamepad: { reset: () => calls.push(['gamepad']) },
+    cameras: { resetForTeleport: () => calls.push(['camera']) },
+    room: () => room,
+    selectCamera: (...args) => calls.push(['selectCamera', ...args])
+  });
+  const buttons = Object.keys(TELEPORT_LOCATIONS).map((key) => ({
+    getAttribute: () => key,
+    addEventListener: (_event, handler) => handlers.set(key, handler)
+  }));
+  let closed = 0;
+  wireTeleportButtons(buttons, TELEPORT_LOCATIONS, teleportTo, () => { closed++; });
   for (const [name, point] of Object.entries(TELEPORT_LOCATIONS)) {
     calls.length = 0;
     handlers.get(name)();
     assert.deepEqual(calls, [
       ['teleport', point.x, point.z, point.heading], ['touch'], ['gamepad'], ['camera'], ['selectCamera', 'chase', true]
     ]);
-    assert.equal(map.waypoint, undefined, 'teleports set no GPS waypoint');
   }
+  assert.equal(closed, Object.keys(TELEPORT_LOCATIONS).length, 'each button closes its popover');
+  // the full map's teleport (CityMapSystem onTeleport): the default heading, and the safe spot the controller found
   calls.length = 0;
-  assert.deepEqual(map.onTeleport(100, 200), landed, 'map teleports return the safe position from the controller');
+  assert.deepEqual(teleportTo(100, 200), landed, 'map teleports return the safe position from the controller');
   assert.deepEqual(calls, [['teleport', 100, 200, Math.PI], ['touch'], ['gamepad'], ['camera'], ['selectCamera', 'chase', true]]);
-  assert.equal(map.waypoint, undefined);
+  // from inside a room, the player leaves it first
+  calls.length = 0;
+  room = { abandon: () => calls.push(['abandon']) };
+  teleportTo(1, 2, 0);
+  assert.deepEqual(calls[0], ['abandon']);
 });
