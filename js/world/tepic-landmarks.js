@@ -90,17 +90,23 @@ function pointedArch(w, h) {
   return shape;
 }
 
+// The front & towers as a 3D model (assets/models/README.md): Meshy's image-to-3D over Nheyob's photograph of the
+// facade (Wikimedia Commons, CC BY-SA 4.0), the neighbours cropped off, scaled to the towers' 40 m to the crosses. In
+// metres, its origin at the foot of the facade's centre, the facade on z = 0 and the church towards -z; `width` across
+// the towers' cornices, which the drawn church below takes too (its collider, and the nave the model's 32 m stop short of)
+const CATEDRAL_MODEL = { file: 'assets/models/catedral.glb', width: 17.6 };
+
 // The Catedral de Tepic (from photographs): a tall front of brownish-grey cantera with a pointed-arch portal, two lancet
 // windows and a round medallion; two towers rising from its corners in three tiers that step in (each with pointed
 // openings on every face under a flaring cornice), crowned by a small dome, a lantern and a cross; the clock gable
-// between them; the nave behind.
+// between them; the nave behind. The front is drawn until CATEDRAL_MODEL has loaded (and stays if it can't).
 function buildCatedral(group, colliders) {
   const C = CATEDRAL;
   const root = new THREE.Group();
   root.name = 'Catedral';
-  // OpenStreetMap's outline takes in the atrium & the annexes: the church itself is ~26 m across and at most 60 m long,
-  // its front on the front of the lot
-  const W = Math.min(26, Math.max(18, C.width)), L = Math.min(60, Math.max(30, C.depth));
+  // OpenStreetMap's outline takes in the atrium & the annexes: the church itself is as wide as its front (~18 m) and at
+  // most 60 m long, its front on the front of the lot
+  const W = CATEDRAL_MODEL ? CATEDRAL_MODEL.width : Math.min(26, Math.max(18, C.width)), L = Math.min(60, Math.max(30, C.depth));
   const shift = (C.depth - L) / 2;
   const cx = C.x + C.f[0] * shift, cz = C.z + C.f[1] * shift;
   // on the ground at the lowest corner of the church, a little into it (the town's slopes)
@@ -136,6 +142,7 @@ function buildCatedral(group, colliders) {
   ridge.lineTo(0, 4);
   ridge.closePath();
   add(new THREE.ExtrudeGeometry(ridge, { depth: L - 6, bevelEnabled: false }), new THREE.MeshStandardNodeMaterial({ color: 0x7a6e60, roughness: 0.85 }), 0, NAVE_H, -3 - (L - 6) / 2);
+  const NAVE_PIECES = root.children.length; // (everything after them is the front, which the model replaces)
   // the front block, its plinth & string courses
   box(W, FRONT_H, 6, 0, FRONT_H / 2, fz - 3);
   box(W + 0.6, 1.2, 6.6, 0, 0.6, fz - 3, light);
@@ -206,23 +213,43 @@ function buildCatedral(group, colliders) {
     box(1.2, 0.22, 0.22, tx, y + top * 0.38 + 5.6, tz, dark);
   }
   // Merged into one mesh per material (and shadow casting), in the church's frame: drawn part by part, its ~140 pieces
-  // cost ~270 draws a frame in the shadow cascades alone from the plaza
+  // cost ~270 draws a frame in the shadow cascades alone from the plaza. The nave and the front apart, so the model can
+  // take the front's place
+  const nave = new THREE.Group(), front = new THREE.Group();
   const parts = new Map();
-  for (const m of root.children) {
+  root.children.forEach((m, i) => {
     m.updateMatrix();
     const geo = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry).applyMatrix4(m.matrix);
-    const key = `${m.material.uuid}:${m.castShadow}`;
-    if (!parts.has(key)) parts.set(key, { mat: m.material, cast: m.castShadow, geos: [] });
+    const part = i < NAVE_PIECES ? nave : front;
+    const key = `${part.id}:${m.material.uuid}:${m.castShadow}`;
+    if (!parts.has(key)) parts.set(key, { part, mat: m.material, cast: m.castShadow, geos: [] });
     parts.get(key).geos.push(geo);
-  }
+  });
   root.clear();
-  for (const { mat, cast, geos } of parts.values()) {
+  for (const { part, mat, cast, geos } of parts.values()) {
     const mesh = new THREE.Mesh(geos.length > 1 ? mergeGeometries(geos) : geos[0], mat);
     mesh.castShadow = cast;
     mesh.receiveShadow = true;
-    root.add(mesh);
+    part.add(mesh);
   }
+  root.add(nave, front);
   group.add(root);
+  // the model in the background (one 4 MB file, not preloaded), standing on the drawn front's plane
+  if (CATEDRAL_MODEL) {
+    import('three/addons/loaders/GLTFLoader.js').then(({ GLTFLoader }) => {
+      new GLTFLoader().load(CATEDRAL_MODEL.file, (gltf) => {
+        const model = gltf.scene;
+        model.position.z = fz;
+        model.traverse((o) => {
+          if (o.isMesh) o.castShadow = o.receiveShadow = true;
+        });
+        root.add(model);
+        // (the landmarks' world matrices are frozen once the city is built, scene-culling.js: work this one out now)
+        model.updateMatrixWorld(true);
+        front.visible = false;
+      }, undefined, (err) => console.warn(`[landmarks] the Catedral's model: could not load ${CATEDRAL_MODEL.file}`, err));
+    });
+  }
   // a collider over the church
   const hx = W / 2, hz = L / 2;
   const ox = root.position.x, oz = root.position.z;

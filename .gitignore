@@ -2,3 +2,4 @@
 .claude/
 tools/data/tepic/overture/
 tools/data/tepic/fetch.log
+.env
