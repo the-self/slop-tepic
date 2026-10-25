@@ -81,7 +81,7 @@ function bucketTriangles(position, index, grid, { undersides = true } = {}) {
  */
 function drapeTile(layer, tris, key, grid, lattice, height) {
   if (!tris || !tris.length) return null;
-  const inTile = clipToRect(layer.arrays, layer.sizes, layer.index, grid.rect(key), tris);
+  const inTile = clipToRect(layer.arrays, layer.sizes, layer.index, grid.rect(key), tris, lattice ? Float64Array : Float32Array);
   if (!inTile[0].length) return null;
   return lattice ? layOnFloor(inTile, layer.sizes, lattice, height, layer.normalAt) : inTile;
 }

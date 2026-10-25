@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
-import { SLOPES, LATTICE, clipToLattice, townHeight } from './ground.js';
-import { visibleTriangles, tiltUpNormals } from './lattice.js';
+import { SLOPES, LATTICE, townHeight } from './ground.js';
+import { visibleTriangles, layOnFloor } from './lattice.js';
 
 // js/world/drape.js
 // Lays the city's ground layers, built flat at y = 0 (the road deck, sidewalks & curbs, meadows, park walks, yards,
@@ -29,13 +29,9 @@ function drapeGeometry(geo, { undersides = true } = {}) {
     });
     index = corners;
   }
-  const out = clipToLattice(arrays, attrs.map((a) => a.itemSize), index, LATTICE);
-  const pos = out[0];
-  for (let i = 0; i < pos.length; i += 3) pos[i + 1] += townHeight(pos[i], pos[i + 2]);
-  // the faces that looked up now look square off the slope under them (each piece lies in one ground triangle's
-  // plane); walls keep facing sideways
-  const n = names.indexOf('normal');
-  if (n >= 0 && attrs[n].itemSize === 3) tiltUpNormals(pos, out[n]);
+  // (the faces that looked up then look square off the slope under them, each piece lying in one ground triangle's
+  // plane; walls keep facing sideways)
+  const out = layOnFloor(arrays, attrs.map((a) => a.itemSize), LATTICE, townHeight, names.indexOf('normal'), index);
   const draped = new THREE.BufferGeometry();
   names.forEach((name, k) => draped.setAttribute(name, new THREE.BufferAttribute(out[k], attrs[k].itemSize, attrs[k].normalized)));
   draped.computeBoundingBox();

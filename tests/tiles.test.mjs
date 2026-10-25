@@ -74,3 +74,21 @@ test('a triangle wholly inside the rectangle goes through as it is; the rest is 
   // the big one covers all of the rectangle: its part is the 5 x 5 square
   assert.ok(Math.abs(area(p) - 0.5 - 25) < 1e-4);
 });
+
+test('an indexed layer (quads sharing their corners) is bucketed and cut by its triangles\' corners', () => {
+  // two 30 x 10 m quads along z = 0..10 and z = 50..60, from x = 20 to 50: across the edge at x = 35
+  const position = new Float32Array([20, 0, 0, 50, 0, 0, 50, 0, 10, 20, 0, 10, 20, 0, 50, 50, 0, 50, 50, 0, 60, 20, 0, 60]);
+  const index = new Uint16Array([0, 3, 2, 0, 2, 1, 4, 7, 6, 4, 6, 5]);
+  const pave = new Float32Array([1, 1, 1, 1, 2, 2, 2, 2]);
+  const layer = { arrays: [position, pave], sizes: [3, 1], index, normalAt: -1 };
+  const buckets = bucketTriangles(position, index, grid);
+  assert.deepEqual([...buckets.keys()].sort(), [grid.key(0, 0), grid.key(0, 1), grid.key(1, 0), grid.key(1, 1)].sort());
+  assert.deepEqual([...buckets.get(grid.key(0, 1))], [2, 3], 'the second quad in the tiles south of z = 35');
+  let total = 0;
+  for (const [k, tris] of buckets) {
+    const [p, a] = drapeTile(layer, tris, k, grid, lattice, floor);
+    total += area(p);
+    for (let v = 0; v < a.length; v++) assert.equal(a[v], p[v * 3 + 2] < 35 ? 1 : 2, 'each vertex keeps its quad\'s attribute');
+  }
+  assert.ok(Math.abs(total - 600) < 1e-3);
+});

@@ -84,12 +84,12 @@ function createPool(arrays, sizes) {
   return pool;
 }
 
-// The output arrays: the whole input triangles `whole` (vertex indices), then fans of the (convex) pieces in their
-// triangle's winding
-function emitPieces(arrays, sizes, whole, polys, pool) {
+// The output arrays (of type `Out`): the whole input triangles `whole` (vertex indices), then fans of the (convex)
+// pieces in their triangle's winding
+function emitPieces(arrays, sizes, whole, polys, pool, Out = Float32Array) {
   let n = whole.length;
   for (const p of polys) n += (p.length - 2) * 3;
-  const out = sizes.map((size) => new Float32Array(n * size));
+  const out = sizes.map((size) => new Out(n * size));
   let w = 0;
   for (const i of whole) {
     for (let a = 0; a < out.length; a++) {
@@ -118,11 +118,10 @@ function emitPieces(arrays, sizes, whole, polys, pool) {
 
 /**
  * Triangles cut along a ground lattice { x0, z0, cell }: the lines x = x0 + k·cell, z = z0 + k·cell and
- * x + z = x0 + z0 + k·cell (each cell's diagonal, from its +x corner to its +z corner; `diagonal: false` leaves them
- * out), so every piece lies on one of the ground's triangles and, laid on it, follows it exactly instead of cutting
- * across its folds. `arrays` are the vertex attributes ([0] the positions, x y z), `sizes` their item sizes, `index`
- * the triangles (or null: consecutive vertices). Every attribute is interpolated along the cuts. Returns new arrays,
- * non-indexed.
+ * x + z = x0 + z0 + k·cell (each cell's diagonal, from its +x corner to its +z corner), so every piece lies on one of the
+ * ground's triangles and, laid on it, follows it exactly instead of cutting across its folds.
+ * `arrays` are the vertex attributes ([0] the positions, x y z), `sizes` their item sizes, `index` the triangles (or
+ * null: consecutive vertices). Every attribute is interpolated along the cuts. Returns new arrays, non-indexed.
  */
 function clipToLattice(arrays, sizes, index, lattice) {
   const { x0, z0, cell } = lattice;
@@ -132,9 +131,9 @@ function clipToLattice(arrays, sizes, index, lattice) {
   // the three families of lines, as a coordinate whose integer values are the lines
   const families = [
     (x, z) => (x - x0) / cell,
-    (x, z) => (z - z0) / cell
+    (x, z) => (z - z0) / cell,
+    (x, z) => (x - x0 + z - z0) / cell
   ];
-  if (lattice.diagonal !== false) families.push((x, z) => (x - x0 + z - z0) / cell);
   const EPS = 1e-7;
   const firstLine = (lo) => Math.floor(lo + EPS) + 1; // the first line past lo
   const pool = createPool(arrays, sizes);
@@ -181,9 +180,11 @@ const alongZ = (x, z) => z;
 /**
  * The parts of triangles inside the rectangle { x0, x1, z0, z1 } (in x & z), cut on its edges; the triangles wholly
  * inside go through as they are. `arrays`, `sizes` & `index` as clipToLattice's; `tris` (optional) the triangles to
- * take, by number (all of them by default). Returns new arrays, non-indexed.
+ * take, by number (all of them by default). Returns new arrays, non-indexed, of type `Out`: Float64Array keeps the
+ * vertices cut on an edge exactly on it, for a lattice cut to follow (Float32 would round them a fraction of a
+ * millimetre off it, and the next cut would split slivers off along it).
  */
-function clipToRect(arrays, sizes, index, rect, tris = null) {
+function clipToRect(arrays, sizes, index, rect, tris = null, Out = Float32Array) {
   const { x0, x1, z0, z1 } = rect;
   const pos = arrays[0], ps = sizes[0];
   const count = tris ? tris.length : (index ? index.length : pos.length / ps) / 3;
@@ -209,7 +210,7 @@ function clipToRect(arrays, sizes, index, rect, tris = null) {
     if (poly.length >= 3 && maxZ > z1) poly = pool.cut(poly, alongZ, z1)[0];
     if (poly.length >= 3) polys.push(poly);
   }
-  return emitPieces(arrays, sizes, whole, polys, pool);
+  return emitPieces(arrays, sizes, whole, polys, pool, Out);
 }
 
 // The triangles of non-indexed positions facing up or sideways (by number): the undersides of the slabs lying on the
@@ -248,12 +249,12 @@ function tiltUpNormals(pos, normal) {
 }
 
 /**
- * Lays non-indexed triangles (`arrays`, `sizes` as clipToLattice's) on a floor: cut along `lattice`, each vertex
- * raised by `height(x, z)`, and the up-facing faces' normals (the attribute at `normalAt`, if any) tilted with the
- * slope under them. Returns new arrays.
+ * Lays triangles (`arrays`, `sizes` & `index` as clipToLattice's) on a floor: cut along `lattice`, each vertex raised by
+ * `height(x, z)`, and the up-facing faces' normals (the attribute at `normalAt`, if any) tilted with the slope under
+ * them. Returns new arrays, non-indexed.
  */
-function layOnFloor(arrays, sizes, lattice, height, normalAt = -1) {
-  const out = clipToLattice(arrays, sizes, null, lattice);
+function layOnFloor(arrays, sizes, lattice, height, normalAt = -1, index = null) {
+  const out = clipToLattice(arrays, sizes, index, lattice);
   const pos = out[0];
   for (let i = 0; i < pos.length; i += 3) pos[i + 1] += height(pos[i], pos[i + 2]);
   if (normalAt >= 0 && sizes[normalAt] === 3) tiltUpNormals(pos, out[normalAt]);
