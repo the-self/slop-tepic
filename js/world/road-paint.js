@@ -21,7 +21,8 @@ const TOPE_LEN = 0.9; // along the street (m)
 const TOPE_H = 0.09;
 const TOPE_SEGS = 6;
 
-function buildRoadPaint(scene, network) {
+// With `streamer` (streaming.js) the paint and the topes go to it as layers, laid tile by tile around the camera
+function buildRoadPaint(scene, network, streamer = null) {
   const position = [];
   const side = [];
   const paint = [];
@@ -266,16 +267,22 @@ function buildRoadPaint(scene, network) {
     tg.setAttribute('position', new THREE.Float32BufferAttribute(tPos, 3));
     tg.setAttribute('uv', new THREE.Float32BufferAttribute(tUv, 2));
     tg.setIndex(tIdx);
-    const draped = drapeGeometry(tg);
-    draped.computeVertexNormals();
     const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.75 });
     // 50 cm stripes, the yellow worn a little darker
     mat.colorNode = mix(color(0xd9a520), color(0x1c1c1a), step(0.5, fract(uv().x.div(1.0)))).mul(float(0.92));
-    const topes = new THREE.Mesh(draped, mat);
-    topes.name = 'Topes';
-    topes.receiveShadow = true;
-    scene.add(topes);
     console.info(`[roads] ${tIdx.length / (TOPE_SEGS * 6)} topes`);
+    if (streamer) {
+      // (shaded by the bump's own normals; the worker tilts its top with the street's slope)
+      tg.computeVertexNormals();
+      streamer.addLayer(tg, mat, { name: 'Topes' });
+    } else {
+      const draped = drapeGeometry(tg);
+      draped.computeVertexNormals();
+      const topes = new THREE.Mesh(draped, mat);
+      topes.name = 'Topes';
+      topes.receiveShadow = true;
+      scene.add(topes);
+    }
   }
 
   const normal = new Float32Array(position.length);
@@ -289,11 +296,16 @@ function buildRoadPaint(scene, network) {
   geometry.setAttribute('paint', new THREE.Float32BufferAttribute(paint, 3));
   geometry.setIndex(index);
 
-  // laid on the town's slopes with the asphalt under it: each strip cut along the ground's lattice
+  // laid on the town's slopes with the asphalt under it: each strip cut along the ground's lattice (renderOrder: under
+  // the other see-through ground effects, contact shadows & headlight beams)
+  if (streamer) {
+    streamer.addLayer(geometry, createRoadPaintMaterial(), { name: 'RoadMarkings', renderOrder: -1 });
+    return null;
+  }
   const mesh = new THREE.Mesh(drapeGeometry(geometry), createRoadPaintMaterial());
   mesh.name = 'RoadMarkings';
   mesh.receiveShadow = true;
-  mesh.renderOrder = -1; // under the other see-through ground effects (contact shadows, headlight beams)
+  mesh.renderOrder = -1;
   scene.add(mesh);
   return mesh;
 }

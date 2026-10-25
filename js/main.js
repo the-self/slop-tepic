@@ -29,7 +29,7 @@ import { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDyna
 import { CityAudioSystem } from './audio/audio-system.js';
 import { buildTerrain } from './world/terrain.js';
 import { buildRiverChannels } from './world/river-channels.js';
-import { groundHeight, townHeight, landHeight, liftAt, deckLift, surfaceHeight, SLOPES, LATTICE } from './world/ground.js';
+import { groundHeight, townHeight, landHeight, liftAt, deckLift, surfaceHeight, SLOPES, LATTICE, waterways } from './world/ground.js';
 import { TileStreamer } from './world/streaming.js';
 import { buildTepicLandmarks } from './world/tepic-landmarks.js';
 import { buildCotos } from './world/cotos.js';
@@ -115,9 +115,10 @@ async function initApp() {
     lattice: SLOPES ? LATTICE : null,
     ground: SLOPES ? GEO.ground : null,
     box: { x0: ISLAND_BOUNDS.minX, x1: ISLAND_BOUNDS.maxX, z0: ISLAND_BOUNDS.minZ, z1: ISLAND_BOUNDS.maxZ },
+    holes: waterways ? Float32Array.from(waterways.holes()) : null,
     workers: Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 4) - 2))
   });
-  const cityGrid = buildCityGrid(scene);
+  const cityGrid = buildCityGrid(scene, streamer);
   markInit('cityGrid');
   // The hills around the valley (Tepic: Cerro de San Juan, Cerro de la Cruz...), over the flat city, and the floor
   // under the streamed tiles not loaded
@@ -152,7 +153,7 @@ async function initApp() {
   // Mast-arm traffic signals at the signalised junctions of a city off the grid (the grid's are built with the streets)
   streetDetails.addJunctionSignals?.(trafficSystem.network, allColliders); // (their poles stop the player)
   const highwayTraffic = createHighwayTraffic(scene, cityGrid.highwayLanes);
-  buildRoadPaint(scene, trafficSystem.network);
+  buildRoadPaint(scene, trafficSystem.network, streamer);
   buildPavements(scene, streamer); // (the empedrado, adoquín, earth & concrete streets, under the paint)
   buildAirport(scene); // (the runway, taxiways & apron south-east of town, and the airliners at the gates)
   markInit('roadPaint');

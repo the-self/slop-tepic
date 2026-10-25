@@ -51,9 +51,10 @@ function createTileMask(grid, box) {
 class TileStreamer {
   /**
    * `lattice`: the ground's (ground.js LATTICE, null in the flat city); `ground`: GEO.ground on the slopes (else null);
-   * `box`: the rectangle the hills' floor is masked over.
+   * `box`: the rectangle the hills' floor is masked over; `holes`: the river channels' holes in the road deck
+   * (waterways.js holes(): flat triangles x0 z0 x1 z1 x2 z2), cut out of the layers that ask for it once laid.
    */
-  constructor({ scene, lattice, ground, box = null, workers = 2 }) {
+  constructor({ scene, lattice, ground, box = null, holes = null, workers = 2 }) {
     this.grid = createTileGrid(lattice, TILE_CELLS);
     this.root = new THREE.Group();
     this.root.name = 'StreamedTiles';
@@ -73,7 +74,7 @@ class TileStreamer {
       const slot = { worker, busy: 0 };
       worker.onmessage = ({ data }) => this.receive(slot, data);
       worker.onerror = (e) => console.error('[streaming] tile worker', e.message || e);
-      worker.postMessage({ type: 'init', lattice, cells: TILE_CELLS, ground });
+      worker.postMessage({ type: 'init', lattice, cells: TILE_CELLS, ground, holes });
       this.workers.push(slot);
     }
   }
@@ -84,9 +85,9 @@ class TileStreamer {
    * of the tiles it answers for (a tile's key, modulo the workers), so the layer is held once however many there are.
    * Options: name, castShadow, receiveShadow, renderOrder; undersides (false leaves out the triangles facing down);
    * covers (it covers all the ground of the tiles it reaches, like the road deck: where its tiles are drawn, the hills'
-   * floor under them is not).
+   * floor under them is not); cutHoles (each tile laid is opened over the river channels, like the road deck).
    */
-  addLayer(geometry, material, { name = '', castShadow = false, receiveShadow = true, undersides = true, renderOrder = 0, covers = false } = {}) {
+  addLayer(geometry, material, { name = '', castShadow = false, receiveShadow = true, undersides = true, renderOrder = 0, covers = false, cutHoles = false } = {}) {
     const names = Object.keys(geometry.attributes).sort((a, b) => (a === 'position' ? -1 : b === 'position' ? 1 : 0));
     const attrs = names.map((n) => geometry.attributes[n]);
     const arrays = attrs.map((a) => (a.isInterleavedBufferAttribute
@@ -124,7 +125,7 @@ class TileStreamer {
           }
         }
       }
-      slot.worker.postMessage({ type: 'layer', id, arrays: out, sizes, normalAt: names.indexOf('normal'), buckets: share },
+      slot.worker.postMessage({ type: 'layer', id, arrays: out, sizes, normalAt: names.indexOf('normal'), cutHoles, buckets: share },
         [...out.map((a) => a.buffer), ...share.map(([, tris]) => tris.buffer)]);
     });
     geometry.dispose();

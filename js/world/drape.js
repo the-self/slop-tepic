@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SLOPES, LATTICE, townHeight } from './ground.js';
 import { visibleTriangles, layOnFloor } from './lattice.js';
 
@@ -58,4 +59,41 @@ function drapeMeshes(root, skip = null) {
   });
 }
 
-export { drapeGeometry, drapeMeshes };
+/**
+ * Every plain (not instanced) mesh under `root` but those in `skip` handed to the tile streamer (streaming.js) instead
+ * of laid whole: taken out of the scene, put in world space and merged by material (one layer each, without their
+ * undersides), so they are laid on the floor tile by tile around the camera. `covers`: the materials of the layers that
+ * cover all the ground under them (the road deck); `cutHoles`: those opened over the river channels once laid.
+ */
+function streamMeshes(root, streamer, { skip = null, covers = new Set(), cutHoles = new Set() } = {}) {
+  root.updateMatrixWorld(true);
+  const groups = new Map(); // material + attribute names -> { material, geos, castShadow, receiveShadow, renderOrder }
+  const meshes = [];
+  root.traverse((obj) => {
+    if (!obj.isMesh || obj.isInstancedMesh || (skip && skip.has(obj)) || Array.isArray(obj.material)) return;
+    meshes.push(obj);
+  });
+  for (const obj of meshes) {
+    let geo = obj.geometry.index ? obj.geometry.toNonIndexed() : obj.geometry.clone();
+    if (!obj.matrixWorld.equals(_identity)) geo.applyMatrix4(obj.matrixWorld);
+    const key = obj.material.uuid + ':' + Object.keys(geo.attributes).sort().join(',');
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = { material: obj.material, geos: [], castShadow: false, receiveShadow: false, renderOrder: obj.renderOrder, name: obj.name }));
+    g.geos.push(geo);
+    g.castShadow ||= obj.castShadow;
+    g.receiveShadow ||= obj.receiveShadow;
+    obj.parent.remove(obj);
+    obj.geometry.dispose();
+  }
+  for (const g of groups.values()) {
+    const merged = g.geos.length > 1 ? mergeGeometries(g.geos, false) : g.geos[0];
+    if (g.geos.length > 1) for (const geo of g.geos) geo.dispose();
+    if (!merged) continue;
+    streamer.addLayer(merged, g.material, {
+      name: g.name || root.name, castShadow: g.castShadow, receiveShadow: g.receiveShadow, renderOrder: g.renderOrder,
+      undersides: false, covers: covers.has(g.material), cutHoles: cutHoles.has(g.material)
+    });
+  }
+}
+
+export { drapeGeometry, drapeMeshes, streamMeshes };

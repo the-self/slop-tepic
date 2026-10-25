@@ -15,7 +15,7 @@ import {
 } from '../render/tsl-materials.js';
 import { GEO } from './city-geodata.js';
 import { SLOPES, liftAt, groundSlope } from './ground.js';
-import { drapeMeshes } from './drape.js';
+import { drapeMeshes, streamMeshes } from './drape.js';
 import { cutRiverHoles } from './river-channels.js';
 import { openness } from './lot-greenery.js';
 import { cyclewayRuns, CYCLEWAY_HALF } from './medians.js';
@@ -211,7 +211,9 @@ function setPavingStyle(geo, style) {
   return geo;
 }
 
-function buildCityGrid(scene) {
+// With `streamer` (streaming.js) the flat ground layers go to it, laid tile by tile around the camera, instead of
+// laid on the slopes whole here
+function buildCityGrid(scene, streamer = null) {
   const group = new THREE.Group();
   group.name = 'CityGrid';
 
@@ -687,10 +689,17 @@ function buildCityGrid(scene) {
 
   // Batch static sub-meshes by material to reduce per-frame WebGPU draw calls
   batchStaticGroupMeshes(group, new Set([roadMat, meadowMat, lotMat, parkLawnMat, pitchMat, cyclewayMat]));
-  // ...and lay them on the town's slopes; the valley floor beyond the hills' grid stays flat
-  drapeMeshes(group, new Set([valleyMesh]));
-  // ...and open the deck over the river channels (river-channels.js draws them sunk into the ground)
-  roadMesh.geometry = cutRiverHoles(roadMesh.geometry);
+  if (streamer) {
+    // ...or they all go to the streamer: the deck as the layer covering the ground, opened over the river channels
+    // (river-channels.js draws them sunk into the ground) once each tile is laid; the valley floor beyond the hills'
+    // grid stays
+    streamMeshes(group, streamer, { skip: new Set([valleyMesh]), covers: new Set([roadMat]), cutHoles: new Set([roadMat]) });
+  } else {
+    // ...and lay them on the town's slopes; the valley floor beyond the hills' grid stays flat
+    drapeMeshes(group, new Set([valleyMesh]));
+    // ...and open the deck over the river channels (river-channels.js draws them sunk into the ground)
+    roadMesh.geometry = cutRiverHoles(roadMesh.geometry);
+  }
 
   scene.add(group);
 
