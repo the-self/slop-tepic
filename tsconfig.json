@@ -1,0 +1,11 @@
+{
+  // The browser client and the protocol it shares with the server. Node runs these same .ts files in the
+  // tests by stripping their types, and esbuild bundles them for the page (tools/build.ts): only erasable
+  // TypeScript syntax, and imports name the .ts file.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2024", "dom", "dom.iterable"],
+    "types": []
+  },
+  "include": ["js/**/*.ts", "shared/**/*.ts", "js/**/*.d.ts"]
+}

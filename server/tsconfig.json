@@ -1,0 +1,10 @@
+{
+  // The room server runs on Node (≥ 24 strips the types itself), so Node's types and no DOM.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2024"],
+    "types": ["node"]
+  },
+  "include": ["**/*.ts", "../shared/**/*.ts"],
+  "exclude": ["node_modules"]
+}

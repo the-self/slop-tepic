@@ -4,10 +4,13 @@ const { join } = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const source = readFileSync(join(__dirname, '../js/sim/traffic.js'), 'utf8');
+const { stripTypes } = require('./helpers/module.cjs');
+
+// (the JavaScript the bundle ships: the types blanked out, every line and column kept)
+const source = stripTypes(readFileSync(join(__dirname, '../js/sim/traffic.ts'), 'utf8'));
 // Exercise the production lane query and player snapshot without creating the WebGPU scene.
-const laneQuery = source.match(/  function playerInLane\(lane, pl\) \{[\s\S]*?\n  \}/)?.[0];
-const playerSnapshot = source.match(/    const pl = entity[\s\S]*?\n    \} : null;/)?.[0];
+const laneQuery = source.match(/ {2}function playerInLane\(lane\s*, pl\s*\)\s*\{[\s\S]*?\n {2}\}/)?.[0];
+const playerSnapshot = source.match(/ {4}const pl = entity[\s\S]*?\n {4}\} : null;/)?.[0];
 assert.ok(laneQuery, 'traffic lane query is present');
 assert.ok(playerSnapshot, 'traffic player snapshot is present');
 const { playerInLane, snapshot } = vm.runInNewContext(`
@@ -20,7 +23,7 @@ const { playerInLane, snapshot } = vm.runInNewContext(`
 `);
 
 // The player-vs-vehicle box test, also used for cyclists and motorcyclists over their whole bike (contactRider)
-const overlapSource = source.match(/  const satHit = [\s\S]*?\n  function overlapWithPlayer\([\s\S]*?\n  \}/)?.[0];
+const overlapSource = source.match(/ {2}const satHit = [\s\S]*?\n {2}function overlapWithPlayer\([\s\S]*?\n {2}\}/)?.[0];
 assert.ok(overlapSource, 'traffic player overlap test is present');
 const overlapWithPlayer = vm.runInNewContext(`${overlapSource}; overlapWithPlayer`);
 
@@ -338,8 +341,8 @@ test('a vehicle on a ramp pitches with the deck as well as the ground', () => {
 
 test('an edge carries its lift profile: interpolated along it, held past its ends, 0 without one', () => {
   const { loadModule } = require('./helpers/module.cjs');
-  const { edgeLift } = loadModule(readFileSync(join(__dirname, '../js/world/road-network.js'), 'utf8'), {
-    imports: { './city-config.js': { ISLAND_BOUNDS: { minX: 0, maxX: 0, minZ: 0, maxZ: 0 } }, './city-geodata.js': { GEO: {} } }
+  const { edgeLift } = loadModule(readFileSync(join(__dirname, '../js/world/road-network.ts'), 'utf8'), {
+    imports: { './city-config.ts': { ISLAND_BOUNDS: { minX: 0, maxX: 0, minZ: 0, maxZ: 0 } }, './city-geodata.js': { GEO: {} } }
   });
   const e = { lift: [[0, 0], [40, 2.8], [60, 6], [100, 6]] };
   const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} should equal ${b}`);

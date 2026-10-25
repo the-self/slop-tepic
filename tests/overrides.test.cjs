@@ -20,9 +20,9 @@ test('an override pinned to a point finds the turned building around it, else th
 
 test('landmark models are placed with the builder projection, facing their compass heading', async () => {
   const { GEO } = await import('../js/world/city-geodata.js');
-  const source = readFileSync(join(__dirname, '../js/world/landmark-models.js'), 'utf8');
+  const source = readFileSync(join(__dirname, '../js/world/landmark-models.ts'), 'utf8');
   const mod = loadModule(source, {
-    imports: { 'three/webgpu': {}, './city-geodata.js': { GEO }, './ground.js': { landHeight: () => 0 } },
+    imports: { 'three/webgpu': {}, './city-geodata.js': { GEO }, './ground.ts': { landHeight: () => 0 } },
     globals: { Math, console }
   });
   // runway 02/20's north end (OpenStreetMap node 21.42873, -104.83763) lands where the builder put it: within the

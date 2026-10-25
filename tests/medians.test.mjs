@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cyclewayRuns, medianTrees, nearestOn } from '../js/world/medians.js';
+import { cyclewayRuns, medianTrees, nearestOn } from '../js/world/medians.ts';
 
 // Two one-way carriageways 7 m wide, 31 m apart centre to centre, running opposite ways along x for 400 m
 const roads = [

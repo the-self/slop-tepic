@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { WEAPONS, Arsenal, pickTarget, rayCircle, rayBox, boxOverlap, roundBox, blastFalloff, hitChance } from '../js/sim/weapons.js';
+import { WEAPONS, Arsenal, pickTarget, rayCircle, rayBox, boxOverlap, roundBox, blastFalloff, hitChance } from '../js/sim/weapons.ts';
 
 const step = (arsenal, held, seconds, dt = 1 / 60) => {
   let shots = 0;

@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
   LOCAL, COLLECTOR, AVENUE, ROUTE_PULL, roadClass, busyFactor, carDemand, peopleDemand, rushOf, carDensity, peopleDensity,
   localHour
-} from '../js/sim/traffic-demand.js';
+} from '../js/sim/traffic-demand.ts';
 
 test("Tepic's three rushes are its busiest hours, and the small hours all but empty", () => {
   for (const h of [8, 14, 18]) assert.ok(carDemand(h) >= 0.95, `${h} h is a rush hour`);

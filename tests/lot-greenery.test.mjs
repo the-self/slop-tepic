@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { indexHouses, openness, lotTrees, grassDryness, edgeDistance } from '../js/world/lot-greenery.js';
+import { indexHouses, openness, lotTrees, grassDryness, edgeDistance } from '../js/world/lot-greenery.ts';
 
 // A 60 x 40 m curb island with one 10 x 10 m house in its north-west corner (houses: x, z, w, d in dm, θ in mrad...)
 const square = (x0, z0, x1, z1) => [{ x: x0, z: z0 }, { x: x1, z: z0 }, { x: x1, z: z1 }, { x: x0, z: z1 }];

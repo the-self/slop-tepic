@@ -14,9 +14,9 @@ import {
   encodeTick,
   encodeError,
   decodeServer
-} from '../shared/protocol.js';
-import { RoomManager } from '../server/rooms.js';
-import { SpatialGrid, nearestInView } from '../server/aoi.js';
+} from '../shared/protocol.ts';
+import { RoomManager } from '../server/rooms.ts';
+import { SpatialGrid, nearestInView } from '../server/aoi.ts';
 
 const entity = (x, y, z, heading, speed) => ({ position: { x, y, z }, heading, speed });
 

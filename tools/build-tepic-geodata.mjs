@@ -20,8 +20,8 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { log, ringArea, bbox, centroid, rdp, rdpRing, extractBlocks, ringCells, clearCapsule, minAreaRect, decodePNG, createRouteMatcher, houseAt } from './tepic-lib.mjs';
-import { BUILDING_OVERRIDES } from '../js/world/building-overrides.js';
-import { STOREFRONTS } from '../js/world/storefronts/index.js';
+import { BUILDING_OVERRIDES } from '../js/world/building-overrides.ts';
+import { STOREFRONTS } from '../js/world/storefronts/index.ts';
 
 const DATA = process.env.GEO_DATA || fileURLToPath(new URL('data/tepic/', import.meta.url));
 const OUT = process.argv[2] || fileURLToPath(new URL('../js/world/city-geodata.js', import.meta.url));
@@ -1175,9 +1175,10 @@ const signs = [];
       locals.push({ i, name, cat, conf: p.confidence || 0, d: Math.hypot(x, z) });
     }
   }
-  // a sign's text: no emoji, no "- Tepic" tacked on the end (Facebook pages' names), something to read left
+  // a sign's text: no emoji, no "- Tepic" tacked on the end (Facebook pages' names), something to read left (the emoji
+  // and their joiners one code point at a time: in a character class they'd read as one joined sequence)
   const signText = (name) => {
-    let t = name.normalize('NFC').replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{20E3}]/gu, '')
+    let t = name.normalize('NFC').replace(/\p{Extended_Pictographic}|\u{FE0F}|\u{200D}|\u{20E3}/gu, '')
       .replace(/\s*[|·•–—-]\s*tepic\b.*$/i, '').replace(/\s+/g, ' ').trim().toUpperCase();
     // a long one: its first part ("DENTALUX - ODONTOLOGÍA INTEGRAL"), else cut at a word
     if (t.length > 30) t = t.replace(/\s*\([^)]*(\)|$)/g, ' ').trim(); // (what's in brackets goes first)
@@ -1622,7 +1623,7 @@ const transit = { groups: [], routes: [] };
       drawn += r.samples;
       on += r.matched;
       if (!r.pieces.length) { log(`route ${name}: not on the map`); continue; }
-      const fleet = (ROUTE_FLEET.find(([re]) => re.test(name)) || [, ''])[1];
+      const fleet = (ROUTE_FLEET.find(([re]) => re.test(name)) || [null, ''])[1];
       // [name, group index, the map's line colour, 'bus' | 'combi' | '' (both), loops 1 | 0, pieces: signed link refs]
       transit.routes.push([name, Math.max(0, groups.findIndex((g) => g.id === f.properties.group)), f.properties.stroke || '#5a5a5a',
         fleet, r.loop ? 1 : 0, r.pieces]);

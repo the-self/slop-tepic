@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { wheelLayout, headingOf, isDrive } from '../js/player/car-physics.js';
+import { wheelLayout, headingOf, isDrive } from '../js/player/car-physics.ts';
 
 test('the wheels hang on springs that settle them where the body shape draws them', () => {
   const [w] = wheelLayout([{ x: 0.8, z: 1.4, radius: 0.35, front: true }], 1.4);

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   Stamina, struckDamage, hardness, crashDamage, walletAmount, nearest, MAX_STAMINA, WINDED_UNTIL
-} from '../js/player/stats.js';
+} from '../js/player/stats.ts';
 
 const run = (stamina, seconds, sprinting = null, step = 0.05) => {
   for (let t = 0; t < seconds - 1e-9; t += step) stamina.update(step, sprinting);

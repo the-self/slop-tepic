@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRouteMatcher } from '../tools/tepic-lib.mjs';
-import { createTransit, decodeTransit } from '../js/sim/transit.js';
+import { createTransit, decodeTransit } from '../js/sim/transit.ts';
 
 // A 100 m block (nodes 0..3 clockwise from the north-west corner, x east, z south) with a street running on east from
 // its north-east corner (node 4), every street two-way unless a test says otherwise

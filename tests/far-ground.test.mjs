@@ -5,11 +5,11 @@ import test from 'node:test';
 
 const require = createRequire(import.meta.url);
 const { loadModule } = require('./helpers/module.cjs');
-const source = readFileSync(new URL('../js/world/far-ground.js', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../js/world/far-ground.ts', import.meta.url), 'utf8');
 const { lotColor, FAR_GROUND_COLORS: C } = loadModule(source, {
   imports: {
     'three/webgpu': {}, 'three/tsl': {},
-    './city-config.js': { BLOCKS: [], ROADS: [], CITY_OUTLINE: [] },
+    './city-config.ts': { BLOCKS: [], ROADS: [], CITY_OUTLINE: [] },
     './city-geodata.js': { GEO: {} }
   }
 });

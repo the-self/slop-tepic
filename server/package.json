@@ -4,11 +4,11 @@
   "type": "module",
   "description": "Region rooms with area-of-interest snapshots for the browser city",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.18"
   },
   "scripts": {
-    "start": "node index.js",
-    "test": "node --test test/*.test.js"
+    "start": "node index.ts",
+    "test": "node --test test/*.test.ts"
   },
   "dependencies": {
     "ws": "8.18.3"

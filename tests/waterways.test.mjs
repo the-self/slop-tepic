@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CHANNELS, createWaterways, cutHoles } from '../js/world/waterways.js';
+import { CHANNELS, createWaterways, cutHoles } from '../js/world/waterways.ts';
 import { GEO } from '../js/world/city-geodata.js';
-import { waterways, groundHeight, landHeight, townHeight } from '../js/world/ground.js';
+import { waterways, groundHeight, landHeight, townHeight } from '../js/world/ground.ts';
 
 const close = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} should equal ${b}`);
 

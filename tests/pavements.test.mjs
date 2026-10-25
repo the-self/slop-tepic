@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { PAVEMENTS } from '../js/world/pavement-data.js';
+import { PAVEMENTS } from '../js/world/pavement-data.ts';
 import { GEO } from '../js/world/city-geodata.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -13,10 +13,10 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 test('pavement-data.js is what tools/build-tepic-pavements.mjs writes from the committed OpenStreetMap data', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pavements-'));
   try {
-    const out = path.join(dir, 'pavement-data.js');
+    const out = path.join(dir, 'pavement-data.ts');
     const result = spawnSync(process.execPath, [path.join(root, 'tools/build-tepic-pavements.mjs'), out], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr + result.stdout);
-    assert.equal(fs.readFileSync(out, 'utf8'), fs.readFileSync(path.join(root, 'js/world/pavement-data.js'), 'utf8'));
+    assert.equal(fs.readFileSync(out, 'utf8'), fs.readFileSync(path.join(root, 'js/world/pavement-data.ts'), 'utf8'));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

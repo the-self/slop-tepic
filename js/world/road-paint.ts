@@ -1,0 +1,353 @@
+import * as THREE from 'three/webgpu';
+import { CROSSWALK, edgeLift } from './road-network.ts';
+import type { PaintEdge, RoadNetwork } from './road-network.ts';
+import { color, mix, step, fract, uv, float } from 'three/tsl';
+import { createRoadPaintMaterial } from '../render/tsl-materials.ts';
+import { PAVEMENTS } from './pavement-data.ts';
+import { drapeGeometry } from './drape.ts';
+
+// js/world/road-paint.ts
+// Road markings generated from the drivable road network (js/world/road-network.ts), so the paint matches where traffic
+// actually drives and stops: dashed lane lines, double yellow centre lines on two-way roads, stop bars at the stop
+// lines, continental crosswalks across every intersection approach and green bike lanes along wide one-way avenues.
+// And the topes: the speed bumps across a third of the two-way residential streets, a little in from the corner,
+// painted in yellow & black stripes (seen only: the traffic and the player's car roll over them). The empedrado and
+// earth streets (pavement-data.ts) get no paint: nobody paints lines on river stones.
+
+const WHITE = new THREE.Color(0xe6e2d6);
+const YELLOW = new THREE.Color(0xe8ad22);
+const GREEN = new THREE.Color(0x2a8a4e);
+const HEIGHT = 0.012; // above the asphalt
+const TOPE_LEN = 0.9; // along the street (m)
+const TOPE_H = 0.09;
+const TOPE_SEGS = 6;
+
+/** A point on the ground [x, z] (m) */
+type Pt = [number, number];
+
+/** The ground streamer (streaming.ts) as the paint uses it: layers it lays tile by tile */
+interface LayerSink {
+  addLayer(geometry: THREE.BufferGeometry, material: THREE.Material, options: { name?: string; renderOrder?: number }): void;
+}
+
+/** A marking along an edge, o m right of its centre line: w wide (m), dashed `period` m with `duty` painted */
+interface PaintLine {
+  e: PaintEdge;
+  o: number;
+  w: number;
+  col: THREE.Color;
+  period: number;
+  duty: number;
+  /** Its two ends (moved to a miter where it joins a line at a bend) */
+  ends: [Pt, Pt];
+  /** At each end, the line it joins at a bend and that line's end */
+  joins: ([PaintLine, number] | undefined)[];
+  len: number;
+  /** The dash phase at its start (m) and which way the dashes run along it (±1), once worked out */
+  phase?: number;
+  flow?: number;
+}
+
+/** A road's lines ending at a bend (a shape node) */
+interface BendEnd {
+  e: PaintEdge;
+  end: number;
+  lines: PaintLine[];
+}
+
+// With `streamer` (streaming.ts) the paint and the topes go to it as layers, laid tile by tile around the camera
+function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: LayerSink | null = null): THREE.Mesh | null {
+  const position: number[] = [];
+  const side: number[] = [];
+  const paint: number[] = [];
+  const colors: number[] = [];
+  const index: number[] = [];
+  const lines: PaintLine[] = [];
+  const bends = new Map<number, BendEnd[]>();
+
+  // Flat strip w wide from a to b, with a dash pattern (period, duty cycle) running along it, on edge e's road: up a
+  // ramp or over a bridge (its lift, road-network.ts), in pieces between the bends of its profile
+  function strip(ax: number, az: number, bx: number, bz: number, w: number, col: THREE.Color, period = 1, duty = 1, phase = 0, flow = 1, e: PaintEdge | null = null) {
+    const len = Math.hypot(bx - ax, bz - az);
+    if (len < 0.05) return;
+    const sx = ((az - bz) / len) * w * 0.5;
+    const sz = ((bx - ax) / len) * w * 0.5;
+    // where along a-b to cut (0..1): its ends, and where it passes the profile's points
+    const cuts = [0, 1];
+    if (e?.lift) {
+      const ta = (ax - e.x0) * e.dx + (az - e.z0) * e.dz, tb = (bx - e.x0) * e.dx + (bz - e.z0) * e.dz;
+      if (Math.abs(tb - ta) > 0.01) for (const [t] of e.lift) { const f = (t - ta) / (tb - ta); if (f > 0.001 && f < 0.999) cuts.push(f); }
+      cuts.sort((p, q) => p - q);
+    }
+    const lift = (x: number, z: number) => (e?.lift ? edgeLift(e, (x - e.x0) * e.dx + (z - e.z0) * e.dz) : 0);
+    for (let k = 0; k + 1 < cuts.length; k++) {
+      const f0 = cuts[k], f1 = cuts[k + 1];
+      const x0 = ax + (bx - ax) * f0, z0 = az + (bz - az) * f0, x1 = ax + (bx - ax) * f1, z1 = az + (bz - az) * f1;
+      const u0 = phase + len * flow * f0, u1 = phase + len * flow * f1;
+      const y0 = HEIGHT + lift(x0, z0), y1 = HEIGHT + lift(x1, z1);
+      const i = position.length / 3;
+      for (const [x, y, z, s, u] of [[x0, y0, z0, -1, u0], [x0, y0, z0, 1, u0], [x1, y1, z1, 1, u1], [x1, y1, z1, -1, u1]] as const) {
+        position.push(x + sx * s, y, z + sz * s);
+        side.push(sx * s, sz * s);
+        paint.push(u, period, duty);
+        colors.push(col.r, col.g, col.b);
+      }
+      index.push(i, i + 1, i + 2, i, i + 2, i + 3);
+    }
+  }
+
+  // Edges run between stop lines; s is measured from the start one and o to the right of the centre line
+  const at = (e: PaintEdge, s: number, o: number): Pt => [e.sx + e.dx * s + e.rx * o, e.sz + e.dz * s + e.rz * o];
+  const along = (e: PaintEdge, o: number, w: number, col: THREE.Color, period = 1, duty = 1) => {
+    const start = (e.sx - e.x0) * e.dx + (e.sz - e.z0) * e.dz;
+    const ends: [Pt, Pt] = [at(e, e.from.shape ? -start : 0.9, o), at(e, e.to.shape ? e.span - start : e.len - 0.9, o)];
+    lines.push({ e, o, w, col, period, duty, ends, joins: [], len: 0 }); // (len: measured once the ends are joined)
+  };
+  const across = (e: PaintEdge, s: number, o0: number, o1: number, w: number, col: THREE.Color, period?: number, duty?: number) => {
+    strip(...at(e, s, o0), ...at(e, s, o1), w, col, period, duty, 0, 1, e);
+  };
+  const clearCentre = (e: PaintEdge, o: number) => {
+    const steps = Math.max(1, Math.ceil((e.len - 1.8) / 2.5));
+    for (let i = 0; i <= steps; i++) {
+      const s = 0.9 + (e.len - 1.8) * i / steps;
+      for (const offset of [o - 0.12, o + 0.12]) if (!network.isRoadClear(...at(e, s, offset), 0.15)) return false;
+    }
+    return true;
+  };
+
+  // The one or two directed edges of each road between a pair of intersections
+  const roads = new Map<number, [PaintEdge, PaintEdge?]>();
+  for (const e of network.paintEdges) {
+    const key = Math.min(e.from.id, e.to.id) * 65536 + Math.max(e.from.id, e.to.id);
+    const road = roads.get(key);
+    if (road) road.push(e);
+    else roads.set(key, [e]);
+  }
+
+  // The cobbled & earth streets' segments in 25 m cells: is (x, z) on one?
+  const UNPAINTED = 25;
+  const unpaintedCells = new Map<number, [number, number, number, number, number][]>();
+  for (const [kind, width, pts] of PAVEMENTS) {
+    if (kind !== 0 && kind !== 2) continue;
+    for (let i = 0; i + 3 < pts.length; i += 2) {
+      const seg: [number, number, number, number, number] = [pts[i], pts[i + 1], pts[i + 2], pts[i + 3], width * 0.5];
+      for (let ix = Math.floor((Math.min(seg[0], seg[2]) - 5) / UNPAINTED); ix <= Math.floor((Math.max(seg[0], seg[2]) + 5) / UNPAINTED); ix++) {
+        for (let iz = Math.floor((Math.min(seg[1], seg[3]) - 5) / UNPAINTED); iz <= Math.floor((Math.max(seg[1], seg[3]) + 5) / UNPAINTED); iz++) {
+          const k = ix * 100003 + iz;
+          let cell = unpaintedCells.get(k);
+          if (!cell) unpaintedCells.set(k, (cell = []));
+          cell.push(seg);
+        }
+      }
+    }
+  }
+  const unpainted = (x: number, z: number) => (unpaintedCells.get(Math.floor(x / UNPAINTED) * 100003 + Math.floor(z / UNPAINTED)) ?? []).some(([ax, az, bx, bz, h]) => {
+    const dx = bx - ax, dz = bz - az;
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)));
+    return Math.hypot(ax + dx * t - x, az + dz * t - z) < h;
+  });
+
+  for (const [e, back] of roads.values()) {
+    if (unpainted(...at(e, e.len / 2, 0))) continue;
+    const firstLine = lines.length;
+    // Lanes of both directions, measured to the right of e, left to right
+    const lanes = e.lanes.map((o) => ({ o, dir: 1 }));
+    if (back) for (const o of back.lanes) lanes.push({ o: -o, dir: -1 });
+    lanes.sort((p, q) => p.o - q.o);
+
+    // Dashed white between lanes going the same way, double yellow between opposing ones
+    // (nothing across a median or a lane closed off by an obstacle)
+    for (let k = 0; k + 1 < lanes.length; k++) {
+      const p = lanes[k];
+      const q = lanes[k + 1];
+      const mid = (p.o + q.o) / 2;
+      if (q.o - p.o > 4.5 && (p.dir === q.dir || !clearCentre(e, mid))) continue;
+      if (p.dir === q.dir) {
+        along(e, mid, 0.13, WHITE, 12, 0.25);
+      } else {
+        along(e, mid - 0.12, 0.11, YELLOW);
+        along(e, mid + 0.12, 0.11, YELLOW);
+      }
+    }
+
+    // Wide one-way avenues: edge line, then a buffer and a green bike lane along the curb on the side left free
+    if (!back && e.axis === 'ave' && lanes.length >= 4) {
+      for (const [edge, sign] of [[lanes[lanes.length - 1].o + 1.8, 1], [lanes[0].o - 1.8, -1]] as const) {
+        const curb = sign * e.half;
+        if ((curb - edge) * sign < 3.5) continue;
+        along(e, edge + sign * 0.2, 0.13, WHITE);
+        along(e, curb - sign * 2.4, 0.13, WHITE);
+        along(e, curb - sign * 1.3, 2.0, GREEN);
+      }
+    }
+
+    // Stop bars across the lanes arriving at each stop line, from the centre line (or median) to the curb (none where a
+    // street merely bends: a shape node of the centreline streets)
+    for (const f of back ? [e, back] : [e]) {
+      if (f.to.shape) continue;
+      const left = back ? Math.max(0, f.lanes[0] - 1.8) : -f.half;
+      across(f, f.len - 0.35, left + 0.1, f.half - 0.1, 0.45, WHITE);
+    }
+
+    // Continental crosswalks curb to curb, between the stop lines and the intersections at both ends
+    if (!e.from.shape) across(e, -CROSSWALK / 2, -e.half, e.half, CROSSWALK - 0.3, WHITE, 1.2, 0.5);
+    if (!e.to.shape) across(e, e.len + CROSSWALK / 2, -e.half, e.half, CROSSWALK - 0.3, WHITE, 1.2, 0.5);
+
+    for (const [end, node] of [[0, e.from], [1, e.to]] as const) {
+      if (!node.shape) continue;
+      let at = bends.get(node.id);
+      if (!at) bends.set(node.id, (at = []));
+      at.push({ e, end, lines: lines.slice(firstLine) });
+    }
+  }
+
+  // At a simple bend, corresponding offset lines meet at a bounded miter, without an intersection-sized gap.
+  for (const roadsAtBend of bends.values()) {
+    if (roadsAtBend.length !== 2) continue;
+    const [a, b] = roadsAtBend;
+    const sign = a.end === b.end ? -1 : 1;
+    if ((a.e.dx * b.e.dx + a.e.dz * b.e.dz) * sign < 0.5) continue;
+    for (const p of a.lines) {
+      let q: PaintLine | null = null;
+      let distance = 0.5;
+      for (const line of b.lines) {
+        const d = Math.abs(p.o - line.o * sign);
+        if (!line.joins[b.end] && line.col === p.col && line.w === p.w && line.period === p.period &&
+          line.duty === p.duty && d < distance) {
+          q = line;
+          distance = d;
+        }
+      }
+      if (!q) continue;
+      const A = p.ends[a.end];
+      const B = q.ends[b.end];
+      const dx = B[0] - A[0];
+      const dz = B[1] - A[1];
+      const cross = a.e.dx * b.e.dz - a.e.dz * b.e.dx;
+      let join: Pt;
+      if (Math.abs(cross) < 0.001) {
+        if (Math.hypot(dx, dz) > 0.5) continue;
+        join = [(A[0] + B[0]) * 0.5, (A[1] + B[1]) * 0.5];
+      } else {
+        const t = (dx * b.e.dz - dz * b.e.dx) / cross;
+        const u = (dx * a.e.dz - dz * a.e.dx) / cross;
+        const limit = Math.min(6, a.e.span * 0.25, b.e.span * 0.25);
+        if (Math.abs(t) > limit || Math.abs(u) > limit) continue;
+        join = [A[0] + a.e.dx * t, A[1] + a.e.dz * t];
+      }
+      p.ends[a.end] = q.ends[b.end] = join;
+      p.joins[a.end] = [q, b.end];
+      q.joins[b.end] = [p, a.end];
+    }
+  }
+
+  // Continue the same dash phase around bends, even when adjacent road edges point in opposite directions.
+  for (const line of lines) {
+    // An unmatched marking keeps its original gap instead of extending towards a curb at a sharp bend.
+    for (const end of [0, 1]) {
+      if (!line.joins[end]) line.ends[end] = at(line.e, end ? line.e.len - 0.9 : 0.9, line.o);
+    }
+    line.len = Math.hypot(line.ends[1][0] - line.ends[0][0], line.ends[1][1] - line.ends[0][1]);
+  }
+  for (const root of lines) {
+    if (root.phase !== undefined) continue;
+    root.phase = 0;
+    root.flow = 1;
+    const stack = [root];
+    while (stack.length) {
+      const line = stack.pop();
+      if (line?.phase === undefined || line.flow === undefined) break; // (every line on the stack has both)
+      for (let end = 0; end < 2; end++) {
+        const join = line.joins[end];
+        if (!join) continue;
+        const [next, nextEnd] = join;
+        if (next.phase !== undefined) continue;
+        next.flow = line.flow * (end === nextEnd ? -1 : 1);
+        next.phase = line.phase + end * line.len * line.flow - nextEnd * next.len * next.flow;
+        next.phase = ((next.phase % next.period) + next.period) % next.period;
+        stack.push(next);
+      }
+      strip(...line.ends[0], ...line.ends[1], line.w, line.col, line.period, line.duty, line.phase, line.flow, line.e);
+    }
+  }
+
+  // Topes: a low rounded hump curb to curb (cosine profile along the street), on a third of the two-way streets
+  // ('st', no ramp or bridge, at least 45 m between corners): one ~14 m from a corner, a second near the other end
+  // of the longer blocks. uv.x: metres across the street (the stripes)
+  const tPos: number[] = [];
+  const tUv: number[] = [];
+  const tIdx: number[] = [];
+  const hash = (a: number, b: number) => {
+    const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
+    return v - Math.floor(v);
+  };
+  for (const [e, back] of roads.values()) {
+    if (!back || e.axis !== 'st' || e.lift || e.len < 45 || hash(e.from.id, e.to.id) > 0.33) continue;
+    const spots = [Math.min(14, e.len * 0.3)];
+    if (e.len > 90 && hash(e.to.id, e.from.id) < 0.5) spots.push(e.len - 14);
+    for (const s0 of spots) {
+      const base = tPos.length / 3;
+      for (let k = 0; k <= TOPE_SEGS; k++) {
+        const u = (k / TOPE_SEGS - 0.5) * TOPE_LEN;
+        const y = HEIGHT + TOPE_H * 0.5 * (1 + Math.cos((Math.PI * 2 * u) / TOPE_LEN));
+        for (const o of [-e.half + 0.25, e.half - 0.25]) {
+          const [x, z] = at(e, s0 + u, o);
+          tPos.push(x, y, z);
+          tUv.push(o + e.half, u);
+        }
+      }
+      for (let k = 0; k < TOPE_SEGS; k++) {
+        const v = base + k * 2;
+        tIdx.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
+      }
+    }
+  }
+  if (tPos.length) {
+    const tg = new THREE.BufferGeometry();
+    tg.setAttribute('position', new THREE.Float32BufferAttribute(tPos, 3));
+    tg.setAttribute('uv', new THREE.Float32BufferAttribute(tUv, 2));
+    tg.setIndex(tIdx);
+    const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.75 });
+    // 50 cm stripes, the yellow worn a little darker
+    mat.colorNode = mix(color(0xd9a520), color(0x1c1c1a), step(0.5, fract(uv().x.div(1.0)))).mul(float(0.92));
+    console.info(`[roads] ${tIdx.length / (TOPE_SEGS * 6)} topes`);
+    if (streamer) {
+      // (shaded by the bump's own normals; the worker tilts its top with the street's slope)
+      tg.computeVertexNormals();
+      streamer.addLayer(tg, mat, { name: 'Topes' });
+    } else {
+      const draped = drapeGeometry(tg);
+      draped.computeVertexNormals();
+      const topes = new THREE.Mesh(draped, mat);
+      topes.name = 'Topes';
+      topes.receiveShadow = true;
+      scene.add(topes);
+    }
+  }
+
+  const normal = new Float32Array(position.length);
+  for (let i = 1; i < normal.length; i += 3) normal[i] = 1;
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setAttribute('side', new THREE.Float32BufferAttribute(side, 2));
+  geometry.setAttribute('paint', new THREE.Float32BufferAttribute(paint, 3));
+  geometry.setIndex(index);
+
+  // laid on the town's slopes with the asphalt under it: each strip cut along the ground's lattice (renderOrder: under
+  // the other see-through ground effects, contact shadows & headlight beams)
+  if (streamer) {
+    streamer.addLayer(geometry, createRoadPaintMaterial(), { name: 'RoadMarkings', renderOrder: -1 });
+    return null;
+  }
+  const mesh = new THREE.Mesh(drapeGeometry(geometry), createRoadPaintMaterial());
+  mesh.name = 'RoadMarkings';
+  mesh.receiveShadow = true;
+  mesh.renderOrder = -1;
+  scene.add(mesh);
+  return mesh;
+}
+
+export { buildRoadPaint };

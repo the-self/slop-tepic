@@ -4,7 +4,7 @@ const { join } = require('node:path');
 const test = require('node:test');
 const { loadModule } = require('./helpers/module.cjs');
 
-const source = readFileSync(join(__dirname, '../js/input/gamepad-controls.js'), 'utf8');
+const source = readFileSync(join(__dirname, '../js/input/gamepad-controls.ts'), 'utf8');
 
 // A standard-mapping pad whose buttons and sticks the test sets
 function rig() {
@@ -15,7 +15,7 @@ function rig() {
     document: { addEventListener: on, hasFocus: () => true, hidden: false, activeElement: null },
     navigator: { getGamepads: () => [pad] }
   };
-  const { GamepadControls } = loadModule(source, { imports: { '../world/city-config.js': { isTypingInField: () => false } }, globals });
+  const { GamepadControls } = loadModule(source, { imports: { '../world/city-config.ts': { isTypingInField: () => false } }, globals });
   const inputs = {};
   const controller = { activeMode: 'person', setGamepadInput: (k, v) => { inputs[k] = v; }, clearGamepadInput() {} };
   const looks = [];

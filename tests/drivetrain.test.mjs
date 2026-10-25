@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildSpec, gearRatios, torqueAt, wheelRpm, gearTopSpeed, createDriveState, stepDrive, gearLabel, zeroTo100
-} from '../js/player/drivetrain.js';
-import { CAR_MODELS, CAR_MODEL_BY_ID } from '../js/models/cars/index.js';
+} from '../js/player/drivetrain.ts';
+import { CAR_MODELS, CAR_MODEL_BY_ID } from '../js/models/cars/index.ts';
 
 const DT = 1 / 60;
 const spec = (id) => buildSpec(CAR_MODEL_BY_ID[id]);
@@ -192,7 +192,7 @@ test('the registry: unique ids, sensible figures', () => {
 });
 
 test('the motos top out at their own speeds, and the MT-09 does its 0-100 km/h', async () => {
-  const { MOTO_MODELS, PLAYER_MOTO } = await import('../js/models/motos/index.js');
+  const { MOTO_MODELS, PLAYER_MOTO } = await import('../js/models/motos/index.ts');
   assert.equal(PLAYER_MOTO.id, 'italika-ft150');
   for (const m of MOTO_MODELS) {
     const top = launch(buildSpec(m), 60).v * 3.6;
@@ -221,7 +221,7 @@ test('on a wet road a car stops in a longer distance and puts down less power', 
 });
 
 test('a cyclist cruises at ~30 km/h, sprints to ~48, pulls away without lifting the front wheel and brakes on rims', async () => {
-  const { pedalForce, PEDALS } = await import('../js/player/drivetrain.js');
+  const { pedalForce, PEDALS } = await import('../js/player/drivetrain.ts');
   const ride = (sprint) => {
     let v = 0;
     for (let t = 0; t < 120; t += DT) v += pedalForce(1, sprint, v, 95) / 95 * DT;

@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
-import * as tiles from '../js/world/tiles.js';
-import * as lattice from '../js/world/lattice.js';
-import * as waterways from '../js/world/waterways.js';
+import * as tiles from '../js/world/tiles.ts';
+import * as lattice from '../js/world/lattice.ts';
+import * as waterways from '../js/world/waterways.ts';
 
 const require = createRequire(import.meta.url);
 const { loadModule } = require('./helpers/module.cjs');
 // (the harness runs it as a script: the worker's URL is made from the module's own)
-const source = readFileSync(new URL('../js/world/streaming.js', import.meta.url), 'utf8').replace('import.meta.url', JSON.stringify('file:///js/world/streaming.js'));
+const source = readFileSync(new URL('../js/world/streaming.ts', import.meta.url), 'utf8').replace('import.meta.url', JSON.stringify('file:///js/world/streaming.ts'));
 
 // Just enough of three.js for the streamer
 class Object3D {
@@ -54,7 +54,7 @@ class Worker {
 function streamerModule() {
   workers.length = 0;
   return loadModule(source, {
-    imports: { 'three/webgpu': THREE, './tiles.js': tiles },
+    imports: { 'three/webgpu': THREE, './tiles.ts': tiles },
     globals: { Worker, URL, performance, setTimeout, console, Math, Set, Map, Promise, Float32Array, Uint8Array, Infinity }
   });
 }
@@ -178,8 +178,8 @@ test('a tile its worker could not lay is let go, not waited on, and its worker f
 function workerScope() {
   const posted = [];
   const self = { postMessage: (msg, transfer = []) => posted.push({ msg, transfer }) };
-  loadModule(readFileSync(new URL('../js/world/tile-worker.js', import.meta.url), 'utf8'), {
-    imports: { './tiles.js': tiles, './lattice.js': lattice, './waterways.js': waterways },
+  loadModule(readFileSync(new URL('../js/world/tile-worker.ts', import.meta.url), 'utf8'), {
+    imports: { './tiles.ts': tiles, './lattice.ts': lattice, './waterways.ts': waterways },
     globals: { self, Math, Map, Float32Array, Uint32Array, String, Infinity, atob }
   });
   return { send: (msg) => self.onmessage({ data: msg }), posted };
