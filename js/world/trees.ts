@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { lights } from 'three/tsl';
 import { createTreeMaterial } from '../render/tsl-materials.ts';
 import { liftAt } from './ground.ts';
 import type { Collider } from './buildings.ts';
@@ -1079,6 +1080,8 @@ interface TreeType {
   windPadding: number;
   /** whether its meshes cast shadows (the far LOD's whole-crown cards don't) */
   castShadow: boolean;
+  /** whether it is drawn with the far material (sun and sky only: createTreeField) */
+  far: boolean;
   meshes: THREE.InstancedMesh[];
 }
 
@@ -1134,6 +1137,14 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
   group.name = 'Trees';
   const atlas = createLeafAtlas();
   const material = createTreeMaterial(atlas.texture);
+  // The trees from LOD_NEAR out are lit by the sun and the sky only. Most of a leaf card's shading was the clustered
+  // point & spot lights' loop (~60% of the trees' cost on the GPU, every card fragment walking its cluster's lights),
+  // and those lights (street lamps, shop fronts, headlights) are the ones round the camera, reaching ~100 m from it:
+  // short of the coarse trees from 105 m. The lights the clustering leaves out are taken from the scene, where the
+  // LightingSystem has put them before the city is built; without any, the far trees keep all the scene's lights.
+  const farMaterial = createTreeMaterial(atlas.texture);
+  const skyLights = scene.children.filter((o): o is THREE.Light => o instanceof THREE.Light && !(o instanceof THREE.PointLight) && !(o instanceof THREE.SpotLight));
+  if (skyLights.length) farMaterial.lightsNode = lights(skyLights);
 
   // Geometries: [species][variant][lod]
   const geos = SPECIES.map((_, s) => [0, 1].map((v) => buildTreeGeometries(s, v, atlas.tileMeters)));
@@ -1152,22 +1163,22 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
 
   // Shared geometry types: lod 0 & 1 per species & variant, lod 2 per species
   const types: TreeType[] = [];
-  const makeType = (geo: THREE.BufferGeometry, name: string, castShadow = true) => {
+  const makeType = (geo: THREE.BufferGeometry, name: string, far: boolean, castShadow = true) => {
     const box = geo.boundingBox; // (TreeGeometryBuilder.build computes it)
     if (!box) throw new Error(`trees: ${name} has no bounding box`);
     const height = Math.max(Math.abs(box.min.y), Math.abs(box.max.y));
     // The material adds wind after the instance transform: height-squared lean/rock, plus bob and flutter.
     const windPadding = Math.hypot(0.2, 0.06) * Math.hypot(0.86, 0.51) * (height / 11) ** 2 + 2;
-    const type: TreeType = { geo, name, windPadding, castShadow, meshes: [] };
+    const type: TreeType = { geo, name, windPadding, castShadow, far, meshes: [] };
     types.push(type);
     return type;
   };
   const meshIndex = SPECIES.map((sp, s) => ({
-    l0: [0, 1].map((v) => makeType(geos[s][v][0], `Trees_${sp.name}_v${v}_lod0`)),
-    l1: [0, 1].map((v) => makeType(geos[s][v][1], `Trees_${sp.name}_v${v}_lod1`)),
+    l0: [0, 1].map((v) => makeType(geos[s][v][0], `Trees_${sp.name}_v${v}_lod0`, false)),
+    l1: [0, 1].map((v) => makeType(geos[s][v][1], `Trees_${sp.name}_v${v}_lod1`, true)),
     // (the whole-crown cards from LOD_MID out cast none: the sun's cascades reach 300 m from a street-level view, and
     // from the air their shadows are specks; every one of their cells in a cascade's box was a draw in each frame)
-    l2: makeType(geos[s][0][2], `Trees_${sp.name}_lod2`, false)
+    l2: makeType(geos[s][0][2], `Trees_${sp.name}_lod2`, true, false)
   }));
   const cells = new Map<string, TreeCell>();
   const meshes: { type: TreeType; cell: TreeCell; name: string; capacity: number }[] = [];
@@ -1238,7 +1249,7 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
     // when the levels change.
     const treeData = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4);
     geo.setAttribute('aTreeData', treeData);
-    const mesh = new THREE.InstancedMesh(geo, material, cap);
+    const mesh = new THREE.InstancedMesh(geo, m.type.far ? farMaterial : material, cap);
     mesh.name = m.name;
     mesh.count = 0;
     mesh.visible = false;
