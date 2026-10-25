@@ -246,6 +246,8 @@ async function initApp() {
   streetDetails.breaker?.setPhysics(physics);
   controllerManager.ragdolls = ragdolls;
   trafficSystem.setRagdolls(ragdolls);
+  // ...and the traffic's cars thrown about in a crash near the player (traffic.js crash)
+  trafficSystem.setPhysics(physics);
   const bloodPools = new BloodPools(scene, (x, z, fromY) => controllerManager.getGroundHeight(x, z, 'person', fromY));
   ragdolls.onSettle = (h) => {
     if (!(h.bleed > 0.05)) return;

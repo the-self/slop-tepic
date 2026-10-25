@@ -290,7 +290,7 @@ function createRagdolls(physics) {
       rig, base, parts, joints, ground: null, gx: NaN, gz: NaN, gy: NaN,
       rot0: layout.map((l) => l.rotation), pos0: layout.map((l) => l.position),
       rot: layout.map(() => [0, 0, 0, 1]), pos: layout.map(() => [0, 0, 0]), delta: layout.map(() => [0, 0, 0, 1]),
-      px: p[0], py: p[1], pz: p[2], x0: p[0], z0: p[2], age: 0, still: 0, rest: 0, speed: Infinity, settled: false, bleed
+      px: p[0], py: p[1], pz: p[2], at: { x: p[0], y: p[1], z: p[2] }, x0: p[0], z0: p[2], age: 0, still: 0, rest: 0, speed: Infinity, settled: false, bleed
     };
     handles.add(h);
     return h;
@@ -331,13 +331,18 @@ function createRagdolls(physics) {
         fastest = Math.max(fastest, Math.hypot(v.GetX(), v.GetY(), v.GetZ()));
       }
       poseFromParts(h.rig.pose, h.base, h.rot0, h.pos0, h.rot, h.pos, h.delta);
-      h.px = h.pos[0][0]; h.py = h.pos[0][1]; h.pz = h.pos[0][2];
+      h.px = h.at.x = h.pos[0][0]; h.py = h.at.y = h.pos[0][1]; h.pz = h.at.z = h.pos[0][2];
       h.speed = fastest;
       h.still = fastest < SETTLE_SPEED ? h.still + dt : 0;
       h.rest = h.still;
       // still; or long after, only crawling along the ground; or very long after, whatever it is doing
       if (h.still > SETTLE_TIME || (h.age > MAX_LIFE && fastest <= SLOW) || h.age > MAX_LIFE_HARD) freeze(h);
     }
+  };
+
+  // The bodies moving out past `far` m from `focus` (the player), for the walls fed round them (car-physics.js)
+  api.foci = function foci(out, focus, far) {
+    for (const h of handles) if (h.parts && Math.hypot(h.px - focus.x, h.pz - focus.z) > far) out.push(h.at);
   };
 
   api.count = () => [...handles].filter((h) => h.parts).length;

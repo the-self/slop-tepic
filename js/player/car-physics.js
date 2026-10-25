@@ -34,8 +34,10 @@ const PATCH_CELL = 0.5; // m between the ground's samples
 const PATCH_SAMPLES = 64; // per side: a 31.5 m square
 const PATCH_RECENTRE = 6; // m a vehicle may move from its patch's centre before it is sampled again around it
 const PATCH_RELEVEL = 1.2; // m up or down (a ramp onto a deck) before the patch is sampled again at its new level
-const WALL_REACH = 45; // m around the player the walls are fed in from
-const WALL_REFRESH = 2; // m the player moves between two looks at the walls around them
+const WALL_REACH = 45; // m around the player the walls are fed in from...
+const FOCUS_REACH = 12; // ...and around each thing moving out past that (a car thrown about, a body)
+const MAX_FOCI = 24; // (at most this many of them)
+const WALL_REFRESH = 2; // m the player (or one of them) moves between two looks at the walls around them
 const STEP = 1 / 90; // s, Jolt's step (the frame is cut into as many)
 const SPRING_HZ = 1.4; // the suspension's natural frequency (a road car's 1.2-1.8 Hz), unless the car says otherwise
 const SPRING_DAMPING = 0.55;
@@ -73,6 +75,17 @@ function wheelLayout(wheels, springHz = SPRING_HZ, gravity = 9.81) {
     };
   });
 }
+
+/**
+ * Pure: a car's springs and anti-roll bars by its class (drivetrain.js CLASSES): [natural frequency (Hz), the bars'
+ * stiffness (N·m/rad per kg)]: trucks & SUVs soft and leaning, sports cars & supercars flat
+ */
+function suspensionOf(cls) {
+  return SUSPENSION[cls] || SUSPENSION.family;
+}
+const SUSPENSION = {
+  truck: [1.25, 0.06], economy: [1.4, 0.1], family: [1.4, 0.1], premium: [1.5, 0.15], sport: [1.8, 0.35], super: [2.1, 0.6]
+};
 
 /**
  * Pure: the heading (rad, three.js's rotation.y: 0 facing +z) of a body whose own ahead is (fx, fy, fz) and up
@@ -215,17 +228,57 @@ function createCarPhysics(Jolt, world) {
   }
 
   // ---- The walls ------------------------------------------------------------------------------------------------
+  // Round the player (WALL_REACH), and round whatever else moves in the world beyond that (FOCUS_REACH): the traffic's
+  // cars thrown about in a crash, the people thrown about (a system's foci(out), sim/ragdolls.js), so none of them goes
+  // through a building out there
   const walls = new Map(); // collider -> Body
   const fed = { x: NaN, z: NaN };
-  let wallStamp = 0;
-  function feedWalls(x, z, y) {
-    const stamp = ++wallStamp;
-    for (const c of world.collidersNear(x, z, WALL_REACH)) {
+  const foci = []; // ({ x, y, z }) the far movers this step
+  let fedFoci = new Float64Array(0); // ...and where they were when the walls were last fed round them (x, z pairs)
+  let fedCount = 0;
+  let playerStamp = 0, focusStamp = 0;
+  // The walls fed round the far movers again, and with `player` round the player too (only they moved: the player's
+  // left as they are); those round neither leave the world
+  function feedWalls(x, z, y, player) {
+    if (player) {
+      playerStamp++;
+      stampWalls(x, z, y, WALL_REACH, '_player', playerStamp);
+      fed.x = x;
+      fed.z = z;
+    }
+    focusStamp++;
+    for (const f of foci) stampWalls(f.x, f.z, f.y, FOCUS_REACH, '_focus', focusStamp);
+    for (const [c, body] of walls) {
+      if (body._player === playerStamp || body._focus === focusStamp) continue;
+      dropBody(body);
+      walls.delete(c);
+    }
+    if (fedFoci.length < foci.length * 2) fedFoci = new Float64Array(foci.length * 2 + 16);
+    for (let i = 0; i < foci.length; i++) {
+      fedFoci[i * 2] = foci[i].x;
+      fedFoci[i * 2 + 1] = foci[i].z;
+    }
+    fedCount = foci.length;
+  }
+
+  // Whether the walls round the far movers want feeding again: one moved WALL_REFRESH m (or came, or went)
+  function fociMoved() {
+    if (fedCount !== foci.length) return true;
+    for (let i = 0; i < foci.length; i++) {
+      if (Math.hypot(foci[i].x - fedFoci[i * 2], foci[i].z - fedFoci[i * 2 + 1]) >= WALL_REFRESH) return true;
+    }
+    return false;
+  }
+
+  // The colliders within `reach` of (x, z) into the world (as static boxes; those already in it kept), their `mark`
+  // set to `stamp`
+  function stampWalls(x, z, y, reach, mark, stamp) {
+    for (const c of world.collidersNear(x, z, reach)) {
       // (a breakable prop's is its breaker's body, sim/mayhem.js)
       if (c.prop) continue;
       // (the list covers whole cells around (x, z): only what really comes within reach)
       const ox = Math.max(c.minX - x, 0, x - c.maxX), oz = Math.max(c.minZ - z, 0, z - c.maxZ);
-      if (ox * ox + oz * oz > WALL_REACH * WALL_REACH) continue;
+      if (ox * ox + oz * oz > reach * reach) continue;
       let body = walls.get(c);
       if (!body) {
         const ground = world.groundAt((c.minX + c.maxX) / 2, (c.minZ + c.maxZ) / 2, y);
@@ -254,15 +307,8 @@ function createCarPhysics(Jolt, world) {
         bodies.AddBody(body.GetID(), Jolt.EActivation_DontActivate);
         walls.set(c, body);
       }
-      body._stamp = stamp;
+      body[mark] = stamp;
     }
-    for (const [c, body] of walls) {
-      if (body._stamp === stamp) continue;
-      dropBody(body);
-      walls.delete(c);
-    }
-    fed.x = x;
-    fed.z = z;
   }
 
   // ---- The vehicles ---------------------------------------------------------------------------------------------
@@ -359,7 +405,8 @@ function createCarPhysics(Jolt, world) {
    * | 'awd', springHz?, roll? (the anti-roll bars' stiffness, N·m/rad per kg: ~0.1 lets a road car lean ~3° a g in a
    * corner, 0.6 holds a supercar nearly flat), wheelMass? (kg) }; a car's `hood` & `cabin`; a two-wheeler's (a moto, a
    * bicycle) `rider` ([x, y, z, hx, hy, hz]: the box its rider fills, left off once they are thrown off), `cgZ` (its
-   * centre of mass along it, m) & maxLean.
+   * centre of mass along it, m) & maxLean; `rescue` false: never set back on its wheels; `sleeps`: Jolt may let it
+   * sleep while still.
    * Returns the vehicle: set its `input` before a step (see step), read its `out` after one
    */
   function add(def, x, y, z, yaw) {
@@ -393,7 +440,7 @@ function createCarPhysics(Jolt, world) {
     bcs.mAngularDamping = two ? 0.3 : 0.15;
     bcs.mFriction = two ? 0.35 : 0.4; // (a moto down on its side slides a long way)
     bcs.mRestitution = 0.05;
-    bcs.mAllowSleeping = false;
+    bcs.mAllowSleeping = Boolean(def.sleeps); // (the traffic's crashed cars, lying still, cost nothing till struck)
     bcs.mMotionQuality = Jolt.EMotionQuality_LinearCast; // (no tunnelling through a wall at 300 km/h)
     const body = bodies.CreateBody(bcs);
     Jolt.destroy(bcs);
@@ -691,12 +738,22 @@ function createCarPhysics(Jolt, world) {
    * drivetrain.js's net drive & resistance, the drive on the driven wheels and the braking on all of them, each no more
    * than its tyre's grip under the weight on it), airDrag (N, against its motion while airborne), steer (-1 left .. 1
    * right of the full lock), handbrake, hold (brakes on to keep it standing), grip (the tyres' grip, 1 dry),
-   * spinning }. `focus` ({ x, y, z }: the player) is where the walls are fed in round. Afterwards each vehicle's `out`
+   * spinning }. `focus` ({ x, y, z }: the player) is where the walls are fed in round (and round the far movers, see
+   * the walls). Afterwards each vehicle's `out`
    * holds its state; `out.hit` the hardest knock its body itself took meanwhile (speed 0: none; `other`, the vehicle it
    * hit).
    */
   function step(dt, focus) {
-    if (focus && !(Math.hypot(focus.x - fed.x, focus.z - fed.z) < WALL_REFRESH)) feedWalls(focus.x, focus.z, focus.y);
+    if (focus) {
+      // the far movers: the vehicles and the systems' (people thrown about, props) out past the player's walls
+      foci.length = 0;
+      const far = WALL_REACH - FOCUS_REACH;
+      for (const v of vehicles) if (Math.hypot(v.out.x - focus.x, v.out.z - focus.z) > far) foci.push(v.out);
+      for (const sys of systems) sys.foci?.(foci, focus, far);
+      if (foci.length > MAX_FOCI) foci.length = MAX_FOCI;
+      const moved = !(Math.hypot(focus.x - fed.x, focus.z - fed.z) < WALL_REFRESH);
+      if (moved || fociMoved()) feedWalls(focus.x, focus.z, focus.y, moved);
+    }
     for (const v of vehicles) {
       read(v);
       keepPatch(v);
@@ -737,9 +794,9 @@ function createCarPhysics(Jolt, world) {
       o.z = v.layout[i].attachZ + v.layout[i].dir[2] * o.travel; // ...and along the vehicle
     });
     out.contacts = onGround;
-    // a car on its roof or its side, all but stopped, for a while: back on its wheels (no rocking it back by hand); a
-    // moto lies where it fell
-    if (v.kind !== 'car') return;
+    // a car on its roof or its side, all but stopped, for a while: back on its wheels (no rocking it back by hand);
+    // not one whose def says no `rescue` (the traffic's: it stays there); a moto lies where it fell
+    if (v.kind !== 'car' || v.def.rescue === false) return;
     if (out.uy < 0.35 && Math.hypot(out.vx, out.vz) < 1.5) v.upsideDown += dt;
     else v.upsideDown = 0;
     if (v.upsideDown > FLIP_RESCUE) place(v, out.x, world.groundAt(out.x, out.z, out.y + 1) + 0.3, out.z, out.heading);
@@ -751,4 +808,4 @@ function createCarPhysics(Jolt, world) {
   };
 }
 
-export { createCarPhysics, wheelLayout, headingOf, isDrive, wheelieThrottle, leanAndPitch };
+export { createCarPhysics, wheelLayout, headingOf, isDrive, wheelieThrottle, leanAndPitch, suspensionOf };
