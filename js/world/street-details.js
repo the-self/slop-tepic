@@ -17,10 +17,12 @@ import { GEO } from './city-geodata.js';
 // - Cobra-head streetlights along the curbs and post-top lamps in the centro
 // - The CFE's concrete poles down one side of every street (crossarm, insulators, a transformer here and there, a
 //   streetlight on the arm) strung with their lines and the cables sagging across to the houses
-// - A few fire hydrants (rare in Tepic), park & street trees, palms down the camellones
+// - A few fire hydrants (rare in Tepic), the municipality's green bins, bollards round the plazas' corners, park &
+//   street trees, palms down the camellones
 // - A post with the two streets' name plates on a corner of every junction (addJunctionSignals: their names are drawn
 //   into a small atlas for the junctions near the camera, redrawn as it moves)
-// Each prop stands on the ground at its base (ground.js liftAt: the town's slopes, y = 0 in the flat city).
+// Each prop stands on the ground at its base (ground.js liftAt: the town's slopes, y = 0 in the flat city). The lamps,
+// sign posts, hydrants and bins are the breaker's (sim/mayhem.js): knocked loose as bodies in Jolt.
 
 /**
  * TSL 3-Aspect Traffic Signal Lens Material (red on top, amber, green: the lenses at 0.36, 0, -0.36 in the head)
@@ -684,6 +686,90 @@ function buildStreetDetails(scene, keepClear = []) {
   if (hydrantPositions.length) group.add(hydrantInst);
   hydrantPositions.forEach(([hx, hz], i) => breakables.push({ kind: 'hydrant', x: hx, z: hz, yaw: 0, ground: 0.215 + liftAt(hx, hz), base: liftAt(hx, hz), parts: [{ mesh: hydrantInst, index: i }] }));
 
+  // 6b. Bins: the municipality's green steel bins, on the sidewalk a few metres from a block's corner (one block in
+  //     nine), standing loose (mayhem.js knocks them flying)
+  const binPositions = [];
+  {
+    let k = 0;
+    for (const b of allBlocks) {
+      if (b.median || b.park > 0.6 || b.poly.length < 4 || (k++ % 9) !== 4) continue;
+      const a = b.poly[1], c = b.poly[2];
+      const L = Math.hypot(c.x - a.x, c.z - a.z);
+      if (L < 14) continue;
+      const ux = (c.x - a.x) / L, uz = (c.z - a.z) / L;
+      let inx = -uz, inz = ux;
+      if (blockAt(a.x + ux * 5 + inx * 1.2, a.z + uz * 5 + inz * 1.2) !== b) { inx = uz; inz = -ux; }
+      const bx = a.x + ux * 5 + inx * 0.8, bz = a.z + uz * 5 + inz * 0.8;
+      if (isOnSidewalk(bx, bz, 0.35) && isClearOfPoles(bx, bz, 1.2)) {
+        binPositions.push([bx, bz]);
+        placedPoles.push({ x: bx, z: bz });
+      }
+    }
+  }
+  const binMat = new THREE.MeshStandardNodeMaterial({ color: 0x2c5a37, roughness: 0.55, metalness: 0.35 });
+  const binLidMat = new THREE.MeshStandardNodeMaterial({ color: 0x23262a, roughness: 0.6, metalness: 0.3 });
+  const binGeo = new THREE.CylinderGeometry(0.23, 0.2, 0.86, 12, 1, true).translate(0, 0.43, 0);
+  const binLidGeo = new THREE.CylinderGeometry(0.245, 0.245, 0.07, 12).translate(0, 0.885, 0);
+  const binInst = new THREE.InstancedMesh(binGeo, binMat, Math.max(1, binPositions.length));
+  const binLidInst = new THREE.InstancedMesh(binLidGeo, binLidMat, Math.max(1, binPositions.length));
+  binPositions.forEach(([bx, bz], i) => {
+    dummy.position.set(bx, liftAt(bx, bz), bz);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    binInst.setMatrixAt(i, dummy.matrix);
+    binLidInst.setMatrixAt(i, dummy.matrix);
+    breakables.push({ kind: 'bin', x: bx, z: bz, yaw: 0, ground: liftAt(bx, bz), base: liftAt(bx, bz), parts: [{ mesh: binInst, index: i }, { mesh: binLidInst, index: i }] });
+  });
+  for (const inst of [binInst, binLidInst]) {
+    inst.count = binPositions.length;
+    inst.castShadow = true;
+    inst.userData.keepOwnShadow = true;
+    if (binPositions.length) group.add(inst);
+  }
+
+  // 6c. Bollards: short concrete posts round the plazas' corners, three to a corner, keeping cars off the paving
+  //     (fixed: what runs into one stops)
+  const bollardPositions = [];
+  for (const b of allBlocks) {
+    if (!isPavedPark(b) || !b.poly || b.poly.length < 3) continue;
+    const n = b.poly.length;
+    for (let i = 0; i < n; i++) {
+      const v = b.poly[i], prev = b.poly[(i + n - 1) % n], next = b.poly[(i + 1) % n];
+      const ax = prev.x - v.x, az = prev.z - v.z, bx = next.x - v.x, bz = next.z - v.z;
+      const la = Math.hypot(ax, az), lb = Math.hypot(bx, bz);
+      if (la < 6 || lb < 6) continue;
+      // (into the plaza between its two edges)
+      for (const [t, along] of [[0.5, 0], [0.5, 1.4], [0.5, -1.4]]) {
+        const ex = along >= 0 ? bx / lb : ax / la, ez = along >= 0 ? bz / lb : az / la;
+        const ox = ax / la + bx / lb, oz = az / la + bz / lb, ol = Math.hypot(ox, oz) || 1;
+        const px = v.x + (ox / ol) * t + ex * Math.abs(along), pz = v.z + (oz / ol) * t + ez * Math.abs(along);
+        if (blockAt(px, pz) !== b || !isClearOfPoles(px, pz, 0.8)) continue;
+        bollardPositions.push([px, pz]);
+      }
+    }
+  }
+  for (const [px, pz] of bollardPositions) placedPoles.push({ x: px, z: pz });
+  const bollardMat = new THREE.MeshStandardNodeMaterial({ color: 0x9a968e, roughness: 0.85, metalness: 0.0 });
+  const bollardGeo = mergeGeometries([
+    new THREE.CylinderGeometry(0.13, 0.15, 0.8, 10).translate(0, 0.4, 0),
+    new THREE.SphereGeometry(0.13, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).translate(0, 0.8, 0)
+  ]);
+  const bollardInst = new THREE.InstancedMesh(bollardGeo, bollardMat, Math.max(1, bollardPositions.length));
+  bollardPositions.forEach(([px, pz], i) => {
+    const g = liftAt(px, pz);
+    dummy.position.set(px, g, pz);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    bollardInst.setMatrixAt(i, dummy.matrix);
+    cfeColliders.push({ minX: px - 0.15, maxX: px + 0.15, minZ: pz - 0.15, maxZ: pz + 0.15, minY: g - 0.6, maxY: g + 0.93 });
+  });
+  bollardInst.count = bollardPositions.length;
+  bollardInst.castShadow = true;
+  bollardInst.userData.keepOwnShadow = true;
+  if (bollardPositions.length) group.add(bollardInst);
+
   // =========================================================================
   // 7. TREES: PARKS & PLAZAS, STREET TREES, THE CAMELLONES' PALMS
   //    Tepic's laureles de la India, jacarandas, mangos, tabachines & Washingtonia palms (js/world/trees.js)
@@ -1007,7 +1093,8 @@ function buildStreetDetails(scene, keepClear = []) {
       { geometry: pedLampPostGeo, material: farolGreenMat },
       { geometry: pedGlobeGeo, material: pedGlobeGlow }
     ],
-    hydrant: [{ geometry: hydrantInst.geometry, material: hydrantMat, matrix: at(0, 0.425, 0) }]
+    hydrant: [{ geometry: hydrantInst.geometry, material: hydrantMat, matrix: at(0, 0.425, 0) }],
+    bin: [{ geometry: binGeo, material: binMat }, { geometry: binLidGeo, material: binLidMat }]
   });
 
   /**
@@ -1165,8 +1252,10 @@ function buildStreetDetails(scene, keepClear = []) {
         }
         if (!own || !cross) continue;
         placedPoles.push({ x: px, z: pz });
-        corners.push({ x: px, z: pz, g: liftAt(px, pz), a: [Math.atan2(-e.dz, e.dx), own], b: cross });
-        colliders?.push({ minX: px - 0.06, maxX: px + 0.06, minZ: pz - 0.06, maxZ: pz + 0.06, minY: corners[corners.length - 1].g, maxY: corners[corners.length - 1].g + 2.8 });
+        const g = liftAt(px, pz);
+        const collider = { minX: px - 0.06, maxX: px + 0.06, minZ: pz - 0.06, maxZ: pz + 0.06, minY: g, maxY: g + 2.8 };
+        corners.push({ x: px, z: pz, g, a: [Math.atan2(-e.dz, e.dx), own], b: cross, collider });
+        colliders?.push(collider);
         break; // one corner per junction
       }
     }
@@ -1183,6 +1272,30 @@ function buildStreetDetails(scene, keepClear = []) {
     });
     posts.castShadow = true;
     group.add(posts);
+    // each a prop a vehicle knocks loose (mayhem.js), its plates going with it: a stand-in post & two blank plates in
+    // its own frame (turned to its first street's plate), its collider (which stops walkers) gone once it is down
+    const plateLook = (yaw, y) => new THREE.Matrix4().compose(
+      new THREE.Vector3(Math.cos(yaw) * 0.48, y, -Math.sin(yaw) * 0.48),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), new THREE.Vector3(0.92, 0.22, 0.025));
+    const blankPlateMat = new THREE.MeshStandardNodeMaterial({ color: 0x1b3f8b, roughness: 0.4 });
+    breaker.addProps(corners.map((c, i) => {
+      const prop = {
+        kind: 'sign', x: c.x, z: c.z, yaw: c.a[0], ground: c.g, base: c.g, parts: [{ mesh: posts, index: i }],
+        collider: c.collider,
+        look: [
+          { geometry: posts.geometry, material: postMat },
+          { geometry: unitBox, material: blankPlateMat, matrix: plateLook(0, 2.62) },
+          { geometry: unitBox, material: blankPlateMat, matrix: plateLook(c.b[0] - c.a[0], 2.36) }
+        ],
+        // (its plates off the refilled plates at once)
+        onBreak: () => {
+          c.broken = true;
+          lastX = Infinity;
+        }
+      };
+      c.collider.prop = prop;
+      return prop;
+    }));
     const grid = new Map();
     for (const c of corners) {
       const k = Math.floor(c.x / CELL) * 100003 + Math.floor(c.z / CELL);
@@ -1254,6 +1367,7 @@ function buildStreetDetails(scene, keepClear = []) {
       for (let a = -r; a <= r; a++) {
         for (let b = -r; b <= r; b++) {
           for (const c of grid.get((ix + a) * 100003 + iz + b) || []) {
+            if (c.broken) continue;
             const d = Math.hypot(c.x - at.x, c.z - at.z);
             if (d < NEAR) near.push([d, c]);
           }

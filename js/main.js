@@ -197,7 +197,6 @@ async function initApp() {
   controllerManager.setLookKits((look) => trafficSystem.lookKit(look));
   // The traffic's damaged engines smoke with the player's car's smoke
   trafficSystem.setSmokeEmitter((x, y, z, vx, vz, count, shade, size) => controllerManager.puffSmoke(x, y, z, vx, vz, count, shade, size));
-  streetDetails.breaker?.setSolidQuery(solidAt);
   streetDetails.breaker?.setGroundQuery(groundHeight);
   // Saved positions belong to one city's frame: the key carries the city's name
   const PLAYER_STATE_KEY = `${(CITY.city || 'city').toLowerCase()}-player-state`;
@@ -243,6 +242,8 @@ async function initApp() {
   // Who is hit, shot or thrown falls as a body (sim/ragdolls.js), in the car's world; a pool of blood spreads under
   // whoever was hit hard as they come to rest (sim/blood.js)
   const ragdolls = createRagdolls(physics);
+  // ...and the street furniture vehicles knock loose (sim/mayhem.js)
+  streetDetails.breaker?.setPhysics(physics);
   controllerManager.ragdolls = ragdolls;
   trafficSystem.setRagdolls(ragdolls);
   const bloodPools = new BloodPools(scene, (x, z, fromY) => controllerManager.getGroundHeight(x, z, 'person', fromY));
@@ -1144,7 +1145,7 @@ async function initApp() {
       cameraSystem.camera
     );
     highwayTraffic.update(dt, cameraSystem.camera, controllerManager.getActiveEntity(), controllerManager.activeMode);
-    // Lamp posts & hydrants the player's car or bicycle runs into (mayhem.js)
+    // Lamp posts, sign posts, hydrants & bins the player's vehicle runs into (mayhem.js)
     if (streetDetails.breaker) streetDetails.breaker.update(dt, controllerManager.getActiveEntity(), controllerManager.activeMode);
     // Gunfire, the police, gangs & thieves (crime.js), and a blast's shake of the camera
     crimeSystem.update(dt, elapsed, cameraSystem.camera);

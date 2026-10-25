@@ -221,6 +221,8 @@ function createCarPhysics(Jolt, world) {
   function feedWalls(x, z, y) {
     const stamp = ++wallStamp;
     for (const c of world.collidersNear(x, z, WALL_REACH)) {
+      // (a breakable prop's is its breaker's body, sim/mayhem.js)
+      if (c.prop) continue;
       // (the list covers whole cells around (x, z): only what really comes within reach)
       const ox = Math.max(c.minX - x, 0, x - c.maxX), oz = Math.max(c.minZ - z, 0, z - c.maxZ);
       if (ox * ox + oz * oz > WALL_REACH * WALL_REACH) continue;

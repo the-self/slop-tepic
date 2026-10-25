@@ -1607,7 +1607,7 @@ class ThirdPersonControllerManager {
         const list = this._colliderCells.get(key(ix, iz));
         if (!list) continue;
         for (const c of list) {
-          if (c._seen === stamp) continue;
+          if (c._seen === stamp || c.broken) continue; // (a sign post knocked down, sim/mayhem.js)
           c._seen = stamp;
           out.push(c);
         }
