@@ -12,6 +12,7 @@ import { crash } from './crashes.ts';
 import { spawnCollisionSparks } from './sparks.ts';
 import { throwRider } from './two-wheelers.ts';
 import { bail } from './carjacking.ts';
+import { hillAt } from './surface.ts';
 
 // A knocked vehicle shunts the vehicles it runs into
 function knockOn(ts: TrafficState, v: Vehicle): void {
@@ -198,8 +199,10 @@ function bumpBody(ts: TrafficState, b: BumpBody): void {
     b.vx += nx * j * (1 - ratio) * 0.48;
     b.vz += nz * j * (1 - ratio) * 0.48;
     b.speed *= 1 - Math.min(0.9, 1 - ratio) * Math.abs(Math.sin(b.heading) * nx + Math.cos(b.heading) * nz);
-    reportCollision(ts, b, v, b.x - nx * b.halfW, 0.58, b.z - nz * b.halfW, nx, nz, approach);
-    if (approach > 1.8) spawnCollisionSparks(ts, b.x - nx * b.halfW, 0.58, b.z - nz * b.halfW, nx, nz, approach);
+    // (over the road it is on: the ground, or a bridge's deck, as the vehicles' crashes with each other)
+    const cx = b.x - nx * b.halfW, cz = b.z - nz * b.halfW, base = v.hy ?? hillAt(ts, cx, cz);
+    reportCollision(ts, b, v, cx, 0.58, cz, nx, nz, approach, base);
+    if (approach > 1.8) spawnCollisionSparks(ts, cx, 0.58, cz, nx, nz, approach, base);
   }
 }
 

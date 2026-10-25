@@ -112,7 +112,7 @@ function blast(ts: TrafficState, x: number, z: number, radius: number, power: nu
       ts.physics?.shove(thrownAbout.body, nx * shove, (2 + power * 0.25) * k, nz * shove, nz * across * 3 * k, (Math.random() - 0.5) * 2 * k, -nx * across * 3 * k);
       const yaw = v.yaw, cs = Math.cos(yaw), sn = Math.sin(yaw);
       hurtVehicle(ts, v, nx * shove * 1.6, nz * shove * 1.6, -(nx * cs - nz * sn), -(nx * sn + nz * cs), v.halfWidth, v.half);
-      spawnCollisionSparks(ts, v.x, 0.6, v.z, -nx, -nz, 6 + shove);
+      spawnCollisionSparks(ts, v.x, 0.6, v.z, -nx, -nz, 6 + shove, v.hy ?? hillAt(ts, v.x, v.z)); // (over its road: a bridge's deck too)
       continue;
     }
     v.vx += nx * shove;
@@ -125,7 +125,7 @@ function blast(ts: TrafficState, x: number, z: number, radius: number, power: nu
     // ...and crushed on the side facing it as by a crash of that much
     const yaw = v.yaw + v.yawOffset, cs = Math.cos(yaw), sn = Math.sin(yaw);
     hurtVehicle(ts, v, nx * shove * 1.6, nz * shove * 1.6, -(nx * cs - nz * sn), -(nx * sn + nz * cs), v.bus ? 1.3 : v.halfWidth, v.bus ? 5.72 : v.half);
-    spawnCollisionSparks(ts, v.x, 0.6, v.z, -nx, -nz, 6 + shove);
+    spawnCollisionSparks(ts, v.x, 0.6, v.z, -nx, -nz, 6 + shove, v.hy ?? hillAt(ts, v.x, v.z)); // (over its road: a bridge's deck too)
   }
   return thrown;
 }

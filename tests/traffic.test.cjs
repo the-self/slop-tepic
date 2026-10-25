@@ -356,3 +356,42 @@ test('an edge carries its lift profile: interpolated along it, held past its end
   close(edgeLift(e, 130), 6);
   close(edgeLift({ lift: null }, 50), 0);
 });
+
+test('a vehicle bumped or caught in a blast on a bridge reports and sparks over the deck, not the ground under it', () => {
+  const GROUND = 5, DECK = 12;
+  const reported = [];
+  const sparks = [];
+  const effects = {
+    './hooks.ts': { reportCollision: (...args) => reported.push(args.at(-1)) },
+    './sparks.ts': { spawnCollisionSparks: (...args) => sparks.push(args.at(-1)) },
+    './surface.ts': { hillAt: () => GROUND },
+    './motion.ts': { shove() {} }
+  };
+  const vehicle = (hy) => ({
+    x: 0, z: 0, yaw: 0, yawOffset: 0, halfWidth: 1, half: 2.2, tx: 0, tz: 1, speed: 0, vx: 0, vz: 0,
+    yawVel: 0, rollVel: 0, pitchVel: 0, edge: {}, crash: null, hy
+  });
+
+  const { bumpBody } = trafficModule('collisions', {
+    ...effects,
+    './constants.ts': { KNOCK_SPEED: 3, CRASH_SPEED: 99, onRoad: () => true, massOf: () => 1200, clamp: (x, lo, hi) => Math.max(lo, Math.min(hi, x)) },
+    './overlap.ts': { overlapWithPlayer: () => ({ nx: 1, nz: 0, pen: 0.1 }) }
+  });
+  // the player's car driving into it from +x at 10 m/s
+  const body = () => ({ x: 1, z: 0, heading: -Math.PI / 2, halfW: 0.9, halfL: 2.2, speed: 10, vx: 0, vz: 0, mass: 1300 });
+  bumpBody({ vehicles: [vehicle(DECK)] }, body());
+  bumpBody({ vehicles: [vehicle(undefined)] }, body());
+  assert.deepEqual(reported, [DECK, GROUND], 'over its road, the ground until it has been placed');
+  assert.deepEqual(sparks, [DECK, GROUND]);
+
+  sparks.length = 0;
+  const { blast } = trafficModule('gunfire', {
+    ...effects,
+    '../weapons.ts': { blastFalloff: () => 1 },
+    './constants.ts': { KNOCK_SPEED: 3, MASS: { sedan: 1200 }, massOf: () => 1200 },
+    './collisions.ts': { hurtVehicle() {} },
+    './crashes.ts': { crash: () => null }
+  });
+  blast({ peds: [], vehicles: [vehicle(DECK)] }, 3, 0, 10, 20);
+  assert.deepEqual(sparks, [DECK]);
+});

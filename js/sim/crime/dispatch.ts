@@ -2,7 +2,7 @@
 // Who turns up (sim/crime.ts): the police for the stars, gangs on their turf, the cartel's trucks, thieves, and
 // health, armour and a bazooka lying about.
 import { POLICE, GANGS, NARCO, gangTurf } from '../crime-rules.ts';
-import { MAX_AGENTS, MAX_TRUCKS, rand } from './constants.ts';
+import { MAX_AGENTS, MAX_TRUCKS, HEALTH_PICKUP, ARMOR_PICKUP, rand } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
 
 export function dispatch(crime: CrimeSystem, dt: number): void {
@@ -85,7 +85,7 @@ export function dispatch(crime: CrimeSystem, dt: number): void {
     const kind = crime.health < 70 ? 'health' : crime.armor < 50 ? 'armor' : null;
     if (kind && crime.pickups.filter((p) => p.kind === kind).length < 2) {
       const s = crime.traffic.sidewalkSpot(crime.px, crime.pz, 25, 80);
-      if (s) crime.drop(kind, s.x, s.z, kind === 'health' ? 50 : 50, 240);
+      if (s) crime.drop(kind, s.x, s.z, kind === 'health' ? HEALTH_PICKUP : ARMOR_PICKUP, 240);
     }
   }
   t.bazooka -= dt;

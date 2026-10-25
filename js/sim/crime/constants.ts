@@ -10,6 +10,9 @@ const MAX_AGENTS = 24; // people on foot: police, gang members, thieves
 const MAX_CRUISERS = 5;
 const MAX_TRUCKS = 2; // the cartel's
 const MAX_PICKUPS = 24;
+// What a pickup lying on the sidewalk gives (of 100): a first-aid kit half a life back, a vest a whole armour, as GTA's
+const HEALTH_PICKUP = 50;
+const ARMOR_PICKUP = 100;
 const PARKED_Y = -1000; // where unused meshes wait (still in the scene, so their pipelines compile at load)
 const BODY_R = 0.34; // m: a person's radius, to shots and to each other
 // m over the ground a shot aimed up or down still hits: a person, a car (or patrol car), a bus or combi
@@ -49,5 +52,5 @@ const zero = new THREE.Matrix4().makeScale(0, 0, 0);
 const tint = new THREE.Color();
 
 export {
-  MAX_AGENTS, MAX_CRUISERS, MAX_TRUCKS, MAX_PICKUPS, PARKED_Y, BODY_R, PERSON_H, CAR_H, BUS_H, inBody, RUN, THIEF_RUN, WALK, DOWN_TIME, DEAD_TIME, DESPAWN, GRIP_REACH, DRAW_TIME, RESPAWN_TIME, COP_SIGHT, CRUISER_SIGHT, CRUISER, NPC_GUN, FOE_DAMAGE, FOE_RANGE, SKILL, PICKUP_COLORS, clamp, rand, dummy, zero, tint
+  MAX_AGENTS, MAX_CRUISERS, MAX_TRUCKS, MAX_PICKUPS, HEALTH_PICKUP, ARMOR_PICKUP, PARKED_Y, BODY_R, PERSON_H, CAR_H, BUS_H, inBody, RUN, THIEF_RUN, WALK, DOWN_TIME, DEAD_TIME, DESPAWN, GRIP_REACH, DRAW_TIME, RESPAWN_TIME, COP_SIGHT, CRUISER_SIGHT, CRUISER, NPC_GUN, FOE_DAMAGE, FOE_RANGE, SKILL, PICKUP_COLORS, clamp, rand, dummy, zero, tint
 };

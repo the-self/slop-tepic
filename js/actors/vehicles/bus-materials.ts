@@ -126,7 +126,9 @@ export function createBusWheelMaterial(): THREE.MeshStandardNodeMaterial {
   return mat;
 }
 
-let _busLoftedMat: THREE.MeshStandardNodeMaterial | null = null;
+// One material per palette (the traffic's camiones share theirs): a material is built around its `liveries` texture,
+// so another palette must not get the first one's back
+const _busLoftedMats = new Map<THREE.DataTexture | null, THREE.MeshStandardNodeMaterial>();
 
 /**
  * Creates the TSL procedural material for Tepic's camiones (the lofted bus body):
@@ -139,7 +141,8 @@ let _busLoftedMat: THREE.MeshStandardNodeMaterial | null = null;
  *   NY plates; black trims & light-grey roof pods
  */
 export function createLoftedBusMaterial(liveries: THREE.DataTexture | null = null): THREE.MeshStandardNodeMaterial {
-  if (_busLoftedMat) return _busLoftedMat;
+  const cached = _busLoftedMats.get(liveries);
+  if (cached) return cached;
   const s = BUS_SPEC;
   const p = attribute('position', 'vec3');
   const n = attribute('normal', 'vec3');
@@ -239,6 +242,6 @@ export function createLoftedBusMaterial(liveries: THREE.DataTexture | null = nul
     .add(color(0xff9a14).mul(max(turnFront, turnRear).mul(blink).mul(2.0)))
     .add(color(0xff0a12).mul(tailLamp.mul(brake.mul(1.5).add(0.75))));
 
-  _busLoftedMat = mat;
+  _busLoftedMats.set(liveries, mat);
   return mat;
 }
