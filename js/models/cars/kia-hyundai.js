@@ -3,7 +3,7 @@
 
 export const CARS = [
   {
-    id: 'kia-rio', name: 'KIA Rio', body: 'sedan', class: 'economy',
+    id: 'kia-rio', glb: 'assets/models/cars/kia-rio.glb', name: 'KIA Rio', body: 'sedan', class: 'economy',
     size: [4.39, 1.73, 1.46], mass: 1140, drive: 'fwd', power: [82, 6300], torque: [151, 4850], redline: 6600,
     gears: 6, top: 185, accel: 10.5, rarity: 12
   },

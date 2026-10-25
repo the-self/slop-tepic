@@ -1206,6 +1206,25 @@ function bloodStains(p, n, spec, mask) {
 }
 
 /**
+ * The material of a car made as a 3D model (models/cars `glb`, modelled white: assets/models/CLAUDE.md): its texture,
+ * with the instance's `paintColor` where the texture is white (light and unsaturated: the body, not the glass, tyres,
+ * trim or lamps), and its red lamps at the back (-z) lit by `carState`'s brake, as the drawn cars' are.
+ */
+function createModelCarMaterial(map) {
+  const mat = new THREE.MeshStandardNodeMaterial({ metalness: 0.1 });
+  const rgb = texture(map, uv()).rgb;
+  const lum = rgb.dot(vec3(0.299, 0.587, 0.114));
+  const sat = max(rgb.r, max(rgb.g, rgb.b)).sub(min(rgb.r, min(rgb.g, rgb.b)));
+  const body = smoothstep(0.5, 0.78, lum).mul(float(1).sub(smoothstep(0.06, 0.16, sat)));
+  const paint = attribute('paintColor', 'vec3');
+  mat.colorNode = mix(rgb, rgb.mul(paint).mul(1.12), body);
+  mat.roughnessNode = mix(float(0.7), float(0.32), body);
+  const lamp = smoothstep(0.2, 0.4, rgb.r.sub(max(rgb.g, rgb.b))).mul(step(positionLocal.z, 0.0));
+  mat.emissiveNode = color(0xff2a1a).mul(lamp).mul(attribute('carState', 'vec4').x.mul(2.2));
+  return mat;
+}
+
+/**
  * Creates the TSL material for lofted vehicles.
  * Instanced traffic reads the per-instance `paintColor` (vec3) and `carState` (vec4: brake, left (+x) & right (-x)
  * turn signal, livery: 1 = NYPD) attributes; with a fixed `fixedColorHex` (the player's taxi, wheels) the state is the
@@ -2411,6 +2430,7 @@ export {
   buildCarGeometry,
   buildCarProxyGeometry,
   createLoftedCarMaterial,
+  createModelCarMaterial,
   buildLightbarGeometry,
   createLightbarMaterial,
   BUS_SPEC,

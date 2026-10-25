@@ -3,7 +3,7 @@
 
 export const CARS = [
   {
-    id: 'toyota-yaris', name: 'Toyota Yaris', body: 'sedan', class: 'economy',
+    id: 'toyota-yaris', glb: 'assets/models/cars/toyota-yaris.glb', name: 'Toyota Yaris', body: 'sedan', class: 'economy',
     size: [4.42, 1.73, 1.47], mass: 1070, drive: 'fwd', power: [79, 6000], torque: [140, 4200], redline: 6500,
     gears: 6, top: 180, accel: 11.0, rarity: 12
   },

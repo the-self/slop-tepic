@@ -52,5 +52,8 @@ crop the neighbours, scale it to a known height, and simplify it.
   model is shared under the same licence. Scaled to 40 m at the crosses of the towers, and cut
   9.5 m behind the facade: the rest of the church, the casona and the portales are drawn.
 
+- `cars/*.glb`: the ten commonest traffic cars, made with Meshy (Meshy T2.5 smart topology) from
+  images Meshy drew from the prompts in `tools/models/jobs/cars/`.
+
 Models taken from Google Maps, Street View or Google's 3D tiles can't be used: their licence
 doesn't allow copying them.

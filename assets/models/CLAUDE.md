@@ -120,18 +120,21 @@ Use `--keep-width` for props that stand alone.
 
 ## Cars and people
 
-They need more than a model, so plan them with the user before spending credits.
-
-- **Cars**: the traffic draws ~200 cars instanced per body shape (`sim/traffic.js`, `actors/actor-models.js`),
-  each with its own paint, wheels drawn apart (to spin and steer), crash crumpling and blood in the material.
-  A Meshy car needs:
-  - its wheels cut out, since the drawn ones stay;
-  - a paint mask, so the instance colour reaches the body and not the glass or tyres. Generate it in plain
-    white;
-  - stretching to each model's real size (`models/cars/`).
+- **Cars are in.** The ten best sellers (Versa, Aveo, March, NP300, Vento, Gol, Kicks, Onix, Yaris, Rio) are
+  Meshy models in `assets/models/cars/`. They were drawn white from prompts (`tools/models/jobs/cars/`, 18
+  credits each), then prepared with `prepare.mjs --length <its real length> --yaw 90 --ratio 1 --texture 1024`.
+  Meshy's front view has every car's nose at -x, and the game's cars face +z.
+  - **Data**: a car model's `glb` field (`js/models/cars/`) names its file.
+  - **Traffic**: `sim/traffic.js` loads those files in the background. Near the camera (`CAR_PROXY_DISTANCE`) such
+    a car is drawn with its own instanced mesh, at scale 1, with its wheels in it. Beyond that distance it is
+    its body shape's ~250-triangle stand-in, as before.
+  - **Material**: `createModelCarMaterial` (`actors/actor-models.js`) puts the instance's paint where the
+    texture is white and unsaturated, and lights the red lamps at the back with the brake.
+  - **Not done yet**: these cars don't crumple and their wheels don't turn. The prompts asked for no badges,
+    but Nano Banana still drew some on the grilles.
+  - **Adding one**: a job, the preparation, the `glb` field. Check that the nose faces +z (`.claude/cars.html`
+    shows the prepared cars side by side) and that the paint takes.
 - **People**: pedestrians are one instanced, GPU-skinned crowd on a 15-bone skeleton (`sim/pedestrians.js`), with
   outfits from a per-person seed. A Meshy person in A-pose has to be skinned to those bones: two bones and a
   weight per vertex, from the bind pose. Each model is one fixed look, and the morphs (build, female
-  proportions, hair) are lost.
-- The pilot jobs are in `tools/models/jobs/` (`sedan.json`, `person.json`, 18 credits each). Both came out
-  clean; neither is in the game yet.
+  proportions, hair) are lost. The pilot is `tools/models/jobs/person.json`.

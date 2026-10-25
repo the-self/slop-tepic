@@ -12,6 +12,7 @@ import {
   buildCarProxyGeometry,
   buildSteerableWheelGeo,
   createLoftedCarMaterial,
+  createModelCarMaterial,
   buildLightbarGeometry,
   createLightbarMaterial,
   buildLoftedBusBodyGeometry,
@@ -388,6 +389,38 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     policeLightbarInst,
     combiSignInst
   );
+
+  // The car models made as 3D models (models/cars `glb`, ~8k triangles each): once its file has loaded, a model's near
+  // level is an instanced mesh of its own, its wheels part of it; beyond CAR_PROXY_DISTANCE it stays its body shape's
+  // stand-in. Loaded in the background (not preloaded): until then, and if a file fails, the body shape draws it.
+  const modelBodies = new Map(); // model id -> instanced mesh
+  const withModel = Object.values(CAR_MODEL_BY_ID).filter((m) => m.glb);
+  if (withModel.length) {
+    const loading = import('three/addons/loaders/GLTFLoader.js');
+    loading.then(({ GLTFLoader }) => {
+      const loader = new GLTFLoader();
+      for (const model of withModel) {
+        loader.load(model.glb, (gltf) => {
+          let src = null;
+          gltf.scene.traverse((o) => {
+            if (o.isMesh && !src) src = o;
+          });
+          if (!src || !src.material.map) return;
+          src.updateWorldMatrix(true, false);
+          const geo = src.geometry.clone().applyMatrix4(src.matrixWorld);
+          geo.setAttribute('paintColor', new THREE.InstancedBufferAttribute(new Float32Array(NUM_CARS * 3), 3));
+          geo.setAttribute('carState', new THREE.InstancedBufferAttribute(new Float32Array(NUM_CARS * 4), 4));
+          const mesh = new THREE.InstancedMesh(geo, createModelCarMaterial(src.material.map), NUM_CARS);
+          mesh.count = 0;
+          mesh.frustumCulled = false;
+          mesh.castShadow = mesh.receiveShadow = true;
+          group.add(mesh);
+          bodyMeshes.push(mesh);
+          modelBodies.set(model.id, mesh);
+        }, undefined, (err) => console.warn(`[traffic] ${model.name}: could not load ${model.glb}`, err));
+      }
+    });
+  }
 
   // =========================================================================
   // 2. LOFTED CAMIONES ON TEPIC'S ROUTES (16 BUSES)
@@ -2392,14 +2425,17 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     if (hasView && !visible(c.x, c.z, 18, (c.hy || 0) + 1)) return;
 
     const near = Math.hypot(c.x - focusX, c.z - focusZ) < CAR_PROXY_DISTANCE;
-    const bodyInst = near ? bodies[c.bodyType].near : bodies[c.bodyType].far;
+    // (a model of its own near the camera: at its real size already, its wheels in it; no crumpling)
+    const own = near && c.model ? modelBodies.get(c.model.id) : undefined;
+    const bodyInst = own || (near ? bodies[c.bodyType].near : bodies[c.bodyType].far);
     const slot = bodyInst.count++;
 
     dummy.position.set(c.x, c.hy || 0, c.z);
     // (a crashed car as its body lies in Jolt)
     if (c.crash) dummy.quaternion.set(c.crash.body.out.qx, c.crash.body.out.qy, c.crash.body.out.qz, c.crash.body.out.qw);
     else dummy.rotation.set(c.pitch + (c.gp || 0), rotY, c.roll, 'YXZ');
-    dummy.scale.set(c.sx, c.sy, c.sz); // (the body shape stretched to the model's size)
+    if (own) dummy.scale.set(1, 1, 1);
+    else dummy.scale.set(c.sx, c.sy, c.sz); // (the body shape stretched to the model's size)
     dummy.updateMatrix();
     bodyInst.setMatrixAt(slot, dummy.matrix);
     if (c.isPolice) policeLightbarInst.setMatrixAt(policeDrawn++, dummy.matrix);
@@ -2462,6 +2498,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
       }
     }
 
+    if (own) return;
     if (near && c.crash) placeCrashedWheels(c, wheelCars++, spec.wheelRadius * c.sw);
     else if (near) {
       placeWheels(c, wheelCars++, rotY, c.roll, spec.wheelRadius * c.sw, spec.wheelX * c.sx, spec.wheelZ * c.sz, carWheelLeftInst, carWheelRightInst);
