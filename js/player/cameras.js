@@ -37,6 +37,7 @@ class CameraSystem {
     this.orbitYawOffset = 0.0;
     this.orbitPitchOffset = 0.09;
     this.zoomMultiplier = 1.0;
+    this.wheelZooms = null; // (event) => whether the mouse wheel zooms (main.js: not while it switches weapons)
     this.isDragging = false;
     this.userOrbitTimer = 0;
 
@@ -166,6 +167,7 @@ class CameraSystem {
 
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
+      if (this.wheelZooms && !this.wheelZooms(e)) return; // (on foot it switches weapons instead: ui/weapon-wheel.js)
       this.zoomMultiplier = Math.max(0.45, Math.min(2.4, this.zoomMultiplier + e.deltaY * 0.001));
     }, { passive: false });
   }

@@ -387,14 +387,15 @@ class CityAudioSystem {
     return true;
   }
 
-  // A shot, a punch, a blast or a pickup at (x, y, z) (crime.js): 'pistol' | 'smg' | 'bazooka' | 'punch' |
-  // 'explosion' | 'pickup'
+  // A shot, a punch, a blast, a pickup or a gun drawn at (x, y, z) (crime.js): 'pistol' | 'smg' | 'bazooka' | 'punch'
+  // | 'explosion' | 'pickup' | 'draw'
   gunfire(kind, x, y, z) {
     if (!this.ready || !this.enabled || !this.haveListener || this.context?.state !== 'running' || document.hidden) return false;
     const source = this.gunSource ??= { id: null, x: 0, y: 0, z: 0, seed: 0 };
     source.id = this.gunSource; source.x = x; source.y = y; source.z = z; source.seed = ++this.collisionSequence;
     if (kind === 'explosion') return this.emit('explosion', source, { severity: 1, intensity: 1 });
     if (kind === 'pickup') return this.emit('pickup', source, { intensity: 1 });
+    if (kind === 'draw') return this.emit('draw', source, { intensity: 1 });
     return this.emit('gun', source, { weapon: kind, severity: kind === 'bazooka' ? 1 : kind === 'smg' ? 0.5 : 0.7, intensity: 1 });
   }
 

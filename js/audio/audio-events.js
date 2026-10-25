@@ -322,6 +322,22 @@ function chime(ctx) {
   }, 0.5);
 }
 
+// A gun drawn: the slide pulled back over its rails and let go, a scrape and two metallic clacks
+function rack(ctx) {
+  const random = randomSource(907);
+  let scrape = 0;
+  return makeBuffer(ctx, 0.28, (t) => {
+    scrape += ((random() * 2 - 1) - scrape) * 0.55; // (bright noise, its lowest rumble taken off)
+    let s = scrape * (t > 0.02 && t < 0.1 ? 0.18 * Math.sin(Math.PI * (t - 0.02) / 0.08) : 0);
+    for (const [at, f, level] of [[0.012, 2650, 0.8], [0.11, 1980, 1]]) {
+      const u = t - at;
+      if (u < 0) continue;
+      s += level * (Math.sin(TAU * f * u) * 0.6 + Math.sin(TAU * f * 1.53 * u) * 0.4 + (random() * 2 - 1) * 0.5) * Math.exp(-u * 85);
+    }
+    return s;
+  }, 0.5);
+}
+
 function gustBuffer(ctx) {
   // Low-rate, looping control signal: uneven overlapping gusts with a smooth seam, rather than a sine LFO.
   const sampleRate = 8000, duration = 24;
@@ -377,6 +393,7 @@ export function createEventResources(ctx, resources) {
     explosions: Array.from({ length: 2 }, (_, i) => explosion(ctx, i + 701)),
     thunder: Array.from({ length: 2 }, (_, i) => thunder(ctx, i + 801)),
     chime: chime(ctx),
+    rack: rack(ctx),
     gusts: gustBuffer(ctx),
     signalTick: signal(ctx, false),
     signalWalk: signal(ctx, true)
@@ -387,7 +404,7 @@ export function playEvent(ctx, resources, kind, output, options = {}) {
   const random = randomSource(options.seed);
   const start = Math.max(ctx.currentTime, finite(options.when, ctx.currentTime));
   const intensity = clamp(finite(options.intensity, 1));
-  const levels = { footstep: 0.22, talk: 0.065, horn: 0.23, signal: 0.13, crash: 0.35, gun: 0.5, explosion: 0.7, pickup: 0.18, thunder: 0.6 };
+  const levels = { footstep: 0.22, talk: 0.065, horn: 0.23, signal: 0.13, crash: 0.35, gun: 0.5, explosion: 0.7, pickup: 0.18, draw: 0.16, thunder: 0.6 };
   if (!Object.hasOwn(levels, kind) || intensity === 0) return { endTime: start, dispose() {} };
   const gain = ctx.createGain();
   gain.gain.value = intensity * levels[kind];
@@ -480,6 +497,8 @@ export function playEvent(ctx, resources, kind, output, options = {}) {
     play(resources.thunder[Math.floor(random() * resources.thunder.length)], start, 0.75 + intensity * 0.3 + random() * 0.08);
   } else if (kind === 'pickup') {
     play(resources.chime, start);
+  } else if (kind === 'draw') {
+    play(resources.rack, start, 0.92 + random() * 0.16);
   } else {
     play(options.walk ? resources.signalWalk : resources.signalTick, start);
   }

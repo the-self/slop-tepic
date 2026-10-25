@@ -1,6 +1,6 @@
 // js/ui/crime-hud.js
-// The crime HUD (crime.js's state): wanted stars, health, stamina (player/stats.js) & armour bars, money, the weapon in hand and its rounds,
-// short messages, the red edges of getting hurt and the WASTED / BUSTED screen. Safe DOM APIs only; the text and
+// The crime HUD (crime.js's state): wanted stars, health, stamina (player/stats.js) & armour bars, money, the weapon in hand (in
+// 3D once ui/weapon-icons.js has baked it, drawn again on a change) and its rounds, short messages, the red edges of getting hurt and the WASTED / BUSTED screen. Safe DOM APIs only; the text and
 // bars change only when their values do.
 
 const TOAST_TIME = 2.6; // s a message stays
@@ -18,6 +18,9 @@ class CrimeHud {
       staminaRow: doc.getElementById('hud-stamina-row'),
       money: doc.getElementById('hud-money'),
       weapon: doc.getElementById('hud-weapon-name'),
+      weaponCard: doc.getElementById('hud-weapon'),
+      weaponImg: doc.querySelector('#hud-weapon-icon img'),
+      weaponGlyph: doc.querySelector('#hud-weapon-icon svg'),
       ammo: doc.getElementById('hud-ammo'),
       toast: doc.getElementById('hud-toast'),
       banner: doc.getElementById('hud-banner'),
@@ -26,6 +29,7 @@ class CrimeHud {
     this.shown = {};
     this.toastTime = 0;
     this.money = null; // the money shown, counting towards the real figure
+    this.icons = null; // ui/weapon-icons.js, set by main.js
   }
 
   set(key, value, apply) {
@@ -74,6 +78,26 @@ class CrimeHud {
 
     const w = crime.arsenal.weapon;
     this.set('weapon', w.label, (label) => { el.weapon.textContent = label; });
+    // its picture: the 3D one in the hand once baked, the flat symbol till then
+    const url = this.icons?.ready ? this.icons.url(w.id, true) : null;
+    this.set('weaponIcon', url || w.id, () => {
+      if (el.weaponImg && url) {
+        el.weaponImg.src = url;
+        el.weaponImg.hidden = false;
+        el.weaponGlyph?.setAttribute('hidden', ''); // (an SVG element has no hidden property)
+      } else {
+        el.weaponGlyph?.firstElementChild?.setAttribute('href', `#w-${w.id}`);
+      }
+    });
+    this.set('weaponDrawn', w.id, (id) => {
+      if (!el.weaponCard || this.shown.weaponFirst === undefined) {
+        this.shown.weaponFirst = id;
+        return;
+      }
+      el.weaponCard.classList.remove('is-switching');
+      void el.weaponCard.offsetWidth; // (restart its animation)
+      el.weaponCard.classList.add('is-switching');
+    });
     const rounds = crime.arsenal.ammo[w.id];
     this.set('ammo', rounds, (n) => { el.ammo.textContent = n === Infinity ? '' : String(n); });
 

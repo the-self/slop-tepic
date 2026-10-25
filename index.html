@@ -78,9 +78,11 @@
   <link rel="modulepreload" href="./js/sim/weapons.js" />
   <link rel="modulepreload" href="./js/sim/crime-rules.js" />
   <link rel="modulepreload" href="./js/sim/gunfire-fx.js" />
+  <link rel="modulepreload" href="./js/actors/weapon-models.js" />
   <link rel="modulepreload" href="./js/sim/crime.js" />
   <link rel="modulepreload" href="./js/ui/crime-hud.js" />
   <link rel="modulepreload" href="./js/ui/weapon-wheel.js" />
+  <link rel="modulepreload" href="./js/ui/weapon-icons.js" />
   <link rel="modulepreload" href="./js/player/drivetrain.js" />
   <link rel="modulepreload" href="./js/player/vehicle-damage.js" />
   <link rel="modulepreload" href="./js/player/controllers.js" />
@@ -104,7 +106,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&amp;family=Overpass:wght@600;700&amp;display=swap" />
-  <link rel="stylesheet" href="./css/style.css?v=20261024-nitro-night" />
+  <link rel="stylesheet" href="./css/style.css?v=20261025-weapon-wheel" />
 </head>
 <body>
   <!-- Icon sprite (24 × 24 stroke icons, drawn in currentColor) -->
@@ -210,7 +212,7 @@
   <!-- Under the toolbar: wanted level, health & armour, money, the weapon in hand (crime.js, crime-hud.js) -->
   <div class="hud hud-crime">
     <section id="hud-crime" class="panel crime-card" aria-label="Status">
-      <div id="hud-weapon" class="crime-weapon" title="Weapons [Tab]"><span id="hud-weapon-name">Pistol</span><span id="hud-ammo" class="crime-ammo">68</span></div>
+      <div id="hud-weapon" class="crime-weapon" title="Weapons [Tab · scroll]"><span id="hud-weapon-icon" class="crime-weapon-icon" aria-hidden="true"><img alt="" hidden /><svg viewBox="0 0 48 24"><use href="#w-pistol"/></svg></span><span id="hud-weapon-name">Pistol</span><span id="hud-ammo" class="crime-ammo">68</span></div>
       <div id="hud-money" class="crime-money">$250</div>
       <div class="crime-bar crime-health" aria-hidden="true"><span id="hud-health"></span></div>
       <div id="hud-stamina-row" class="crime-bar crime-stamina" aria-hidden="true" hidden><span id="hud-stamina"></span></div>
@@ -219,11 +221,13 @@
         <span class="wanted-star" aria-hidden="true">★</span><span class="wanted-star" aria-hidden="true">★</span><span class="wanted-star" aria-hidden="true">★</span><span class="wanted-star" aria-hidden="true">★</span><span class="wanted-star" aria-hidden="true">★</span>
       </div>
     </section>
+    <!-- the quick switch's strip (ui/weapon-wheel.js) -->
+    <div id="weapon-strip" class="weapon-strip" aria-hidden="true" hidden></div>
   </div>
   <div id="hud-toast" class="crime-toast" role="status" aria-live="polite" hidden></div>
   <div id="hud-banner" class="crime-banner" aria-live="assertive" hidden></div>
   <div id="hud-hurt" class="hurt-vignette" aria-hidden="true"></div>
-  <!-- Free aim's crosshair (player/aim.js) and the weapon wheel (ui/weapon-wheel.js) -->
+  <!-- Free aim's crosshair (player/aim.js) and the weapon wheel (ui/weapon-wheel.js, its pictures ui/weapon-icons.js) -->
   <div id="hud-crosshair" class="crosshair" aria-hidden="true" hidden><span></span></div>
   <div id="weapon-wheel" class="weapon-wheel" aria-label="Weapons" hidden></div>
 

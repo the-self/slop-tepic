@@ -208,6 +208,19 @@ function roundBox(x, z, gx, gz, b, margin) {
   return Math.atan2(b.x + cu * b.sn + cv * b.cs - x, b.z + cu * b.cs - cv * b.sn - z);
 }
 
+// The wheel's bars for a weapon (ui/weapon-wheel.js), each 0..1 against the strongest in the arsenal: damage per hit (a
+// rocket's whole blast), fire rate, range, and accuracy (the spread either side of the aim; a fist always lands)
+function weaponStats(id) {
+  const w = WEAPONS[id];
+  if (!w) return null;
+  return {
+    damage: clamp01(w.damage / 220),
+    rate: clamp01(w.rate / 11),
+    range: clamp01(Math.sqrt(w.range / 170)),
+    accuracy: clamp01(1 - w.spread / 0.06)
+  };
+}
+
 // Share of a blast's force felt at distance d from its centre (1 at the centre, 0 at the edge of its radius)
 function blastFalloff(d, radius) {
   const k = clamp01(1 - d / radius);
@@ -220,4 +233,4 @@ function hitChance(distance, speed, skill, range) {
   return clamp01(skill * (1 - (distance / range) ** 2) / (1 + Math.max(0, speed) * 0.07));
 }
 
-export { WEAPONS, WEAPON_ORDER, Arsenal, pickTarget, rayCircle, rayBox, boxOverlap, roundBox, blastFalloff, hitChance, wrapAngle };
+export { WEAPONS, WEAPON_ORDER, Arsenal, weaponStats, pickTarget, rayCircle, rayBox, boxOverlap, roundBox, blastFalloff, hitChance, wrapAngle };

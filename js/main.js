@@ -35,6 +35,7 @@ import { buildCotos } from './world/cotos.js';
 import { CrimeSystem } from './sim/crime.js';
 import { CrimeHud } from './ui/crime-hud.js';
 import { WeaponWheel } from './ui/weapon-wheel.js';
+import { WeaponIcons } from './ui/weapon-icons.js';
 import { AimControl } from './player/aim.js';
 
 // js/main.js
@@ -253,8 +254,15 @@ async function initApp() {
   if (Number.isFinite(savedMoney)) crimeSystem.money = Math.max(0, Math.round(savedMoney));
   audioSystem.sources.pursuers = crimeSystem.cruisers;
   const crimeHud = new CrimeHud();
-  // The weapon wheel, held open with Tab (ui/weapon-wheel.js): the game runs slowed meanwhile
-  const weaponWheel = new WeaponWheel(crimeSystem, { aim: aimControl });
+  // The weapon wheel, held open with Tab (ui/weapon-wheel.js): the game runs slowed meanwhile. On foot the mouse wheel
+  // switches weapons, GTA-style (Alt + the wheel, or a pinch, still zooms the camera); in a vehicle it zooms.
+  const scrollSwitches = (e) => !e.altKey && !e.ctrlKey && controllerManager.activeMode === 'person' && crimeSystem.state === 'play';
+  const weaponWheel = new WeaponWheel(crimeSystem, { aim: aimControl, canvas: renderer.domElement, canScroll: scrollSwitches });
+  cameraSystem.wheelZooms = (e) => !scrollSwitches(e);
+  // Its pictures and the HUD's, the arsenal's 3D models in the hand (ui/weapon-icons.js), baked once the city is up
+  const weaponIcons = new WeaponIcons(renderer);
+  crimeHud.icons = weaponIcons;
+  weaponWheel.setIcons(weaponIcons);
   // Crashes hurt as well as sound: each system has a single collision listener, shared here with the audio's
   let lastCrash = -Infinity;
   for (const system of [controllerManager, trafficSystem, streetDetails.breaker]) {
@@ -394,6 +402,12 @@ async function initApp() {
     onBoard: board,
     onCycleCamera: cycleCamera,
     onCycleWeapon: (dir) => crimeSystem.cycleWeapon(dir),
+    // LB held: the weapon wheel, the right stick pointing
+    onWeaponWheel: (action, x, y) => {
+      if (action === 'open') weaponWheel.open(false);
+      else if (action === 'aim') weaponWheel.stick(x, y);
+      else weaponWheel.close(action === 'close');
+    },
     onToggleMap: () => mapSystem.toggleFullMap(!mapSystem.isFullMapOpen),
     onCloseMap: () => mapSystem.toggleFullMap(false)
   });
@@ -818,7 +832,7 @@ async function initApp() {
   markInit('ui');
   // Debugging handle for the console, only with ?debug in the URL
   if (new URLSearchParams(location.search).has('debug')) {
-    window.__slop = { scene, renderer, controllerManager, trafficSystem, cameraSystem, streetDetails, cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl, weaponWheel };
+    window.__slop = { scene, renderer, controllerManager, trafficSystem, cameraSystem, streetDetails, cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl, weaponWheel, weaponIcons };
   }
 
   // The loading screen stays up while the shaders compile (precompileShaders() & the warm-up frame, see the loop) and
@@ -1036,6 +1050,8 @@ async function initApp() {
         if (loadingOverlay) loadingOverlay.classList.add('hidden');
         audioSystem.ready = true;
         setLoadingProgress(1);
+        // (the weapon pictures, off screen, once the first frames are through)
+        setTimeout(() => weaponIcons.bake(), 400);
       });
     }
 
