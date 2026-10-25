@@ -331,6 +331,13 @@ class PropBreaker {
     this.anchored.add(p);
   }
 
+  // The props flying about out past `far` m from `focus` (the player), for the walls fed round them (car-physics.js)
+  foci(out, focus, far) {
+    for (const p of this.loose) {
+      if (Math.hypot(p.root.position.x - focus.x, p.root.position.z - focus.z) > far) out.push(p.root.position);
+    }
+  }
+
   // Jolt's systems (car-physics.js addSystem): before each step, the ground under each loose prop (its `floor`)
   before() {
     for (const p of this.loose) {

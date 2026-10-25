@@ -54,6 +54,7 @@ function keyboardHarness(nyc = {}) {
       '../models/cars/index.js': carRegistry,
       '../models/motos/index.js': realModule('../js/models/motos/index.js'),
       './car-blood.js': realModule('../js/player/car-blood.js'),
+      './car-physics.js': realModule('../js/player/car-physics.js'),
       '../sim/ragdolls.js': realModule('../js/sim/ragdolls.js')
     }
   });

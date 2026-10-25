@@ -27,6 +27,7 @@ import { CAR_MODEL_BY_ID, TAXI_MODEL, POLICE_MODEL, BUS_MODEL, pickModel } from 
 import { PLAYER_MOTO, MOTO_MODEL_BY_ID } from '../models/motos/index.js';
 import { MIN_IMPACT, createDamage, applyImpact, enginePower, deformBody } from './vehicle-damage.js';
 import { createStains, bloodFrame, addHit, wash, clean } from './car-blood.js';
+import { suspensionOf } from './car-physics.js';
 import { bleedOf } from '../sim/ragdolls.js';
 
 // js/player/controllers.js
@@ -2045,8 +2046,10 @@ class ThirdPersonControllerManager {
     const hit = o.hit;
     if (hit.speed > 1.5) {
       const hx = c.position.x - hit.nx * c.halfL * 0.9, hz = c.position.z - hit.nz * c.halfL * 0.9;
-      // (it hurts whoever is in it: nobody, when it rolls on alone)
-      if (driving) this.reportCollision(c, (this._wall ??= { type: 'building' }), 'building', hx, c.position.y + 0.56, hz, hit.nx, 0, hit.nz, hit.speed);
+      // (it hurts whoever is in it: nobody, when it rolls on alone; a car of the traffic thrown about in Jolt, traffic.js
+      // crash, as hard as a car)
+      const other = hit.other?.owner;
+      if (driving) this.reportCollision(c, other || (this._wall ??= { type: 'building' }), other ? 'vehicle' : 'building', hx, c.position.y + 0.56, hz, hit.nx, 0, hit.nz, hit.speed);
       this.impactCar(c, hit.nx * hit.speed, hit.nz * hit.speed);
       c.cameraKick = Math.max(c.cameraKick || 0, Math.min(1, (hit.speed - 1.5) / 14)); // (cameras.js speedEffects)
       if (hit.speed > 2.2) c.lastCollisionSpark = { x: hx, y: 0.56, z: hz, nx: hit.nx, nz: hit.nz, speed: hit.speed };
@@ -2190,10 +2193,7 @@ class ThirdPersonControllerManager {
   // What the car's body is: its model's mass, its footprint & height, its wheels where they stand on the body, and
   // springs & anti-roll bars by its class (trucks & SUVs soft and leaning, sports cars & supercars flat)
   carBodyDef(c, spec) {
-    const SUSPENSION = {
-      truck: [1.25, 0.06], economy: [1.4, 0.1], family: [1.4, 0.1], premium: [1.5, 0.15], sport: [1.8, 0.35], super: [2.1, 0.6]
-    };
-    const [springHz, roll] = SUSPENSION[spec.cls] || SUSPENSION.family;
+    const [springHz, roll] = suspensionOf(spec.cls);
     const height = c.bodyHeight || 1.45;
     return {
       kind: 'car', mass: spec.mass, halfW: c.halfW, halfL: c.halfL, height, cg: height * (c.kit && c.kit.wheels ? 0.4 : 0.36),
@@ -2475,7 +2475,8 @@ class ThirdPersonControllerManager {
     let thrown = 0;
     if (hit.speed > 1.5) {
       const hx = m.position.x - hit.nx * 0.9, hz = m.position.z - hit.nz * 0.9;
-      this.reportCollision(m, (this._wall ??= { type: 'building' }), 'building', hx, m.position.y + 0.6, hz, hit.nx, 0, hit.nz, hit.speed);
+      const other = hit.other?.owner;
+      this.reportCollision(m, other || (this._wall ??= { type: 'building' }), other ? 'vehicle' : 'building', hx, m.position.y + 0.6, hz, hit.nx, 0, hit.nz, hit.speed);
       m.cameraKick = Math.max(m.cameraKick || 0, Math.min(1, (hit.speed - 1.5) / 10));
       if (hit.speed > 2.2) m.lastCollisionSpark = { x: hx, y: 0.5, z: hz, nx: hit.nx, nz: hit.nz, speed: hit.speed };
       // head on (what it hit faces its front wheel) at ~30 km/h, or anything that hard from any side: over the bars
