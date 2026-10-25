@@ -158,7 +158,17 @@ if (CATEDRAL) {
     }
   });
   LANDMARK_RESERVES.push(churchRect([PLAN.atrium[0], PLAN.casona[1], PLAN.casona[3], PLAN.atrium[1]], 2));
-  LANDMARK_RESERVES.push(churchRect([PLAN.pink[0], PLAN.portales[1], -24, 2], 2));
+  // (the pink building's & the portales' runs along the curb, as built)
+  for (const run of frontRuns(PLAN.pink[0], PLAN.portales[1])) {
+    const c = Math.cos(run.th), s = Math.sin(run.th);
+    LANDMARK_RESERVES.push({
+      contains(px, pz) {
+        const C = CATEDRAL, dx = px - C.x, dz = pz - C.z, x = dx * C.f[1] - dz * C.f[0] - run.ox, z = dx * C.f[0] + dz * C.f[1] - run.oz;
+        const u = x * c - z * s, v = x * s + z * c;
+        return u > -0.5 && u < run.len + 0.5 && v > -12.5 && v < 2.5;
+      }
+    });
+  }
 }
 
 function stoneMaterial(tint) {
