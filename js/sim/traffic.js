@@ -1563,7 +1563,10 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
       if (into > 0) mayhemListener('struck', pe.position.x, pe.position.y, pe.position.z, into, massOf(v));
     }
 
-    const jImpulse = (1.0 + 0.28) * approachSpeed;
+    // (the crumpling soaks up a hard hit: ~0.28 of it comes back from a knock, 0.05 from ~23 m/s, see
+    // controllers.js resolveHorizontalCollision)
+    const restitution = Math.max(0.05, 0.28 - approachSpeed * 0.01);
+    const jImpulse = (1.0 + restitution) * approachSpeed;
     const cImpulse = jImpulse * massRatio * 0.92;
     v.vx -= nx * cImpulse;
     v.vz -= nz * cImpulse;
@@ -1594,7 +1597,9 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
       // the speed lost by the player's share: half of it head on into a car, nearly all into a bus, a few % into a bike
       pe.speed *= 1.0 - Math.min(0.95, pPush) * headOnDot;
       if (pe.type === 'car') {
-        const pImpulse = jImpulse * pPush * 0.48;
+        // pushed off it: what of the hit comes back head on (its speed already lost it above), the approach itself
+        // when it only grazes (so it slides off instead of through)
+        const pImpulse = approachSpeed * pPush * (restitution + (1 - headOnDot) * 0.6);
         pe.vx = (pe.vx || 0) + nx * pImpulse;
         pe.vz = (pe.vz || 0) + nz * pImpulse;
         const pLocalNx = nx * pCos - nz * pSin;

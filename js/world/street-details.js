@@ -4,7 +4,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SIGNAL_TIMING, blockAt, BLOCKS, nearestRoads } from './city-config.js';
 import { cityUniforms, createTreeGrateMaterial, atlasSlotUV, createWireMaterial, WIRE_FADE } from '../render/tsl-materials.js';
 import { PropBreaker } from '../sim/mayhem.js';
-import { createTreeField } from './trees.js';
+import { createTreeField, treeTrunkColliders } from './trees.js';
 import { parkTreeSites, sidewalkBlocks, parkLampSites } from './city-grid.js';
 import { liftAt } from './ground.js';
 
@@ -811,6 +811,8 @@ function buildStreetDetails(scene) {
   // level of detail, each tree's level following the camera
   const treeField = createTreeField(scene, treePositions);
   group.add(treeField.group);
+  // ...and their trunks stop the player, like the CFE poles (main.js adds both to the player's colliders)
+  for (const c of treeTrunkColliders(treePositions)) cfeColliders.push(c);
 
   // =========================================================================
   // 8. CLUSTERED STREETLIGHTS & STREET FURNITURE LIGHT POOLS

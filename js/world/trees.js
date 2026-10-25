@@ -954,6 +954,23 @@ function hashPos(x, y, z) {
 }
 
 /**
+ * The trunks of the trees at `sites` (as createTreeField draws them) as colliders for the player (controllers.js): a
+ * box around each trunk's flared foot, its species' radius at the tree's own scale, up to where the crown starts.
+ * A car runs into a tree instead of through it
+ */
+function treeTrunkColliders(sites) {
+  const out = [];
+  for (const t of sites) {
+    const sp = SPECIES[Math.min(SPECIES.length - 1, Math.max(0, t.species || 0))];
+    const s = t.scale * (0.9 + hashPos(t.x, 1.3, t.z) * 0.2); // (createTreeField's own)
+    const r = sp.trunk.r * s * 1.3 * Math.max(t.sx || 1, t.sz || 1); // (its foot flares to ~1.75× the trunk's radius)
+    const y = t.y || 0;
+    out.push({ minX: t.x - r, maxX: t.x + r, minZ: t.z - r, maxZ: t.z + r, minY: y - 0.5, maxY: y + Math.min(sp.trunk.top, 4) * s });
+  }
+  return out;
+}
+
+/**
  * Builds the instanced tree field for `sites` ({ x, y, z, scale, species, yaw?, sx?, sz?, tier?, whitewash? }) and keeps each
  * tree's level of detail up to date from the camera of every view pass (scene.onBeforeRender). Returns
  * { group, material, atlas, update(cameraPosition) }.
@@ -1178,4 +1195,4 @@ function createTreeField(scene, sites) {
   return { group, material, atlas, update, meshes: instanced, stats };
 }
 
-export { createTreeField, createLeafAtlas, buildTreeGeometries, SPECIES as TREE_SPECIES };
+export { createTreeField, treeTrunkColliders, createLeafAtlas, buildTreeGeometries, SPECIES as TREE_SPECIES };
