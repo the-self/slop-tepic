@@ -735,7 +735,42 @@ const houses = [];
     for (const ring of elemRings(e)) stores.push({ ring, box: bbox(ring), mall: t.shop === 'mall' || /^plaza\b|centro comercial/i.test(t.name || '') });
   }
   const storeAt = (x, z) => stores.find((s) => x > s.box.x0 && x < s.box.x1 && z > s.box.z0 && z < s.box.z1 && inRing(s.ring, x, z));
-  let read = 0, small = 0, outside = 0, squeezed = 0, bigBoxes = 0;
+  // The open canals, drains & ditches (not underground), in 50 m cells. A footprint standing on one in a green block
+  // (a camellón, a park) is an ML footprint's mistake: Ciudad del Valle's canal runs down Paseo de Hamburgo's planted
+  // median, where Overture had a house. (Elsewhere a drain under a hall or across a yard is more likely a culvert.)
+  const CH = 50;
+  const channels = new Map();
+  for (const [kind, , , flags, pts] of waterways) {
+    if (!/^(canal|drain|ditch)$/.test(kind) || flags & 2) continue;
+    for (let i = 0; i + 3 < pts.length; i += 2) {
+      const seg = pts.slice(i, i + 4);
+      for (let ix = Math.floor(Math.min(seg[0], seg[2]) / CH); ix <= Math.floor(Math.max(seg[0], seg[2]) / CH); ix++) {
+        for (let iz = Math.floor(Math.min(seg[1], seg[3]) / CH); iz <= Math.floor(Math.max(seg[1], seg[3]) / CH); iz++) {
+          const k = `${ix},${iz}`;
+          if (!channels.has(k)) channels.set(k, []);
+          channels.get(k).push(seg);
+        }
+      }
+    }
+  }
+  // whether a channel runs within 0.5 m of the oriented box (centre, size, turn's cos & sin), sampled every 0.25 m
+  const onChannel = (cx, cz, w, d, cs, sn) => {
+    const r = Math.hypot(w, d) / 2 + 1;
+    for (let ix = Math.floor((cx - r) / CH); ix <= Math.floor((cx + r) / CH); ix++) {
+      for (let iz = Math.floor((cz - r) / CH); iz <= Math.floor((cz + r) / CH); iz++) {
+        for (const [x0, z0, x1, z1] of channels.get(`${ix},${iz}`) || []) {
+          const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 0.25));
+          for (let k = 0; k <= n; k++) {
+            const dx = x0 + ((x1 - x0) * k) / n - cx, dz = z0 + ((z1 - z0) * k) / n - cz;
+            // (world = c + R(θ)·local, so local = R(−θ)·(p − c))
+            if (Math.abs(dx * cs - dz * sn) <= w / 2 + 0.5 && Math.abs(dx * sn + dz * cs) <= d / 2 + 0.5) return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+  let read = 0, small = 0, outside = 0, squeezed = 0, onCanal = 0, bigBoxes = 0;
   if (fs.existsSync(file)) {
     const text = fs.readFileSync(file, 'utf8');
     let start = 0;
@@ -779,6 +814,8 @@ const houses = [];
         if (w < 3 || d < 3) break;
       }
       if (!ok || w < 3 || d < 3) { squeezed++; continue; }
+      const block = byLab.get(labAt(cx, cz));
+      if (block && !block.rural && block.park >= 0.6 && onChannel(cx, cz, w, d, cs, sn)) { onCanal++; continue; }
       // Front: the side with the nearest roadway straight out from its middle (w, e, n, s of the house's own frame)
       const outs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
       let front = 0, bestD = Infinity;
@@ -818,7 +855,7 @@ const houses = [];
         front + (shop ? KIND.shop : 0) + (big ? KIND.big : 0) + (strip ? KIND.strip : 0), 0);
     }
   }
-  log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets), ${bigBoxes} big boxes`);
+  log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets, ${onCanal} on a canal through green), ${bigBoxes} big boxes`);
 }
 
 // =====================================================================================================================

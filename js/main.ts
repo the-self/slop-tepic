@@ -170,6 +170,8 @@ async function initApp(): Promise<void> {
   const aimControl = new AimControl({ canvas: renderer.domElement, controllers: controllerManager });
   cameraSystem.aim = aimControl;
   cameraSystem.setGroundQuery(groundHeight); // the chase cameras stay over the ground
+  // ...and in front of the walls between them and the player (what is under 1 m across, a pole, left out)
+  cameraSystem.setObstacleQuery((x, y, z) => controllerManager.isSolidAt(x, z, 0, y, 1));
   // The scenic cameras frame the city's own spots (see cameras.ts)
   const T = TELEPORT_LOCATIONS;
   cameraSystem.setScenicAnchors({
@@ -544,6 +546,8 @@ async function initApp(): Promise<void> {
     .run('player', ({ frameDt, elapsed }) => {
       // out of breath, no sprinting
       controllerManager.canSprint = stamina.canSprint;
+      // on foot WASD go the way the camera looks (cameras.ts)
+      controllerManager.viewHeading = cameraSystem.viewHeading();
       // the player keeps real time down to 10 fps, in steps of at most 1/30 s: a slow frame mustn't stretch a car's
       // 0-100 km/h or slow its speed over the ground
       const playerSteps = Math.ceil(frameDt * 30 - 1e-6);

@@ -10,8 +10,9 @@ type Hint = readonly [keys: readonly string[], action: string];
 
 // Keyboard guide for each mode
 const CONTROL_HINTS: Readonly<Record<PlayerMode, readonly Hint[]>> = {
-  person: [[['W', 'S'], 'Walk'], [['A', 'D'], 'Turn'], [['Shift'], 'Sprint'], [['Space'], 'Jump'], [['RMB', 'Z'], 'Aim'],
-    [['LMB', 'X'], 'Fire'], [['Tab', '1-4'], 'Weapons'], [['F'], 'Robar / Subir']], // (3 again: SMG / rifle)
+  // (the mouse looks once a click has locked the pointer, cameras.ts)
+  person: [[['W', 'A', 'S', 'D'], 'Walk'], [['Mouse'], 'Look (Esc frees it)'], [['Shift'], 'Sprint'], [['Space'], 'Jump'],
+    [['RMB', 'Z'], 'Aim'], [['LMB', 'X'], 'Fire'], [['Tab', '1-4'], 'Weapons'], [['F'], 'Robar / Subir']], // (3 again: SMG / rifle)
   // (Shift's Nitro only in a car with a kit, drivetrain.ts)
   car: [[['W', 'S'], 'Gas / Brake'], [['A', 'D'], 'Steer'], [['Shift'], 'Nitro'], [['Space'], 'Handbrake'], [['E', 'Q'], 'Gears'],
     [['T'], 'Auto / Manual'], [['RMB', 'X'], 'Shoot'], [['F'], 'Bajar']],

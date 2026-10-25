@@ -1,5 +1,5 @@
 // js/sim/crime/player.ts
-// The player in the street's crime (sim/crime.ts): its input (fire: X, the left button while aiming on foot (aim.ts),
+// The player in the street's crime (sim/crime.ts): its input (fire: X, the left button on foot (aim.ts),
 // the right button from a vehicle; touch & gamepad through controllers.keys.fire; weapons 1-4, R to cycle, Tab for the
 // wheel: ui/weapon-wheel.ts), firing, aiming and punching, getting hurt, and being WASTED or BUSTED.
 import type { Point3 } from '../ragdolls.ts';
@@ -36,10 +36,11 @@ export function bindInput(crime: CrimeSystem, canvas: HTMLElement | null): void 
 export function updatePlayer(crime: CrimeSystem, dt: number, _elapsed: number): void {
   const c = crime.controllers;
   const p = c.entities.person;
-  // aiming on foot (aim.ts): the shots go where the crosshair is, and the right button aims rather than fires
+  // aiming on foot (aim.ts): the shots go where the crosshair is, and the right button aims rather than fires; on
+  // foot the left button fires (aim.ts: aiming, or from the hip with the pointer locked)
   const aimCtl = crime.aim;
   const free = aimCtl != null && aimCtl.active && crime.mode === 'person';
-  const mouse = free ? aimCtl.fire : crime.mouseFire && (crime.mode !== 'person' || !crime.aim);
+  const mouse = crime.mode === 'person' && aimCtl ? aimCtl.fire : crime.mouseFire;
   const held = Boolean(c.keys.fire) || mouse;
   const w = crime.arsenal.weapon;
   // a change of weapon (the keys, the wheel, the mouse wheel, or out of rounds): the last one put away, this one

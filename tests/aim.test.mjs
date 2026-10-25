@@ -54,7 +54,7 @@ test('the right button aims on foot: the pointer is locked, the crosshair shows,
   for (let i = 0; i < 40; i++) aim.update(1 / 60);
   assert.equal(aim.active, false);
   assert.equal(aim.fire, false, 'letting go of the aim lets go of the trigger');
-  assert.equal(doc.pointerLockElement, null);
+  assert.equal(doc.pointerLockElement, canvas, 'the pointer stays locked: the mouse goes on looking around');
   assert.equal(crosshair.hidden, true);
   assert.equal(aim.blend, 0);
 });
@@ -91,4 +91,22 @@ test('Z toggles the aim; it ends in a vehicle, out of play, and when Esc lets go
   aim.allowed = false;
   aim.update(1 / 60);
   assert.equal(aim.active, false);
+});
+
+test('on foot with the pointer locked the left button fires from the hip; in a vehicle it does not', () => {
+  const { win, doc, canvas, controllers, aim } = setup();
+  const press = () => win.dispatch('pointerdown', { pointerType: 'mouse', button: 0, target: canvas, stopPropagation() {}, preventDefault() {} });
+  press();
+  assert.equal(aim.fire, false, 'the click that takes the lock is not a shot');
+  doc.pointerLockElement = canvas;
+  press();
+  aim.update(1 / 60);
+  assert.equal(aim.fire, true);
+  assert.equal(aim.active, false, 'firing from the hip is not aiming');
+  win.dispatch('mouseup', { button: 0 });
+  assert.equal(aim.fire, false);
+  controllers.activeMode = 'car';
+  press();
+  aim.update(1 / 60);
+  assert.equal(aim.fire, false);
 });
