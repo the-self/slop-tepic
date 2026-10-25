@@ -4,7 +4,7 @@ const { join } = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const source = readFileSync(join(__dirname, '../js/render/scene-culling.js'), 'utf8');
+const source = readFileSync(join(__dirname, '../js/render/scene-culling.ts'), 'utf8');
 const topLevel = (name) => {
   const match = source.match(new RegExp(`^function ${name}\\([^]*?\\n\\}`, 'm'));
   assert.ok(match, `${name} is present`);

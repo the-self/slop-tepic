@@ -4,13 +4,13 @@ const { join } = require('node:path');
 const test = require('node:test');
 const { loadModule } = require('./helpers/module.cjs');
 
-const source = readFileSync(join(__dirname, '../js/player/controllers.js'), 'utf8');
+const source = readFileSync(join(__dirname, '../js/player/controllers.ts'), 'utf8');
 // The car's drivetrain & damage are plain modules without imports: the real ones run under the harness
 const realModule = (path) => loadModule(readFileSync(join(__dirname, path), 'utf8'));
-const drivetrain = realModule('../js/player/drivetrain.js');
-const vehicleDamage = realModule('../js/player/vehicle-damage.js');
+const drivetrain = realModule('../js/player/drivetrain.ts');
+const vehicleDamage = realModule('../js/player/vehicle-damage.ts');
 // ...and two of the car models' files stand in for the registry (js/models/cars/index.js)
-const carModels = [...realModule('../js/models/cars/nissan.js').CARS, ...realModule('../js/models/cars/stellantis.js').CARS];
+const carModels = [...realModule('../js/models/cars/nissan.ts').CARS, ...realModule('../js/models/cars/stellantis.ts').CARS];
 const carModelById = Object.fromEntries(carModels.map((m) => [m.id, m]));
 const carRegistry = {
   CAR_MODEL_BY_ID: carModelById,
@@ -44,15 +44,15 @@ function keyboardHarness(nyc = {}) {
     globals: { window, document },
     imports: {
       'three/webgpu': {},
-      '../world/city-config.js': config,
-      '../render/tsl-materials.js': {},
-      '../actors/actor-models.js': {},
-      '../sim/pedestrians.js': {},
-      '../actors/vehicle-lights.js': {},
-      './drivetrain.js': drivetrain,
-      './vehicle-damage.js': vehicleDamage,
-      '../models/cars/index.js': carRegistry,
-      '../models/motos/index.js': realModule('../js/models/motos/index.js'),
+      '../world/city-config.ts': config,
+      '../render/tsl-materials.ts': {},
+      '../actors/actor-models.ts': {},
+      '../sim/pedestrians.ts': {},
+      '../actors/vehicle-lights.ts': {},
+      './drivetrain.ts': drivetrain,
+      './vehicle-damage.ts': vehicleDamage,
+      '../models/cars/index.ts': carRegistry,
+      '../models/motos/index.ts': realModule('../js/models/motos/index.ts'),
     }
   });
   // Exercise the production event handlers without constructing the scene's 3D models.

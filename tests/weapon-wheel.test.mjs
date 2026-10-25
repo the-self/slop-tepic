@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { slotAt, wedgePath } from '../js/ui/weapon-wheel.js';
-import { WEAPONS, WEAPON_ORDER, weaponStats } from '../js/sim/weapons.js';
+import { slotAt, wedgePath } from '../js/ui/weapon-wheel.ts';
+import { WEAPONS, WEAPON_ORDER, weaponStats } from '../js/sim/weapons.ts';
 
 test('a pull of the mouse or the stick points at the wedge in its direction, clockwise from the top', () => {
   const n = 5;

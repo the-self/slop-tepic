@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { solarPosition, sunDirection, parseOpenMeteo, weatherLabel, LiveWeather, WEATHER_LOCATION } from '../js/world/weather.js';
+import { solarPosition, sunDirection, parseOpenMeteo, weatherLabel, LiveWeather, WEATHER_LOCATION } from '../js/world/weather.ts';
 
 const { latitude, longitude } = WEATHER_LOCATION;
 
@@ -118,7 +118,7 @@ test('blocked site storage does not stop live weather from starting', () => {
 });
 
 test('rain wets the road within a couple of minutes and it dries over the next half hour', async () => {
-  const { RoadWater, WEATHER_SAMPLES, CLEAR_WEATHER, rainIntensity, wetGrip } = await import('../js/world/weather.js');
+  const { RoadWater, WEATHER_SAMPLES, CLEAR_WEATHER, rainIntensity, wetGrip } = await import('../js/world/weather.ts');
   assert.equal(rainIntensity(CLEAR_WEATHER), 0);
   assert.ok(rainIntensity(WEATHER_SAMPLES.rain) > 0.4 && rainIntensity(WEATHER_SAMPLES.rain) < 0.8);
   assert.equal(rainIntensity(WEATHER_SAMPLES.storm), 1);

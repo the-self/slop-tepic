@@ -1,8 +1,16 @@
 const vm = require('node:vm');
+const { stripTypeScriptTypes } = require('node:module');
+
+// The modules are TypeScript with erasable syntax only: Node blanks the types out (keeping every line and column), so
+// the source the tests read, slice and run is the JavaScript the bundle ships.
+function stripTypes(source) {
+  return stripTypeScriptTypes(source, { mode: 'strip' });
+}
 
 // Keep the existing isolated unit harnesses synchronous. Only the app's static import/export declarations
 // are adapted; dependencies are explicit namespace stubs, and the production function bodies run unchanged.
 function loadModule(source, { imports = {}, globals = {}, filename = 'module.js' } = {}) {
+  source = stripTypes(source);
   const exported = [];
   const names = (list) => list.split(',').map((name) => name.trim()).filter(Boolean).map((name) => {
     const match = /^([\w$]+)(?:\s+as\s+([\w$]+))?$/.exec(name);
@@ -31,4 +39,4 @@ function loadModule(source, { imports = {}, globals = {}, filename = 'module.js'
   return evaluate(imports);
 }
 
-module.exports = { loadModule };
+module.exports = { loadModule, stripTypes };

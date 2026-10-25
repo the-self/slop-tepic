@@ -6,8 +6,8 @@ const { loadModule } = require('./helpers/module.cjs');
 
 class Matrix4 {}
 const { boxHit, riderKnocked, startTopple, stepTopple, hideInstance } = loadModule(
-  readFileSync(join(__dirname, '../js/sim/mayhem.js'), 'utf8'),
-  { imports: { 'three/webgpu': { Matrix4 } }, filename: 'mayhem.js' }
+  readFileSync(join(__dirname, '../js/sim/mayhem.ts'), 'utf8'),
+  { imports: { 'three/webgpu': { Matrix4 } }, filename: 'mayhem.ts' }
 );
 
 test('the player box hits bodies along its length and width only', () => {

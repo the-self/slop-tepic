@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const DATA = process.env.GEO_DATA || fileURLToPath(new URL('data/tepic/', import.meta.url));
-const OUT = process.argv[2] || fileURLToPath(new URL('../js/world/pavement-data.js', import.meta.url));
+const OUT = process.argv[2] || fileURLToPath(new URL('../js/world/pavement-data.ts', import.meta.url));
 const load = (f) => JSON.parse(fs.readFileSync(DATA + f, 'utf8'));
 
 // The frame of build-tepic-geodata.mjs (section 1): origin at the Plaza Principal, axes along the centro's grid

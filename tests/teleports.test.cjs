@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const read = (path) => readFileSync(join(__dirname, '..', path), 'utf8');
 let TELEPORT_LOCATIONS, LANDMARK_SITES, CITY, blockAt, nearestRoads, getIslandBoundsAtZ, getLocationLabel;
 test.before(async () => {
-  ({ TELEPORT_LOCATIONS, LANDMARK_SITES, CITY, blockAt, nearestRoads, getIslandBoundsAtZ, getLocationLabel } = await import('../js/world/city-config.js'));
+  ({ TELEPORT_LOCATIONS, LANDMARK_SITES, CITY, blockAt, nearestRoads, getIslandBoundsAtZ, getLocationLabel } = await import('../js/world/city-config.ts'));
 });
 
 test('every teleport button has a destination on a real roadway inside the city', () => {
@@ -37,7 +37,7 @@ test('the city starts at the Plaza Principal, on a street, facing the Catedral',
 });
 
 test('preset and map teleports share arrival resets and leave no GPS waypoint', () => {
-  const main = read('js/main.js');
+  const main = read('js/main.ts');
   const start = main.indexOf('  function teleportTo(');
   const end = main.indexOf('  const openMapBtn', start);
   const handlers = new Map();

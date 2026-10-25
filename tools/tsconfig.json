@@ -1,0 +1,10 @@
+{
+  // The build script (and the tools that move to TypeScript): run by Node, which strips the types itself.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2024"],
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["data"]
+}

@@ -4,7 +4,7 @@ const { join } = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const source = readFileSync(join(__dirname, '../js/sim/traffic.js'), 'utf8');
+const source = readFileSync(join(__dirname, '../js/sim/traffic.ts'), 'utf8');
 // Exercise the production lane query and player snapshot without creating the WebGPU scene.
 const laneQuery = source.match(/  function playerInLane\(lane, pl\) \{[\s\S]*?\n  \}/)?.[0];
 const playerSnapshot = source.match(/    const pl = entity[\s\S]*?\n    \} : null;/)?.[0];
@@ -338,8 +338,8 @@ test('a vehicle on a ramp pitches with the deck as well as the ground', () => {
 
 test('an edge carries its lift profile: interpolated along it, held past its ends, 0 without one', () => {
   const { loadModule } = require('./helpers/module.cjs');
-  const { edgeLift } = loadModule(readFileSync(join(__dirname, '../js/world/road-network.js'), 'utf8'), {
-    imports: { './city-config.js': { ISLAND_BOUNDS: { minX: 0, maxX: 0, minZ: 0, maxZ: 0 } }, './city-geodata.js': { GEO: {} } }
+  const { edgeLift } = loadModule(readFileSync(join(__dirname, '../js/world/road-network.ts'), 'utf8'), {
+    imports: { './city-config.ts': { ISLAND_BOUNDS: { minX: 0, maxX: 0, minZ: 0, maxZ: 0 } }, './city-geodata.js': { GEO: {} } }
   });
   const e = { lift: [[0, 0], [40, 2.8], [60, 6], [100, 6]] };
   const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} should equal ${b}`);

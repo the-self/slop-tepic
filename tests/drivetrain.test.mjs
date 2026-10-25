@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildSpec, gearRatios, torqueAt, wheelRpm, gearTopSpeed, createDriveState, stepDrive, gearLabel, zeroTo100
-} from '../js/player/drivetrain.js';
-import { CAR_MODELS, CAR_MODEL_BY_ID } from '../js/models/cars/index.js';
+} from '../js/player/drivetrain.ts';
+import { CAR_MODELS, CAR_MODEL_BY_ID } from '../js/models/cars/index.ts';
 
 const DT = 1 / 60;
 const spec = (id) => buildSpec(CAR_MODEL_BY_ID[id]);
@@ -192,7 +192,7 @@ test('the registry: unique ids, sensible figures', () => {
 });
 
 test('the Italika motos top out at their own speeds', async () => {
-  const { MOTO_MODELS, PLAYER_MOTO } = await import('../js/models/motos/index.js');
+  const { MOTO_MODELS, PLAYER_MOTO } = await import('../js/models/motos/index.ts');
   assert.equal(PLAYER_MOTO.id, 'italika-ft150');
   for (const m of MOTO_MODELS) {
     const top = launch(buildSpec(m), 60).v * 3.6;

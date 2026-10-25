@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { GEO } from '../js/world/city-geodata.js';
-import { SLOPES, createGround, groundHeight, hillGround, townHeight } from '../js/world/ground.js';
+import { SLOPES, createGround, groundHeight, hillGround, townHeight } from '../js/world/ground.ts';
 
 // A grid as the builder writes it: heights in dm, Int16 little-endian, base64
 function grid(heightsM, w, extra = {}) {
@@ -72,7 +72,7 @@ test("Tepic's ground: the datum is the town's lowest point and its streets climb
 });
 
 test('triangles cut along the lattice keep their area & winding, each piece on one ground triangle', async () => {
-  const { clipToLattice } = await import('../js/world/ground.js');
+  const { clipToLattice } = await import('../js/world/ground.ts');
   const lattice = { x0: -5, z0: 3, cell: 10 };
   // two big triangles (one indexed quad, counter-clockwise from above) with an attribute linear in x & z
   const pos = new Float32Array([-31, 0.2, -18, 44, 0.2, -9, 40, 0.2, 57, -26, 0.2, 51]);
@@ -126,7 +126,7 @@ test("the town's grid lies on the hills' lattice and meets the far floor at its 
 });
 
 test("a bridge's deck holds what is on it and lets what passes under it through; a raised junction is a disc", async () => {
-  const { createDecks } = await import('../js/world/ground.js');
+  const { createDecks } = await import('../js/world/ground.ts');
   // a 200 m road east along z = 0 ramping to 6 m at x = 100 and back, and a road crossing it at grade (nodes 2-3);
   // a third link meeting the first at its raised middle (node 4) makes that a junction
   const geo = {
@@ -160,7 +160,7 @@ test("a bridge's deck holds what is on it and lets what passes under it through;
 });
 
 test("a ramp's deck rises smoothly through its vertices, and its run past an end still fills a bend's outside", async () => {
-  const { createDecks } = await import('../js/world/ground.js');
+  const { createDecks } = await import('../js/world/ground.ts');
   // a 7 % ramp east along z = 0 in three pieces (vertices at x = 40 and 80), then turning north at x = 120
   const geo = {
     roadGraph: {

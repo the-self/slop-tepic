@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { FloodLevel, rainRate, riverStage, hollows, lowness, floodDepth, riverSpill, FLOOD_SPOTS, floodSpotAt, spotWater, canalSpill, nearestBank } from '../js/world/flood-model.js';
+import { FloodLevel, rainRate, riverStage, hollows, lowness, floodDepth, riverSpill, FLOOD_SPOTS, floodSpotAt, spotWater, canalSpill, nearestBank } from '../js/world/flood-model.ts';
 
 test('each cell finds the nearest bank, on the grid or just off it, within ~8%', () => {
   // a 20 x 20 grid of 6 m cells from (0, 0), ground at 10 m; a canal point at (30, 30) on 9 m ground, one off the grid

@@ -1,0 +1,1285 @@
+import * as THREE from 'three/webgpu';
+import { pass, mrt, output, normalView, positionView, metalness, roughness, vec2, smoothstep, color } from 'three/tsl';
+import { ssr } from 'three/addons/tsl/display/SSRNode.js';
+import { createPostProcessing } from './render/post-processing.ts';
+import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
+import { CITY, getLocationLabel, isTypingInField, ROADS, CITY_LANDMARKS, TELEPORT_LOCATIONS, HOSPITALS, ISLAND_BOUNDS } from './world/city-config.ts';
+import { buildCityGrid } from './world/city-grid.ts';
+import { buildCityBlocks } from './world/buildings.ts';
+import { buildStreetDetails } from './world/street-details.ts';
+import { createTrafficSystem, createHighwayTraffic } from './sim/traffic.ts';
+import { buildRoadPaint } from './world/road-paint.ts';
+import { buildPavements } from './world/pavements.ts';
+import { buildBridges } from './world/bridges.ts';
+import { buildAirport } from './world/airport.ts';
+import { buildLandmarkModels } from './world/landmark-models.ts';
+import { buildStores } from './world/store-interiors.ts';
+import { ThirdPersonControllerManager } from './player/controllers.ts';
+import { Stamina, struckDamage, hardness, crashDamage, walletAmount, nearest, CRASH_GRACE } from './player/stats.ts';
+import { TouchControls } from './input/touch-controls.ts';
+import { GamepadControls } from './input/gamepad-controls.ts';
+import { CameraSystem, CAMERA_PRESETS } from './player/cameras.ts';
+import { LightingSystem } from './render/lighting.ts';
+import { WEATHER_SAMPLES, weatherLabel, CLEAR_WEATHER, RoadWater, wetGrip } from './world/weather.ts';
+import { createRain } from './render/rain.ts';
+import { CityMapSystem } from './ui/city-map.ts';
+import { Tachometer } from './ui/tachometer.ts';
+import { gearLabel } from './player/drivetrain.ts';
+import { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices, releaseStaticArrays } from './render/scene-culling.ts';
+import { CityAudioSystem } from './audio/audio-system.ts';
+import { buildTerrain } from './world/terrain.ts';
+import { buildRiverChannels } from './world/river-channels.ts';
+import { groundHeight, townHeight, landHeight, liftAt, deckLift, surfaceHeight, SLOPES, LATTICE, waterways } from './world/ground.ts';
+import { TileStreamer } from './world/streaming.ts';
+import { paintFarGround, farGroundColor } from './world/far-ground.ts';
+import { buildTepicLandmarks } from './world/tepic-landmarks.ts';
+import { buildCotos } from './world/cotos.ts';
+import { CrimeSystem } from './sim/crime.ts';
+import { CrimeHud } from './ui/crime-hud.ts';
+import { WeaponWheel } from './ui/weapon-wheel.ts';
+import { WeaponIcons } from './ui/weapon-icons.ts';
+import { AimControl } from './player/aim.ts';
+import { createCarPhysics } from './player/car-physics.ts';
+import { createRagdolls } from './sim/ragdolls.ts';
+import { BloodPools } from './sim/blood.ts';
+import { cityUniforms } from './render/tsl-materials.ts';
+import { grassDryness } from './world/lot-greenery.ts';
+import { GEO } from './world/city-geodata.js';
+import { findVenues } from './world/venues.ts';
+import { StreetFood } from './world/street-food.ts';
+import { Floods } from './world/floods.ts';
+import { Nightlife } from './world/nightlife.ts';
+import { Interiors } from './world/interiors.ts';
+import { Fires } from './sim/fires.ts';
+
+// js/main.js
+// Main entry point for the city (Tepic, Nayarit) in Three.js WebGPURenderer & TSL (three.js dev, see index.html)
+
+async function initApp() {
+  // ?debug: node creation stack traces for shader build errors
+  if (new URLSearchParams(location.search).has('debug') && THREE.Node) THREE.Node.captureStackTrace = true;
+  const container = document.getElementById('canvas-container');
+  const loadingOverlay = document.getElementById('loading-overlay');
+  const loadingStatus = document.getElementById('loading-status');
+  const loadingTrack = loadingOverlay ? loadingOverlay.querySelector('.loader-track') : null;
+  const loadingFill = document.getElementById('loading-progress');
+  // The loading bar sweeps while the city is being built (the main thread is busy) and fills as the shaders compile
+  const setLoadingProgress = (p) => {
+    if (!loadingFill) return;
+    if (loadingTrack) loadingTrack.classList.remove('is-indeterminate');
+    loadingFill.style.transform = `scaleX(${Math.min(1, Math.max(0, p))})`;
+  };
+
+  if (loadingStatus) {
+    loadingStatus.textContent = `Initializing Three.js r${THREE.REVISION} WebGPURenderer & TSL Shaders...`;
+  }
+
+  // 1. Initialize Three.js WebGPURenderer with 32-bit float reversedDepthBuffer
+  const renderer = new THREE.WebGPURenderer({
+    antialias: true,
+    powerPreference: 'high-performance',
+    reversedDepthBuffer: true
+  });
+  renderer.setPixelRatio(1.0);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.lighting = new ClusteredLighting(256, 32, 28, 48);
+  container.appendChild(renderer.domElement);
+
+  // Start-up phase timings (logged once as "[init] ...") to keep load-time regressions traceable
+  let initTimings = [];
+  let initMark = performance.now();
+  const markInit = (label) => {
+    const now = performance.now();
+    initTimings.push(`${label} ${Math.round(now - initMark)}ms`);
+    initMark = now;
+  };
+
+  // The player's car is a rigid body on sprung wheels in Jolt Physics (player/car-physics.js): its WASM downloads and
+  // compiles while the city is built
+  const joltReady = import('jolt-physics').then(({ default: initJolt }) => initJolt());
+  joltReady.catch(() => {}); // (awaited below, once the controllers are up)
+
+  await renderer.init();
+  markInit('renderer');
+
+  // 2. Build Scene & Physical Atmospheric Sky / PMREM IBL / 4096x4096 Shadow Lighting
+  const scene = new THREE.Scene();
+  const lightingSystem = new LightingSystem(scene, renderer);
+  // Rain falling round the camera, and the water it leaves on the roads (Live weather only: the fixed times of day
+  // stay dry)
+  const rain = createRain(scene, lightingSystem.uNightFactor);
+  const roadWater = new RoadWater();
+  let nextLightning = 0;
+  markInit('lighting');
+
+  if (loadingStatus) {
+    loadingStatus.textContent = `Construyendo ${CITY.city || 'la ciudad'}: calles, manzanas y colonias...`;
+  }
+
+  // 3. Build the city: streets, hills, landmarks, blocks, street details & traffic
+  // The heaviest ground layers are laid on the slopes tile by tile around the camera, by workers (streaming.js);
+  // ?stream=0 lays all of them at start-up, as before
+  const streamer = new URLSearchParams(location.search).get('stream') === '0' ? null : new TileStreamer({
+    scene,
+    lattice: SLOPES ? LATTICE : null,
+    ground: SLOPES ? GEO.ground : null,
+    box: { x0: ISLAND_BOUNDS.minX, x1: ISLAND_BOUNDS.maxX, z0: ISLAND_BOUNDS.minZ, z1: ISLAND_BOUNDS.maxZ },
+    holes: waterways ? Float32Array.from(waterways.holes()) : null,
+    workers: Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 4) - 2))
+  });
+  const cityGrid = buildCityGrid(scene, streamer);
+  markInit('cityGrid');
+  // Beyond the streamed tiles the city's floor is painted with the streets, lots & parks they lay (far-ground.js): the
+  // hills' floor under them on the slopes, the valley floor in the flat city
+  const farGround = streamer && paintFarGround({
+    open: cityGrid.open, box: { x0: ISLAND_BOUNDS.minX, x1: ISLAND_BOUNDS.maxX, z0: ISLAND_BOUNDS.minZ, z1: ISLAND_BOUNDS.maxZ }
+  });
+  if (farGround && !SLOPES) cityGrid.valley.material.colorNode = farGroundColor(farGround, color(cityGrid.valley.material.color));
+  markInit('farGround');
+  // The hills around the valley (Tepic: Cerro de San Juan, Cerro de la Cruz...), over the flat city, and the floor
+  // under the streamed tiles not loaded
+  buildTerrain(scene, { mask: streamer?.mask, far: farGround });
+  markInit('terrain');
+  // The Río Mololoa & the arroyos in their channels, under the deck the city grid opened over them
+  const rivers = buildRiverChannels(scene);
+  markInit('rivers');
+  const { colliders: landmarkColliders } = buildTepicLandmarks(scene);
+  // (and the landmarks made as 3D models, js/world/landmark-models.js: their lots now, the models as they load)
+  const { colliders: modelColliders } = buildLandmarkModels(scene);
+  markInit('landmarks');
+  const cityBlocks = buildCityBlocks(scene);
+  // The big chain stores you can walk into: their walls, door, shelves & tills (js/world/store-interiors.js)
+  const stores = buildStores(scene, cityBlocks.stores);
+  markInit('blocks');
+  // The gated communities' walls & guard booths (the houses inside are among the blocks')
+  const { colliders: cotoColliders } = buildCotos(scene);
+  const allColliders = [...landmarkColliders, ...modelColliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...(cityGrid.colliders || [])];
+
+  const streetDetails = buildStreetDetails(scene, stores.reserves);
+  markInit('streetDetails');
+  // Buildings turned along non-grid streets have oriented colliders whose world bounds reach past their lots: they stay
+  // inside the property line anyway, so the road network (lanes & sidewalks) doesn't need them.
+  // Elevated building sections that clear even a bus (3.5 m over the ground under them) don't obstruct ground traffic.
+  const trafficSystem = createTrafficSystem(scene, cityGrid.sidewalks, [
+    ...cityGrid.footprints,
+    ...streetDetails.footprints,
+    ...allColliders.filter((c) => !c.obb && (c.minY ?? 0) - liftAt((c.minX + c.maxX) / 2, (c.minZ + c.maxZ) / 2) < 3.5)
+  ]);
+  markInit('traffic');
+  // Mast-arm traffic signals at the signalised junctions of a city off the grid (the grid's are built with the streets)
+  streetDetails.addJunctionSignals?.(trafficSystem.network, allColliders); // (their poles stop the player)
+  const highwayTraffic = createHighwayTraffic(scene, cityGrid.highwayLanes);
+  buildRoadPaint(scene, trafficSystem.network, streamer);
+  buildPavements(scene, streamer); // (the empedrado, adoquín, earth & concrete streets, under the paint)
+  buildAirport(scene); // (the runway, taxiways & apron south-east of town, and the airliners at the gates)
+  markInit('roadPaint');
+  // The overpasses, their ramps & the railway; their walls, parapets & piers stop the player (not the traffic's
+  // footprints: the lanes on and under them stay open)
+  const bridges = buildBridges(scene);
+  allColliders.push(...bridges.colliders);
+  // The CFE's concrete poles stop the player (not the traffic: they stand on the sidewalks' outer edge)
+  allColliders.push(...(streetDetails.colliders || []));
+  markInit('bridges');
+
+  // 4. Initialize Third-Person Controllers (Person, Car, Cyclist, Helicopter) & Multi-Camera System
+  const controllerManager = new ThirdPersonControllerManager(scene, allColliders);
+  // The ground (ground.js): the town's own slopes and the hills over them (the flat city with ?slopes=0)
+  controllerManager.setTerrain(groundHeight, townHeight, landHeight, deckLift); // (and the bridges' decks over it)
+  trafficSystem.setHillQuery(groundHeight);
+  trafficSystem.setSurfaceQuery(surfaceHeight);
+  // People, bicycles & hydrants knocked flying bounce off the buildings' walls (mayhem.js)
+  const solidAt = (x, z) => controllerManager.isSolidAt(x, z, 1.5, groundHeight(x, z));
+  trafficSystem.setSolidQuery(solidAt);
+  // (the walls the sidewalks' walkers turn back at: the buildings', not the poles' they pass by)
+  trafficSystem.setWallQuery((x, z) => controllerManager.isSolidAt(x, z, 1.5, groundHeight(x, z), 2));
+  // A camión or combi the player takes is built from the traffic's own parts, its route and all
+  controllerManager.setLookKits((look) => trafficSystem.lookKit(look));
+  // The traffic's damaged engines smoke with the player's car's smoke
+  trafficSystem.setSmokeEmitter((x, y, z, vx, vz, count, shade, size) => controllerManager.puffSmoke(x, y, z, vx, vz, count, shade, size));
+  streetDetails.breaker?.setSolidQuery(solidAt);
+  streetDetails.breaker?.setGroundQuery(groundHeight);
+  // Saved positions belong to one city's frame: the key carries the city's name
+  const PLAYER_STATE_KEY = `${(CITY.city || 'city').toLowerCase()}-player-state`;
+  // Reuse teleport placement so saved players return at rest, close to their last positions. The game always starts
+  // on foot: someone who left driving steps out of that vehicle where it was.
+  let savedMode = null;
+  let savedMoney;
+  try {
+    const saved = JSON.parse(localStorage.getItem(PLAYER_STATE_KEY));
+    if (saved?.version === 1) {
+      for (const mode of Object.keys(controllerManager.entities)) {
+        const p = saved.entities?.[mode];
+        if (!p || ![p.x, p.y, p.z, p.heading].every(Number.isFinite)) continue;
+        controllerManager.setMode(mode);
+        controllerManager.teleportActiveTo(p.x, p.z, p.heading, p.y);
+      }
+      const car = saved.looks?.car;
+      if (car && Number.isFinite(car.paint)) controllerManager.setCarLook(car.bodyType, car.paint, car.police, car.model, car.route);
+      if (Number.isFinite(saved.looks?.cyclist?.color)) controllerManager.setBikeColor(saved.looks.cyclist.color);
+      savedMode = saved.activeMode;
+      savedMoney = saved.stats?.money;
+    }
+  } catch { /* Missing or unavailable storage does not prevent playing. */ }
+  controllerManager.setMode('person');
+  controllerManager.landHelicopter(true);
+  if (savedMode === 'car' || savedMode === 'cyclist' || savedMode === 'moto') {
+    controllerManager.setMode(savedMode);
+    controllerManager.exitVehicle();
+  }
+  let physics;
+  try {
+    controllerManager.setCarPhysics(physics = createCarPhysics(await joltReady, {
+      // what the car stands on: the ground at its level (a bridge's deck it is on), the sidewalks over the street
+      groundAt: (x, z, fromY) => controllerManager.getGroundHeight(x, z, 'person', fromY),
+      collidersNear: (x, z, r) => controllerManager.nearColliders(x, z, r)
+    }));
+  } catch (err) {
+    if (loadingStatus) loadingStatus.textContent = 'The car physics (Jolt Physics) could not load: check the connection and reload';
+    throw err;
+  }
+  // Who is hit, shot or thrown falls as a body (sim/ragdolls.js), in the car's world; a pool of blood spreads under
+  // whoever was hit hard as they come to rest (sim/blood.js)
+  const ragdolls = createRagdolls(physics);
+  controllerManager.ragdolls = ragdolls;
+  trafficSystem.setRagdolls(ragdolls);
+  const bloodPools = new BloodPools(scene, (x, z, fromY) => controllerManager.getGroundHeight(x, z, 'person', fromY));
+  ragdolls.onSettle = (h) => {
+    if (h.bleed > 0.05) bloodPools.add(h.px, h.pz, h.py + 0.3, 0.9 + h.bleed * 1.7);
+  };
+  markInit('physics');
+  // Sprinting runs out of breath (player/stats.js)
+  const stamina = new Stamina();
+
+  let interiors = null; // (interiors.js, below: inside a room, the player is saved at its venue's door)
+  function savePlayerState() {
+    try {
+      const entities = Object.fromEntries(Object.entries(controllerManager.entities).map(([mode, entity]) => [mode, {
+        x: entity.position.x, y: entity.position.y, z: entity.position.z, heading: entity.heading
+      }]));
+      const door = interiors?.inside?.venue;
+      if (door) entities.person = { x: door.x + door.nx * 1.2, y: 0, z: door.z + door.nz * 1.2, heading: door.heading };
+      const looks = { car: controllerManager.entities.car.look, cyclist: controllerManager.entities.cyclist.look };
+      localStorage.setItem(PLAYER_STATE_KEY, JSON.stringify({
+        version: 1, activeMode: controllerManager.activeMode, entities, looks, stats: { money: crimeSystem.money }
+      }));
+    } catch { /* Storage may be disabled or full. */ }
+  }
+
+  const cameraSystem = new CameraSystem(renderer.domElement, controllerManager);
+  // Free aim on foot: the right button (or Z) brings the camera over the shoulder with a crosshair (player/aim.js)
+  const aimControl = new AimControl({ canvas: renderer.domElement, controllers: controllerManager });
+  cameraSystem.aim = aimControl;
+  cameraSystem.setGroundQuery(groundHeight); // the chase cameras stay over the ground
+  // The scenic cameras frame the city's own spots (see cameras.js)
+  const T = TELEPORT_LOCATIONS;
+  cameraSystem.setScenicAnchors({
+    fifthAve: T.plaza, timesSquare: T.alameda, chryslerGCT: T.uan, centralPark: T.loma, bryantPark: T.mercado,
+    waterfront: T.estacion, observatory: T.plaza, drone: T.plaza
+  });
+  const touchControls = new TouchControls(controllerManager);
+  const soundButton = document.getElementById('btn-sound');
+  const audioSystem = new CityAudioSystem({ controllerManager, trafficSystem, highwayTraffic, streetDetails, propBreaker: streetDetails.breaker }, {
+    onStateChange: updateSoundButton
+  });
+  function updateSoundButton() {
+    if (!soundButton) return;
+    soundButton.disabled = !audioSystem.supported;
+    soundButton.setAttribute('aria-pressed', String(audioSystem.enabled));
+    soundButton.setAttribute('aria-label', audioSystem.enabled ? 'Mute sound' : 'Enable sound');
+    soundButton.title = audioSystem.supported ? `${audioSystem.enabled ? 'Mute' : 'Enable'} sound [N]` : 'Web Audio is unavailable';
+    soundButton.querySelector('use').setAttribute('href', audioSystem.enabled ? '#i-sound' : '#i-sound-off');
+  }
+  soundButton?.addEventListener('click', () => audioSystem.setEnabled(!audioSystem.enabled));
+  updateSoundButton();
+  // Guns, the police, gangs & thieves (crime.js); killed, the player comes round at the nearest hospital (OpenStreetMap's,
+  // HOSPITALS), arrested at the nearest teleport spot, on foot either way
+  const crimeSystem = new CrimeSystem({
+    scene, controllers: controllerManager, traffic: trafficSystem, groundHeight, solidAt, canvas: renderer.domElement,
+    audio: audioSystem, aim: aimControl,
+    onRespawn: (kind) => {
+      if (controllerManager.activeMode === 'helicopter') {
+        controllerManager.setMode('person');
+        controllerManager.landHelicopter();
+      } else if (controllerManager.activeMode !== 'person') {
+        controllerManager.exitVehicle();
+      }
+      const p = controllerManager.entities.person.position;
+      const spot = (kind === 'wasted' && nearest(HOSPITALS, p.x, p.z)) || nearest(Object.values(TELEPORT_LOCATIONS), p.x, p.z);
+      if (spot) teleportTo(spot.x, spot.z, spot.heading);
+      if (kind === 'wasted' && spot?.name) crimeSystem.toast(spot.name);
+      stamina.reset();
+      syncMode();
+    }
+  });
+  if (Number.isFinite(savedMoney)) crimeSystem.money = Math.max(0, Math.round(savedMoney));
+  // The city's eating & drinking places, off the real shop signs (venues.js), and the night's street food stands in
+  // front of them and at the parks (street-food.js)
+  const venues = findVenues(GEO.houses || [], GEO.signs || [], GEO.houseStride || 8);
+  const streetFood = new StreetFood({ scene, venues, pois: GEO.pois || [], controllers: controllerManager, crime: crimeSystem });
+  // The Live weather's storms flood the low streets & the Mololoa's banks (floods.js); ?flood=<0..1> to preview
+  const floodParam = Number.parseFloat(new URLSearchParams(location.search).get('flood'));
+  const floods = new Floods({ scene, rivers, hold: Number.isFinite(floodParam) ? floodParam : null });
+  controllerManager.waterAt = (x, z) => floods.depthAt(x, z);
+  // The bars & antros open at night and the colonias' weekend parties (nightlife.js)
+  const nightlife = new Nightlife({ scene, venues, houses: GEO.houses || [], stride: GEO.houseStride || 8, controllers: controllerManager, audio: audioSystem });
+  // In through their doors (F): the restaurants', bars' and antros' rooms, the Tapanko's tapanco and all (interiors.js)
+  interiors = new Interiors({ scene, venues, controllers: controllerManager, cameras: cameraSystem, crime: crimeSystem });
+  // Burning wrecks, house fires, the dry season's quemas, and the bomberos who come for them (fires.js)
+  const fires = new Fires({ scene, crime: crimeSystem, controllers: controllerManager, houses: GEO.houses || [], stride: GEO.houseStride || 8 });
+  crimeSystem.onExplosion = (x, y, z, radius) => fires.onExplosion(x, y, z, radius);
+  let floodWarned = false;
+  let floodSpot = null;
+  audioSystem.sources.pursuers = crimeSystem.cruisers;
+  crimeSystem.ragdolls = ragdolls;
+  // Thrown out through the windscreen (controllers.js ejectDriver): on foot now, hurt by how hard it hit, bleeding
+  controllerManager.onEject = (impact, x, z) => {
+    syncMode();
+    const c = controllerManager.entities.car;
+    crimeSystem.fx.splatter(x, c.position.y + 1, z, impact, Math.sin(c.heading), Math.cos(c.heading));
+    crimeSystem.hurt(Math.min(95, 25 + (impact - 19) * 4), x, z);
+  };
+  const crimeHud = new CrimeHud();
+  // The weapon wheel, held open with Tab (ui/weapon-wheel.js): the game runs slowed meanwhile. On foot the mouse wheel
+  // switches weapons, GTA-style (Alt + the wheel, or a pinch, still zooms the camera); in a vehicle it zooms.
+  const scrollSwitches = (e) => !e.altKey && !e.ctrlKey && controllerManager.activeMode === 'person' && crimeSystem.state === 'play';
+  const weaponWheel = new WeaponWheel(crimeSystem, { aim: aimControl, canvas: renderer.domElement, canScroll: scrollSwitches });
+  cameraSystem.wheelZooms = (e) => !scrollSwitches(e);
+  // Its pictures and the HUD's, the arsenal's 3D models in the hand (ui/weapon-icons.js), baked once the city is up
+  const weaponIcons = new WeaponIcons(renderer);
+  crimeHud.icons = weaponIcons;
+  weaponWheel.setIcons(weaponIcons);
+  // Crashes hurt as well as sound: each system has a single collision listener, shared here with the audio's
+  let lastCrash = -Infinity;
+  for (const system of [controllerManager, trafficSystem, streetDetails.breaker]) {
+    system?.setCollisionListener?.((impact) => {
+      audioSystem.onCollision(impact);
+      // the car, bicycle, moto or helicopter the player is in, hitting something hard enough (crashDamage)
+      const mode = controllerManager.activeMode;
+      const me = controllerManager.getActiveEntity();
+      if (mode === 'person' || (impact.a !== me && impact.b !== me)) return;
+      const damage = crashDamage(mode, impact.speed, hardness(impact.kind, impact.a === me ? impact.b : impact.a), impact.kind);
+      const now = performance.now() * 0.001;
+      if (damage <= 0 || now - lastCrash < CRASH_GRACE) return;
+      lastCrash = now;
+      crimeSystem.hurt(damage, impact.x, impact.z);
+    });
+  }
+  // A vehicle driving into the player on foot hurts; whoever the player knocked over leaves a wallet where they lie
+  trafficSystem.setMayhemListener((type, x, y, z, speed, mass) => {
+    if (type === 'struck') crimeSystem.hurt(struckDamage(speed, mass), x, z);
+    else if (type === 'down') crimeSystem.drop('money', x, z, walletAmount());
+  });
+  // pagehide also covers navigation away on mobile; preserve the context across back-forward cache restores.
+  window.addEventListener('pagehide', (event) => {
+    savePlayerState();
+    if (!event.persisted) audioSystem.dispose();
+  });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) savePlayerState(); });
+  markInit('controllers');
+
+  // City-wide static geometry: chunk & distance-cull the small props, shadow stand-ins for the big casters
+  // (scene-culling.js)
+  const cullingRoots = ['CityGrid', 'CityBlocks', 'StreetDetails', 'Hills', 'Rivers', 'Bridges']
+    .map((name) => scene.getObjectByName(name))
+    .filter(Boolean);
+  setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
+  // ...whose world matrices never change again: rendering stops walking them (the loop updates the rest of the scene)
+  const staticRoots = [...cullingRoots, ...['TepicLandmarks', 'Cotos', 'Airport', 'RoadMarkings', 'Pavements', 'Topes', 'StreamedTiles']
+    .map((name) => scene.getObjectByName(name))
+    .filter((o) => o && o.parent === scene)];
+  freezeStaticMatrices(scene, staticRoots);
+  markInit('culling');
+
+  // On WebGPU, small InstancedMeshes (<= 1000 instances) keep their matrices in uniform buffers that three.js
+  // re-uploads on every draw of every pass (~2.5 MB/frame with the shadow cascades, stalling the GPU queue).
+  // Storage attributes only upload when needed; WebGL2 needs ordinary instanced attributes for correct transforms.
+  if (renderer.backend.isWebGPUBackend) {
+    scene.traverse((object) => {
+      if (object.isInstancedMesh) {
+        object.instanceMatrix = new THREE.StorageInstancedBufferAttribute(object.instanceMatrix.array, 16);
+      }
+    });
+  }
+
+  // 5. TSL RenderPipeline with Half-Res Screen Space Reflections (SSRNode), Bloom & Filmic Toning
+  //    Fade out distant and matte surfaces so SSR spends its rays on visible glossy reflections.
+  const scenePass = pass(scene, cameraSystem.camera);
+  // The multisampled colour attachments (output, normal, metalRough) only need resolving, never storing: discarding
+  // them spares the GPU writing 3 x 4 samples per pixel to memory every frame (transient, memoryless attachments where
+  // the browser supports them). The multisampled depth stays stored: SSR reads it.
+  scenePass.renderTarget.storeMultisampledColorBuffer = false;
+  const ssrFade = smoothstep(360.0, 180.0, positionView.z.negate());
+  const maxSSRRoughness = 0.75;
+  const sceneMRT = mrt({
+    output: output,
+    normal: normalView,
+    metalRough: vec2(roughness.lessThan(maxSSRRoughness).select(metalness.mul(ssrFade), 0), roughness)
+  });
+  sceneMRT.setBlendMode('normal', new THREE.BlendMode(THREE.MaterialBlending));
+  sceneMRT.setBlendMode('metalRough', new THREE.BlendMode(THREE.MaterialBlending));
+  scenePass.setMRT(sceneMRT);
+
+  const scenePassColor = scenePass.getTextureNode('output');
+  const scenePassDepth = scenePass.getTextureNode('depth');
+  const scenePassNormal = scenePass.getTextureNode('normal');
+  const scenePassMetalRough = scenePass.getTextureNode('metalRough');
+
+  const ssrPass = ssr(scenePassColor, scenePassDepth, scenePassNormal, {
+    metalnessNode: scenePassMetalRough.r,
+    roughnessNode: scenePassMetalRough.g,
+    camera: cameraSystem.camera
+  });
+  ssrPass.resolutionScale = 0.5;
+  ssrPass.blurQuality = 1;
+  ssrPass.maxDistance.value = 42;
+  ssrPass.thickness.value = 0.85;
+  // Fewer coarse steps, then refine detected hits to keep reflection edges precise.
+  ssrPass.quality.value = 0.25;
+  ssrPass.binaryRefine = true;
+  ssrPass.intensity.value = 0.50;
+  ssrPass.screenEdgeFadeBlack = true;
+
+  // Roughness mip blur must not spread reflections back onto matte or nonreflective surfaces.
+  const reflectionMask = scenePassMetalRough.r.greaterThan(0).select(smoothstep(maxSSRRoughness, 0.55, scenePassMetalRough.g), 0);
+  const reflections = ssrPass.mul(reflectionMask);
+  const colorGrade = createPostProcessing(renderer, scenePassColor, reflections);
+  const renderPipeline = new THREE.RenderPipeline(renderer, colorGrade.outputNode);
+
+  // 6. Wire UI Controls (Strictly using safe DOM APIs: textContent, classList, addEventListener)
+  const cameraButtons = document.querySelectorAll('[data-camera]');
+  const timeButtons = document.querySelectorAll('[data-time]');
+  const teleportButtons = document.querySelectorAll('[data-teleport]');
+  const hudToggleBtn = document.getElementById('btn-toggle-hud');
+  const boardButton = document.getElementById('touch-board');
+
+  const elFps = document.getElementById('hud-fps');
+  const elMode = document.getElementById('hud-active-mode');
+  const elCamera = document.getElementById('hud-active-camera');
+  const elSpeed = document.getElementById('hud-speed');
+  const elSpeedMeter = document.getElementById('hud-speed-meter');
+  const elAltitude = document.getElementById('hud-altitude');
+  const elLocation = document.getElementById('hud-location');
+  const elControlsHint = document.getElementById('hud-controls-hint');
+  const elPrompt = document.getElementById('hud-prompt');
+  const tachometer = new Tachometer(document.getElementById('hud-tacho'));
+  const liveButton = document.getElementById('time-live');
+  const liveLabel = liveButton && liveButton.querySelector('.seg-label');
+
+  // Live time of day: the real sun & weather over the weather location (js/world/weather.js). ?live-time=<ISO date> starts the
+  // clock elsewhere & ?live-weather=<clear|cloudy|overcast|rain|storm|fog> pins the conditions, to preview them
+  const liveParams = new URLSearchParams(location.search);
+  const liveStart = Date.parse(liveParams.get('live-time') || '');
+  if (Number.isFinite(liveStart)) {
+    const t0 = performance.now();
+    lightingSystem.liveClock = () => new Date(liveStart + performance.now() - t0);
+  }
+  const heldWeather = WEATHER_SAMPLES[liveParams.get('live-weather')];
+  if (heldWeather) lightingSystem.weather.hold(heldWeather);
+  lightingSystem.onLiveChange = (state) => {
+    colorGrade.applyMix(state.blend.a, state.blend.b, state.blend.t, state.block);
+    if (!liveButton) return;
+    const w = state.weather;
+    const temp = state.live && Number.isFinite(w.temperature) ? ` ${Math.round(w.temperature)}°` : '';
+    if (liveLabel) liveLabel.textContent = `${state.location.name}${temp}`;
+    let clock = '';
+    try {
+      clock = lightingSystem.liveClock().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: state.location.timeZone });
+    } catch { /* unknown time zone */ }
+    const sky = state.live ? weatherLabel(w) : state.loading ? 'Loading weather…' : 'Weather unavailable, clear sky';
+    liveButton.title = `Live · ${state.location.name} ${clock} · ${sky} · Weather data by Open-Meteo.com`;
+  };
+  const gamepadControls = new GamepadControls(controllerManager, cameraSystem, {
+    onBoard: board,
+    onCycleCamera: cycleCamera,
+    onCycleWeapon: (dir) => crimeSystem.cycleWeapon(dir),
+    // LB held: the weapon wheel, the right stick pointing
+    onWeaponWheel: (action, x, y) => {
+      if (action === 'open') weaponWheel.open(false);
+      else if (action === 'aim') weaponWheel.stick(x, y);
+      else weaponWheel.close(action === 'close');
+    },
+    onToggleMap: () => mapSystem.toggleFullMap(!mapSystem.isFullMapOpen),
+    onCloseMap: () => mapSystem.toggleFullMap(false)
+  });
+
+  // Keyboard guide for each mode: [keys, action]
+  const controlHints = {
+    person: [[['W', 'S'], 'Walk'], [['A', 'D'], 'Turn'], [['Shift'], 'Sprint'], [['Space'], 'Jump'], [['RMB', 'Z'], 'Aim'],
+      [['LMB', 'X'], 'Fire'], [['Tab', '1-4'], 'Weapons'], [['F'], 'Robar / Subir']], // (3 again: SMG / rifle)
+    // (Shift's Nitro only in a car with a kit, drivetrain.js)
+    car: [[['W', 'S'], 'Gas / Brake'], [['A', 'D'], 'Steer'], [['Shift'], 'Nitro'], [['Space'], 'Handbrake'], [['E', 'Q'], 'Gears'],
+      [['T'], 'Auto / Manual'], [['RMB', 'X'], 'Shoot'], [['F'], 'Bajar']],
+    cyclist: [[['W', 'S'], 'Pedal / Brake'], [['A', 'D'], 'Lean & Turn'], [['Shift'], 'Sprint'], [['RMB', 'X'], 'Shoot'], [['F'], 'Bajar']],
+    moto: [[['W', 'S'], 'Gas / Brake'], [['A', 'D'], 'Lean & Turn'], [['Shift'], 'Nitro'], [['E', 'Q'], 'Gears'], [['T'], 'Auto / Manual'],
+      [['RMB', 'X'], 'Shoot'], [['F'], 'Bajar']],
+    helicopter: [[['W', 'S'], 'Pitch'], [['A', 'D'], 'Yaw'], [['Space', 'E'], 'Ascend'], [['Q', 'C'], 'Descend'], [['F'], 'Bajar']]
+  };
+  // Boosted top speeds in km/h (controllers.js caps them at 8.2, 19 & 52 m/s; the car has its tachometer instead):
+  // full scale of the speed meter
+  const topSpeedKmh = { person: 30, car: 200, cyclist: 68, helicopter: 187, moto: 110 };
+
+  function renderControlHints(mode, spec = null) {
+    if (!elControlsHint) return;
+    const hints = (controlHints[mode] || []).filter(([, action]) => action !== 'Nitro' || spec?.nitro);
+    const items = hints.map(([keys, action]) => {
+      const item = document.createElement('span');
+      item.className = 'hint';
+      for (const key of keys) {
+        const kbd = document.createElement('kbd');
+        kbd.textContent = key;
+        item.appendChild(kbd);
+      }
+      const label = document.createElement('span');
+      label.className = 'hint-label';
+      label.textContent = action;
+      item.appendChild(label);
+      return item;
+    });
+    elControlsHint.replaceChildren(...items);
+  }
+
+  // The HUD follows whatever the player is in now (on foot, or the vehicle it got into)
+  function syncMode() {
+    const mode = controllerManager.activeMode;
+    touchControls.setMode(mode);
+    gamepadControls.reset();
+    document.body.dataset.mode = mode;
+    const ent = controllerManager.getActiveEntity();
+    if (elMode) elMode.textContent = ent.label;
+    renderControlHints(mode, ent.spec);
+
+    // If currently on a static scenic camera, switch to 3rd-Person Chase so user sees their selected character/vehicle
+    const currentCam = cameraSystem.getActivePreset();
+    if (currentCam.category !== 'follow') {
+      selectCamera('chase', false);
+    }
+  }
+
+  // GTA-style boarding (F, the gamepad's Y, the touch button): on foot, get into the nearest of the player's own
+  // vehicles or take the nearest car or bicycle from the traffic, whose driver is left in the street; in a vehicle, get
+  // out (a helicopter once it has landed)
+  const BOARD_REACH = 1.6; // m from the vehicle's body
+  const TILL_REACH = 1.8; // m from a store's till (store-interiors.js)
+  function boardTarget() {
+    // (not while lying in the road, thrown out of a car)
+    if (controllerManager.activeMode !== 'person' || controllerManager.entities.person.ragdoll) return null;
+    const p = controllerManager.entities.person.position;
+    const own = controllerManager.ownVehicleNear(BOARD_REACH);
+    const taken = trafficSystem.vehicleNear(p.x, p.z, own ? Math.min(BOARD_REACH, own.distance) : BOARD_REACH);
+    if (taken) return { taken };
+    if (own) return { mode: own.mode, left: own.left };
+    for (const till of stores.tills) if (Math.hypot(till.x - p.x, till.z - p.z) < TILL_REACH) return { till };
+    return null;
+  }
+  // Robbing a store's till: what's in it (a supermarket's takings since it was last emptied), the store's alarm (two
+  // stars: the staff call the police) and the shoppers' panic; it's empty for ten minutes after
+  function robTill(till) {
+    const now = performance.now() / 1000;
+    if (now < till.refill) {
+      crimeSystem.toast('The till is empty');
+      return;
+    }
+    const amount = Math.round(400 + Math.random() * 1100);
+    crimeSystem.money += amount;
+    crimeSystem.toast(`+$${amount} · ${till.store.name}`);
+    crimeSystem.report('robbery', true);
+    trafficSystem.panic(till.x, till.z, 45);
+    till.refill = now + 600;
+  }
+  function board() {
+    if (mapSystem.isFullMapOpen || crimeSystem.state !== 'play') return;
+    if (controllerManager.activeMode !== 'person') {
+      if (controllerManager.exitVehicle()) syncMode();
+      return;
+    }
+    if (interiors.active) {
+      interiors.act(); // (inside: the counter, or out of the door)
+      return;
+    }
+    const target = boardTarget();
+    if (!target) {
+      // on foot at a taco stand: something to eat; at a restaurant's, bar's or antro's door: in
+      if (!streetFood.buy()) interiors.act();
+      return;
+    }
+    if (target.till) {
+      robTill(target.till);
+      return;
+    }
+    if (target.taken) {
+      const taken = trafficSystem.hijack(target.taken);
+      if (taken.kind === 'car') controllerManager.leaveCarBehind(); // (the player's own car stays where it is)
+      controllerManager.enterVehicle(taken.kind, taken);
+      // taking a patrol car is always a crime; any other car, if the police see it
+      const p = controllerManager.entities.person.position;
+      if (taken.police) crimeSystem.report('stealCop');
+      else crimeSystem.report('carjack', crimeSystem.copNear(p.x, p.z, 40));
+    } else if (target.left) {
+      controllerManager.takeLeftCar(target.left);
+    } else {
+      controllerManager.enterVehicle(target.mode);
+    }
+    syncMode();
+  }
+  // What F would do here, shown over the controls guide
+  const promptNames = { car: 'Subir al coche', cyclist: 'Subir a la bici', moto: 'Subir a la moto', helicopter: 'Subir al helicóptero' };
+  let promptText = '';
+  function updatePrompt() {
+    let text = '';
+    if (controllerManager.activeMode === 'person') {
+      const target = boardTarget();
+      if (target?.taken) {
+        const v = target.taken;
+        text = v.bike ? 'Robar la bici' : v.isPolice ? 'Robar la patrulla' : v.bus ? 'Robar el camión' : v.fleet === 'combi' ? 'Robar la combi' : 'Robar el coche';
+      }
+      else if (target?.till) text = 'Asaltar la caja';
+      else if (target) text = promptNames[target.mode];
+      else text = (interiors.active ? '' : streetFood.prompt()) || interiors.prompt();
+    } else if (controllerManager.activeMode === 'helicopter') {
+      const h = controllerManager.entities.helicopter;
+      const air = h.position.y - controllerManager.getGroundHeight(h.position.x, h.position.z, 'helicopter');
+      text = air > 3 ? 'Aterriza para bajar' : 'Bajar del helicóptero';
+    }
+    const onFoot = controllerManager.activeMode === 'person';
+    const state = `${onFoot}:${text}`;
+    if (state === promptText) return;
+    promptText = state;
+    if (boardButton) {
+      // the touch button: get in or take what is at hand, or get out
+      boardButton.hidden = onFoot && !text;
+      const label = boardButton.querySelector('[data-board-label]');
+      if (label) label.textContent = !onFoot ? 'Bajar' : text.startsWith('Robar') || text.startsWith('Asaltar') ? 'Robar' : text.split(' ')[0] === 'Subir' || !text ? 'Subir' : text.split(' ')[0];
+    }
+    if (!elPrompt) return;
+    elPrompt.hidden = !text;
+    if (!text) return;
+    const key = document.createElement('kbd');
+    key.textContent = 'F';
+    const label = document.createElement('span');
+    label.textContent = text;
+    elPrompt.replaceChildren(key, label);
+  }
+  boardButton?.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    board();
+  });
+
+  function selectCamera(camId, snap = false) {
+    cameraSystem.setCameraPreset(camId, snap);
+    cameraButtons.forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-camera') === camId);
+    });
+    const preset = cameraSystem.getActivePreset();
+    if (elCamera) elCamera.textContent = preset.name;
+  }
+
+  // Steps through CAMERA_PRESETS (V / Shift+V, and the arrows either side of the camera name)
+  function cycleCamera(step) {
+    const n = CAMERA_PRESETS.length;
+    const idx = CAMERA_PRESETS.findIndex((p) => p.id === cameraSystem.activePresetId);
+    selectCamera(CAMERA_PRESETS[(idx + step + n) % n].id, true);
+  }
+
+  function selectTime(timeId) {
+    lightingSystem.applyPreset(timeId);
+    // Live grades itself through onLiveChange as the sun moves
+    if (lightingSystem.activePresetId !== 'live') colorGrade.applyPreset(lightingSystem.activePresetId);
+    try {
+      localStorage.setItem('time-of-day', lightingSystem.activePresetId);
+    } catch { /* Storage may be disabled. */ }
+    timeButtons.forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-time') === timeId);
+    });
+  }
+
+  // Popovers (native [popover]: light dismiss & Esc for free) open against the control that toggles them: data-anchor
+  // names the element they sit above / below, data-align the one whose right edge they line up with
+  const popovers = document.querySelectorAll('.popover[popover]');
+  const supportsPopover = typeof HTMLElement.prototype.togglePopover === 'function';
+  function closePopovers() {
+    if (!supportsPopover) return;
+    popovers.forEach((pop) => {
+      if (pop.matches(':popover-open')) pop.hidePopover();
+    });
+  }
+  popovers.forEach((pop) => {
+    const invoker = document.querySelector(`[popovertarget="${pop.id}"]`);
+    pop.addEventListener('beforetoggle', (e) => {
+      const open = e.newState === 'open';
+      if (invoker) invoker.classList.toggle('is-open', open);
+      if (!open) return;
+      const anchor = document.getElementById(pop.dataset.anchor) || invoker;
+      const align = document.getElementById(pop.dataset.align) || invoker;
+      if (!anchor || !align) return;
+      const r = anchor.getBoundingClientRect();
+      const spaceAbove = Math.max(0, r.top - 20);
+      const spaceBelow = Math.max(0, window.innerHeight - r.bottom - 20);
+      let above = pop.dataset.side === 'above';
+      // The camera control moves to the top on touch screens; open toward the available space.
+      if ((above ? spaceAbove : spaceBelow) < 160) above = spaceAbove > spaceBelow;
+      pop.style.right = `${Math.max(8, window.innerWidth - align.getBoundingClientRect().right)}px`;
+      if (above) {
+        pop.style.top = 'auto';
+        pop.style.bottom = `${window.innerHeight - r.top + 8}px`;
+        pop.style.maxHeight = `${spaceAbove}px`;
+      } else {
+        pop.style.bottom = 'auto';
+        pop.style.top = `${r.bottom + 8}px`;
+        pop.style.maxHeight = `${spaceBelow}px`;
+      }
+    });
+  });
+
+  cameraButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      selectCamera(btn.getAttribute('data-camera'), true);
+      closePopovers();
+    });
+  });
+
+  const camPrevBtn = document.getElementById('cam-prev');
+  const camNextBtn = document.getElementById('cam-next');
+  if (camPrevBtn) camPrevBtn.addEventListener('click', () => cycleCamera(-1));
+  if (camNextBtn) camNextBtn.addEventListener('click', () => cycleCamera(1));
+
+  timeButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      selectTime(btn.getAttribute('data-time'));
+    });
+  });
+
+  // No browser context menu in the game (text fields keep theirs): right-click or macOS Ctrl+click opened it, and
+  // opened mid-drag it swallowed the pointerup so the camera kept orbiting with the bare mouse
+  document.addEventListener('contextmenu', (e) => {
+    if (!isTypingInField(e)) e.preventDefault();
+  });
+
+  // A mouse click mustn't leave the focus on a HUD button, or Space (jump / ascend) and Enter would press it again
+  document.addEventListener('click', (e) => {
+    const btn = e.target instanceof Element ? e.target.closest('button') : null;
+    if (btn && e.detail > 0) btn.blur();
+  });
+
+  // Where you are: the place's name over its street corner, drawn as a pair of street-name signs
+  const roadNames = new Set(ROADS.map((r) => r.name));
+  const placeNames = new Set(CITY_LANDMARKS.map((l) => l.name));
+  let locationText = '';
+  function renderLocation(label) {
+    if (!elLocation || label === locationText) return;
+    locationText = label;
+    let place = '';
+    let streets = label;
+    const split = label.indexOf(' · ');
+    if (split >= 0) {
+      place = label.slice(0, split);
+      streets = label.slice(split + 3);
+    } else if (placeNames.has(label) || (!label.includes(' & ') && !roadNames.has(label))) {
+      place = label;
+      streets = '';
+    }
+    const nodes = [];
+    if (place) {
+      const el = document.createElement('div');
+      el.className = 'location-place';
+      el.textContent = place;
+      nodes.push(el);
+    }
+    if (streets) {
+      const row = document.createElement('div');
+      row.className = 'location-signs';
+      if (streets.startsWith('near ')) {
+        streets = streets.slice(5);
+        const near = document.createElement('span');
+        near.className = 'location-near';
+        near.textContent = 'near';
+        row.appendChild(near);
+      }
+      for (const name of streets.split(' & ')) {
+        const sign = document.createElement('span');
+        sign.className = 'street-sign';
+        sign.textContent = name;
+        row.appendChild(sign);
+      }
+      nodes.push(row);
+    }
+    elLocation.replaceChildren(...nodes);
+  }
+
+  function teleportTo(x, z, heading = Math.PI) {
+    interiors?.abandon(); // (from inside a room: out of it, wherever the teleport lands)
+    const destination = controllerManager.teleportActiveTo(x, z, heading);
+    touchControls.reset();
+    gamepadControls.reset();
+    cameraSystem.resetForTeleport();
+    selectCamera('chase', true);
+    return destination;
+  }
+
+  const mapSystem = new CityMapSystem({
+    controllerManager,
+    cameraSystem,
+    trafficSystem,
+    allBlocks: cityBlocks.allBlocks,
+    onToggle: (open) => {
+      controllerManager.resetInput();
+      touchControls.setEnabled(!open);
+      gamepadControls.setEnabled(!open);
+      const mapHint = document.getElementById('fullmap-hover-info');
+      if (open && touchControls.available && mapHint) {
+        mapHint.textContent = 'Tap to teleport · Drag to pan · Use + / − to zoom';
+      }
+    },
+    onTeleport: teleportTo
+  });
+
+  teleportButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.getAttribute('data-teleport');
+      const loc = TELEPORT_LOCATIONS[key];
+      if (loc) {
+        teleportTo(loc.x, loc.z, loc.heading);
+      }
+      closePopovers();
+    });
+  });
+
+  const openMapBtn = document.getElementById('btn-open-map');
+  mapSystem.setBlipSource(() => fires.blips(crimeSystem.blips())); // (the police, gangs, pickups & fires on the radar)
+  if (openMapBtn) openMapBtn.addEventListener('click', () => mapSystem.toggleFullMap(true));
+
+  if (hudToggleBtn) {
+    hudToggleBtn.addEventListener('click', () => {
+      document.body.classList.toggle('hud-minimized');
+      const isMin = document.body.classList.contains('hud-minimized');
+      hudToggleBtn.setAttribute('aria-pressed', String(isMin));
+      hudToggleBtn.setAttribute('aria-label', isMin ? 'Show HUD' : 'Hide HUD');
+      hudToggleBtn.title = isMin ? 'Show the HUD [H]' : 'Clean view: hide the HUD [H]';
+      if (isMin) closePopovers();
+    });
+  }
+
+  // Global keyboard shortcuts for getting in & out (F), cameras (V / 5-0), and HUD (H)
+  window.addEventListener('keydown', (e) => {
+    if (isTypingInField(e)) return;
+    switch (e.code) {
+      case 'KeyF':
+        if (!e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) board();
+        break;
+      case 'Digit5':
+        selectCamera('chase', true);
+        break;
+      case 'Digit6':
+        selectCamera('action', true);
+        break;
+      case 'Digit7':
+        selectCamera('pov', true);
+        break;
+      case 'Digit8':
+        selectCamera('fifthAve', true);
+        break;
+      case 'Digit9':
+        selectCamera('timesSquare', true);
+        break;
+      case 'Digit0':
+        selectCamera('chryslerGCT', true);
+        break;
+      case 'KeyV':
+        cycleCamera(e.shiftKey ? -1 : 1);
+        break;
+      case 'KeyH':
+        if (hudToggleBtn) hudToggleBtn.click();
+        break;
+      case 'KeyN':
+        if (!e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) audioSystem.setEnabled(!audioSystem.enabled);
+        break;
+      case 'KeyB':
+        if (!e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !mapSystem.isFullMapOpen) audioSystem.honk(controllerManager.getActiveEntity());
+        break;
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    cameraSystem.onResize(window.innerWidth, window.innerHeight);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    if (mapSystem.isFullMapOpen) {
+      mapSystem.resizeFullCanvas();
+      mapSystem.renderFullMap();
+    }
+  });
+
+  // Initialize the UI and chase camera around the player, on foot.
+  syncMode();
+  selectCamera('chase', true);
+  let savedTime = null;
+  try {
+    savedTime = localStorage.getItem('time-of-day');
+  } catch { /* Storage may be disabled. */ }
+  selectTime([...timeButtons].some((btn) => btn.getAttribute('data-time') === savedTime) ? savedTime : 'live');
+  // Multiplayer (?multiplayer=1, see js/net/multiplayer.js) loads only when asked for, so single-player pays nothing
+  let multiplayer = null;
+  if (new URLSearchParams(location.search).has('multiplayer')) {
+    import('./net/multiplayer.ts')
+      .then(({ Multiplayer, multiplayerOptions }) => {
+        const options = multiplayerOptions();
+        if (!options) {
+          console.info('[mp] no server to connect to: add &mp-server=wss://… (or serve from localhost)');
+          return;
+        }
+        multiplayer = new Multiplayer({ scene, controllers: controllerManager, camera: cameraSystem.camera, ...options });
+      })
+      .catch((err) => console.warn('[mp] could not start multiplayer:', err));
+  }
+  markInit('ui');
+  // Debugging handle for the console, only with ?debug in the URL
+  if (new URLSearchParams(location.search).has('debug')) {
+    window.__slop = { scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors, fires, controllerManager, trafficSystem, cameraSystem, streetDetails, cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl, weaponWheel, weaponIcons };
+  }
+
+  // The streamed tiles round the player, laid before the first frame; and a stand-in of every streamed layer for the
+  // shader warm-up, so no tile builds pipelines in play when its layer first comes in (taken out after the first frame)
+  let streamWarmup = null;
+  if (streamer) {
+    if (loadingStatus) loadingStatus.textContent = 'Laying the streets around you...';
+    const here = controllerManager.getActiveEntity().position;
+    await streamer.preload(here.x, here.z);
+    streamWarmup = new THREE.Group();
+    streamWarmup.add(...streamer.warmupMeshes());
+    scene.add(streamWarmup);
+    markInit(`tiles ${streamer.stats.shown}`);
+  }
+
+  // The loading screen stays up while the shaders compile (precompileShaders() & the warm-up frame, see the loop) and
+  // until the first frame is on screen
+  if (loadingStatus) {
+    loadingStatus.textContent = 'Compiling Shaders & Render Pipelines...';
+  }
+
+  // 6b. Shader pre-compilation behind the loading screen. compileAsync() builds the node graphs in slices and has the GPU
+  //     process compile the pipelines in parallel, but after every 8 ms slice it waits for a rendered frame, which
+  //     leaves the main thread idle about half the time while nothing else animates; several calls side by side keep
+  //     it busy (warm cache: 2.1 s instead of 4.0 s). (Rendering straight away compiled ~500 pipelines one after
+  //     another: ~25 s with a cold shader cache.)
+  const COMPILE_POOL = 16;
+  const nextTask = () => (globalThis.scheduler?.yield ? globalThis.scheduler.yield() : new Promise((resolve) => setTimeout(resolve, 0)));
+  async function precompileShaders() {
+    // An empty frame first: it sets up the post-processing chain, which configures the scene pass's render target
+    // (MSAA samples, depth format), so the pipelines compiled below are the very ones the scene pass asks for
+    scene.visible = false;
+    renderPipeline.render();
+    scene.visible = true;
+    markInit('postFX');
+
+    // Every visible object with frustum culling off (like the warm-up frame, see the loop). Plain meshes that share
+    // a material share its shader, so one job compiles them in turn (the first build serves the rest); every
+    // instanced mesh gets a build of its own unless its chunks share a pipeline
+    const culled = [];
+    const jobs = [];
+    const jobByMaterial = new Map();
+    const pipelines = new Set();
+    scene.traverseVisible((o) => {
+      if (o.frustumCulled) {
+        culled.push(o);
+        o.frustumCulled = false;
+      }
+      if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) return;
+      // Use the first visible chunk: the original representative may be in an inactive tree cell. Shadow stand-ins
+      // only draw in the shadow maps (the warm-up frame compiles those).
+      if (o.userData.shadowProxy) return;
+      const pipeline = o.userData.sharesPipelineWith || o;
+      if (pipelines.has(pipeline)) return;
+      pipelines.add(pipeline);
+      if (o.isInstancedMesh || Array.isArray(o.material)) {
+        jobs.push([o]);
+        return;
+      }
+      let job = jobByMaterial.get(o.material);
+      if (!job) {
+        job = [];
+        jobByMaterial.set(o.material, job);
+        jobs.push(job);
+      }
+      job.push(o);
+    });
+
+    renderer.setRenderTarget(scenePass.renderTarget);
+    renderer.setMRT(sceneMRT);
+    const compile = async (object) => {
+      // Each compile starts in a task of its own: compileAsync() keeps one precompilation state on the renderer,
+      // which must not be mid-step for two of them in the same microtask checkpoint
+      await nextTask();
+      try {
+        await renderer.compileAsync(object, cameraSystem.camera, scene);
+      } catch (e) {
+        console.warn('[compile]', e); // the warm-up frame compiles it instead
+      }
+    };
+    let next = 0;
+    let done = 0;
+    const worker = async () => {
+      while (next < jobs.length) {
+        const job = jobs[next++];
+        for (const object of job) await compile(object);
+        done++;
+        if (loadingStatus) {
+          loadingStatus.textContent = `Compiling Shaders & Render Pipelines... ${Math.round((done / jobs.length) * 100)}%`;
+        }
+        setLoadingProgress(done / jobs.length);
+      }
+    };
+    await Promise.all(Array.from({ length: COMPILE_POOL }, worker));
+    renderer.setMRT(null);
+    renderer.setRenderTarget(null);
+    for (const o of culled) o.frustumCulled = true;
+  }
+
+  await precompileShaders();
+  markInit('compile');
+
+  // 6. Animation Loop
+  // The rain & the wet roads from the Live weather: drops round the camera slanted by the wind, the tyres' grip for
+  // the player & the traffic, the hiss in the audio, and in a thunderstorm lightning every 8-30 s with its thunder
+  // after the time its sound takes to arrive
+  function updateRain(dt, elapsed) {
+    const w = lightingSystem.activePresetId === 'live' ? lightingSystem.liveWeather || CLEAR_WEATHER : CLEAR_WEATHER;
+    roadWater.update(dt, w);
+    floods.update(dt, w, cameraSystem.camera);
+    // word of a flood once it is deep
+    if (floods.level > 0.3 && !floodWarned) crimeSystem.toast('¡Se inunda la ciudad! Cuidado con los bajos y el Mololoa');
+    floodWarned = floods.level > 0.3 || (floodWarned && floods.level > 0.15);
+    // ...and of the places that flood every year as the player comes into one (flood-model.js FLOOD_SPOTS)
+    const here = controllerManager.getActiveEntity().position;
+    const spot = floods.spotAt(here.x, here.z);
+    if (spot && spot !== floodSpot) crimeSystem.toast(`Se inunda: ${spot.name}`);
+    floodSpot = spot;
+    // wind blows from windDirection (° clockwise from true north): toward the opposite bearing, in the grid frame
+    const toward = (w.windDirection + 180 - (CITY.bearingDeg || 0)) * Math.PI / 180;
+    const wind = (w.windSpeed || 0) / 3.6;
+    // (indoors, no rain falls round the camera nor drums on the roof over it)
+    const falling = interiors.active ? 0 : roadWater.rain;
+    rain.update(falling, Math.sin(toward) * wind, -Math.cos(toward) * wind, elapsed, cameraSystem.camera);
+    controllerManager.roadWet = floods.level > 0.05 ? 1 : roadWater.wet; // (a flood soaks every street)
+    controllerManager.roadGrip = wetGrip(roadWater.wet);
+    trafficSystem.setRoadWater(roadWater.wet, roadWater.rain, controllerManager.roadGrip);
+    audioSystem.setRain(falling);
+    if (w.code >= 95 && roadWater.rain > 0.3) {
+      if (!nextLightning) nextLightning = elapsed + 4 + Math.random() * 10;
+      if (elapsed >= nextLightning) {
+        const distance = 600 + Math.random() * 5400; // m to the strike
+        const near = 1 - distance / 6000;
+        lightingSystem.flash(0.35 + 0.65 * near);
+        audioSystem.thunder(distance / 343, near);
+        nextLightning = elapsed + 8 + Math.random() * 22;
+      }
+    } else nextLightning = 0;
+  }
+
+  const ambience = [];
+  let weekday = new Date().getDay();
+  const sceneLights = [];
+  let lightsCounted = -1;
+  // (gathered again every couple of seconds: lights come & go with the city's systems, multiplayer's among them)
+  const gatherLights = () => {
+    sceneLights.length = 0;
+    scene.traverse((o) => { if (o.isPointLight || o.isSpotLight) sceneLights.push(o); });
+  };
+  let lastTime = performance.now();
+  let elapsed = 0;
+  let frameCount = 0;
+  let fpsTimer = 0;
+  let nextPlayerSave = 0;
+  let nextRelease = Infinity; // (releaseStaticArrays: from when the first frame is on the GPU)
+  let warmedUp = false; // see the first frame below
+
+  if (elFps) elFps.textContent = '60';
+
+  renderer.setAnimationLoop((now) => {
+    const rawDt = (now - lastTime) * 0.001;
+    lastTime = now;
+    // The world steps at most 0.05 s a frame (below 20 fps it runs slow rather than unstably). The player keeps real
+    // time down to 10 fps, in steps of at most 1/30 s: a slow frame mustn't stretch a car's 0-100 km/h or slow its
+    // speed over the ground
+    const frameDt = Math.min(Math.max(rawDt, 0.001), 0.1) * weaponWheel.timeScale;
+    const dt = Math.min(frameDt, 0.05 * weaponWheel.timeScale);
+    elapsed += dt;
+
+    // Update 3rd-person controllers, camera, signals, traffic & vehicle collisions, building LODs, and dynamic shadow focus
+    gamepadControls.update(dt);
+    // out of breath, no sprinting
+    controllerManager.canSprint = stamina.canSprint;
+    const playerSteps = Math.ceil(frameDt * 30 - 1e-6);
+    for (let i = 0; i < playerSteps; i++) controllerManager.update(frameDt / playerSteps, elapsed);
+    // The car's or moto's tachometer follows the engine every frame (the rest of the HUD every 250 ms, below)
+    const motorMode = controllerManager.activeMode;
+    if (motorMode === 'car' || motorMode === 'moto') {
+      const v = controllerManager.entities[motorMode];
+      const engine = v.damage ? 1 - v.damage.engine : 1;
+      tachometer.update(v.spec, v.drive, Math.round(Math.abs(v.speed) * 3.6), engine, engine <= 0, v.drive ? gearLabel(v.drive, v.spec) : '1');
+    }
+    // (aiming only on foot and in play, not while choosing a weapon)
+    aimControl.allowed = crimeSystem.state === 'play' && !weaponWheel.isOpen;
+    aimControl.update(dt);
+    cameraSystem.update(dt, elapsed);
+    streetDetails.signalClock.value = elapsed;
+    cityUniforms.uClock.value = elapsed;
+    // the hour sets how much traffic and how many people are out (traffic-demand.js): rush hours on the avenues
+    trafficSystem.setHour(lightingSystem.hourOfDay);
+    trafficSystem.setParked(crimeSystem.addObstacles(controllerManager.parkedVehicles()));
+    trafficSystem.update(
+      dt,
+      elapsed,
+      cameraSystem.currentPos,
+      controllerManager.getActiveEntity(),
+      controllerManager.activeMode,
+      cameraSystem.camera
+    );
+    highwayTraffic.update(dt, cameraSystem.camera, controllerManager.getActiveEntity(), controllerManager.activeMode);
+    // Lamp posts & hydrants the player's car or bicycle runs into (mayhem.js)
+    if (streetDetails.breaker) streetDetails.breaker.update(dt, controllerManager.getActiveEntity(), controllerManager.activeMode);
+    // Gunfire, the police, gangs & thieves (crime.js), and a blast's shake of the camera
+    crimeSystem.update(dt, elapsed, cameraSystem.camera);
+    bloodPools.update(dt);
+    streetFood.update(dt, lightingSystem.hourOfDay, cameraSystem.camera);
+    nightlife.update(dt, lightingSystem.hourOfDay, weekday, cameraSystem.camera);
+    interiors.update(dt, lightingSystem.hourOfDay);
+    if (!interiors.active) fires.update(dt, cityUniforms.uDryness.value, cameraSystem.camera);
+    // the sounds that stay put (audio-ambience.js): the planchas, the antros' & parties' music, the fires
+    ambience.length = 0;
+    streetFood.sounds(ambience);
+    nightlife.sounds(ambience);
+    interiors.sounds(ambience);
+    fires.sounds(ambience);
+    audioSystem.setAmbience(ambience);
+    crimeSystem.shakeCamera(cameraSystem.camera);
+    stamina.update(dt, crimeSystem.state === 'play' ? controllerManager.sprintingMode() : null);
+    crimeHud.update(crimeSystem, dt, stamina);
+    weaponWheel.update();
+    if (!document.hidden && now >= nextPlayerSave) {
+      savePlayerState();
+      nextPlayerSave = now + 5000;
+    }
+    cityBlocks.update(cameraSystem.currentPos.x, cameraSystem.currentPos.z);
+    stores.update(cameraSystem.currentPos.x, cameraSystem.currentPos.z);
+    if (cityBlocks.updateLights) cityBlocks.updateLights(cameraSystem.camera);
+    if (streetDetails.update) streetDetails.update(cameraSystem.camera);
+    lightingSystem.update(cameraSystem.currentPos);
+    updateRain(dt, elapsed);
+    if (multiplayer) multiplayer.update(dt, elapsed);
+    mapSystem.update();
+    audioSystem.update(dt, elapsed, cameraSystem.camera, lightingSystem.isNight);
+    if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
+    if (streamer) {
+      // (in a room the camera is in its pocket high over the map: the tiles stay laid round the door)
+      const door = interiors.inside?.venue;
+      const eye = cameraSystem.camera.position;
+      if (door) streamer.update(door, 0, Math.max(0, rawDt));
+      else streamer.update(eye, eye.y - groundHeight(eye.x, eye.z), Math.max(0, rawDt));
+    }
+    // The clustered lighting takes the first 256 point & spot lights it finds: those switched off (intensity 0: the
+    // traffic's by day, the pools waiting) are hidden, so they don't take the places of the ones on
+    if (elapsed - lightsCounted > 2) {
+      gatherLights();
+      lightsCounted = elapsed;
+    }
+    // The parts of the static city drawn for the first time since: their CPU-side copies go too (scene-culling.js)
+    if (now >= nextRelease) {
+      releaseStaticArrays(renderer);
+      nextRelease = now + 3000;
+    }
+    for (const l of sceneLights) {
+      if (l.intensity <= 0 && l.visible) {
+        l.visible = false;
+        l.userData.switchedOff = true;
+      } else if (l.intensity > 0 && l.userData.switchedOff) {
+        l.visible = true;
+        l.userData.switchedOff = false;
+      }
+    }
+    updateDynamicMatrices(scene);
+
+    // Render frame via TSL RenderPipeline (SSR + Bloom)
+    if (!warmedUp) {
+      // First frame = pipeline warm-up behind the loading screen, for what precompileShaders() can't reach (the shadow
+      // map passes): with frustum culling off, every visible material's pipelines compile now instead of stalling the
+      // first time the camera turns towards it (one chunk / shadow stand-in per shared pipeline is enough)
+      const culled = [];
+      const pipelines = new Set();
+      scene.traverseVisible((o) => {
+        const pipeline = o.userData.sharesPipelineWith || o;
+        if (pipelines.has(pipeline)) return;
+        pipelines.add(pipeline);
+        if (o.frustumCulled) {
+          culled.push(o);
+          o.frustumCulled = false;
+        }
+      });
+      renderPipeline.render();
+      for (const o of culled) o.frustumCulled = true;
+      markInit('warmup');
+    }
+    renderPipeline.render();
+    if (!warmedUp) {
+      warmedUp = true;
+      markInit('firstFrame');
+      // The loading screen stays up until the GPU has got through the first frame (and the pipelines its warm-up
+      // compiled), i.e. until the city is actually on screen
+      const device = renderer.backend.device;
+      Promise.resolve(device && device.queue.onSubmittedWorkDone()).catch(() => {}).then(() => {
+        markInit('gpu');
+        // What the warm-up drew of the static city is on the GPU now: its CPU-side copies go, and the rest's as it
+        // gets drawn (below)
+        if (streamWarmup) {
+          scene.remove(streamWarmup);
+          for (const mesh of streamWarmup.children) mesh.geometry.dispose();
+        }
+        const released = releaseStaticArrays(renderer);
+        markInit(`release ${Math.round(released / 1e6)}MB`);
+        nextRelease = performance.now() + 3000;
+        console.log(`[init] ${initTimings.join(', ')}`);
+        initTimings = null;
+        if (loadingOverlay) loadingOverlay.classList.add('hidden');
+        audioSystem.ready = true;
+        setLoadingProgress(1);
+        // (the weapon pictures, off screen, once the first frames are through)
+        setTimeout(() => weaponIcons.bake(), 400);
+      });
+    }
+
+    // Telemetry uses wall time, not the clamped simulation step, so slow frames and high-refresh displays report
+    // their actual frame rate (updates DOM every 250ms).
+    frameCount++;
+    fpsTimer += Math.max(0, rawDt);
+    if (fpsTimer >= 0.25) {
+      const currentFps = Math.round(frameCount / fpsTimer);
+      frameCount = 0;
+      fpsTimer = 0;
+
+      const activeEnt = controllerManager.getActiveEntity();
+      const mode = controllerManager.activeMode;
+      const kmh = Math.round(Math.abs(activeEnt.speed) * 3.6);
+      // over the town's floor (its slopes put the streets well over y = 0)
+      const altM = activeEnt.position.y - controllerManager.floorHeight(activeEnt.position.x, activeEnt.position.z);
+      const altFt = Math.max(0, Math.round(altM * 3.281));
+
+      if (elFps) {
+        elFps.textContent = String(currentFps);
+        elFps.className = currentFps >= 50 ? 'fps-ok' : currentFps >= 30 ? 'fps-warn' : 'fps-bad';
+      }
+      // the grass greens in the rains & browns in the dry season (lot-greenery.js), by the month shown
+      cityUniforms.uDryness.value = grassDryness(lightingSystem.liveClock().getMonth());
+      cityUniforms.uHour.value = lightingSystem.hourOfDay; // (the lit rooms & the shops' shutters)
+      weekday = lightingSystem.liveClock().getDay(); // (the weekend's parties)
+      if (elSpeed) elSpeed.textContent = String(kmh);
+      if (elSpeedMeter) elSpeedMeter.style.transform = `scaleX(${Math.min(1, kmh / (topSpeedKmh[mode] || 130))})`;
+      document.body.classList.toggle('is-boosting', controllerManager.keys.boost && kmh > 0);
+      if (elAltitude) elAltitude.textContent = altFt.toLocaleString('en-US');
+      // The street corner of the player on the follow cameras, of the camera itself on the scenic ones
+      const where = cameraSystem.getActivePreset().category === 'follow' ? activeEnt.position : cameraSystem.currentPos;
+      renderLocation(getLocationLabel(where.x, where.z));
+      updatePrompt();
+    }
+  });
+}
+
+initApp();

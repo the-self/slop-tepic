@@ -8,13 +8,13 @@ const tsl = new Proxy({}, { get: () => () => ({}) });
 // (the module makes its unit geometries & scratch objects on load)
 class Stub { rotateX() { return this; } }
 const three = { BoxGeometry: Stub, PlaneGeometry: Stub, Matrix4: Stub, Quaternion: Stub, Vector3: Stub };
-const store = loadModule(readFileSync(join(__dirname, '../js/world/store-interiors.js'), 'utf8'), {
+const store = loadModule(readFileSync(join(__dirname, '../js/world/store-interiors.ts'), 'utf8'), {
   imports: {
     'three/webgpu': three,
     'three/tsl': tsl,
-    '../render/tsl-materials.js': { cityUniforms: {} },
-    './drape.js': { drapeGeometry: (g) => g },
-    './ground.js': { townHeight: () => 0 }
+    '../render/tsl-materials.ts': { cityUniforms: {} },
+    './drape.ts': { drapeGeometry: (g) => g },
+    './ground.ts': { townHeight: () => 0 }
   },
   globals: { Math, console }
 });

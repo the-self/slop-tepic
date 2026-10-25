@@ -27,7 +27,7 @@ function fakeDom() {
 }
 
 globalThis.window = fakeDom().win;
-const { AimControl, PITCH_MIN, PITCH_MAX } = await import('../js/player/aim.js');
+const { AimControl, PITCH_MIN, PITCH_MAX } = await import('../js/player/aim.ts');
 
 function setup() {
   const dom = fakeDom();

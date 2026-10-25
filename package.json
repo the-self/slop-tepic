@@ -1,0 +1,29 @@
+{
+  "name": "slop-tepic",
+  "private": true,
+  "type": "module",
+  "description": "A GTA-style open world of Tepic, Nayarit at 1:1 scale, in three.js WebGPU",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node tools/build.ts --serve",
+    "build": "node tools/build.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p server/tsconfig.json && tsc -p tools/tsconfig.json",
+    "lint": "eslint .",
+    "test": "node --no-warnings=ExperimentalWarning --test tests/*.test.*",
+    "check": "npm run typecheck && npm run lint && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.6.5",
+    "@types/three": "0.186.0",
+    "@types/ws": "8.18.2",
+    "esbuild": "0.28.2",
+    "eslint": "10.13.0",
+    "globals": "17.13.0",
+    "jolt-physics": "1.1.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.0"
+  }
+}

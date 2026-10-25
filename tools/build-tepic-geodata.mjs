@@ -20,8 +20,8 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { log, ringArea, bbox, centroid, rdp, rdpRing, extractBlocks, ringCells, clearCapsule, minAreaRect, decodePNG, createRouteMatcher, houseAt } from './tepic-lib.mjs';
-import { BUILDING_OVERRIDES } from '../js/world/building-overrides.js';
-import { STOREFRONTS } from '../js/world/storefronts/index.js';
+import { BUILDING_OVERRIDES } from '../js/world/building-overrides.ts';
+import { STOREFRONTS } from '../js/world/storefronts/index.ts';
 
 const DATA = process.env.GEO_DATA || fileURLToPath(new URL('data/tepic/', import.meta.url));
 const OUT = process.argv[2] || fileURLToPath(new URL('../js/world/city-geodata.js', import.meta.url));

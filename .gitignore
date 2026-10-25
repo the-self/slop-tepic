@@ -2,3 +2,5 @@
 .claude/
 tools/data/tepic/overture/
 tools/data/tepic/fetch.log
+node_modules/
+dist/
