@@ -4,6 +4,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GEO } from './city-geodata.js';
 import { cityUniforms } from '../render/tsl-materials.js';
 import { liftAt, landHeight } from './ground.js';
+import { MODEL_RESERVES } from './landmark-models.js';
 
 // js/world/tepic-landmarks.js
 // Tepic's landmarks on their real footprints (city-geodata.js `landmarks`, from OpenStreetMap): the Catedral on the
@@ -54,8 +55,8 @@ const CATEDRAL = (() => {
   return { x: box.cx, z: box.cz, f: front.f, width: front.width, depth: front.depth, yaw: Math.atan2(front.f[0], front.f[1]) };
 })();
 
-// Lots the generic houses keep off: { contains(x, z) }
-const LANDMARK_RESERVES = [];
+// Lots the generic houses keep off: { contains(x, z) } (and those of the landmarks made as 3D models)
+const LANDMARK_RESERVES = [...MODEL_RESERVES];
 if (CATEDRAL) {
   const { x, z, f, width, depth } = CATEDRAL;
   LANDMARK_RESERVES.push({

@@ -19,7 +19,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { log, ringArea, bbox, centroid, rdp, rdpRing, extractBlocks, ringCells, clearCapsule, minAreaRect, decodePNG, createRouteMatcher } from './tepic-lib.mjs';
+import { log, ringArea, bbox, centroid, rdp, rdpRing, extractBlocks, ringCells, clearCapsule, minAreaRect, decodePNG, createRouteMatcher, houseAt } from './tepic-lib.mjs';
+import { BUILDING_OVERRIDES } from '../js/world/building-overrides.js';
 import { STOREFRONTS } from '../js/world/storefronts/index.js';
 
 const DATA = process.env.GEO_DATA || fileURLToPath(new URL('data/tepic/', import.meta.url));
@@ -1610,6 +1611,23 @@ const transit = { groups: [], routes: [] };
 }
 
 // =====================================================================================================================
+// 6C. WHAT'S KNOWN OF PARTICULAR BUILDINGS (js/world/building-overrides.js): each entry finds the building it points
+// at; its storeys go into the house, its paint into GEO.overrides [house index, storeys (0: as guessed), paint
+// (0xrrggbb, -1: the palette's)], which also tells buildings.js to draw it whole
+// =====================================================================================================================
+const overrides = [];
+for (const o of BUILDING_OVERRIDES) {
+  const [x, z] = toWorld(o.lon, o.lat);
+  const n = houseAt(houses, HS, x, z);
+  if (n < 0) { log(`override ${o.note || `${o.lat},${o.lon}`}: no building there`); continue; }
+  const storeys = Number.isInteger(o.storeys) ? Math.max(1, Math.min(12, o.storeys)) : 0;
+  if (storeys) houses[n * HS + 5] = storeys;
+  const paint = /^#[0-9a-f]{6}$/i.test(o.paint || '') ? parseInt(o.paint.slice(1), 16) : -1;
+  overrides.push([n, storeys, paint]);
+}
+if (BUILDING_OVERRIDES.length) log(`overrides: ${overrides.length} of ${BUILDING_OVERRIDES.length} pinned to a building`);
+
+// =====================================================================================================================
 // 7. ASSEMBLE
 // =====================================================================================================================
 const GEO = {
@@ -1673,7 +1691,9 @@ const GEO = {
   transit,
   // The airport (4): runways & taxiways [ref, width (m), flat centreline], aprons & helipads (flat rings), gates (the
   // boarding bridges [x, z at the terminal, x, z at the aircraft])
-  airport
+  airport,
+  // Buildings drawn as they are (6C): [house index, storeys (0: as guessed), paint (0xrrggbb, -1: the palette's)]
+  overrides
 };
 
 const json = JSON.stringify(GEO);

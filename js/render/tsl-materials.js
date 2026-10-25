@@ -562,10 +562,12 @@ function createMexicanHouseMaterial({ floorHeight = 3.0, chains = [] } = {}) {
     const isBack = float(1.0).sub(isFront).sub(isChain).sub(isBig).max(0.0);
     const rawBlock = isBack.mul(step(wallSeed, 0.42));
 
-    // the house's paint
+    // the house's paint: its own where known (paint.w = 1), else the palette's by tone
     let paint = color(PALETTE[0]);
     const idx = floor(tone.mul(PALETTE.length));
     for (let i = 1; i < PALETTE.length; i++) paint = mix(paint, color(PALETTE[i]), step(i - 0.5, idx));
+    const ownPaint = attribute('paint', 'vec4');
+    paint = mix(paint, ownPaint.xyz, ownPaint.w);
     const blockGrey = color(0x8e8b85);
     const mortar = max(lineAA(fract(y.div(0.2)).sub(0.5), 0.04), lineAA(fract(sx.div(0.4).add(step(0.5, fract(y.div(0.4))).mul(0.5))).sub(0.5), 0.02));
     const block = blockGrey.mul(float(1.0).sub(mortar.mul(0.25))).mul(hash2D(vec2(floor(sx.div(0.4)), floor(y.div(0.2)))).mul(0.12).add(0.94));
@@ -1258,8 +1260,13 @@ function createFacadeBoxes(material, boxes) {
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   const box = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
   const faces = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
+  // a building's own paint, where it is known (the centro's overrides, js/world/building-overrides.js): rgb, 1 (0: the
+  // palette's, by tone)
+  const paint = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
   geometry.setAttribute('box', box);
   geometry.setAttribute('faces', faces);
+  geometry.setAttribute('paint', paint);
+  const colour = new THREE.Color();
 
   const mesh = new THREE.InstancedMesh(geometry, material, boxes.length);
   const matrix = new THREE.Matrix4();
@@ -1270,8 +1277,15 @@ function createFacadeBoxes(material, boxes) {
   boxes.forEach((b, i) => {
     if (b.ry) mesh.setMatrixAt(i, matrix.compose(pos.set(b.x, b.y, b.z), quat.setFromAxisAngle(up, b.ry), scale.set(b.w, b.h, b.d)));
     else mesh.setMatrixAt(i, matrix.makeScale(b.w, b.h, b.d).setPosition(b.x, b.y, b.z));
-    box.setXYZW(i, b.w, b.h, b.d, ((i * 29) % 1000) + 0.1 + 0.8 * (b.tone ?? 0.5));
+    // the seed from where the building stands, not its place in the list: a house added or taken away elsewhere
+    // leaves this one's door, gate & back walls as they were
+    const h = Math.sin(b.x * 12.9898 + b.z * 78.233) * 43758.5453;
+    box.setXYZW(i, b.w, b.h, b.d, Math.floor((h - Math.floor(h)) * 1000) + 0.1 + 0.8 * (b.tone ?? 0.5));
     if (b.faces) faces.setXYZW(i, b.faces[0], b.faces[1], b.faces[2], b.faces[3]);
+    if (b.paint !== undefined && b.paint !== null) {
+      colour.set(b.paint);
+      paint.setXYZW(i, colour.r, colour.g, colour.b, 1);
+    }
   });
   return mesh;
 }

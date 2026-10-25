@@ -12,6 +12,8 @@ import { buildRoadPaint } from './world/road-paint.js';
 import { buildPavements } from './world/pavements.js';
 import { buildBridges } from './world/bridges.js';
 import { buildAirport } from './world/airport.js';
+import { buildLandmarkModels } from './world/landmark-models.js';
+import { buildStores } from './world/store-interiors.js';
 import { ThirdPersonControllerManager } from './player/controllers.js';
 import { Stamina, struckDamage, hardness, crashDamage, walletAmount, nearest, CRASH_GRACE } from './player/stats.js';
 import { TouchControls } from './input/touch-controls.js';
@@ -105,14 +107,18 @@ async function initApp() {
   buildRiverChannels(scene);
   markInit('rivers');
   const { colliders: landmarkColliders } = buildTepicLandmarks(scene);
+  // (and the landmarks made as 3D models, js/world/landmark-models.js: their lots now, the models as they load)
+  const { colliders: modelColliders } = buildLandmarkModels(scene);
   markInit('landmarks');
   const cityBlocks = buildCityBlocks(scene);
+  // The big chain stores you can walk into: their walls, door, shelves & tills (js/world/store-interiors.js)
+  const stores = buildStores(scene, cityBlocks.stores);
   markInit('blocks');
   // The gated communities' walls & guard booths (the houses inside are among the blocks')
   const { colliders: cotoColliders } = buildCotos(scene);
-  const allColliders = [...landmarkColliders, ...cityBlocks.colliders, ...cotoColliders, ...(cityGrid.colliders || [])];
+  const allColliders = [...landmarkColliders, ...modelColliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...(cityGrid.colliders || [])];
 
-  const streetDetails = buildStreetDetails(scene);
+  const streetDetails = buildStreetDetails(scene, stores.reserves);
   markInit('streetDetails');
   // Buildings turned along non-grid streets have oriented colliders whose world bounds reach past their lots: they stay
   // inside the property line anyway, so the road network (lanes & sidewalks) doesn't need them.
@@ -449,13 +455,31 @@ async function initApp() {
   // vehicles or take the nearest car or bicycle from the traffic, whose driver is left in the street; in a vehicle, get
   // out (a helicopter once it has landed)
   const BOARD_REACH = 1.6; // m from the vehicle's body
+  const TILL_REACH = 1.8; // m from a store's till (store-interiors.js)
   function boardTarget() {
     if (controllerManager.activeMode !== 'person') return null;
     const p = controllerManager.entities.person.position;
     const own = controllerManager.ownVehicleNear(BOARD_REACH);
     const taken = trafficSystem.vehicleNear(p.x, p.z, own ? Math.min(BOARD_REACH, own.distance) : BOARD_REACH);
     if (taken) return { taken };
-    return own ? { mode: own.mode, left: own.left } : null;
+    if (own) return { mode: own.mode, left: own.left };
+    for (const till of stores.tills) if (Math.hypot(till.x - p.x, till.z - p.z) < TILL_REACH) return { till };
+    return null;
+  }
+  // Robbing a store's till: what's in it (a supermarket's takings since it was last emptied), the store's alarm (two
+  // stars: the staff call the police) and the shoppers' panic; it's empty for ten minutes after
+  function robTill(till) {
+    const now = performance.now() / 1000;
+    if (now < till.refill) {
+      crimeSystem.toast('The till is empty');
+      return;
+    }
+    const amount = Math.round(400 + Math.random() * 1100);
+    crimeSystem.money += amount;
+    crimeSystem.toast(`+$${amount} · ${till.store.name}`);
+    crimeSystem.report('robbery', true);
+    trafficSystem.panic(till.x, till.z, 45);
+    till.refill = now + 600;
   }
   function board() {
     if (mapSystem.isFullMapOpen || crimeSystem.state !== 'play') return;
@@ -465,6 +489,10 @@ async function initApp() {
     }
     const target = boardTarget();
     if (!target) return;
+    if (target.till) {
+      robTill(target.till);
+      return;
+    }
     if (target.taken) {
       const taken = trafficSystem.hijack(target.taken);
       if (taken.kind === 'car') controllerManager.leaveCarBehind(); // (the player's own car stays where it is)
@@ -491,6 +519,7 @@ async function initApp() {
         const v = target.taken;
         text = v.bike ? 'Robar la bici' : v.isPolice ? 'Robar la patrulla' : v.bus ? 'Robar el camión' : v.fleet === 'combi' ? 'Robar la combi' : 'Robar el coche';
       }
+      else if (target?.till) text = 'Asaltar la caja';
       else if (target) text = promptNames[target.mode];
     } else if (controllerManager.activeMode === 'helicopter') {
       const h = controllerManager.entities.helicopter;
@@ -505,7 +534,7 @@ async function initApp() {
       // the touch button: get in or take what is at hand, or get out
       boardButton.hidden = onFoot && !text;
       const label = boardButton.querySelector('[data-board-label]');
-      if (label) label.textContent = !onFoot ? 'Bajar' : text.startsWith('Robar') ? 'Robar' : 'Subir';
+      if (label) label.textContent = !onFoot ? 'Bajar' : text.startsWith('Robar') || text.startsWith('Asaltar') ? 'Robar' : 'Subir';
     }
     if (!elPrompt) return;
     elPrompt.hidden = !text;
@@ -963,6 +992,7 @@ async function initApp() {
       nextPlayerSave = now + 5000;
     }
     cityBlocks.update(cameraSystem.currentPos.x, cameraSystem.currentPos.z);
+    stores.update(cameraSystem.currentPos.x, cameraSystem.currentPos.z);
     if (cityBlocks.updateLights) cityBlocks.updateLights(cameraSystem.camera);
     if (streetDetails.update) streetDetails.update(cameraSystem.camera);
     lightingSystem.update(cameraSystem.currentPos);

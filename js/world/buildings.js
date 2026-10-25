@@ -42,6 +42,7 @@ import {
 import { GEO } from './city-geodata.js';
 import { STOREFRONTS } from './storefronts/index.js';
 import { LANDMARK_RESERVES as TEPIC_RESERVES } from './tepic-landmarks.js';
+import { isEnterableStore, storeReserve } from './store-interiors.js';
 import { SLOPES, groundHeight, liftAt } from './ground.js';
 import { pavedPlazaRects, parkTreeSites, sidewalkBlocks } from './city-grid.js';
 
@@ -259,6 +260,7 @@ function buildCityBlocks(scene) {
   const group = new THREE.Group();
   group.name = 'CityBlocks';
   const colliders = [];
+  const stores = []; // the big chain stores you can walk into (store-interiors.js)
 
   // Frame of the lots being populated. Irregular blocks come with frontage frames (city-config.js BLOCKS: lots laid
   // out along the streets they front, in a frame turned by θ about p); the generator works in the frame as on a grid
@@ -1898,9 +1900,26 @@ function buildCityBlocks(scene) {
       }
       return blk;
     };
+    // the halls of the stores you walk into (store-interiors.js), first: no other footprint overlapping one is built
+    // (Overture's footprints overlap here and there; inside a store they would stand among the shelves)
+    const storeHalls = new Set();
+    const storeLots = [];
+    for (let i = 0; i < HOUSES.length; i += HS) {
+      const signNo = HS > 7 ? HOUSES[i + 7] : 0;
+      const sign = signNo ? SIGNS[signNo - 1] : null;
+      const chain = sign && sign.chain ? STOREFRONTS[sign.store] : null;
+      const w = HOUSES[i + 2] / 10, d = HOUSES[i + 3] / 10;
+      if (!(HOUSES[i + 6] & 8) || !isEnterableStore(chain, w, d)) continue;
+      storeHalls.add(i);
+      storeLots.push(storeReserve({ cx: HOUSES[i] / 10, cz: HOUSES[i + 1] / 10, w, d, th: HOUSES[i + 4] / 1000 }));
+    }
+    // the buildings known as they are (js/world/building-overrides.js): house index -> [storeys (0: as guessed), paint]
+    const known = new Map((GEO.overrides || []).map(([n, storeys, paint]) => [n, { storeys, paint: paint >= 0 ? paint : null }]));
     for (let i = 0; i < HOUSES.length; i += HS) {
       const cx0 = HOUSES[i] / 10, cz0 = HOUSES[i + 1] / 10;
+      const own = known.get(i / HS);
       if (TEPIC_RESERVES.some((r) => r.contains(cx0, cz0))) continue; // a landmark stands there (tepic-landmarks.js)
+      if (!storeHalls.has(i) && storeLots.some((r) => r.contains(cx0, cz0))) continue; // inside a store's hall
       const w0 = HOUSES[i + 2] / 10, d0 = HOUSES[i + 3] / 10;
       const th = HOUSES[i + 4] / 1000;
       const floors0 = HOUSES[i + 5];
@@ -1923,7 +1942,7 @@ function buildCityBlocks(scene) {
       const along0 = alongZ ? d0 : w0;
       // split long fronts into houses, a strip plaza into its locales (never a chain store or a hall)
       const parts = [];
-      if (!chain && !big && along0 > (strip ? 9 : 13)) {
+      if (!chain && !big && !own && along0 > (strip ? 9 : 13)) {
         let n = Math.max(2, Math.round(along0 / (strip ? range(5, 7) : range(6.5, 9.5))));
         const cuts = [0];
         for (let k = 1; k < n; k++) cuts.push((k / n + (rand() - 0.5) * 0.25 / n) * along0);
@@ -1941,7 +1960,8 @@ function buildCityBlocks(scene) {
         const u = alongZ ? 0 : mid, v = alongZ ? mid : 0;
         const cx = cx0 + u * cs + v * sn, cz = cz0 - u * sn + v * cs;
         const w = alongZ ? w0 : len, d = alongZ ? len : d0;
-        const floors = chain || big || coto ? floors0 : strip ? plazaFloors : Math.max(1, Math.min(4, floors0 + (parts.length > 1 ? pickW([[0, 5], [1, 2], [-1, 1.5]]) : 0)));
+        const floors = own && own.storeys ? own.storeys : chain || big || coto ? floors0 : strip ? plazaFloors
+          : Math.max(1, Math.min(4, floors0 + (parts.length > 1 ? pickW([[0, 5], [1, 2], [-1, 1.5]]) : 0)));
         const hasSign = k === signPart && !!sign;
         const shop = strip || (shop0 && k === signPart) || (shop0 && chance(0.3));
         const h = floors * storeys[MEX] + (chain || big || strip ? 0.6 : range(0, 0.35));
@@ -1966,8 +1986,11 @@ function buildCityBlocks(scene) {
         const onSlope = SLOPES || g1 > 0;
         const base = SLOPES ? g0 - 0.15 : onSlope ? Math.max(0, g0 - 0.15) : 0;
         const top = g1 + h;
-        buckets[MEX].push({ x: cx, y: (base + top) * 0.5, z: cz, w, h: top - base, d, faces, tone, ry: th });
-        colliders.push({ minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez, minY: base, maxY: top, obb: { cx, cz, hx, hz, cs, sn } });
+        buckets[MEX].push({ x: cx, y: (base + top) * 0.5, z: cz, w, h: top - base, d, faces, tone, ry: th, paint: own ? own.paint : null });
+        // a big chain's store is walked into (store-interiors.js: its walls, door & shelves collide instead)
+        if (storeHalls.has(i)) {
+          stores.push({ cx, cz, w, d, th, front, base, top, name: chain.name, band: chain.facade.band });
+        } else colliders.push({ minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez, minY: base, maxY: top, obb: { cx, cz, hx, hz, cs, sn } });
         blk.footprints.push({ x0: cx - ex, x1: cx + ex, z0: cz - ez, z1: cz + ez, h: top - liftAt(cx, cz), tone, pts }); // h: over the ground
         blk.minX = Math.min(blk.minX, cx - ex);
         blk.maxX = Math.max(blk.maxX, cx + ex);
@@ -2642,6 +2665,7 @@ function buildCityBlocks(scene) {
   return {
     group,
     colliders,
+    stores,
     quadtree,
     allBlocks,
     update,

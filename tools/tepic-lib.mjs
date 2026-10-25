@@ -924,3 +924,25 @@ export function createRouteMatcher(links, { step = 15, radius = 30, sigma = 8, b
     return { pieces, samples: samples.length, matched, loop };
   };
 }
+
+/**
+ * The building (`houses`, stride HS: centre x, z & width, depth in dm, turn θ in mrad, world = c + R_y(θ)·local) whose
+ * footprint holds the point (x, z) (m): the smallest that does, else the one whose footprint passes nearest within
+ * `slack` m; -1 if none. For the hand-curated overrides pinned to a point on a building.
+ */
+export function houseAt(houses, HS, x, z, slack = 3) {
+  let best = -1, bestArea = Infinity, near = -1, nearD = slack;
+  for (let k = 0; k + HS <= houses.length; k += HS) {
+    const cx = houses[k] / 10, cz = houses[k + 1] / 10, hx = houses[k + 2] / 20, hz = houses[k + 3] / 20;
+    if (Math.abs(x - cx) > hx + hz + slack || Math.abs(z - cz) > hx + hz + slack) continue;
+    const th = houses[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th);
+    // into the building's local frame (the inverse of x' = cs·u + sn·v, z' = -sn·u + cs·v)
+    const dx = x - cx, dz = z - cz;
+    const u = cs * dx - sn * dz, v = sn * dx + cs * dz;
+    const out = Math.hypot(Math.max(0, Math.abs(u) - hx), Math.max(0, Math.abs(v) - hz));
+    if (out === 0) {
+      if (hx * hz < bestArea) { bestArea = hx * hz; best = k / HS; }
+    } else if (out < nearD) { nearD = out; near = k / HS; }
+  }
+  return best >= 0 ? best : near;
+}
