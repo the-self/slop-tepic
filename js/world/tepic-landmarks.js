@@ -4,7 +4,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GEO } from './city-geodata.js';
 import { cityUniforms } from '../render/tsl-materials.js';
 import { liftAt, landHeight } from './ground.js';
-import { MODEL_RESERVES } from './landmark-models.js';
+import { MODEL_RESERVES, geoToWorld } from './landmark-models.js';
 
 // js/world/tepic-landmarks.js
 // Tepic's landmarks on their real footprints (city-geodata.js `landmarks`, from OpenStreetMap): the Catedral on the
@@ -388,6 +388,15 @@ function buildMonuments(group, colliders) {
   {
     const f = fountain(5);
     place('Fuente Los 3 Delfines', [[f.stone, stone], [f.water, water], [f.jet, jetMat]], { half: 0 });
+  }
+  {
+    // La Hermana Agua: a woman in bronze high over a round fountain, in the glorieta where the Paseo de la Loma meets
+    // the Calzada de la Cruz & Av. México by the Parque La Loma (not mapped in OpenStreetMap: its roundabout is, way
+    // 1313667127, whose ring is centred here; the island ~13 m across)
+    const [x, z] = geoToWorld(21.502578, -104.896108);
+    const f = fountain(7.5);
+    place('Hermana Agua', [[f.stone, stone], [f.water, water], [pedestal(1.8, 4.6), stone], [figure(3.6, false).translate(0, 4.6, 0), bronze]],
+      { half: 2, height: 9, at: { x, z } });
   }
   {
     const f = fountain(7);

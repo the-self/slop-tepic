@@ -82,6 +82,7 @@ function buildStreetDetails(scene, keepClear = []) {
     roughness: 0.45,
     metalness: 0.78
   });
+  const farolGreenMat = new THREE.MeshStandardNodeMaterial({ color: 0x24402f, roughness: 0.5, metalness: 0.55 });
   const aveSignalLensMat = createTrafficSignalLensMaterial(true, signalClock);
   const streetSignalLensMat = createTrafficSignalLensMaterial(false, signalClock);
   // Cobra-head LED streetlight lens & pedestrian post-top globe: pale diffuser by day, warm white after dusk
@@ -111,13 +112,21 @@ function buildStreetDetails(scene, keepClear = []) {
   // Cobra-head luminaire on the end of the arm: flattened grey housing, flat lens underneath
   const lampHousingGeo = new THREE.SphereGeometry(1, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(0.7, 0.2, 0.3);
   const lampLensGeo = new THREE.CircleGeometry(1, 16).rotateX(Math.PI / 2).scale(0.6, 1, 0.24).translate(0, -0.005, 0);
-  // Cast-iron pedestrian post-top globe lightpole (fluted base + shaft + decorative capital + opal globe)
+  // The centro's cast-iron farol, painted dark green: a fluted base, a slender shaft, a swan-neck arm curving out over
+  // the sidewalk (local +x, turned towards the street) and a bell lantern hanging from it, its glass lit at night
+  const SWAN = { x: 0.82, y: 3.62 }; // where the lantern hangs (its glass's centre)
   const pedLampPostGeo = mergeGeometries([
     new THREE.CylinderGeometry(0.11, 0.16, 0.85, 10).translate(0, 0.425, 0),
-    new THREE.CylinderGeometry(0.065, 0.085, 2.75, 10).translate(0, 2.22, 0),
-    new THREE.CylinderGeometry(0.14, 0.07, 0.16, 10).translate(0, 3.62, 0)
+    new THREE.CylinderGeometry(0.065, 0.085, 3.35, 10).translate(0, 2.52, 0),
+    new THREE.TorusGeometry(0.42, 0.035, 6, 12, Math.PI * 0.6).rotateZ(Math.PI * 0.2).translate(0.42, 3.95, 0),
+    new THREE.SphereGeometry(0.07, 8, 6).translate(0, 4.22, 0),
+    new THREE.CylinderGeometry(0.018, 0.018, 0.22, 6).translate(SWAN.x, SWAN.y + 0.43, 0),
+    new THREE.ConeGeometry(0.24, 0.2, 12).translate(SWAN.x, SWAN.y + 0.24, 0),
+    new THREE.CylinderGeometry(0.06, 0.1, 0.06, 12).translate(SWAN.x, SWAN.y - 0.2, 0)
   ].map((g) => g.toNonIndexed()));
-  const pedGlobeGeo = new THREE.SphereGeometry(0.23, 12, 10).translate(0, 3.84, 0);
+  const pedGlobeGeo = new THREE.CylinderGeometry(0.17, 0.12, 0.34, 12).translate(SWAN.x, SWAN.y, 0);
+  // the farol's turn: its arm (local +x) over the street, whose outward normal is (ox, oz)
+  const farolYaw = (ox, oz) => Math.atan2(-oz, ox);
 
   // =========================================================================
   // 1. POLES, LAMPS & THE PROPS THE PLAYER CAN KNOCK OVER
@@ -305,16 +314,17 @@ function buildStreetDetails(scene, keepClear = []) {
           addFootprint(px, pz, 0.4, 0.4);
 
           const g = liftAt(px, pz);
+          const yaw = farolYaw(outX, outZ);
           dummy.position.set(px, 0.18 + g, pz);
-          dummy.rotation.set(0, 0, 0);
+          dummy.rotation.set(0, yaw, 0);
           dummy.scale.set(1, 1, 1);
           dummy.updateMatrix();
-          breakables.push({ kind: 'post', x: px, z: pz, yaw: 0, ground: 0.18 + g, base: g, idx: { post: pedPostMatrices.length }, lightIndex: streetPointSites.length });
+          breakables.push({ kind: 'post', x: px, z: pz, yaw, ground: 0.18 + g, base: g, idx: { post: pedPostMatrices.length }, lightIndex: streetPointSites.length });
           pedPostMatrices.push(dummy.matrix.clone());
           streetPointSites.push({
-            x: px,
-            y: 4.02 + g,
-            z: pz,
+            x: px + outX * SWAN.x,
+            y: 0.18 + SWAN.y + g,
+            z: pz + outZ * SWAN.x,
             g,
             color: 0xffe0aa,
             intensity: 30,
@@ -340,16 +350,17 @@ function buildStreetDetails(scene, keepClear = []) {
           addFootprint(px, pz, 0.4, 0.4);
 
           const g = liftAt(px, pz);
+          const yaw = farolYaw(outX, outZ);
           dummy.position.set(px, 0.18 + g, pz);
-          dummy.rotation.set(0, 0, 0);
+          dummy.rotation.set(0, yaw, 0);
           dummy.scale.set(1, 1, 1);
           dummy.updateMatrix();
-          breakables.push({ kind: 'post', x: px, z: pz, yaw: 0, ground: 0.18 + g, base: g, idx: { post: pedPostMatrices.length }, lightIndex: streetPointSites.length });
+          breakables.push({ kind: 'post', x: px, z: pz, yaw, ground: 0.18 + g, base: g, idx: { post: pedPostMatrices.length }, lightIndex: streetPointSites.length });
           pedPostMatrices.push(dummy.matrix.clone());
           streetPointSites.push({
-            x: px,
-            y: 4.02 + g,
-            z: pz,
+            x: px + outX * SWAN.x,
+            y: 0.18 + SWAN.y + g,
+            z: pz + outZ * SWAN.x,
             g,
             color: 0xffe0aa,
             intensity: 28,
@@ -497,7 +508,7 @@ function buildStreetDetails(scene, keepClear = []) {
   const armInst = addMatrixArrayInstanced(unitBox, poleMetalMat, armMatrices);
   const lampHousingInst = addMatrixArrayInstanced(lampHousingGeo, poleMetalMat, lampHeadMatrices);
   const lampLensInst = addMatrixArrayInstanced(lampLensGeo, lampBulbGlow, lampHeadMatrices, false);
-  const pedPostInst = addMatrixArrayInstanced(pedLampPostGeo, poleMetalMat, pedPostMatrices);
+  const pedPostInst = addMatrixArrayInstanced(pedLampPostGeo, farolGreenMat, pedPostMatrices);
   const pedGlobeInst = addMatrixArrayInstanced(pedGlobeGeo, pedGlobeGlow, pedPostMatrices, false);
   // knock-over props hide their instances (mayhem.js): their meshes keep their own shadows (no static stand-ins)
   for (const m of [poleInst, armInst, lampHousingInst, lampLensInst, pedPostInst, pedGlobeInst]) if (m) m.userData.keepOwnShadow = true;
@@ -974,7 +985,7 @@ function buildStreetDetails(scene, keepClear = []) {
       { geometry: lampLensGeo, material: lampBulbGlow, matrix: at(2.6, 7.98, 0) }
     ],
     post: [
-      { geometry: pedLampPostGeo, material: poleMetalMat },
+      { geometry: pedLampPostGeo, material: farolGreenMat },
       { geometry: pedGlobeGeo, material: pedGlobeGlow }
     ],
     hydrant: [{ geometry: hydrantInst.geometry, material: hydrantMat, matrix: at(0, 0.425, 0) }]

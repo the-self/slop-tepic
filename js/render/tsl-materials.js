@@ -51,6 +51,7 @@ import {
   texture,
   mrt,
   If,
+  Discard,
   specularColor,
   specularColorBlended,
   specularF90,
@@ -566,8 +567,17 @@ function createMexicanHouseMaterial({ floorHeight = 3.0, chains = [] } = {}) {
     let paint = color(PALETTE[0]);
     const idx = floor(tone.mul(PALETTE.length));
     for (let i = 1; i < PALETTE.length; i++) paint = mix(paint, color(PALETTE[i]), step(i - 0.5, idx));
+    // the centro's colonial houses (buildings.js, within ~620 m of the Plaza Principal): limewash in the strong colours
+    // of the centro (magenta, orange, ochre, terracotta, cream...), windows & doors framed in cantera, a darker
+    // guardapolvo along the foot, a moulded cornice under the parapet, doors onto iron balconies upstairs
     const ownPaint = attribute('paint', 'vec4');
-    paint = mix(paint, ownPaint.xyz, ownPaint.w);
+    const colonial = step(1.5, ownPaint.w);
+    const COLONIAL = [0xc4304a, 0xe0703a, 0xd9a13d, 0xefe2c4, 0xa9452f, 0xe8c45a, 0xd65f7a, 0xf3ece0, 0x6f9bb2, 0xc9573c];
+    let colonialPaint = color(COLONIAL[0]);
+    const cIdx = floor(tone.mul(COLONIAL.length));
+    for (let i = 1; i < COLONIAL.length; i++) colonialPaint = mix(colonialPaint, color(COLONIAL[i]), step(i - 0.5, cIdx));
+    paint = mix(paint, colonialPaint, colonial);
+    paint = mix(paint, ownPaint.xyz, mod(ownPaint.w, 2.0));
     const blockGrey = color(0x8e8b85);
     const mortar = max(lineAA(fract(y.div(0.2)).sub(0.5), 0.04), lineAA(fract(sx.div(0.4).add(step(0.5, fract(y.div(0.4))).mul(0.5))).sub(0.5), 0.02));
     const block = blockGrey.mul(float(1.0).sub(mortar.mul(0.25))).mul(hash2D(vec2(floor(sx.div(0.4)), floor(y.div(0.2)))).mul(0.12).add(0.94));
@@ -595,15 +605,35 @@ function createMexicanHouseMaterial({ floorHeight = 3.0, chains = [] } = {}) {
     const cortina = isShop.mul(ground).mul(step(0.3, sx)).mul(step(sx, wallW.sub(0.3))).mul(step(fv, 2.55));
     const backWin = step(0.55, hash2D(vec2(cellK.add(seed), fl.add(wallSeed.mul(13.0)))));
     const freeCell = float(1.0).sub(ground.mul(isFront).mul(step(abs(cellK.sub(doorK)), 0.5).add(step(abs(cellK.sub(gateK)), 0.5).mul(hasGate)).min(1.0)));
-    const win = step(abs(u), 0.62).mul(step(1.0, fv)).mul(step(fv, 2.2)).mul(mix(float(1.0), backWin, isBack)).mul(float(1.0).sub(rawBlock.mul(0.6)))
+    // (colonial: tall & narrow, on the ground floor from 0.8 m; upstairs doors from 0.35 m onto the balconies)
+    const winHalf = mix(float(0.62), float(0.56), colonial);
+    const winLo = mix(float(1.0), mix(float(0.8), float(0.35), step(0.5, fl)), colonial);
+    const winHi = mix(float(2.2), float(2.55), colonial);
+    // (whether this cell of this storey has a window at all; then the window's own rectangle)
+    const winK = mix(float(1.0), backWin, isBack).mul(float(1.0).sub(rawBlock.mul(0.6)))
       .mul(freeCell).mul(float(1.0).sub(isShop.mul(ground))).mul(float(1.0).sub(isChain)).mul(float(1.0).sub(isBig)).mul(step(0.3, fromTop));
+    const win = step(abs(u), winHalf).mul(step(winLo, fv)).mul(step(fv, winHi)).mul(winK);
     // frame, glass & bars
-    const frame = win.mul(float(1.0).sub(step(abs(u), 0.56).mul(step(1.06, fv)).mul(step(fv, 2.14))));
-    const bars = win.mul(max(step(0.82, fract(u.mul(6.0).add(0.5))), step(0.88, fract(fv.sub(1.0).mul(1.6)))));
+    const frame = win.mul(float(1.0).sub(step(abs(u), winHalf.sub(0.06)).mul(step(winLo.add(0.06), fv)).mul(step(fv, winHi.sub(0.06)))));
+    const bars = win.mul(max(step(0.82, fract(u.mul(6.0).add(0.5))), step(0.88, fract(fv.sub(1.0).mul(1.6))))).mul(float(1.0).sub(colonial.mul(step(0.5, fl))));
     let c = base;
     c = mix(c, color(0x27323a), win);
     c = mix(c, color(0xd6d6cf), frame);
     c = mix(c, color(0x1c1c1e), bars.mul(float(1.0).sub(frame)));
+    // cantera round the colonial windows & doors (a band ~18 cm wide, a deeper lintel), the guardapolvo, the cornice
+    const stoneHalf = winHalf.add(0.18);
+    const opening = max(win, door);
+    const canteraWin = step(abs(u), stoneHalf).mul(step(winLo.sub(0.12), fv)).mul(step(fv, winHi.add(0.3))).mul(step(0.5, winK)).mul(isFront);
+    const canteraDoor = door.add(isEntry.mul(ground).mul(step(abs(cellK.sub(doorK)), 0.5)).mul(step(abs(u), 0.68)).mul(step(fv, 2.4))).min(1.0);
+    const cantera = max(canteraWin, canteraDoor).mul(float(1.0).sub(opening)).mul(colonial).mul(float(1.0).sub(isRoof));
+    // (the guardapolvo by the height over the street here, not over the box's foot: on a slope that is under the sidewalk)
+    const overStreet = positionWorld.y.sub(townFloorNode(positionWorld.xz));
+    const guardapolvo = colonial.mul(step(overStreet, 1.05)).mul(float(1.0).sub(isRoof));
+    const cornice = colonial.mul(step(fromTop, 0.55)).mul(step(0.18, fromTop)).mul(float(1.0).sub(isRoof));
+    const canteraTone = mix(color(0xb9a27f), color(0xcdb894), noise2D(vec2(sx.mul(2.1), y.mul(2.7)).add(seed)));
+    c = mix(c, paint.mul(0.62), guardapolvo.mul(float(1.0).sub(opening)));
+    c = mix(c, canteraTone, cantera);
+    c = mix(c, mix(color(0xe9e1cf), color(0x8d8270), step(fromTop, 0.26)), cornice);
     // door & gate
     const doorTint = mix(color(0x5b3a26), color(0x2e3438), step(0.5, hash2D(vec2(seed, 3.3))));
     c = mix(c, doorTint.mul(float(1.0).sub(lineAA(fract(u.mul(2.0)).sub(0.5), 0.03).mul(0.3))), door);
@@ -1256,12 +1286,32 @@ function createPreWarBuildingMaterial(opts = {}) {
  * (size + a spread seed carrying the building's tone in its fraction) that lays each wall out in whole window bays,
  * and `faces`: the WALL_KINDS of the box's -x, +x, -z & +z walls (storefront fronts all round when omitted).
  */
+// The iron of a colonial balcony's railing (buildings.js): black-green bars every 11 cm between a top & bottom rail,
+// a scroll band under the handrail; the rest open (alpha-tested)
+function createBalconyRailMaterial() {
+  const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.45, metalness: 0.6, side: THREE.DoubleSide });
+  const p = positionGeometry; // (not positionLocal: on an instanced mesh that is already moved by the instance)
+  const along = p.x.add(p.z); // metres along each rail (the front one runs along x, the side ones along z)
+  const y = p.y;
+  const bar = step(0.75, fract(along.div(0.11).add(0.5)));
+  const rails = max(step(0.88, y), step(y, 0.06)).add(step(0.66, y).mul(step(y, 0.72))).min(1.0);
+  const scroll = step(0.72, y).mul(step(y, 0.88)).mul(step(0.55, abs(sin(along.mul(28.0).add(y.mul(18.0))))));
+  const iron = max(max(bar, rails), scroll);
+  mat.colorNode = Fn(() => {
+    If(iron.lessThan(0.5), () => {
+      Discard();
+    });
+    return color(0x1d2620);
+  })();
+  return mat;
+}
+
 function createFacadeBoxes(material, boxes) {
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   const box = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
   const faces = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
-  // a building's own paint, where it is known (the centro's overrides, js/world/building-overrides.js): rgb, 1 (0: the
-  // palette's, by tone)
+  // a building's own paint, where it is known (the centro's overrides, js/world/building-overrides.js): rgb, and in w 1
+  // (0: the palette's, by tone), plus 2 for a colonial house of the centro (buildings.js: cantera, balconies...)
   const paint = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
   geometry.setAttribute('box', box);
   geometry.setAttribute('faces', faces);
@@ -1284,8 +1334,8 @@ function createFacadeBoxes(material, boxes) {
     if (b.faces) faces.setXYZW(i, b.faces[0], b.faces[1], b.faces[2], b.faces[3]);
     if (b.paint !== undefined && b.paint !== null) {
       colour.set(b.paint);
-      paint.setXYZW(i, colour.r, colour.g, colour.b, 1);
-    }
+      paint.setXYZW(i, colour.r, colour.g, colour.b, 1 + (b.colonial ? 2 : 0));
+    } else if (b.colonial) paint.setW(i, 2);
   });
   return mesh;
 }
@@ -1991,7 +2041,18 @@ function createSidewalkMaterial() {
       .mul(mix(float(1.0), float(0.72), max(swWet.x, swPuddle)))
       .mul(mix(float(1.0), float(0.8), swWet.z));
 
-    return baseConcrete.mul(float(1.0).sub(joints.mul(0.45)));
+    // the centro's sidewalks (within ~620 m of the Plaza Principal): terracotta brick pavers in running bond,
+    // 30 x 15 cm, their colour varying brick by brick, darker in the wet like the flags
+    const centro = smoothstep(700.0, 580.0, length(positionWorld.xz));
+    const course = floor(wz.div(0.15));
+    const shift = mod(course, 2.0).mul(0.15);
+    const brickTone = hash2D(vec2(floor(wx.add(shift).div(0.3)), course));
+    const mortar = max(gridLine(wz, 0.15, 0.008), gridLine(wx.add(shift), 0.3, 0.008)).mul(detail);
+    const brick = mix(color(0x8a4636), color(0xa9604a), brickTone).add(grit)
+      .mul(mix(float(1.0), float(0.72), max(swWet.x, swPuddle)))
+      .mul(mix(float(1.0), float(0.8), swWet.z))
+      .mul(float(1.0).sub(mortar.mul(0.35)));
+    return mix(baseConcrete.mul(float(1.0).sub(joints.mul(0.45))), brick, centro);
   })();
 
   mat.roughnessNode = Fn(() => {
@@ -2045,7 +2106,11 @@ function createCurbMaterial() {
     const joints = max(gridLine(wx, 1.5, 0.038), gridLine(wz, 1.5, 0.038)).mul(detail);
     const topFace = smoothstep(0.5, 0.85, normalWorldGeometry.y);
     const wetFilm = smoothstep(0.2, 0.8, cityUniforms.uRoadWetness); // rain-darkened granite, like the roadway's film
-    return mix(stone.mul(0.68), stone, topFace).mul(float(1.0).sub(joints.mul(0.42))).mul(mix(float(1.0), float(0.78), wetFilm));
+    // the centro's curbs are painted traffic yellow (within ~620 m of the Plaza Principal), worn through in patches
+    const centro = smoothstep(700.0, 580.0, length(positionWorld.xz));
+    const paintLeft = smoothstep(0.28, 0.4, noise2D(vec2(wx.mul(0.9), wz.mul(0.9)).add(3.7)));
+    const painted = mix(stone, mix(color(0xd9a92a), color(0xe8c04a), tone), paintLeft.mul(centro));
+    return mix(painted.mul(0.68), painted, topFace).mul(float(1.0).sub(joints.mul(0.42))).mul(mix(float(1.0), float(0.78), wetFilm));
   })();
 
   mat.roughnessNode = mix(float(0.72), float(0.5), smoothstep(0.2, 0.8, cityUniforms.uRoadWetness));
@@ -2333,6 +2398,7 @@ export {
   createRoadPaintMaterial,
   createPavementMaterial,
   createAirfieldMaterial,
+  createBalconyRailMaterial,
   createWireMaterial,
   WIRE_FADE,
   createBridgeConcreteMaterial,

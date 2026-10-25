@@ -36,6 +36,7 @@ import {
   createCurtainWallMaterial,
   createMexicanHouseMaterial,
   createFacadeBoxes,
+  createBalconyRailMaterial,
   atlasSlotUV,
   WALL_KINDS
 } from '../render/tsl-materials.js';
@@ -261,6 +262,7 @@ function buildCityBlocks(scene) {
   group.name = 'CityBlocks';
   const colliders = [];
   const stores = []; // the big chain stores you can walk into (store-interiors.js)
+  const balconies = []; // the colonial houses' iron balconies: { x, y, z, yaw } (the slab's top, facing out)
 
   // Frame of the lots being populated. Irregular blocks come with frontage frames (city-config.js BLOCKS: lots laid
   // out along the streets they front, in a frame turned by θ about p); the generator works in the frame as on a grid
@@ -1986,7 +1988,24 @@ function buildCityBlocks(scene) {
         const onSlope = SLOPES || g1 > 0;
         const base = SLOPES ? g0 - 0.15 : onSlope ? Math.max(0, g0 - 0.15) : 0;
         const top = g1 + h;
-        buckets[MEX].push({ x: cx, y: (base + top) * 0.5, z: cz, w, h: top - base, d, faces, tone, ry: th, paint: own ? own.paint : null });
+        // the centro's colonial houses (within ~620 m of the Plaza Principal; not the chains, halls, plazas or cotos): their
+        // look is the house material's (cantera, guardapolvo, cornice, balcony doors); here their balconies, one at
+        // each upper-floor window of the front (the material's window cells: one per ~3.4 m)
+        const colonial = !chain && !big && !strip && !coto && Math.hypot(cx, cz) < 620;
+        if (colonial && floors > 1 && !hasSign) { // (a shop's sign board runs across its upper floor)
+          const L = alongZ ? d : w;
+          const cells = Math.max(1, Math.floor(L / 3.4)), sp = L / cells;
+          const nx = ou * cs + ov * sn, nz = -ou * sn + ov * cs; // the front's outward normal
+          const yaw = Math.atan2(nx, nz);
+          for (let fl = 1; fl < floors; fl++) {
+            for (let k = 0; k < cells; k++) {
+              const t = (k + 0.5) * sp - L / 2;
+              const lu = alongZ ? ou * hx : t, lv = alongZ ? t : ov * hz;
+              balconies.push({ x: cx + lu * cs + lv * sn, y: base + fl * storeys[MEX] + 0.35, z: cz - lu * sn + lv * cs, yaw });
+            }
+          }
+        }
+        buckets[MEX].push({ x: cx, y: (base + top) * 0.5, z: cz, w, h: top - base, d, faces, tone, ry: th, paint: own ? own.paint : null, colonial });
         // a big chain's store is walked into (store-interiors.js: its walls, door & shelves collide instead)
         if (storeHalls.has(i)) {
           stores.push({ cx, cz, w, d, th, front, base, top, name: chain.name, band: chain.facade.band });
@@ -2092,6 +2111,29 @@ function buildCityBlocks(scene) {
     inst.receiveShadow = true;
     group.add(inst);
   });
+
+  // The colonial balconies: a cantera slab 1.5 m wide standing 60 cm out, its iron railing round the front & sides
+  if (balconies.length) {
+    const slabGeo = new THREE.BoxGeometry(1.5, 0.12, 0.6).translate(0, -0.06, 0.3);
+    const railGeo = mergeGeometries([
+      new THREE.PlaneGeometry(1.5, 0.95).translate(0, 0.475, 0.58),
+      new THREE.PlaneGeometry(0.58, 0.95).rotateY(Math.PI / 2).translate(-0.74, 0.475, 0.29),
+      new THREE.PlaneGeometry(0.58, 0.95).rotateY(Math.PI / 2).translate(0.74, 0.475, 0.29)
+    ]);
+    const slabs = new THREE.InstancedMesh(slabGeo, new THREE.MeshStandardNodeMaterial({ color: 0xc2ad8a, roughness: 0.85 }), balconies.length);
+    const rails = new THREE.InstancedMesh(railGeo, createBalconyRailMaterial(), balconies.length);
+    const up = new THREE.Vector3(0, 1, 0), q = new THREE.Quaternion(), m = new THREE.Matrix4(), one = new THREE.Vector3(1, 1, 1), at = new THREE.Vector3();
+    balconies.forEach((b, i) => {
+      m.compose(at.set(b.x, b.y, b.z), q.setFromAxisAngle(up, b.yaw), one);
+      slabs.setMatrixAt(i, m);
+      rails.setMatrixAt(i, m);
+    });
+    slabs.castShadow = true; // (the railing's bars are cut in its colour pass: its shadow would be a solid sheet)
+    slabs.receiveShadow = true;
+    slabs.name = 'Balconies';
+    rails.name = 'BalconyRails';
+    group.add(slabs, rails);
+  }
 
   // Rear yards, light courts & project lawns: one thin slab per patch just above the sidewalk (buildings standing on
   // it hide the rest). Lawn, paving and tree canopies come from world-space noise; detail finer than a pixel fades

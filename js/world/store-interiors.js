@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { color, float, vec2, vec3, mix, step, smoothstep, fract, floor, abs, max, positionLocal, positionWorld, normalLocal, sin, dot } from 'three/tsl';
+import { color, float, vec2, vec3, mix, step, smoothstep, fract, floor, abs, max, positionGeometry, positionWorld, normalGeometry, sin, dot } from 'three/tsl';
 import { cityUniforms } from '../render/tsl-materials.js';
 import { drapeGeometry } from './drape.js';
 import { townHeight } from './ground.js';
@@ -122,12 +122,14 @@ function storeColliders(s, layout = storeLayout(s)) {
 
 // Products on the shelves: five levels of packs in bright colours, hashed per pack (~25 cm), a metal shelf under
 // each; the unit's top & ends plain
+// (the shelves, counters & fridges are instanced meshes: their patterns read the unit box's own positionGeometry &
+// normalGeometry, positionLocal & normalLocal being already moved by the instance)
 function createGondolaMaterial() {
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.6, metalness: 0.1 });
-  const y = positionLocal.y.add(0.5); // 0..1 up the unit
+  const y = positionGeometry.y.add(0.5); // 0..1 up the unit
   const level = floor(y.mul(5.0));
   const inLevel = fract(y.mul(5.0));
-  const side = step(0.5, abs(normalLocal.x)).add(step(0.5, abs(normalLocal.z))).min(1.0).mul(float(1.0).sub(step(0.5, normalLocal.y)));
+  const side = step(0.5, abs(normalGeometry.x)).add(step(0.5, abs(normalGeometry.z))).min(1.0).mul(float(1.0).sub(step(0.5, normalGeometry.y)));
   const pack = floor(positionWorld.xz.mul(4.0));
   const h = fract(sin(dot(vec3(pack.x, pack.y, level), vec3(12.9898, 78.233, 37.719))).mul(43758.5453));
   const palette = [0xd8232a, 0xf5a623, 0x2b62b8, 0x1f9a3c, 0xf2f2ee, 0x7a3fa0, 0xe86a1a, 0x20a8c8];
@@ -145,7 +147,7 @@ function createGondolaMaterial() {
 // A checkout: a grey counter, its black belt on top
 function createCounterMaterial() {
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.5, metalness: 0.2 });
-  const top = step(0.5, normalLocal.y);
+  const top = step(0.5, normalGeometry.y);
   const c = mix(color(0x8f949b), color(0x15171a), top);
   mat.colorNode = c;
   mat.emissiveNode = c.mul(0.15);
@@ -155,7 +157,7 @@ function createCounterMaterial() {
 // Fridges: glass doors glowing cold white, frames dark
 function createFridgeMaterial() {
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.25, metalness: 0.3 });
-  const door = smoothstep(0.04, 0.06, fract(positionWorld.x.add(positionWorld.z).mul(0.8))).mul(step(0.12, positionLocal.y.add(0.5)));
+  const door = smoothstep(0.04, 0.06, fract(positionWorld.x.add(positionWorld.z).mul(0.8))).mul(step(0.12, positionGeometry.y.add(0.5)));
   const c = mix(color(0x22262b), color(0xdceeff), door);
   mat.colorNode = c;
   mat.emissiveNode = color(0xcfe6ff).mul(door.mul(0.9));
@@ -174,7 +176,7 @@ function createFloorMaterial() {
 }
 function createWallMaterial(band) {
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.8, side: THREE.BackSide });
-  const y = positionLocal.y.add(0.5);
+  const y = positionGeometry.y.add(0.5);
   const c = mix(color(0xf1f0eb), color(band), step(0.3, y).mul(step(y, 0.38)));
   mat.colorNode = c;
   mat.emissiveNode = c.mul(0.2);
