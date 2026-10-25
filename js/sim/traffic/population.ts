@@ -18,6 +18,11 @@ function allowance(ts: TrafficState): void {
   ts.allowed.moto = Math.round(ts.fleetSize.moto * share);
   ts.allowed.bus = Math.round(ts.fleetSize.bus * Math.max(0, Math.min(1, carDemand(ts.hour) * 1.25 - 0.1)));
 }
+// A traffic patrol car turned to chase the player (crime.ts takes it over as one of its own): off the streets
+function withdraw(v: Vehicle): void {
+  retireVehicle(v);
+  v.vx = v.vz = 0;
+}
 // Off the streets until wanted again (like a hijacked vehicle, without its driver getting out)
 function retireVehicle(v: Vehicle): void {
   v.edge = null;
@@ -35,4 +40,4 @@ function retirePed(ts: TrafficState, p: Ped): void {
   p.nextRoute = null;
 }
 
-export { kindOf, allowance, retireVehicle, retirePed };
+export { kindOf, allowance, retireVehicle, retirePed, withdraw };

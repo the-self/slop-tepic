@@ -1,29 +1,43 @@
 // js/sim/crime/cruisers.ts
-// The patrol cars and the cartel's trucks (sim/crime.ts): spawning them down the road, the chase along the road graph,
-// overtaking, dropping officers off, driving & bumping, blowing up, and ramming the player and each other.
+// The patrol cars, the cartel's and the army's trucks (sim/crime.ts): spawning them down the road (or taking a patrol
+// of the traffic over), the chase along the road graph, overtaking, dropping officers, gunmen or soldiers off, driving
+// & bumping, blowing up, and ramming the player and each other.
 import { boxHit } from '../mayhem.ts';
 import { boxOverlap, wrapAngle } from '../weapons.ts';
 import { POLICE, NARCO } from '../crime-rules.ts';
+import type { Car } from '../traffic.ts';
 import type { Faction, Cruiser } from './types.ts';
-import { PARKED_Y, DESPAWN, CRUISER, clamp, rand } from './constants.ts';
+import { PARKED_Y, DESPAWN, CRUISER, CRUISER_HP, clamp, rand } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
 
 const tilt = { pitch: 0, roll: 0 };
 
-// A patrol car (faction 'police') or a cartel truck ('narco') coming after the player, out of sight down the road
-export function spawnCruiser(crime: CrimeSystem, faction: Faction = 'police'): Cruiser | null {
+// A patrol car (faction 'police'), a cartel truck ('narco') or an army truck ('army') coming after the player, out of
+// sight down the road, or from `at` (a patrol of the traffic taking up the chase: where it is, heading rad, speed m/s)
+export function spawnCruiser(
+  crime: CrimeSystem, faction: Faction = 'police', at: { x: number; z: number; heading: number; speed: number } | null = null
+): Cruiser | null {
   const cr = crime.cruisers.find((c) => !c.active && c.faction === faction);
   if (!cr) return null;
-  const s = crime.traffic.roadSpot(crime.px, crime.pz, 70, 160);
+  const s = at ?? crime.traffic.roadSpot(crime.px, crime.pz, 70, 160);
   if (!s) return null;
   Object.assign(cr, {
-    active: true, x: s.x, z: s.z, heading: Math.atan2(crime.px - s.x, crime.pz - s.z), speed: 6, vx: 0, vz: 0,
-    hp: faction === 'narco' ? 140 : 100,
+    active: true, x: s.x, z: s.z, heading: at ? at.heading : Math.atan2(crime.px - s.x, crime.pz - s.z), speed: at ? at.speed : 6,
+    vx: 0, vz: 0, hp: CRUISER_HP[faction],
     wreck: 0, state: 'chase', path: null, pathI: 0, replan: 0, stuckT: 0, checkX: s.x, checkZ: s.z, reverseT: 0,
     deployed: false, life: 0, pitch: 0, roll: 0, lift: 0, vy: 0, stuckCount: 0, slowT: 0, startX: s.x, startZ: s.z
   });
   cr.bodyMesh.material = cr.paint;
   cr.lightbar.visible = faction === 'police';
+  return cr;
+}
+
+// A patrol of the traffic that sees the wanted player takes up the chase: it leaves the traffic and goes on as one of
+// the chase's own patrol cars, from where it is
+export function takeOverPatrol(crime: CrimeSystem, v: Car): Cruiser | null {
+  if (!crime.cruisers.some((c) => !c.active && c.faction === 'police')) return null;
+  const cr = crime.spawnCruiser('police', { x: v.x, z: v.z, heading: v.yaw + v.yawOffset, speed: v.speed });
+  if (cr) crime.traffic.withdraw(v);
   return cr;
 }
 
@@ -37,7 +51,8 @@ export function removeCruiser(cr: Cruiser): void {
 export function damageCruiser(crime: CrimeSystem, cr: Cruiser, damage: number, byPlayer: boolean): void {
   if (cr.wreck) return;
   cr.hp -= damage;
-  const police = cr.faction === 'police';
+  const police = cr.police;
+  // (the crew saw who did it; the odd stray round once wanted adds nothing)
   if (byPlayer && police) crime.report('shootCop', damage > 10 || crime.wanted.stars === 0);
   if (byPlayer && !police) crime.angerGang(NARCO);
   if (cr.hp > 0) return;
@@ -46,7 +61,7 @@ export function damageCruiser(crime: CrimeSystem, cr: Cruiser, damage: number, b
   cr.speed = 0;
   cr.bodyMesh.material = crime.burnt;
   cr.lightbar.visible = false;
-  if (byPlayer && police) crime.report('killCop');
+  if (byPlayer && police) crime.report('killCop', true);
   crime.explode(cr.x, cr.y + 0.8, cr.z, 7, 120, byPlayer);
   cr.vy = 6;
 }
@@ -66,8 +81,9 @@ export function updateCruiser(crime: CrimeSystem, cr: Cruiser, dt: number): void
   }
   const stars = crime.wanted.stars;
   const narco = cr.faction === 'narco';
-  // the police chase while there are stars, the cartel while it is after the player
-  if ((narco ? crime.gangAnger[NARCO] <= 0 : stars === 0) || crime.state !== 'play') cr.state = 'leave';
+  // the police chase while there are stars, the army from four, the cartel while it is after the player
+  const done = narco ? crime.gangAnger[NARCO] <= 0 : cr.faction === 'army' ? !POLICE.soldiers[stars] : stars === 0;
+  if (done || crime.state !== 'play') cr.state = 'leave';
   if (cr.state === 'leave' && (dist > 90 || cr.life > 90)) {
     crime.removeCruiser(cr);
     return;
@@ -194,14 +210,15 @@ export function blockerAhead(crime: CrimeSystem, cr: Cruiser): number {
 }
 
 export function deployOfficers(crime: CrimeSystem, cr: Cruiser): void {
-  if (cr.faction === 'narco') {
-    // the cartel's gunmen jump out with their rifles
+  if (cr.faction !== 'police') {
+    // the cartel's gunmen or the soldiers jump out with their rifles
     for (const side of [1, -1, 1]) {
       const lx = Math.cos(cr.heading) * side * 1.7, lz = -Math.sin(cr.heading) * side * 1.7;
       const back = side === 1 && crime.agents.length % 2 ? -1.8 : 0;
       const x = cr.x + lx + Math.sin(cr.heading) * back, z = cr.z + lz + Math.cos(cr.heading) * back;
       if (crime.solidAt(x, z)) continue;
-      crime.spawnAgent('gang', x, z, { gang: NARCO, weapon: 'rifle' });
+      if (cr.faction === 'army') crime.spawnAgent('cop', x, z, { weapon: 'rifle', army: true });
+      else crime.spawnAgent('gang', x, z, { gang: NARCO, weapon: 'rifle' });
     }
     return;
   }
@@ -284,7 +301,7 @@ export function moveCruiser(crime: CrimeSystem, cr: Cruiser, dt: number, want: n
     // patrol cars knock down the gangs and thieves in their way, not their own
     if (Math.abs(cr.speed) > 3) {
       for (const a of crime.agents) {
-        if (a.fallen || (cr.faction === 'police' ? a.kind === 'cop' : a.gang === NARCO)) continue;
+        if (a.fallen || (cr.police ? a.kind === 'cop' : a.gang === NARCO)) continue;
         const hit = boxHit(cr.x, cr.z, cr.heading, cr.halfW, cr.halfL, a.x, a.z, 0.3);
         if (!hit) continue;
         a.hp -= Math.abs(cr.speed) * 6;
@@ -337,11 +354,22 @@ export function collideCruisers(crime: CrimeSystem): void {
         const approach = (cvx - crime.pvx) * hit.nx + (cvz - crime.pvz) * hit.nz;
         if (approach > 0.5) {
           if (crime.mode === 'car') {
-            pe.vx = (pe.vx || 0) + hit.nx * approach * share * 0.7;
-            pe.vz = (pe.vz || 0) + hit.nz * approach * share * 0.7;
+            const kick = approach * share * 0.7;
+            const fx = Math.sin(pe.heading), fz = Math.cos(pe.heading);
+            const along = fx * hit.nx + fz * hit.nz; // the push along the player's heading: + rammed from behind
+            if (pe.speed * along < 0) {
+              // driven into it: it loses speed and is knocked back
+              pe.speed *= 0.8;
+              pe.vx = (pe.vx || 0) + hit.nx * kick;
+              pe.vz = (pe.vz || 0) + hit.nz * kick;
+            } else {
+              // rammed from behind (or standing): shoved on its way, never braked, so it can still drive off
+              pe.speed += kick * along;
+              pe.vx = (pe.vx || 0) + (hit.nx - fx * along) * kick;
+              pe.vz = (pe.vz || 0) + (hit.nz - fz * along) * kick;
+            }
             pe.angularVel = (pe.angularVel || 0) + (Math.random() - 0.5) * approach * 0.15;
             pe.rollVel = (pe.rollVel || 0) + approach * 0.2;
-            pe.speed *= 0.8;
           }
           cr.speed *= 0.6;
           cr.vx -= hit.nx * approach * (1 - share) * 0.5;

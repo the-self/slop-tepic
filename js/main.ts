@@ -222,7 +222,7 @@ async function initApp(): Promise<void> {
   // Burning wrecks, house fires, the dry season's quemas, and the bomberos who come for them (sim/fires.ts)
   const fires = new Fires({ scene, crime: crimeSystem, controllers: controllerManager, houses: GEO.houses, stride: GEO.houseStride || 8 });
   crimeSystem.onExplosion = (x, y, z, radius) => { fires.onExplosion(x, y, z, radius); };
-  audioSystem.sources.pursuers = crimeSystem.cruisers;
+  audioSystem.sources.pursuers = [...crimeSystem.cruisers, crimeSystem.heli]; // (the patrol cars & trucks, the helicopter)
   crimeSystem.ragdolls = ragdolls;
   // Thrown out through the windscreen (controllers.ts ejectDriver), or off the moto (ejectRider; stepping off it as it
   // falls over, offMoto, impact 0): on foot now, bleeding; out of the car hurt by how hard it hit (off the moto, the

@@ -6,7 +6,7 @@ import type { Weapon } from '../weapons.ts';
 import type { Ped, Vehicle } from '../traffic.ts';
 import { WEAPONS, rayCircle, rayBox, blastFalloff } from '../weapons.ts';
 import type { TraceKind, XZ, Agent, Cruiser, TraceTarget, TraceHit } from './types.ts';
-import { BODY_R, PERSON_H, CAR_H, BUS_H, inBody, clamp } from './constants.ts';
+import { BODY_R, PERSON_H, CAR_H, BUS_H, HELI_R, inBody, clamp } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
 
 // Free aim: what the crosshair's ray (the middle of the screen, from the camera) meets first, past the player, within
@@ -31,7 +31,7 @@ export function aimAlong(crime: CrimeSystem, camera: THREE.Camera | null, w: Wea
 }
 
 // What a shot from (ox, oy, oz) along `yaw` meets first within `range` m (past `from` m), into crime._trace
-// { t, kind: 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'vehicle', target }. Level (slope null), it
+// { t, kind: 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'heli' | 'ped' | 'vehicle', target }. Level (slope null), it
 // takes whoever stands in the line on the map; with a `slope` (m up per m along: aimed up or down) it passes over or
 // under people and vehicles, meets walls at its own height, and can hit the street.
 export function trace(crime: CrimeSystem, ox: number, oy: number, oz: number, yaw: number, range: number, slope: number | null = null, from = 0): TraceHit {
@@ -82,6 +82,17 @@ export function trace(crime: CrimeSystem, ox: number, oy: number, oz: number, ya
     kind = 'cruiser';
     target = cr;
   }
+  // the helicopter, only to a shot aimed up at it
+  const h = crime.heli;
+  if (slope !== null && h.active && h.state !== 'down') {
+    const t = rayCircle(ox, oz, dx, dz, h.x, h.z, HELI_R);
+    const y = oy + slope * t;
+    if (t >= from && t < best && y > h.y - 0.3 && y < h.y + 3.2) {
+      best = t;
+      kind = 'heli';
+      target = h;
+    }
+  }
   const accept = pitched || from > 0
     ? (k: 'ped' | 'vehicle', o: XZ & { bus?: boolean }, t: number) => t >= from && (!pitched || inBody(over(t, o.x, o.z), k === 'ped' ? PERSON_H : o.bus ? BUS_H : CAR_H))
     : null;
@@ -120,6 +131,9 @@ export function hitScan(crime: CrimeSystem, ox: number, oy: number, oz: number, 
   } else if (kind === 'cruiser') {
     crime.fx.impact(ex, ey, ez, 'metal', -dx, -dz);
     crime.damageCruiser(target as Cruiser, w.damage * 0.22, byPlayer);
+  } else if (kind === 'heli') {
+    crime.fx.impact(ex, ey, ez, 'metal', -dx, -dz);
+    crime.damageHeli(w.damage * 0.22, byPlayer);
   } else if (kind === 'ped') {
     crime.fx.impact(ex, ey, ez, 'blood', dx, dz);
     crime.traffic.shootPed(target as Ped, dx, dz, 3.5);
@@ -127,7 +141,7 @@ export function hitScan(crime: CrimeSystem, ox: number, oy: number, oz: number, 
   } else if (kind === 'vehicle') {
     crime.fx.impact(ex, ey, ez, 'metal', -dx, -dz);
     crime.traffic.shootVehicle(target as Vehicle, ex, ey, ez, dx, dz);
-    if (byPlayer) crime.report('shootCar', crime.copNear(ex, ez, 50));
+    if (byPlayer) crime.report('shootCar');
   }
 }
 
@@ -154,6 +168,8 @@ export function updateRockets(crime: CrimeSystem, dt: number): void {
       for (const cr of crime.cruisers) {
         if (!hit && low && cr.active && rayBox(k.x, k.z, k.dx, k.dz, cr.x, cr.z, cr.heading, cr.halfW, cr.halfL) === 0) hit = true;
       }
+      const h = crime.heli;
+      if (!hit && h.active && Math.hypot(h.x - k.x, h.z - k.z) < HELI_R + 0.6 && Math.abs(h.y + 1.4 - k.y) < 2) hit = true;
       if (!hit && k.y < g + BUS_H) {
         const street = crime.traffic.rayHit(k.x - k.dx * 0.5, k.z - k.dz * 0.5, k.dx, k.dz, 0.6);
         if (street) hit = true;
@@ -178,8 +194,9 @@ export function explode(crime: CrimeSystem, x: number, y: number, z: number, rad
   crime.shake = Math.min(1.6, crime.shake + clamp(1.6 - near / 40, 0, 1.6));
   const thrown = crime.traffic.blast(x, z, radius * 1.4, 24);
   crime.traffic.panic(x, z, 70);
-  if (byPlayer) crime.report(thrown > 0 ? 'shootPed' : 'explosion');
-  if (byPlayer && thrown > 1) crime.report('explosion');
+  const seen = byPlayer && (crime.witnessed(x, z) || crime.witnessed());
+  if (byPlayer) crime.report(thrown > 0 ? 'shootPed' : 'explosion', seen);
+  if (byPlayer && thrown > 1) crime.report('explosion', seen);
   for (const a of [...crime.agents]) {
     const d = Math.hypot(a.x - x, a.z - z);
     if (d > radius * 1.4) continue;
@@ -196,6 +213,11 @@ export function explode(crime: CrimeSystem, x: number, y: number, z: number, rad
     cr.vx += nx * 14 * k;
     cr.vz += nz * 14 * k;
     if (!cr.wreck) crime.damageCruiser(cr, damage * k, byPlayer);
+  }
+  const h = crime.heli;
+  if (h.active && h.state !== 'down') {
+    const d = Math.hypot(h.x - x, h.y + 1.4 - y, h.z - z);
+    if (d < radius + HELI_R) crime.damageHeli(damage * blastFalloff(Math.max(0, d - HELI_R), radius), byPlayer);
   }
   // the player
   const pd = Math.hypot(crime.px - x, crime.pz - z);

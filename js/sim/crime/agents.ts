@@ -1,5 +1,6 @@
 // js/sim/crime/agents.ts
-// The people on foot of the street's crime (sim/crime.ts): police, gang members (the cartel's among them) and thieves:
+// The people on foot of the street's crime (sim/crime.ts): police (soldiers among them, from four stars), gang members
+// (the cartel's among them) and thieves:
 // spawning them, hurting and knocking them down, what each kind does every frame, walking round walls and vehicles,
 // the police and the cartel finding each other, and their shots.
 import { PersonRig, OUTFIT, OUTFIT_SEED } from '../pedestrians.ts';
@@ -12,15 +13,19 @@ import type { AgentKind, NpcGun, Agent } from './types.ts';
 import { MAX_AGENTS, BODY_R, RUN, THIEF_RUN, WALK, DOWN_TIME, DEAD_TIME, DESPAWN, NPC_GUN, FOE_DAMAGE, FOE_RANGE, SKILL, clamp, rand, dummy } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
 
-export function spawnAgent(crime: CrimeSystem, kind: AgentKind, x: number, z: number, { gang = -1, weapon = null }: { gang?: number; weapon?: StreetGun | null } = {}): Agent | null {
+// (a soldier, `army`, is one of the police: kind 'cop', in fatigues, with a rifle and more to them)
+export function spawnAgent(
+  crime: CrimeSystem, kind: AgentKind, x: number, z: number,
+  { gang = -1, weapon = null, army = false }: { gang?: number; weapon?: StreetGun | null; army?: boolean } = {}
+): Agent | null {
   if (crime.agents.length >= MAX_AGENTS) return null;
-  const outfit = kind === 'cop' ? OUTFIT.police : kind === 'thief' ? OUTFIT.thief : GANGS[gang].outfit;
+  const outfit = army ? OUTFIT.soldier : kind === 'cop' ? OUTFIT.police : kind === 'thief' ? OUTFIT.thief : GANGS[gang].outfit;
   const rig = new PersonRig({
     seed: outfit * OUTFIT_SEED + Math.floor(Math.random() * 997) + 0.5,
     scale: rand(0.95, 1.06), girth: rand(0.95, 1.12), hair: rand(0, 0.25), armSwing: rand(0.9, 1.1)
   });
   const a: Agent = {
-    kind, gang, rig, x, z, heading: Math.atan2(crime.px - x, crime.pz - z), speed: 0, hp: kind === 'cop' ? 100 : 80,
+    kind, gang, army, rig, x, z, heading: Math.atan2(crime.px - x, crime.pz - z), speed: 0, hp: army ? 150 : kind === 'cop' ? 100 : 80,
     fallen: null, dead: false, state: kind === 'thief' ? 'approach' : kind === 'gang' ? 'idle' : 'chase',
     t: 0, weapon, cooldown: rand(0.5, 1.5), burst: 0, homeX: x, homeZ: z, money: 0, arrest: 0, idleYaw: Math.random() * 6.28,
     wanderT: rand(2, 6), los: false, losT: 0, stepT: 0, foe: null, foeT: Math.random() * 0.5
@@ -48,10 +53,11 @@ export function damageAgent(crime: CrimeSystem, a: Agent, damage: number, nx: nu
   a.hp -= damage;
   const killed = a.hp <= 0;
   if (byPlayer) {
-    if (a.kind === 'cop') crime.report(killed ? 'killCop' : damage > 15 ? 'shootCop' : 'hitCop');
+    // (crimes against the police: they saw it themselves)
+    if (a.kind === 'cop') crime.report(killed ? 'killCop' : damage > 15 ? 'shootCop' : 'hitCop', true);
     if (a.kind === 'gang') crime.angerGang(a.gang);
   }
-  if (a.kind === 'cop' && byPlayer && crime.wanted.stars === 0) crime.report('hitCop');
+  if (a.kind === 'cop' && byPlayer && crime.wanted.stars === 0) crime.report('hitCop', true);
   if (!killed && throwSpeed < 6) {
     // a flinch: shot but still standing
     a.stepT = 0.25;
@@ -82,7 +88,7 @@ export function kill(crime: CrimeSystem, a: Agent): void {
     crime.toast('Get your money back!');
     a.money = 0;
   } else if (a.kind === 'cop' && Math.random() < 0.7) {
-    crime.drop(a.weapon === 'smg' ? 'smg' : 'pistol', a.x, a.z);
+    crime.drop(a.weapon === 'smg' || a.weapon === 'rifle' ? a.weapon : 'pistol', a.x, a.z);
   } else if (a.kind === 'gang') {
     const narco = a.gang === NARCO;
     if (Math.random() < (narco ? 0.75 : 0.6)) crime.drop(a.weapon ?? 'pistol', a.x, a.z);
@@ -108,7 +114,7 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
       a.fallen = null;
       a.rig.reset(a.x, a.z, a.heading, crime.personGround, a);
       if (a.kind === 'thief' && a.state === 'approach') a.state = 'leave';
-      if (a.kind === 'gang') crime.gangAnger[a.gang] = Math.max(crime.gangAnger[a.gang], 60);
+      if (a.kind === 'gang' && crime.state === 'play' && dist < 80) crime.gangAnger[a.gang] = Math.max(crime.gangAnger[a.gang], 60);
     } else {
       // (its pose the ragdoll's)
       crime.crowd.add(a.rig, dist);
@@ -127,7 +133,7 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
       crime.knockAgent(a, crime.pvx, crime.pvz, hit.nx, hit.nz, crime.mode === 'car', bleedOf(crime.pspeed));
       crime.fx.splatter(a.x, crime.groundAt(a.x, a.z) + 0.9, a.z, crime.pspeed, hit.nx, hit.nz);
       crime.controllers.bloodyCar?.(a.x, a.z, crime.pspeed);
-      if (a.kind === 'cop') crime.report(a.hp <= 0 ? 'killCop' : 'hitCop');
+      if (a.kind === 'cop') crime.report(a.hp <= 0 ? 'killCop' : 'hitCop', true);
       else crime.report('runOver');
       if (a.kind === 'gang') crime.angerGang(a.gang);
       if (a.hp <= 0) crime.kill(a);
@@ -171,8 +177,9 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
     if (a.kind === 'cop' && a.state === 'leave') a.t = 0; // (still on the job)
   } else if (a.kind === 'cop') {
     const stars = crime.wanted.stars;
-    if (!playing || stars === 0 || a.state === 'leave') {
-      a.state = playing && stars > 0 ? 'chase' : 'leave';
+    const called = stars > 0 && (!a.army || POLICE.soldiers[stars] > 0); // (the army only from four stars)
+    if (!playing || !called || a.state === 'leave') {
+      a.state = playing && called ? 'chase' : 'leave';
       if (crime.state === 'busted') {
         goalYaw = toPlayer; // standing over the arrested player
       } else {
@@ -184,12 +191,12 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
         }
       }
     } else {
-      const gun = POLICE.shoots[stars] ? NPC_GUN[a.weapon ?? 'pistol'] : null;
+      const gun = POLICE.shoots[stars] || a.army ? NPC_GUN[a.weapon ?? 'pistol'] : null;
       goalYaw = toPlayer;
       if (gun && a.los && dist < gun.range && dist > 2.2) {
         aim = 1;
         speed = dist > 16 ? RUN * 0.55 : 0;
-        if (a.stepT <= 0) crime.npcShoot(a, gun, SKILL.cop, dist, dt);
+        if (a.stepT <= 0) crime.npcShoot(a, gun, a.army ? SKILL.army : SKILL.cop, dist, dt);
       } else {
         speed = dist > 1.2 ? RUN : 0;
       }

@@ -163,6 +163,10 @@ export interface AudioPursuer {
   /** s left burning, once wrecked (0: not a wreck) */
   wreck?: number;
   police?: boolean;
+  /** a patrol car's side (crime.ts): only the police's have sirens, not the cartel's nor the army's trucks */
+  faction?: string;
+  /** 'helicopter': the police helicopter, its rotor heard from afar */
+  type?: string;
   x: number;
   y: number;
   z: number;
@@ -378,7 +382,7 @@ class CityAudioSources {
     this.motos = trafficSystem.motos ?? [];
     this.peds = trafficSystem.peds;
     this.highwayCars = highwayTraffic.cars;
-    this.pursuers = []; // the patrol cars chasing the player (crime.ts): sirens & engines
+    this.pursuers = []; // the patrol cars, trucks and the helicopter chasing the player (crime.ts): sirens & engines
     this.signalSites = streetDetails.audioSignals;
     this.motors = new NearestSources(10, motorRecord);
     this.sirens = new NearestSources(2, motorRecord);
@@ -496,7 +500,12 @@ class CityAudioSources {
     for (let i = 0; i < this.pursuers.length; i++) {
       const c = this.pursuers[i];
       if (!c.active || c.wreck) continue;
-      this.motor(c, c.police ? 'sedan' : 'suv', c.x, c.y + 0.7, c.z, Math.abs(c.speed), unit(Math.abs(c.speed) / 20), c.heading, !!c.police, false, seedAt(3000 + i), false);
+      if (c.type === 'helicopter') {
+        this.motor(c, 'helicopter', c.x, c.y + 2.66, c.z, c.speed, 0.7, c.heading, false, false, seedAt(3000 + i), false, 0.6, 450);
+        continue;
+      }
+      const siren = c.faction ? c.faction === 'police' : Boolean(c.police);
+      this.motor(c, siren ? 'sedan' : 'suv', c.x, c.y + 0.7, c.z, Math.abs(c.speed), unit(Math.abs(c.speed) / 20), c.heading, siren, false, seedAt(3000 + i), false);
     }
     this.streetVehicles(this.cars, elapsed, 100);
     this.streetVehicles(this.buses, elapsed, 1000);

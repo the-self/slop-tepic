@@ -62,7 +62,7 @@ export function updatePlayer(crime: CrimeSystem, dt: number, _elapsed: number): 
   if (free) {
     crime.lockTarget = null;
     const hit = crime.aimAlong(crime.camera, w);
-    aimCtl.onTarget = !w.melee && (hit.kind === 'agent' || hit.kind === 'ped' || hit.kind === 'cruiser' || hit.kind === 'vehicle');
+    aimCtl.onTarget = !w.melee && (hit.kind === 'agent' || hit.kind === 'ped' || hit.kind === 'cruiser' || hit.kind === 'vehicle' || hit.kind === 'heli');
   } else if (crime.aim) {
     crime.aim.onTarget = false;
   }
@@ -120,6 +120,7 @@ export function findTarget(crime: CrimeSystem, x: number, z: number, heading: nu
   if (person) return person;
   list.length = 0;
   for (const cr of crime.cruisers) if (cr.active && !cr.wreck) list.push(cr);
+  if (crime.heli.active && crime.heli.state !== 'down') list.push(crime.heli);
   const car = pickTarget(x, z, heading, list, range, cone);
   if (car) return car;
   list.length = 0;
@@ -168,12 +169,15 @@ export function playerFire(crime: CrimeSystem, w: Weapon): void {
       slope = Math.tan(aimCtl.pitch); // (right up against it: along the camera)
     }
     slope += (Math.random() - 0.5) * 2 * w.spread;
+  } else if (t && t === crime.heli) {
+    // locked on to the helicopter: up at its cabin
+    slope = (crime.heli.y + 1.3 - m.y) / Math.max(1, Math.hypot(t.x - m.x, t.z - m.z)) + (Math.random() - 0.5) * 2 * w.spread;
   }
   yaw += (Math.random() - 0.5) * 2 * w.spread;
   crime.fx.muzzle(m.x, m.y, m.z, yaw, Boolean(w.rocket));
   crime.audio?.gunfire?.(w.id, m.x, m.y, m.z);
   crime.traffic.panic(m.x, m.z, w.rocket ? 45 : 35);
-  if (crime.copNear(m.x, m.z, 40)) crime.report('gunfire');
+  crime.report('gunfire', crime.witnessed(m.x, m.z));
   if (w.rocket) {
     const pitch = Math.atan(slope ?? 0);
     const r = crime.fx.launchRocket(m.x, m.y, m.z, yaw, -pitch);
@@ -214,7 +218,7 @@ export function punch(crime: CrimeSystem): void {
     crime.damageAgent(best, WEAPONS.fists.damage, nx, nz, true, 2.5);
   } else {
     crime.traffic.shootPed(best, nx, nz, 2.2);
-    crime.report('punch', crime.copNear(crime.px, crime.pz, 30));
+    crime.report('punch');
   }
 }
 
@@ -287,8 +291,16 @@ export function updateDown(crime: CrimeSystem, dt: number): void {
     crime.toast(`Your guns were taken${fee ? `, and $${fee}` : ''}`);
   }
   crime.wanted.clear();
-  for (const a of crime.agents) if (a.kind === 'cop') a.state = 'leave';
+  // a fresh start: the police and the gangs forget the player (no cartel trucks after it from the hospital)
+  crime.gangAnger.fill(0);
+  crime.timers.trucks = 0;
+  for (let i = crime.agents.length - 1; i >= 0; i--) {
+    const a = crime.agents[i];
+    if (a.kind === 'cop') a.state = 'leave';
+    else if (a.kind === 'gang' && !a.fallen) crime.removeAgent(a);
+  }
   for (const cr of crime.cruisers) if (cr.active) crime.removeCruiser(cr);
+  crime.removeHeli();
   crime.onRespawn?.(kind);
 }
 

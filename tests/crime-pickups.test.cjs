@@ -10,7 +10,7 @@ class Scratch { makeScale() { return this; } }
 const THREE = { Object3D: Scratch, Matrix4: Scratch, Color: Scratch };
 const constants = loadModule(read('js/sim/crime/constants.ts'), { imports: { 'three/webgpu': THREE, '../crime-rules.ts': {}, './types.ts': {} } });
 const { dispatch } = loadModule(read('js/sim/crime/dispatch.ts'), {
-  imports: { '../crime-rules.ts': { POLICE: {}, GANGS: [], NARCO: 2, gangTurf: () => -1 }, './constants.ts': constants }
+  imports: { '../crime-rules.ts': { POLICE: { helicopter: [false] }, GANGS: [], NARCO: 2, gangTurf: () => -1 }, './constants.ts': constants }
 });
 
 // A crime system that only lays pickups: no stars, no turf, no thieves (no money), the bazooka in hand
@@ -18,7 +18,8 @@ function crimeWith(health, armor) {
   const drops = [];
   const crime = {
     state: 'play', wanted: { stars: 0 }, mode: 'person', px: 0, pz: 0, money: 0, health, armor, agents: [], cruisers: [], pickups: [],
-    timers: { dispatch: 99, gangs: 99, trucks: 99, thief: 99, health: 0, bazooka: 99 },
+    timers: { dispatch: 99, gangs: 99, trucks: 99, thief: 99, health: 0, bazooka: 99, patrols: 99, heli: 99 },
+    heli: { active: false },
     arsenal: { has: () => true },
     traffic: { sidewalkSpot: () => ({ x: 4, z: 5 }) },
     drop: (kind, x, z, amount) => drops.push([kind, amount])

@@ -1,12 +1,16 @@
 // js/sim/crime/models.ts
 // The street crime's models (sim/crime.ts), built once and parked out of sight until used: the guns in the player's
-// and everyone else's hands, and the patrol cars and the cartel's trucks.
+// and everyone else's hands, the patrol cars, the cartel's and the army's trucks, and the police helicopter.
 import * as THREE from 'three/webgpu';
 import type { StreetGun } from '../crime-rules.ts';
-import { BODY_SPECS, buildCarGeometry, createLoftedCarMaterial, buildLightbarGeometry, createLightbarMaterial } from '../../actors/actor-models.ts';
+import {
+  BODY_SPECS, buildCarGeometry, createLoftedCarMaterial, buildLightbarGeometry, createLightbarMaterial,
+  buildHelicopterBodyGeometry, buildHelicopterMainRotorGeometry, buildHelicopterTailRotorGeometry, createLoftedHelicopterMaterial
+} from '../../actors/actor-models.ts';
 import { WEAPON_MODELS, buildWeaponGeometry, createWeaponMaterial } from '../../actors/weapon-models.ts';
 import { createContactShadowMaterial } from '../../render/tsl-materials.ts';
-import { MAX_AGENTS, MAX_CRUISERS, MAX_TRUCKS, PARKED_Y, GRIP_REACH, CRUISER, NPC_GUN, zero } from './constants.ts';
+import { MAX_AGENTS, MAX_CRUISERS, MAX_TRUCKS, MAX_ARMY, PARKED_Y, GRIP_REACH, CRUISER, CRUISER_HP, HELI_HP, NPC_GUN, zero } from './constants.ts';
+import type { Faction, Helicopter } from './types.ts';
 import type { CrimeSystem } from '../crime.ts';
 
 export function buildGuns(crime: CrimeSystem): void {
@@ -47,42 +51,88 @@ export function buildCruisers(crime: CrimeSystem): void {
   // (the uniform createLoftedCarMaterial keeps in userData for a car of a colour of its own)
   const carState = mat.userData.carState as { value: THREE.Vector4 } | undefined;
   if (carState) carState.value.set(0, 0, 0, 1); // police livery
-  // the cartel's black SUVs, without a light bar
+  // the cartel's black SUVs and the army's olive-drab ones, without a light bar
   const truckSpec = Object.hasOwn(BODY_SPECS, 'suv') ? BODY_SPECS.suv : spec; // (a Record: TS takes any key to be there)
-  const truckMat = createLoftedCarMaterial(truckSpec, 0x0c0d0f);
   const truckBody = buildCarGeometry(truckSpec, true);
   const body = buildCarGeometry(spec, true);
+  const looks: Record<Faction, { body: THREE.BufferGeometry; paint: THREE.Material; name: string }> = {
+    police: { body, paint: mat, name: 'PoliceCruiser' },
+    narco: { body: truckBody, paint: createLoftedCarMaterial(truckSpec, 0x0c0d0f), name: 'CartelTruck' },
+    army: { body: truckBody, paint: createLoftedCarMaterial(truckSpec, 0x4a5130), name: 'ArmyTruck' }
+  };
   const bar = buildLightbarGeometry(spec);
   const barMat = createLightbarMaterial();
   const shadowGeo = new THREE.PlaneGeometry(2.3, 5.2).rotateX(-Math.PI / 2);
   const shadowMat = createContactShadowMaterial();
-  for (let i = 0; i < MAX_CRUISERS + 1 + MAX_TRUCKS; i++) {
-    const truck = i > MAX_CRUISERS;
-    const root = new THREE.Group();
-    root.name = truck ? 'CartelTruck' : 'PoliceCruiser';
-    const tiltPivot = new THREE.Group();
-    root.add(tiltPivot);
-    // the last one is never driven: a burnt-out wreck parked out of sight, so that material compiles at load too
-    const bodyMesh = new THREE.Mesh(truck ? truckBody : body, i === MAX_CRUISERS ? crime.burnt : truck ? truckMat : mat);
-    bodyMesh.castShadow = true;
-    bodyMesh.receiveShadow = true;
-    const lightbar = new THREE.Mesh(bar, barMat);
-    const shadow = new THREE.Mesh(shadowGeo, shadowMat);
-    shadow.position.y = 0.02;
-    shadow.renderOrder = 998;
-    tiltPivot.add(bodyMesh);
-    if (!truck) tiltPivot.add(lightbar);
-    root.add(shadow);
-    root.position.y = PARKED_Y;
-    crime.scene.add(root);
-    if (i === MAX_CRUISERS) continue;
-    crime.cruisers.push({
-      active: false, mesh: root, tiltPivot, bodyMesh, lightbar, paint: truck ? truckMat : mat, faction: truck ? 'narco' : 'police',
-      x: 0, y: 0, z: 0, heading: 0, speed: 0, vx: 0, vz: 0, halfW: CRUISER.halfW, halfL: CRUISER.halfL,
-      mass: CRUISER.mass, type: 'car', police: !truck, hp: truck ? 140 : 100, wreck: 0, state: 'chase', path: null, pathI: 0,
-      replan: 0, stuckT: 0, checkX: 0, checkZ: 0, reverseT: 0, deployed: false, life: 0, pitch: 0, roll: 0,
-      hw: CRUISER.halfW, hl: CRUISER.halfL, stuckCount: 0, slowT: 0, startX: 0, startZ: 0, goalX: 0, goalZ: 0, passSide: 0, lift: 0, vy: 0,
-      position: new THREE.Vector3() // (for the audio: crashes & sirens)
-    });
+  // a burnt-out wreck that is never driven, parked out of sight, so that material compiles at load too
+  const parkedWreck = new THREE.Mesh(body, crime.burnt);
+  parkedWreck.position.y = PARKED_Y;
+  crime.scene.add(parkedWreck);
+  const fleet: [Faction, number][] = [['police', MAX_CRUISERS], ['narco', MAX_TRUCKS], ['army', MAX_ARMY]];
+  for (const [faction, n] of fleet) {
+    const look = looks[faction];
+    for (let i = 0; i < n; i++) {
+      const root = new THREE.Group();
+      root.name = look.name;
+      const tiltPivot = new THREE.Group();
+      root.add(tiltPivot);
+      const bodyMesh = new THREE.Mesh(look.body, look.paint);
+      bodyMesh.castShadow = true;
+      bodyMesh.receiveShadow = true;
+      const lightbar = new THREE.Mesh(bar, barMat);
+      const shadow = new THREE.Mesh(shadowGeo, shadowMat);
+      shadow.position.y = 0.02;
+      shadow.renderOrder = 998;
+      tiltPivot.add(bodyMesh);
+      if (faction === 'police') tiltPivot.add(lightbar);
+      root.add(shadow);
+      root.position.y = PARKED_Y;
+      crime.scene.add(root);
+      crime.cruisers.push({
+        active: false, mesh: root, tiltPivot, bodyMesh, lightbar, paint: look.paint, faction,
+        x: 0, y: 0, z: 0, heading: 0, speed: 0, vx: 0, vz: 0, halfW: CRUISER.halfW, halfL: CRUISER.halfL,
+        mass: CRUISER.mass, type: 'car', police: faction !== 'narco', hp: CRUISER_HP[faction], wreck: 0, state: 'chase', path: null, pathI: 0,
+        replan: 0, stuckT: 0, checkX: 0, checkZ: 0, reverseT: 0, deployed: false, life: 0, pitch: 0, roll: 0,
+        hw: CRUISER.halfW, hl: CRUISER.halfL, stuckCount: 0, slowT: 0, startX: 0, startZ: 0, goalX: 0, goalZ: 0, passSide: 0, lift: 0, vy: 0,
+        position: new THREE.Vector3() // (for the audio: crashes & sirens)
+      });
+    }
   }
+}
+
+// The police helicopter: the player's own model (actors/actor-models.ts) with red & blue beacons under its belly,
+// parked out of sight until four stars call it
+export function buildHelicopter(crime: CrimeSystem): Helicopter {
+  const mat = createLoftedHelicopterMaterial();
+  const root = new THREE.Group();
+  root.name = 'PoliceHelicopter';
+  const tiltPivot = new THREE.Group();
+  root.add(tiltPivot);
+  const body = new THREE.Mesh(buildHelicopterBodyGeometry(), mat);
+  body.castShadow = true;
+  tiltPivot.add(body);
+  const rotor = new THREE.Group();
+  rotor.position.set(0, 2.66, -0.35);
+  const blades = new THREE.Mesh(buildHelicopterMainRotorGeometry(), mat);
+  blades.castShadow = true;
+  const disc = new THREE.Mesh(new THREE.CylinderGeometry(4.85, 4.85, 0.015, 32),
+    new THREE.MeshBasicNodeMaterial({ color: 0xc8d8e8, transparent: true, opacity: 0.13, side: THREE.DoubleSide, depthWrite: false }));
+  rotor.add(blades, disc);
+  const tail = new THREE.Group();
+  tail.position.set(0.18, 2.02, -5.62);
+  tail.add(new THREE.Mesh(buildHelicopterTailRotorGeometry(), mat));
+  const beacon = new THREE.SphereGeometry(0.11, 8, 6);
+  const red = new THREE.Mesh(beacon, new THREE.MeshBasicNodeMaterial({ color: 0xff2424 }));
+  const blue = new THREE.Mesh(beacon, new THREE.MeshBasicNodeMaterial({ color: 0x2a5cff }));
+  red.position.set(0.45, 0.3, 0.9);
+  blue.position.set(-0.45, 0.3, 0.9);
+  tiltPivot.add(rotor, tail, red, blue);
+  root.position.y = PARKED_Y;
+  crime.scene.add(root);
+  return {
+    type: 'helicopter', active: false, state: 'chase', mesh: root, tiltPivot, rotor, tail, red, blue,
+    x: 0, y: PARKED_Y, z: 0, heading: 0, speed: 0, vx: 0, vy: 0, vz: 0, hp: HELI_HP, orbit: 0, life: 0,
+    pitch: 0, roll: 0, spin: 0, cooldown: 2, burst: 0,
+    position: new THREE.Vector3(0, PARKED_Y, 0)
+  };
 }

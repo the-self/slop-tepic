@@ -19,15 +19,15 @@ type DownKind = Exclude<CrimeState, 'play'>;
 type AgentKind = 'cop' | 'gang' | 'thief';
 // approach (a thief closing in), flee (with the money), idle (a gang on its corner), chase, leave
 type AgentState = 'approach' | 'flee' | 'idle' | 'chase' | 'leave';
-// A patrol car's side: the police, or the cartel's black trucks
-type Faction = 'police' | 'narco';
+// A patrol car's side: the police, the cartel's black trucks, or the army's olive ones (four stars on)
+type Faction = 'police' | 'narco' | 'army';
 type CruiserState = 'chase' | 'leave';
 // What lies about to be picked up: money, health, armour, or a gun
 type PickupKind = 'money' | 'health' | 'armor' | StreetGun | 'bazooka';
 // What a shot meets first (trace)
-type TraceKind = 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'vehicle';
-// The radar's blips, flat: kind ('cop' | 'thief' | 'rojos' | 'verdes' | 'narcos' | 'cruiser' | 'truck' | a
-// PickupKind, or fires.ts's 'fire'), x, z, kind, x, z, ...
+type TraceKind = 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'vehicle' | 'heli';
+// The radar's blips, flat: kind ('cop' | 'soldier' | 'thief' | 'rojos' | 'verdes' | 'narcos' | 'cruiser' | 'truck' |
+// 'army' | 'heli' | a PickupKind, or fires.ts's 'fire'), x, z, kind, x, z, ...
 type Blips = (string | number)[];
 
 interface XZ {
@@ -78,7 +78,7 @@ interface CrimeControllers {
 // What crime uses of sim/traffic.ts's traffic: the road graph, its people & vehicles, and what shots, blasts and
 // patrol cars do to them (walking round its vehicles only where it can tell where they are)
 type CrimeTraffic = Pick<TrafficSystem, 'network' | 'peds' | 'cars' | 'buses' | 'setKnockListener' | 'panic' | 'rayHit' | 'shootPed'
-  | 'shootVehicle' | 'blast' | 'roadSpot' | 'sidewalkSpot' | 'sparks' | 'bumpBody' | 'knockBox'>
+  | 'shootVehicle' | 'blast' | 'roadSpot' | 'sidewalkSpot' | 'sparks' | 'bumpBody' | 'knockBox' | 'withdraw'>
   & Partial<Pick<TrafficSystem, 'vehicleBoxAt' | 'vehicleAt'>>;
 // The sounds crime plays (audio/audio-system.ts CityAudioSystem)
 interface CrimeAudio {
@@ -98,13 +98,15 @@ interface CrimeOptions {
   onRespawn?: ((kind: DownKind) => void) | null;
 }
 
-// Someone on foot: police, a gang member (gang: GANGS index, else -1) or a thief. hp of 100 (80: not police); fallen:
+// Someone on foot: police (army: a soldier, in fatigues with a rifle, 150 hp), a gang member (gang: GANGS index, else
+// -1) or a thief. hp of 100 (80: not police); fallen:
 // their ragdoll while down; t: s in this state; cooldown & burst: their gun's; home: a gang's corner; money: what a
 // thief took; arrest: s an officer has had hold of the player; los: a clear line to the player (checked every losT
 // s); stepT: s of a flinch; foe: the other side's one they are shooting at (rechecked every foeT s)
 interface Agent extends XZ {
   kind: AgentKind;
   gang: number;
+  army: boolean;
   rig: PersonRig;
   heading: number;
   speed: number;
@@ -128,7 +130,7 @@ interface Agent extends XZ {
   foe: Agent | null;
   foeT: number;
 }
-// A patrol car or a cartel truck (m, rad, m/s): its meshes, its chase (path: the intersections of its route, pathI
+// A patrol car, a cartel truck or an army truck (m, rad, m/s; police: on the law's side, faction says which): its meshes, its chase (path: the intersections of its route, pathI
 // the next; replan s to a new one; goal where the player was then), being stuck (checked every 2 s against check;
 // reverseT s backing out), wreck: s left burning; the hw, hl copies of its half sizes for boxOverlap
 interface Cruiser extends XZ {
@@ -195,12 +197,42 @@ interface Pickup extends XZ {
   amount: number;
   life: number;
 }
-// What the player locks on to: one of crime's people or patrol cars, or a passer-by
+// The police helicopter (four stars on, crime/helicopter.ts), m, rad, m/s: chase (circling the player, its gunner
+// firing), leave, down (shot down: falling, spinning at `spin` rad/s); orbit: rad round the player; life: s since it
+// came; cooldown & burst: the gunner's; the rotor, tail rotor and beacons to animate
+interface Helicopter extends XZ {
+  type: 'helicopter';
+  active: boolean;
+  state: 'chase' | 'leave' | 'down';
+  mesh: THREE.Group;
+  tiltPivot: THREE.Group;
+  rotor: THREE.Group;
+  tail: THREE.Group;
+  red: THREE.Mesh;
+  blue: THREE.Mesh;
+  y: number;
+  heading: number;
+  speed: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  hp: number;
+  orbit: number;
+  life: number;
+  pitch: number;
+  roll: number;
+  spin: number;
+  cooldown: number;
+  burst: number;
+  wreck?: number; // (never: for the audio's pursuers, which skips wrecks)
+  position: THREE.Vector3; // (for the audio: its rotor)
+}
+// What the player locks on to: one of crime's people or patrol cars, the helicopter, or a passer-by
 interface LockTarget extends XZ {
   y?: number;
   mesh?: unknown;
 }
-type TraceTarget = Agent | Cruiser | Ped | Vehicle;
+type TraceTarget = Agent | Cruiser | Helicopter | Ped | Vehicle;
 // What a shot met (trace, reused): t m along it
 interface TraceHit {
   t: number;
@@ -209,5 +241,5 @@ interface TraceHit {
 }
 
 export type {
-  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, RocketFlight, Pickup, LockTarget, TraceTarget, TraceHit
+  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, TraceTarget, TraceHit
 };

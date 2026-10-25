@@ -8,8 +8,9 @@ import type { WeaponId } from './weapons.ts';
 // Heat at which each star is reached (index = stars)
 const STAR_HEAT: readonly number[] = [0, 10, 60, 150, 320, 560];
 const MAX_HEAT = 800;
-// Heat each crime adds when it is reported. Running someone over always gets reported (someone calls it in): the
-// first one is a star, the third two.
+// Heat each crime adds when the police witness it (crime.ts witnessed: an officer, a patrol car or the helicopter in
+// sight of it; crimes against the police themselves always count, and a store's staff call a robbery in). Running
+// someone over in front of a patrol: the first one is a star, the third two.
 const CRIME_HEAT = {
   runOver: 22,
   punch: 12,
@@ -30,10 +31,15 @@ type CrimeKind = keyof typeof CRIME_HEAT;
 // The guns the police and the gangs carry
 type StreetGun = Extract<WeaponId, 'pistol' | 'smg' | 'rifle'>;
 
-// The police each star sends after the player: officers on foot and patrol cars (each array indexed by stars, 0..5)
+// The police each star sends after the player: officers on foot and patrol cars; from four stars the army too
+// (soldiers with rifles, on foot and in their trucks) and a helicopter whose gunner shoots from the door (each array
+// indexed by stars, 0..5)
 interface PoliceByStars {
   foot: readonly number[];
   cruisers: readonly number[];
+  soldiers: readonly number[];
+  armyTrucks: readonly number[];
+  helicopter: readonly boolean[];
   shoots: readonly boolean[];
   weapon: readonly (StreetGun | null)[];
   speed: readonly number[];
@@ -41,6 +47,9 @@ interface PoliceByStars {
 const POLICE: PoliceByStars = {
   foot: [0, 2, 3, 4, 5, 6],
   cruisers: [0, 1, 2, 3, 4, 5],
+  soldiers: [0, 0, 0, 0, 3, 6],
+  armyTrucks: [0, 0, 0, 0, 1, 2],
+  helicopter: [false, false, false, false, true, true],
   shoots: [false, false, true, true, true, true], // one star: they only come to arrest
   weapon: [null, null, 'pistol', 'pistol', 'smg', 'smg'],
   speed: [0, 15, 18, 21, 24, 27] // m/s the patrol cars drive at
