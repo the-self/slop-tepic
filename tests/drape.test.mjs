@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
-import { clipToLattice } from '../js/world/ground.js';
+import { clipToLattice, visibleTriangles, tiltUpNormals } from '../js/world/lattice.js';
 
 const require = createRequire(import.meta.url);
 const { loadModule } = require('./helpers/module.cjs');
@@ -28,7 +28,8 @@ function drape(slopes = true) {
   return loadModule(source, {
     imports: {
       'three/webgpu': THREE,
-      './ground.js': { SLOPES: slopes, LATTICE: { x0: 0, z0: 0, cell: 10 }, clipToLattice, townHeight: floor }
+      './ground.js': { SLOPES: slopes, LATTICE: { x0: 0, z0: 0, cell: 10 }, clipToLattice, townHeight: floor },
+      './lattice.js': { visibleTriangles, tiltUpNormals }
     }
   }).drapeGeometry;
 }
