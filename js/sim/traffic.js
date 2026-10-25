@@ -28,7 +28,8 @@ import { PersonCrowd, PersonRig } from './pedestrians.js';
 import { createTransit } from './transit.js';
 import { GEO } from '../world/city-geodata.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { BONES, boxHit, riderKnocked, startTumble, stepTumble, slide, tumblePose } from './mayhem.js';
+import { boxHit, riderKnocked, slide } from './mayhem.js';
+import { throwVelocity, bleedOf } from './ragdolls.js';
 import { TAXI_MODEL, POLICE_MODEL, BUS_MODEL, CAR_MODEL_BY_ID, BODY_SHARE, paintsOf, pickModel, pickBody } from '../models/cars/index.js';
 import { rayCircle, rayBox, roundBox, blastFalloff } from './weapons.js';
 import { MIN_IMPACT, createDamage, applyImpact } from '../player/vehicle-damage.js';
@@ -2526,17 +2527,23 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   // someone): they walk on out of it rather than freeze there
   const stepBlocked = (x0, z0, x1, z1, r = 0.3) => vehicleAt(x1, z1, r) && !vehicleAt(x0, z0, r);
 
-  // Throws pedestrian p to the ground, hit at velocity (vx, vz) and pushed out along (nx, nz)
-  function throwPed(p, vx, vz, nx, nz) {
+  // The people thrown about (sim/ragdolls.js, main.js)
+  let ragdolls = null;
+  function setRagdolls(r) {
+    ragdolls = r;
+  }
+
+  // Throws pedestrian p to the ground as a ragdoll, hit at velocity (vx, vz) and pushed out along (nx, nz); by the
+  // player's car (`byCar`) its body throws theirs itself. `bleed` (0..1): how badly they bleed where they come to rest;
+  // `lift` m/s more up (a blast)
+  function throwPed(p, vx, vz, nx, nz, byCar = false, bleed = 0, lift = 0) {
     // a fresh solved pose to fall from (hidden pedestrians only advance their gait)
     const partner = p.conversation && (p.conversation.a === p ? p.conversation.b : p.conversation.a);
     const facing = p.bail ? p.bail.heading : partner ? Math.atan2(partner.x - p.x, partner.z - p.z) : Math.atan2(p.ux * p.dir, p.uz * p.dir);
     p.rig.update(1 / 60, p.x, p.z, facing, pedGround, p, 0, true);
-    const ground = pedGround(p, p.x, p.z);
-    p.fallBase = p.fallBase || new Float32Array(BONES * 8);
-    p.fallBase.set(p.rig.pose.subarray(0, BONES * 8));
-    p.fallen = startTumble(p.x, ground, p.z, vx, vz, nx, nz);
-    p.fallen.lift = ground - hillAt(p.x, p.z); // the sidewalk or crosswalk over the hill it lands on
+    const v = byCar ? { vx: p.rig.vx || 0, vy: 0, vz: p.rig.vz || 0 } : throwVelocity(vx, vz, nx, nz);
+    v.vy += lift;
+    p.fallen = ragdolls.spawn(p.rig, { ...v, spin: byCar ? 0 : 2 + Math.hypot(vx, vz) * 0.3, bleed });
     if (p.conversation) endConversation(p.conversation);
     p.node = null; // off any crosswalk queue (gatherCurbs)
     p.waiting = false;
@@ -2545,24 +2552,24 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   }
 
   function knockPed(p, hit) {
-    throwPed(p, player.vx, player.vz, hit.nx, hit.nz);
+    const speed = Math.hypot(player.vx, player.vz);
+    throwPed(p, player.vx, player.vz, hit.nx, hit.nz, player.mode === 'car', bleedOf(speed));
     reportCollision(player.entity, p, p.x, 1.0, p.z, -hit.nx, -hit.nz, player.speed);
     if (knockListener) knockListener('ped', p.x, p.z, player.speed);
-    // (a car hardly slows for a person; a bicycle loses about half its speed)
-    if (player.entity && typeof player.entity.speed === 'number') player.entity.speed *= player.mass / (player.mass + MASS.person);
+    // (a bicycle loses about half its speed; the car's body loses what it does against theirs, in Jolt)
+    if (player.mode !== 'car' && player.entity && typeof player.entity.speed === 'number') player.entity.speed *= player.mass / (player.mass + MASS.person);
   }
 
-  // A knocked-over pedestrian flies, lands and lies still, then gets up out of sight (respawned like any other)
+  // A knocked-over pedestrian flies, lands and lies still (its ragdoll), then gets up out of sight (respawned like any
+  // other)
   function tumblePed(p, dt) {
     const f = p.fallen;
-    // it lands on the hill where it comes down, not where it was hit
-    const ground = f.lift + hillAt(f.px, f.pz);
-    const still = stepTumble(f, dt, ground, solidAt);
-    if (still > 0.5 && !f.down) {
+    if (f.rest > 0.5 && !f.down) {
       f.down = true;
-      if (mayhemListener) mayhemListener('down', f.px, ground, f.pz, 0, MASS.person);
+      if (mayhemListener) mayhemListener('down', f.px, f.py - 0.15, f.pz, 0, MASS.person);
     }
-    if (still > DOWN_TIME) {
+    if (f.rest > DOWN_TIME) {
+      ragdolls.release(f);
       p.fallen = null;
       p.placed = false;
       p.rig.placed = false;
@@ -2570,7 +2577,6 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     }
     p.x = f.px;
     p.z = f.pz;
-    tumblePose(p.rig.pose, p.fallBase, f);
     if (hasView && !visible(p.x, p.z, 4)) return;
     pedCrowd.add(p.rig, Math.hypot(p.x - focusX, p.z - focusZ));
   }
@@ -2618,14 +2624,10 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   // Throws rider v off at velocity (tvx, tvz) along (nx, nz), its bike taking the share of it that a hitter of `mass`
   // gives (Infinity: all of it, its own speed). Also what shots and blasts do (crime.js)
   function throwRider(v, nx, nz, tvx, tvz, mass) {
-    const r = v.rider;
     poseRider(v); // (a bike out of sight hasn't posed its rider lately)
-    v.fallBase = v.fallBase || new Float32Array(BONES * 8);
-    v.fallBase.set(r.pose.subarray(0, BONES * 8));
     const g = v.hy; // (on its road: the ground, or a bridge's deck)
-    const f = startTumble(v.x, g, v.z, tvx, tvz, nx, nz);
-    // the rider's pivot as it sat (the hips over the saddle)
-    f.y0 = f.py = g + v.kit.seat.seat.y + 0.07;
+    const throwSpeed = Math.hypot(tvx, tvz);
+    const f = ragdolls.spawn(v.rider, { ...throwVelocity(tvx, tvz, nx, nz), spin: 2 + throwSpeed * 0.3, bleed: bleedOf(throwSpeed) });
     // the bike, a fraction of the hitter's weight, is flung too: up & along, cartwheeling, then skids on its side (a
     // motorcycle, heavier, not so high nor so wildly)
     const share = mass === Infinity ? 1 : mass / (mass + massOf(v)); // of the throw's velocity it takes
@@ -2695,7 +2697,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   // A pedestrian shot (or punched) along (dx, dz): knocked to the ground, `power` m/s
   function shootPed(p, dx, dz, power = 3) {
     if (!p.placed || p.fallen) return;
-    throwPed(p, dx * power, dz * power, dx, dz);
+    throwPed(p, dx * power, dz * power, dx, dz, false, 0.7);
   }
 
   // A vehicle shot at (x, y, z) along (dx, dz): sparks off its body; a cyclist is knocked off
@@ -2732,8 +2734,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
       if (d > radius) continue;
       const k = blastFalloff(d, radius);
       const nx = d > 0.01 ? dx / d : 1, nz = d > 0.01 ? dz / d : 0;
-      throwPed(p, nx * power * k, nz * power * k, nx, nz);
-      p.fallen.vy += 6 * k;
+      throwPed(p, nx * power * k, nz * power * k, nx, nz, false, 0.8 * k, 6 * k);
       thrown++;
     }
     for (const v of vehicles) {
@@ -2797,7 +2798,8 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
       if (Math.abs(p.x - x) > hl + 1 || Math.abs(p.z - z) > hl + 1) continue;
       const hit = boxHit(x, z, heading, hw, hl, p.x, p.z, 0.3);
       if (!hit) continue;
-      throwPed(p, vx, vz, hit.nx, hit.nz);
+      const speed = Math.hypot(vx, vz);
+      throwPed(p, vx, vz, hit.nx, hit.nz, false, bleedOf(speed));
       thrown++;
     }
     return thrown;
@@ -2919,11 +2921,10 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     const w = v.wreck;
     // (each on the surface under it: the deck of a bridge it was knocked over on, the ground once off its edge)
     const r = w.rider;
-    const riderGround = surfaceAt(r.px, r.pz, r.py - 0.9);
-    const restR = stepTumble(r, dt, riderGround, solidAt);
+    const restR = r.rest;
     if (restR > 0.5 && !r.down) {
       r.down = true;
-      if (mayhemListener) mayhemListener('down', r.px, riderGround, r.pz, 0, MASS.person);
+      if (mayhemListener) mayhemListener('down', r.px, r.py - 0.15, r.pz, 0, MASS.person);
     }
     // the bicycle in the air (py over the surface under it) turns over freely; down, it skids and lies on one side
     const gy = surfaceAt(w.px, w.pz, (w.gy ?? v.hy ?? 0) + w.py);
@@ -2952,15 +2953,13 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
       if (Math.hypot(w.vx, w.vz) < 0.2) w.rest += dt;
     }
     if (restR > DOWN_TIME && w.rest > DOWN_TIME) {
+      ragdolls.release(r);
       v.wreck = null;
       return;
     }
-    // the rider, thrown far ahead of the bike, is drawn wherever the camera may see it, the bike likewise
-    const f = w.rider;
-    if (!hasView || visible(f.px, f.pz, 4, f.py)) {
-      tumblePose(v.rider.pose, v.fallBase, f);
-      riderCrowd.add(v.rider, Math.hypot(f.px - focusX, f.pz - focusZ));
-    }
+    // the rider, thrown far ahead of the bike, is drawn wherever the camera may see it, the bike likewise (its pose
+    // the ragdoll's)
+    if (!hasView || visible(r.px, r.pz, 4, r.py)) riderCrowd.add(v.rider, Math.hypot(r.px - focusX, r.pz - focusZ));
     if (hasView && !visible(w.px, w.pz, 4)) return;
     const kit = v.kit;
     const slot = kit.drawn++;
@@ -3000,6 +2999,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   function retirePed(p) {
     if (p.conversation) endConversation(p.conversation);
     p.placed = false;
+    ragdolls?.release(p.fallen); // (its body out of the world: its rig is the next walker's)
     p.fallen = null;
     p.bail = null;
     p.nextRoute = null;
@@ -3460,6 +3460,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
       }
       if (!p.placed) out++;
       pedBudget--;
+      ragdolls?.release(p.fallen);
       p.fallen = null; // (a knocked-over pedestrian left far behind gets up elsewhere)
       p.bail = null; // (and so does a driver left behind)
       spawnPed(p, jump ? 0 : 60, jump ? NEAR_RADIUS : 280, !jump);
@@ -3502,6 +3503,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
     setCollisionListener,
     setMayhemListener,
     setKnockListener,
+    setRagdolls,
     rayHit,
     shootPed,
     shootVehicle,
