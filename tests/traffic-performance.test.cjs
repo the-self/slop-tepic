@@ -2,27 +2,28 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const test = require('node:test');
-const vm = require('node:vm');
 
-const { stripTypes } = require('./helpers/module.cjs');
+const { loadModule, stripTypes } = require('./helpers/module.cjs');
 
-// (the JavaScript the bundle ships: the types blanked out, every line and column kept)
-const source = stripTypes(readFileSync(join(__dirname, '../js/sim/traffic.ts'), 'utf8'));
-function productionFunction(name, context) {
-  const match = source.match(new RegExp(`  function ${name}\\([^]*?\\n  \\}`));
-  assert.ok(match, `${name} is present`);
-  return vm.runInNewContext(`(${match[0].trim()})`, context);
+// A part of the traffic (js/sim/traffic/<name>.ts), its imports stubbed: those given, an empty namespace for the rest
+function trafficModule(name, imports = {}) {
+  const source = readFileSync(join(__dirname, `../js/sim/traffic/${name}.ts`), 'utf8');
+  const stubs = {};
+  for (const [, specifier] of stripTypes(source).matchAll(/^import\s[^;]*?\sfrom\s+'([^']+)';/gm)) stubs[specifier] = imports[specifier] ?? {};
+  return loadModule(source, { imports: stubs });
 }
+const { flagRange } = trafficModule('render');
 
 for (const [hasView, inView, draw] of [[true, false, false], [true, true, true], [false, false, true]]) {
   test(`pedestrian gait always advances; pose generation follows drawing (${hasView}, ${inView})`, () => {
     let args, drawn = 0;
     const ped = { x: 10, z: 20, ux: 0, uz: 1, dir: 1, rig: { update(...values) { args = values; } } };
-    const renderPed = productionFunction('renderPed', {
-      hasView, visible: () => inView, pedGround: () => 0, focusX: 0, focusZ: 0,
+    const ts = {
+      hasView, pedGround: () => 0, focusX: 0, focusZ: 0,
       pedCrowd: { add(rig) { assert.equal(rig, ped.rig); drawn++; } }
-    });
-    renderPed(ped, 1 / 60);
+    };
+    const { renderPed } = trafficModule('peds', { './view.ts': { visible: () => inView } });
+    renderPed(ts, ped, 1 / 60);
     assert.equal(args[0], 1 / 60);
     assert.equal(args[1], ped.x);
     assert.equal(args[2], ped.z);
@@ -50,12 +51,11 @@ function sparkHarness(updates = 3) {
     instanceMatrix: attr,
     setMatrixAt(index, matrix) { writes.push({ index, matrix: JSON.parse(JSON.stringify(matrix)) }); }
   };
-  const context = { MAX_SPARKS: 120, sparks, sparkInst, dummy, zero, updates };
-  const flag = productionFunction('flagRange', {});
-  context.flagRange = flag;
+  const ts = { sparks, sparkInst, dummy, zero, updates };
+  const { updateSparks } = trafficModule('sparks', { './render.ts': { flagRange } });
   return {
     sparks, writes, sparkInst,
-    update: productionFunction('updateSparks', context),
+    update: (dt) => updateSparks(ts, dt),
     uploads: () => uploads,
     range: () => range
   };
