@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { float, color, mix, smoothstep, positionWorld, normalWorld, vec2, sin, fract, dot, floor, attribute, texture, uniform } from 'three/tsl';
 import { GEO } from './city-geodata.js';
 import { cityUniforms } from '../render/tsl-materials.js';
+import { farGroundColor } from './far-ground.js';
 import { ISLAND_BOUNDS } from './city-config.js';
 import { SINK, SLOPES, hillHeights, terrainHeight, hillGround, townHeight } from './ground.js';
 
@@ -30,9 +31,10 @@ const vnoise = (p) => {
 /**
  * `mask` (streaming.js createTileMask): the streamed tiles' state. With it, the hills' flat cells inside the detailed
  * box (left out for the road deck that covers them) are drawn as a floor under the deck wherever its tile isn't
- * loaded, so the city beyond the streamed tiles stands on ground, not over a hole.
+ * loaded, so the city beyond the streamed tiles stands on ground, not over a hole: painted with `far` (far-ground.js
+ * paintFarGround), the streets, lots and parks it stands in for.
  */
-function buildTerrain(scene, { mask = null } = {}) {
+function buildTerrain(scene, { mask = null, far = null } = {}) {
   const group = new THREE.Group();
   group.name = 'Hills';
   if (!heights) {
@@ -128,7 +130,7 @@ function buildTerrain(scene, { mask = null } = {}) {
     underGeo.setIndex(new THREE.Uint32BufferAttribute(under, 1));
     underGeo.computeBoundingSphere();
     const underMat = new THREE.MeshStandardNodeMaterial({ roughness: 0.96, metalness: 0.0 });
-    underMat.colorNode = mat.colorNode;
+    underMat.colorNode = far ? farGroundColor(far, mat.colorNode).mul(vnoise(p.mul(0.25)).mul(0.1).add(0.95)) : mat.colorNode;
     const uv = positionWorld.xz.sub(uniform(mask.origin)).div(uniform(mask.span));
     underMat.opacityNode = float(1).sub(texture(mask.texture, uv).r);
     underMat.alphaTest = 0.5;

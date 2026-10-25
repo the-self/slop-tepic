@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { pass, mrt, output, normalView, positionView, metalness, roughness, vec2, smoothstep } from 'three/tsl';
+import { pass, mrt, output, normalView, positionView, metalness, roughness, vec2, smoothstep, color } from 'three/tsl';
 import { ssr } from 'three/addons/tsl/display/SSRNode.js';
 import { createPostProcessing } from './render/post-processing.js';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
@@ -31,6 +31,7 @@ import { buildTerrain } from './world/terrain.js';
 import { buildRiverChannels } from './world/river-channels.js';
 import { groundHeight, townHeight, landHeight, liftAt, deckLift, surfaceHeight, SLOPES, LATTICE, waterways } from './world/ground.js';
 import { TileStreamer } from './world/streaming.js';
+import { paintFarGround, farGroundColor } from './world/far-ground.js';
 import { buildTepicLandmarks } from './world/tepic-landmarks.js';
 import { buildCotos } from './world/cotos.js';
 import { CrimeSystem } from './sim/crime.js';
@@ -120,9 +121,16 @@ async function initApp() {
   });
   const cityGrid = buildCityGrid(scene, streamer);
   markInit('cityGrid');
+  // Beyond the streamed tiles the city's floor is painted with the streets, lots & parks they lay (far-ground.js): the
+  // hills' floor under them on the slopes, the valley floor in the flat city
+  const farGround = streamer && paintFarGround({
+    open: cityGrid.open, box: { x0: ISLAND_BOUNDS.minX, x1: ISLAND_BOUNDS.maxX, z0: ISLAND_BOUNDS.minZ, z1: ISLAND_BOUNDS.maxZ }
+  });
+  if (farGround && !SLOPES) cityGrid.valley.material.colorNode = farGroundColor(farGround, color(cityGrid.valley.material.color));
+  markInit('farGround');
   // The hills around the valley (Tepic: Cerro de San Juan, Cerro de la Cruz...), over the flat city, and the floor
   // under the streamed tiles not loaded
-  buildTerrain(scene, { mask: streamer?.mask });
+  buildTerrain(scene, { mask: streamer?.mask, far: farGround });
   markInit('terrain');
   // The Río Mololoa & the arroyos in their channels, under the deck the city grid opened over them
   const rivers = buildRiverChannels(scene);

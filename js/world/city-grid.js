@@ -709,7 +709,8 @@ function buildCityGrid(scene, streamer = null) {
   // Raised sidewalk blocks bound the roads (the planted medians are obstacles in the roadway, handed over with the
   // footprints). No shore highways or viaducts here: no highway lanes, no extra colliders
   const sidewalks = roadSidewalks;
-  return { group, sidewalks, footprints, highwayLanes: [], colliders: [] };
+  // (the valley floor and how open each block's lot lies, for the far ground: far-ground.js)
+  return { group, sidewalks, footprints, highwayLanes: [], colliders: [], valley: valleyMesh, open };
 }
 
 export {
