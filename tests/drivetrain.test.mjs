@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  buildSpec, gearRatios, torqueAt, wheelRpm, gearTopSpeed, createDriveState, stepDrive, gearLabel
+  buildSpec, gearRatios, torqueAt, wheelRpm, gearTopSpeed, createDriveState, stepDrive, gearLabel, zeroTo100
 } from '../js/player/drivetrain.js';
 import { CAR_MODELS, CAR_MODEL_BY_ID } from '../js/models/cars/index.js';
 
@@ -30,6 +30,15 @@ test('every car model tops out at its maker\'s top speed and pulls away plausibl
     assert.ok(to100 > 2.5 && to100 < 16, `${m.id} 0-100 km/h in ${to100}s`);
     assert.ok(d.rpm <= m.redline);
   }
+});
+
+test('every car does its maker\'s 0-100 km/h', () => {
+  for (const m of CAR_MODELS) {
+    assert.ok(m.accel > 2 && m.accel < 20, `${m.id} has its 0-100 km/h time`);
+    const { to100 } = launch(buildSpec(m), 25);
+    assert.ok(Math.abs(to100 - m.accel) <= 0.15, `${m.id} 0-100 km/h in ${to100.toFixed(2)}s, not ${m.accel}`);
+  }
+  assert.ok(Math.abs(zeroTo100(spec('tesla-model-y'), DT) - 4.8) <= 0.15);
 });
 
 test('the fast ones are fast and the slow ones slow', () => {

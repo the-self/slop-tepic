@@ -23,7 +23,8 @@ const CLASSES = {
   moto: { grip: 1.0, brake: 7.5, shift: 0.14 }
 };
 // Dynamic tyre radius (m) by body shape
-const WHEEL_RADIUS = { moto: 0.29, sedan: 0.31, taxi: 0.29, hatch: 0.3, coupe: 0.34, fastback: 0.34, suv: 0.36, pickup: 0.38, van: 0.33, wedge: 0.44 };
+const WHEEL_RADIUS = { moto: 0.29, sedan: 0.31, taxi: 0.29, hatch: 0.3, coupe: 0.34, fastback: 0.34, suv: 0.36, pickup: 0.38, van: 0.33, wedge: 0.44,
+  crossover: 0.37, supercar: 0.34, offroad: 0.46 };
 // Weight on the driven wheels while accelerating: a front-drive car's ~60 % on the front lightens as it squats, a
 // rear-drive car's rear gains it, all-wheel drive uses all of it
 const DRIVEN = { fwd: 0.56, rwd: 0.62, awd: 1.0 };
@@ -89,16 +90,53 @@ function buildSpec(m) {
     vmax: m.limited ? vmax : Infinity, dragArea: 0.7,
     // a nitrous kit: the sports cars and supercars come with one (not an electric), the rest of the traffic doesn't;
     // a model's `nitro` says otherwise
-    nitro: m.nitro ?? (!m.electric && (m.class === 'sport' || m.class === 'super'))
+    nitro: m.nitro ?? (!m.electric && (m.class === 'sport' || m.class === 'super')),
+    pull: 1 // (see calibratePull)
   };
-  // Drag area so that the power at the top-speed revs (in top gear) just holds the top speed (or a little over the
-  // limiter): P·η = (Crr·m·g + ½ρ·CdA·v²)·v
-  const v = m.limited ? vmax * 1.06 : vmax;
-  const rpm = wheelRpm(spec, n, v);
-  const power = torqueAt(spec, Math.min(rpm, m.redline)) * rpm / RPM_PER_RAD_S * efficiency;
-  spec.dragArea = Math.max(m.body === 'moto' ? 0.3 : 0.4, Math.min(1.8, (power - rolling * m.mass * G * v) / (0.5 * AIR * v * v * v)));
+  fitDrag(spec, m);
+  if (m.accel) calibratePull(spec, m);
   m._spec = spec;
   return spec;
+}
+
+// Drag area so that the power at the top-speed revs (in top gear) just holds the top speed (or a little over the
+// limiter): P·η = (Crr·m·g + ½ρ·CdA·v²)·v
+function fitDrag(spec, m) {
+  const vmax = m.top / 3.6;
+  const v = m.limited ? vmax * 1.06 : vmax;
+  const rpm = wheelRpm(spec, spec.gears.length, v);
+  const power = torqueAt(spec, Math.min(rpm, m.redline)) * spec.pull * rpm / RPM_PER_RAD_S * spec.efficiency;
+  const rolling = spec.rolling * m.mass * G;
+  spec.dragArea = Math.max(m.body === 'moto' ? 0.3 : 0.4, Math.min(1.8, (power - rolling * v) / (0.5 * AIR * v * v * v)));
+}
+
+// Seconds from a standstill to 100 km/h at full throttle (no nitro), or Infinity
+function zeroTo100(spec, dt = 1 / 30) {
+  const d = createDriveState(spec);
+  const input = { throttle: 1, power: 1 };
+  let v = 0;
+  for (let t = dt; t < 30; t += dt) {
+    v = stepDrive(d, spec, input, v, dt);
+    if (v >= 100 / 3.6) return t;
+  }
+  return Infinity;
+}
+
+// The figures above leave out what makes a fast car fast off the line (launch control, sticky tyres, the weight
+// thrown onto the driven wheels, an electric car's motors' own reductions) and a slow one slow (the CVT, the
+// part-throttle maps): `pull` scales the drive force (and the tyres' launch grip, never below the class's) until the car
+// does its maker's 0-100 km/h (`accel`, s), with the drag refitted each time so it still tops out where it should
+const PULL_MIN = 0.3, PULL_MAX = 4;
+function calibratePull(spec, m) {
+  let lo = PULL_MIN, hi = PULL_MAX;
+  for (let i = 0; i < 16; i++) {
+    spec.pull = (lo + hi) / 2;
+    fitDrag(spec, m);
+    if (zeroTo100(spec) > m.accel) lo = spec.pull;
+    else hi = spec.pull;
+  }
+  spec.pull = (lo + hi) / 2;
+  fitDrag(spec, m);
 }
 
 const NITRO_BURN = 0.24; // tank per second at full nitro (a full tank lasts ~4 s)
@@ -210,12 +248,12 @@ function stepDrive(d, spec, input, v, dt) {
   // Drive force at the wheels, cut while shifting and by the rev limiter, limited by what the tyres can put down
   let drive = 0;
   if (!d.shift && !d.limiter && throttle > 0 && !(d.gear > 0 && v >= spec.vmax)) {
-    const torque = torqueAt(spec, Math.min(rpm, spec.redline)) * throttle * (d.nitroOn ? NITRO_POWER : 1) * d.power;
+    const torque = torqueAt(spec, Math.min(rpm, spec.redline)) * (spec.pull ?? 1) * throttle * (d.nitroOn ? NITRO_POWER : 1) * d.power;
     drive = torque * ratio * spec.efficiency / spec.wheelRadius;
   }
   // Traction control holds the tyres at their limit; with far more torque than that they still break loose
   const grip = input.grip ?? 1;
-  const traction = spec.grip * grip * spec.mass * G * spec.driven;
+  const traction = spec.grip * grip * spec.mass * G * spec.driven * Math.max(1, spec.pull ?? 1);
   d.wheelspin = drive > traction * 1.25;
   if (d.wheelspin) rpm = Math.min(spec.redline, rpm + Math.min(1, drive / traction - 1.25) * 1500); // the engine flares
   if (drive > traction) drive = traction * (d.wheelspin ? 0.88 : 0.97);
@@ -267,5 +305,6 @@ export {
   createDriveState,
   selectGear,
   stepDrive,
-  gearLabel
+  gearLabel,
+  zeroTo100
 };

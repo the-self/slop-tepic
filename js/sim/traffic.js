@@ -225,7 +225,7 @@ function createTrafficSystem(scene, sidewalks, obstacles) {
   const carWheelRightGeo = buildSteerableWheelGeo(BODY_SPECS.sedan, 1);
   const carWheelMat = createLoftedCarMaterial(BODY_SPECS.sedan, 0xffbe14);
   const CAR_BODIES = ['taxi', ...Object.keys(BODY_SHARE)];
-  const HEAVY_BODIES = new Set(['suv', 'pickup', 'van', 'wedge']);
+  const HEAVY_BODIES = new Set(['suv', 'pickup', 'van', 'wedge', 'crossover', 'offroad']);
 
   const taxiYellow = new THREE.Color(0xffbe14);
   const policeWhite = new THREE.Color(0xf6f9fc);

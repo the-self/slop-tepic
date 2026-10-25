@@ -1011,14 +1011,19 @@ async function initApp() {
   renderer.setAnimationLoop((now) => {
     const rawDt = (now - lastTime) * 0.001;
     lastTime = now;
-    const dt = Math.min(Math.max(rawDt, 0.001), 0.05) * weaponWheel.timeScale;
+    // The world steps at most 0.05 s a frame (below 20 fps it runs slow rather than unstably). The player keeps real
+    // time down to 10 fps, in steps of at most 1/30 s: a slow frame mustn't stretch a car's 0-100 km/h or slow its
+    // speed over the ground
+    const frameDt = Math.min(Math.max(rawDt, 0.001), 0.1) * weaponWheel.timeScale;
+    const dt = Math.min(frameDt, 0.05 * weaponWheel.timeScale);
     elapsed += dt;
 
     // Update 3rd-person controllers, camera, signals, traffic & vehicle collisions, building LODs, and dynamic shadow focus
     gamepadControls.update(dt);
     // out of breath, no sprinting
     controllerManager.canSprint = stamina.canSprint;
-    controllerManager.update(dt, elapsed);
+    const playerSteps = Math.ceil(frameDt * 30 - 1e-6);
+    for (let i = 0; i < playerSteps; i++) controllerManager.update(frameDt / playerSteps, elapsed);
     // The car's or moto's tachometer follows the engine every frame (the rest of the HUD every 250 ms, below)
     const motorMode = controllerManager.activeMode;
     if (motorMode === 'car' || motorMode === 'moto') {

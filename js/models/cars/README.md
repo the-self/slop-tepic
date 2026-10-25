@@ -2,7 +2,7 @@
 
 Every car the traffic drives (and the player can steal) is a plain data entry here, one file per make. Each one is
 drawn with one of the shared body shapes (sedan, taxi, suv, pickup, van & hatch in `js/actors/actor-models.js`; coupe,
-fastback & wedge in `../bodies.js`), stretched to the car's real length, width and height, and driven by a drivetrain built from its real numbers
+fastback, wedge, crossover, supercar & offroad in `../bodies.js`), stretched to the car's real length, width and height, and driven by a drivetrain built from its real numbers
 (`js/player/drivetrain.js` `buildSpec`).
 
 To add a car: add an entry to its make's file (or a new `<make>.js` listed in `index.js`). Fields:
@@ -20,6 +20,7 @@ To add a car: add an entry to its make's file (or a new `<make>.js` listed in `i
 | `redline` | rpm (an EV: its motor's top rpm) |
 | `gears` | forward gears (an EV: 1) |
 | `top` | top speed, km/h; `limited: true` when an electronic limiter sets it |
+| `accel` | 0-100 km/h, s (the maker's figure): the drivetrain is tuned to do it (`calibratePull`) |
 | `electric` | battery-electric: one gear, full torque from 0 rpm, regenerative braking |
 | `rarity` | how often it turns up in traffic (weights: ~20 for the best sellers, 0.05 for a Ferrari) |
 | `paints` | optional body colours (hex); a sensible palette otherwise |
