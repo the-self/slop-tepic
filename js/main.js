@@ -731,6 +731,7 @@ async function initApp() {
   }
 
   function teleportTo(x, z, heading = Math.PI) {
+    interiors?.abandon(); // (from inside a room: out of it, wherever the teleport lands)
     const destination = controllerManager.teleportActiveTo(x, z, heading);
     touchControls.reset();
     gamepadControls.reset();
@@ -987,7 +988,12 @@ async function initApp() {
   const ambience = [];
   let weekday = new Date().getDay();
   const sceneLights = [];
-  scene.traverse((o) => { if (o.isPointLight || o.isSpotLight) sceneLights.push(o); });
+  let lightsCounted = -1;
+  // (gathered again every couple of seconds: lights come & go with the city's systems, multiplayer's among them)
+  const gatherLights = () => {
+    sceneLights.length = 0;
+    scene.traverse((o) => { if (o.isPointLight || o.isSpotLight) sceneLights.push(o); });
+  };
   let lastTime = performance.now();
   let elapsed = 0;
   let frameCount = 0;
@@ -1068,6 +1074,10 @@ async function initApp() {
     if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
     // The clustered lighting takes the first 256 point & spot lights it finds: those switched off (intensity 0: the
     // traffic's by day, the pools waiting) are hidden, so they don't take the places of the ones on
+    if (elapsed - lightsCounted > 2) {
+      gatherLights();
+      lightsCounted = elapsed;
+    }
     for (const l of sceneLights) {
       if (l.intensity <= 0 && l.visible) {
         l.visible = false;

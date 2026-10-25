@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { Bystanders } from '../sim/bystanders.js';
+import { hash } from './hash.js';
+import { Bystanders, BYSTANDER_STYLES } from '../sim/bystanders.js';
 
 // js/world/street-food.js
 // The night's street food: as the sun goes down the taquerías put their stand out on the sidewalk in front (a table
@@ -23,11 +24,9 @@ const PEOPLE_DISTANCE = 110; // m: their people
 const MAX_STANDS = 48;
 const MAX_LIGHTS = 8;
 const REACH = 2.4; // m from the stand's counter the player buys from
+const STAND_PARTS = ['frame', 'plancha', 'lona', 'bulb', 'stools']; // (a taco stand's meshes)
+const byDistance = (a, b) => a.distance - b.distance;
 
-const hash = (x, z, k = 0) => {
-  const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453;
-  return s - Math.floor(s);
-};
 const openAt = (s, hour) => {
   const h = ((hour % 24) + 24) % 24;
   return s.open < s.close ? h >= s.open && h < s.close : h >= s.open || h < s.close;
@@ -169,6 +168,7 @@ class StreetFood {
       cart: inst(parts.cart, cartMat), parasol: inst(parts.parasol, lona, true), stools: inst(parts.stools, plastic)
     };
     this.meshes.bulb.castShadow = this.meshes.grill.castShadow = false;
+    this.meshList = Object.values(this.meshes);
     this._m = new THREE.Matrix4();
     this._q = new THREE.Quaternion();
     this._p = new THREE.Vector3();
@@ -205,52 +205,51 @@ class StreetFood {
         }
       }
     }
-    near.sort((a, b) => a.distance - b.distance);
+    near.sort(byDistance);
     if (near.length > MAX_STANDS) near.length = MAX_STANDS;
 
     const M = this.meshes;
-    const counts = { stand: 0, cart: 0 };
+    let stands = 0, carts = 0, trompos = 0;
     for (const s of near) {
       s.y = this.controllers.getGroundHeight(s.x, s.z, 'person');
       this._q.setFromAxisAngle(this._up, s.heading);
       this._m.compose(this._p.set(s.x, s.y, s.z), this._q, this._s);
       this._c.setHex(s.lona);
       if (s.cart) {
-        const i = counts.cart++;
+        const i = carts++;
         M.cart.setMatrixAt(i, this._m);
         M.parasol.setMatrixAt(i, this._m);
         M.parasol.setColorAt(i, this._c);
       } else {
-        const i = counts.stand++;
-        for (const k of ['frame', 'plancha', 'lona', 'bulb', 'stools']) M[k].setMatrixAt(i, this._m);
+        const i = stands++;
+        for (const k of STAND_PARTS) M[k].setMatrixAt(i, this._m);
         M.lona.setColorAt(i, this._c);
         // only the taquerías turn a trompo
         if (s.kind === 'tacos') {
-          const t = counts.trompo = (counts.trompo || 0) + 1;
-          M.trompo.setMatrixAt(t - 1, this._m);
-          M.grill.setMatrixAt(t - 1, this._m);
+          M.trompo.setMatrixAt(trompos, this._m);
+          M.grill.setMatrixAt(trompos++, this._m);
         }
       }
     }
-    for (const k of ['frame', 'plancha', 'lona', 'bulb', 'stools']) M[k].count = counts.stand;
-    M.trompo.count = M.grill.count = counts.trompo || 0;
-    M.cart.count = M.parasol.count = counts.cart;
-    for (const m of Object.values(M)) {
+    for (const k of STAND_PARTS) M[k].count = stands;
+    M.trompo.count = M.grill.count = trompos;
+    M.cart.count = M.parasol.count = carts;
+    for (const m of this.meshList) {
       m.instanceMatrix.needsUpdate = true;
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     }
 
     // the bulbs light the nearest stands' sidewalks after dark (a warm 60 W bare bulb)
     const dark = hour < 6.5 || hour > 18.6 ? 1 : 0;
-    this.lights.forEach((light, i) => {
-      const s = near[i];
+    for (let i = 0; i < MAX_LIGHTS; i++) {
+      const light = this.lights[i], s = near[i];
       // (an unlit light is hidden: the clustered lighting takes 256 lights at most)
       light.visible = !!s && !!dark;
-      if (!light.visible) return;
+      if (!light.visible) continue;
       const hx = Math.sin(s.heading), hz = Math.cos(s.heading);
       light.position.set(s.x + hx * 0.1, s.y + (s.cart ? 2.5 : 1.95), s.z + hz * 0.1);
       light.intensity = 9;
-    });
+    }
 
     // the taquero behind the counter, the customers waiting in front of it
     const ppl = this.people;
@@ -259,12 +258,13 @@ class StreetFood {
       if (s.distance > PEOPLE_DISTANCE) break;
       const hx = Math.sin(s.heading), hz = Math.cos(s.heading);
       const rx = hz, rz = -hx; // across the counter
-      ppl.place(`${s.seed}v`, s.x - hx * 0.85, s.z - hz * 0.85, s.heading, s.distance, { seed: s.seed, sway: 1 });
+      // (kept by number: the stand's seed x 8, the taquero 0, the customers 1..)
+      ppl.place(s.seed * 8, s.x - hx * 0.85, s.z - hz * 0.85, s.heading, s.distance, s.seed, BYSTANDER_STYLES.stand);
       for (let k = 0; k < s.customers; k++) {
         const across = (k - (s.customers - 1) / 2) * 0.75 + (hash(s.seed, k, 8) - 0.5) * 0.3;
         const out = 1.0 + (k % 2) * 0.55 + hash(s.seed, k, 9) * 0.3;
-        ppl.place(`${s.seed}c${k}`, s.x + hx * out + rx * across, s.z + hz * out + rz * across, s.heading + Math.PI + (hash(s.seed, k, 10) - 0.5) * 0.8,
-          s.distance, { seed: s.seed + k + 1, sway: 1 });
+        ppl.place(s.seed * 8 + k + 1, s.x + hx * out + rx * across, s.z + hz * out + rz * across, s.heading + Math.PI + (hash(s.seed, k, 10) - 0.5) * 0.8,
+          s.distance, s.seed + k + 1, BYSTANDER_STYLES.stand);
       }
     }
     ppl.end(dt);
@@ -319,7 +319,15 @@ class StreetFood {
 
   // The stands out near (x, z) for the audio: the planchas' sizzle
   sounds(out) {
-    for (const s of this.near) if (s.distance < 40 && !s.cart) out.push({ kind: 'sizzle', id: s, x: s.x, y: s.y + 1, z: s.z, gain: 0.5 });
+    for (const s of this.near) {
+      if (s.distance >= 40 || s.cart) continue;
+      // (each stand's own sound record, filled in again every frame)
+      const snd = (s.sound ??= { kind: 'sizzle', id: s, x: 0, y: 0, z: 0, gain: 0.5, range: 40 });
+      snd.x = s.x;
+      snd.y = s.y + 1;
+      snd.z = s.z;
+      out.push(snd);
+    }
     return out;
   }
 }

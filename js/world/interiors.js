@@ -2,7 +2,8 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Fn, color, positionWorld, floor, fract, step, mix, sin, uniform } from 'three/tsl';
 import { isOpen } from './venues.js';
-import { Bystanders } from '../sim/bystanders.js';
+import { hash } from './hash.js';
+import { Bystanders, BYSTANDER_STYLES } from '../sim/bystanders.js';
 
 // js/world/interiors.js
 // Going into a restaurant, a cantina or an antro (F at its door: "Entrar a ..."): the room the street front opens on,
@@ -26,11 +27,6 @@ const ROOM_OF = { restaurant: 'restaurant', seafood: 'restaurant', tacos: 'resta
 const MEZZ_Y = 3.0; // the tapanco's floor over the hall's
 const MEZZ_D = 4.5; // its depth from the back wall
 const DOOR_REACH = 1.8; // m from a door the player goes in or out by
-
-const hash = (x, z, k = 0) => {
-  const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453;
-  return s - Math.floor(s);
-};
 
 // Box geometry at (x, y, z) local, its bottom at y
 const box = (w, h, d, x, y, z) => new THREE.BoxGeometry(w, h, d).translate(x, y + h / 2, z).toNonIndexed();
@@ -324,7 +320,15 @@ class Interiors {
   enter(venue) {
     const room = this.rooms[ROOM_OF[venue.kind]];
     const c = this.controllers;
-    this.inside = { room, venue };
+    // (the venue's people & its sound records, made once as the player comes in: nothing is built per frame)
+    const seed = Math.floor(hash(venue.x, venue.z) * 1e4);
+    const [mx, my, mz] = room.spots.music;
+    const music = room.kind === 'restaurant' ? 'cumbia' : room.kind === 'bar' ? (hash(venue.x, venue.z, 1) < 0.5 ? 'banda' : 'cumbia') : 'reggaeton';
+    const sounds = [
+      { kind: music, id: room, x: room.ox + mx, y: room.y0 + my, z: room.oz + mz, gain: room.kind === 'disco' ? 1 : 0.45, range: 60, seed: 3 },
+      { kind: 'crowd', id: room.spots, x: room.ox, y: room.y0 + 1.6, z: room.oz, gain: room.kind === 'restaurant' ? 0.5 : 0.35, range: 40, seed: 4 }
+    ];
+    this.inside = { room, venue, seed, sounds };
     for (const l of room.lights) l.visible = true;
     const { g, canvas, tex } = room.sign;
     g.fillStyle = room.kind === 'disco' ? '#0b0b10' : '#1d1b19';
@@ -346,16 +350,31 @@ class Interiors {
     this.crime.toast(venue.tapanco ? `${venue.name}: sube al tapanco por la escalera` : venue.name);
   }
 
+  // Out of the room without going back through its door (main.js: a teleport from the map, a respawn), and the room's
+  // lights off; nothing if the player is outside
+  abandon() {
+    if (!this.inside) return;
+    for (const l of this.inside.room.lights) l.visible = false;
+    this.inside = null;
+    this.controllers.setInterior(null);
+    this.cameras.setInterior(null);
+  }
+
   // Back out to the street, at the door, facing away from it
   leave() {
     const v = this.inside.venue;
-    const c = this.controllers;
-    for (const l of this.inside.room.lights) l.visible = false;
-    this.inside = null;
-    c.setInterior(null);
-    this.cameras.setInterior(null);
-    c.teleportActiveTo(v.x + v.nx * 1.2, v.z + v.nz * 1.2, v.heading);
+    this.abandon();
+    this.controllers.teleportActiveTo(v.x + v.nx * 1.2, v.z + v.nz * 1.2, v.heading);
     this.cameras.resetForTeleport();
+  }
+
+  // The room's people of one `list` of spots ([x, z, yaw, floor?]), kept by number from `base` on
+  placeAll(list, base, style) {
+    const { room, seed } = this.inside;
+    for (let i = 0; i < list.length; i++) {
+      const spot = list[i];
+      this.people.place(seed * 128 + base + i, room.ox + spot[0], room.oz + spot[1], spot[2], 6, seed + base + i, style);
+    }
   }
 
   /**
@@ -377,20 +396,19 @@ class Interiors {
       const s = room.spots;
       this.exitNear = Math.hypot(p.x - room.ox, p.z - (room.oz + room.d / 2 - 0.4)) < DOOR_REACH;
       this.counterNear = !!s.counter && Math.hypot(p.x - (room.ox + s.counter[0]), p.z - (room.oz + s.counter[1])) < 1.6 && p.y < room.y0 + 1;
-      const seed = Math.floor(hash(this.inside.venue.x, this.inside.venue.z) * 1e4);
-      const put = (list, tag, opts) => list.forEach(([x, z, yaw], i) => ppl.place(`${tag}${seed}_${i}`, room.ox + x, room.oz + z, yaw, 6, { seed: seed + i * 7 + tag.length, ...opts }));
-      put(s.staff, 's', { sway: 1 });
-      put(s.guests, 'g', { sway: 1 });
-      put(s.dancers, 'd', { dance: 1 });
+      // (the staff from key 0, the guests from 8, the dancers from 32: fewer than 8, 24 & 96 of each)
+      this.placeAll(s.staff, 0, BYSTANDER_STYLES.stand);
+      this.placeAll(s.guests, 8, BYSTANDER_STYLES.stand);
+      this.placeAll(s.dancers, 32, BYSTANDER_STYLES.dance);
       // the antro's lights sweep to the beat
       if (room.kind === 'disco') {
-        room.lights.forEach((l, i) => {
-          if (i > 3) return;
+        for (let i = 0; i < 4; i++) {
+          const l = room.lights[i];
           const a = this.time * 1.3 + i * 1.7;
           l.position.set(Math.sin(a) * 5, room.h - 0.5, Math.cos(a * 0.8) * 4 + 1);
           l.color.setHSL((this.time * 0.15 + i * 0.25) % 1, 1, 0.55);
           l.intensity = (40 + 30 * Math.max(0, Math.cos(this.time * Math.PI * 2 * (92 / 60)))) * room.K.light;
-        });
+        }
       }
     } else if (c.activeMode === 'person') {
       this.doorNear = this.doorAt(p.x, p.z, hour);
@@ -440,12 +458,7 @@ class Interiors {
 
   // The room's music & talk, for the audio's loops (inside it, nothing of the street's carries)
   sounds(out) {
-    if (!this.inside) return out;
-    const { room, venue } = this.inside;
-    const [x, y, z] = room.spots.music;
-    const music = room.kind === 'restaurant' ? 'cumbia' : room.kind === 'bar' ? (hash(venue.x, venue.z) < 0.5 ? 'banda' : 'cumbia') : 'reggaeton';
-    out.push({ kind: music, id: room, x: room.ox + x, y: room.y0 + y, z: room.oz + z, gain: room.kind === 'disco' ? 1 : 0.45, range: 60, seed: 3 });
-    out.push({ kind: 'crowd', id: room.spots, x: room.ox, y: room.y0 + 1.6, z: room.oz, gain: room.kind === 'restaurant' ? 0.5 : 0.35, range: 40, seed: 4 });
+    if (this.inside) for (const snd of this.inside.sounds) out.push(snd);
     return out;
   }
 }

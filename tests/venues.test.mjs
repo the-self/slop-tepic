@@ -12,7 +12,7 @@ test('signs read as the places they are', () => {
   assert.equal(venueKind('QUEENS DISCO'), 'disco');
   assert.equal(venueKind('RESTAURANTE LA NORIA'), 'restaurant');
   // not food or drink, though the words look like it
-  for (const t of ['CLUB DE NUTRICIÓN ALICIA', 'BARBERÍA LÍNEA DORADA', 'EL BARATERO', 'EL REY GORRAS CLUB', 'GOGO ABARROTERA', 'FERRETERÍA']) {
+  for (const t of ['ZANZIBAR', 'CLUB DE NUTRICIÓN ALICIA', 'BARBERÍA LÍNEA DORADA', 'EL BARATERO', 'EL REY GORRAS CLUB', 'GOGO ABARROTERA', 'FERRETERÍA']) {
     assert.equal(venueKind(t), null, t);
   }
 });

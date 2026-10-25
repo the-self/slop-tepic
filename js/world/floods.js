@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { FloodLevel, floodTerrain, floodDepth, riverStage, riverSpill, floodSpotAt, spotWater, canalSpill } from './flood-model.js';
+import { FloodLevel, floodTerrain, floodDepth, riverStage, riverSpill, floodSpotAt, spotWater, canalSpill, nearestBank } from './flood-model.js';
 import { createFloodWaterMaterial } from '../render/tsl-materials.js';
 import { landHeight, waterways } from './ground.js';
 import { GEO } from './city-geodata.js';
@@ -17,27 +17,6 @@ const SPAN = (N - 1) * CELL; // m the grid spans, vertex to vertex
 const MOVE = 180; // m the camera goes before the grid is laid round it again
 const DRY = -0.6; // m a dry cell's vertex sinks under the ground (the water's edge runs between wet & dry cells)
 const REACH = 160; // m round the grid the rivers & canals are looked for
-
-// The nearest of `points` (flat x, z, ground height triples) to each cell of the grid at (x0, z0): its distance into
-// `dist` and how far the cell lies over its ground into `above`
-function nearestBank(points, heights, x0, z0, dist, above) {
-  const near = [];
-  for (let k = 0; k < points.length; k += 3) {
-    if (points[k] > x0 - REACH && points[k] < x0 + SPAN + REACH && points[k + 1] > z0 - REACH && points[k + 1] < z0 + SPAN + REACH) near.push(k);
-  }
-  for (let i = 0; i < N; i++) {
-    for (let j = 0; j < N; j++) {
-      const c = i * N + j, px = x0 + j * CELL, pz = z0 + i * CELL;
-      let best = Infinity, top = 0;
-      for (const k of near) {
-        const d = (points[k] - px) ** 2 + (points[k + 1] - pz) ** 2;
-        if (d < best) { best = d; top = points[k + 2]; }
-      }
-      dist[c] = Math.sqrt(best);
-      above[c] = heights[c] - top;
-    }
-  }
-}
 
 class Floods {
   /**
@@ -107,8 +86,8 @@ class Floods {
       }
     }
     this.terrain = floodTerrain(this.heights, N, CELL);
-    nearestBank(this.riverPoints, this.heights, x0, z0, this.riverDist, this.riverAbove);
-    nearestBank(this.canalPoints, this.heights, x0, z0, this.canalDist, this.canalAbove);
+    nearestBank(this.riverPoints, this.heights, N, CELL, x0, z0, REACH, this.riverDist, this.riverAbove);
+    nearestBank(this.canalPoints, this.heights, N, CELL, x0, z0, REACH, this.canalDist, this.canalAbove);
     this.mesh.position.set(this.cx, 0, this.cz);
     this.shown = -1;
   }

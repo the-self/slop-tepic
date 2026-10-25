@@ -2257,12 +2257,13 @@ class ThirdPersonControllerManager {
     input.nitro = Boolean(this.keys.boost);
     input.shift = shift;
     input.slope = this.slopeAcceleration(m.position.x, m.position.z, m.heading, m.position.y);
-    input.power = 1;
+    // (a moto in a flood: the water drags at it, and over its exhaust, ~0.4 m, the engine dies until it is out)
+    const water = this.waterAt ? this.waterAt(m.position.x, m.position.z) : 0;
+    m.drowned = water > 0.4;
+    input.power = m.drowned ? 0 : 1;
     input.grip = this.roadGrip ?? 1;
     m.speed = stepDrive(d, spec, input, m.speed, dt);
-    // (a moto in a flood: the water drags at it, and over its exhaust the engine dies)
-    const water = this.waterAt ? this.waterAt(m.position.x, m.position.z) : 0;
-    if (water > 0.03) m.speed *= Math.exp(-dt * (water > 0.4 ? 3 : water * 4));
+    if (water > 0.03) m.speed *= Math.exp(-dt * (m.drowned ? 3 : water * 4));
 
     let turnInput = 0;
     if (this.keys.left) turnInput = this.keys.left;

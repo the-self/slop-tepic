@@ -1,7 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { Bystanders } from './bystanders.js';
-import { OUTFIT, OUTFIT_SEED } from './pedestrians.js';
+import { Bystanders, BYSTANDER_STYLES } from './bystanders.js';
 import { getLocationLabel } from '../world/city-config.js';
 
 // js/sim/fires.js
@@ -247,7 +246,7 @@ class Fires {
         for (let k = 0; k < 3; k++) {
           const along = Math.min(ad - f.size * 0.5 - 2, 3 + k * 1.2), side = (k - 1) * 2.2;
           const x = t.x + ux * along - uz * side, z = t.z + uz * along + ux * side;
-          ppl.place(`bombero${k}`, x, z, Math.atan2(f.x - x, f.z - z), 20, { seed: OUTFIT.bombero * OUTFIT_SEED + k * 31 + 0.5, female: false });
+          ppl.place(k, x, z, Math.atan2(f.x - x, f.z - z), 20, k * 31, BYSTANDER_STYLES.bombero);
           if (t.t > 4 && Math.random() < dt * 30) {
             const v = 11 + Math.random() * 2;
             const tx = f.x - x + (Math.random() - 0.5) * f.size * 0.6, tz = f.z - z + (Math.random() - 0.5) * f.size * 0.6;
@@ -275,7 +274,13 @@ class Fires {
 
   // The crackle & roar of the nearest fires, for the audio's loops
   sounds(out) {
-    for (const f of this.fires) if (f.heat > 0.1) out.push({ kind: 'fire', id: f, x: f.x, y: f.y + 1, z: f.z, gain: Math.min(1, f.heat) * (f.kind === 'grass' ? 0.8 : 1), range: 90 });
+    for (const f of this.fires) {
+      if (f.heat <= 0.1) continue;
+      // (each fire's own sound record, its level filled in again every frame)
+      const snd = (f.sound ??= { kind: 'fire', id: f, x: f.x, y: f.y + 1, z: f.z, gain: 0, range: 90 });
+      snd.gain = Math.min(1, f.heat) * (f.kind === 'grass' ? 0.8 : 1);
+      out.push(snd);
+    }
     return out;
   }
 }

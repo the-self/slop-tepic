@@ -7,14 +7,11 @@
 // - lotTrees(blocks, houses): tree sites on the open ground, clear of the walls and the sidewalk, thick along the
 //   edges of a lot and in the yards, sparse out in the middle of a big field (where the kids play football)
 
+import { hash } from './hash.js';
+
 const TREE_SPACING = 9; // m between the candidate tree sites (jittered)
 const WALL_CLEAR = 2.4; // m a trunk stands at least from any wall
 const HOUSE_CELL = 24; // m cells of the houses' spatial index
-
-const hash = (x, z, k = 0) => {
-  const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453;
-  return s - Math.floor(s);
-};
 
 /**
  * The houses (city-geodata.js `houses`: stride integers each, centre x & z in dm, width & depth in dm, turn θ in

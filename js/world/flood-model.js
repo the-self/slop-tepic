@@ -5,6 +5,7 @@
 // - FloodLevel: the storm's water, `level` (0 dry .. ~1 a big flood) from the Live weather's rain over time
 // - floodDepths(heights, n, cell, level): the water's depth (m) on a square grid of ground heights round the camera
 // - riverStage(level): how high (m) the river stands over its usual level
+// - nearestBank(...): how far each cell of the grid lies from the nearest river bank or canal, and how high over it
 
 const DRAIN_RATE = 8; // mm/h of rain the drains & the ground take without the water standing
 const FLOOD_RAIN = 45; // mm of rain past the drains for a big flood (level 1)
@@ -244,4 +245,71 @@ function riverSpill(stage, above, distance) {
   return distance > 160 ? 0 : Math.max(0, over);
 }
 
-export { FloodLevel, rainRate, riverStage, hollows, lowness, floodTerrain, floodDepth, riverSpill, FLOOD_SPOTS, floodSpotAt, spotWater, canalSpill };
+/**
+ * The nearest of `points` (flat x, z, ground height triples) to each cell of an n x n grid of `heights` (row-major,
+ * `cell` m apart, its first cell at (x0, z0)): its distance (m) into `dist`, and how far the cell lies over that
+ * point's ground into `above`; Infinity if there is none within `reach` of the grid. A two-pass chamfer distance transform
+ * (3 x 3, within ~8% of the true distance) over the grid grown by `reach` on every side, so the points just off it count
+ * too: linear in the cells, however many points (every point against every cell took a 50-100 ms hitch per relayout)
+ */
+let bankDist = null, bankTop = null;
+function nearestBank(points, heights, n, cell, x0, z0, reach, dist, above) {
+  const margin = Math.ceil(reach / cell), ne = n + 2 * margin;
+  if (!bankDist || bankDist.length !== ne * ne) {
+    bankDist = new Float32Array(ne * ne);
+    bankTop = new Float32Array(ne * ne);
+  }
+  const ex0 = x0 - margin * cell, ez0 = z0 - margin * cell;
+  bankDist.fill(Infinity);
+  bankTop.fill(0);
+  // every point into the cell nearest it
+  for (let k = 0; k < points.length; k += 3) {
+    const fj = (points[k] - ex0) / cell, fi = (points[k + 1] - ez0) / cell;
+    const j = Math.round(fj), i = Math.round(fi);
+    if (j < 0 || i < 0 || j >= ne || i >= ne) continue;
+    const c = i * ne + j, d = Math.hypot(fj - j, fi - i) * cell;
+    if (d < bankDist[c]) {
+      bankDist[c] = d;
+      bankTop[c] = points[k + 2];
+    }
+  }
+  // the distances spread forward then back, each cell taking its neighbour's point if that is nearer
+  const diag = cell * Math.SQRT2;
+  const relax = (c, m, w) => {
+    if (bankDist[m] + w < bankDist[c]) {
+      bankDist[c] = bankDist[m] + w;
+      bankTop[c] = bankTop[m];
+    }
+  };
+  for (let i = 0; i < ne; i++) {
+    for (let j = 0; j < ne; j++) {
+      const c = i * ne + j;
+      if (j > 0) relax(c, c - 1, cell);
+      if (i > 0) {
+        relax(c, c - ne, cell);
+        if (j > 0) relax(c, c - ne - 1, diag);
+        if (j < ne - 1) relax(c, c - ne + 1, diag);
+      }
+    }
+  }
+  for (let i = ne - 1; i >= 0; i--) {
+    for (let j = ne - 1; j >= 0; j--) {
+      const c = i * ne + j;
+      if (j < ne - 1) relax(c, c + 1, cell);
+      if (i < ne - 1) {
+        relax(c, c + ne, cell);
+        if (j < ne - 1) relax(c, c + ne + 1, diag);
+        if (j > 0) relax(c, c + ne - 1, diag);
+      }
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const g = (i + margin) * ne + j + margin;
+      dist[i * n + j] = bankDist[g];
+      above[i * n + j] = heights[i * n + j] - bankTop[g];
+    }
+  }
+}
+
+export { FloodLevel, rainRate, riverStage, hollows, lowness, floodTerrain, floodDepth, riverSpill, FLOOD_SPOTS, floodSpotAt, spotWater, canalSpill, nearestBank };

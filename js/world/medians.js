@@ -7,12 +7,9 @@
 //   { x, z, tx, tz (along the path, unit), half (m from the centre line to either carriageway's edge) }
 // - medianTrees(runs): two rows of trees each side of the path
 
-const CYCLEWAY_HALF = 1.6; // m: a two-way bike path 3.2 m wide
+import { hash } from './hash.js';
 
-const hash = (x, z, k = 0) => {
-  const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453;
-  return s - Math.floor(s);
-};
+const CYCLEWAY_HALF = 1.6; // m: a two-way bike path 3.2 m wide
 
 // The nearest point to (x, z) on a flat [x0, z0, x1, z1, ...] polyline: { d, x, z, tx, tz }
 function nearestOn(c, x, z) {

@@ -5,6 +5,7 @@ import { CityAcoustics } from './audio-acoustics.js';
 import { createAmbienceResources, createLoopVoice } from './audio-ambience.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const nearestFirst = (a, b) => a.d2 - b.d2;
 const smooth = (param, value, now, time = 0.035, immediate = false) => {
   param.cancelScheduledValues(now);
   if (immediate) param.setValueAtTime(value, now);
@@ -533,12 +534,14 @@ class CityAudioSystem {
     const L = this.listener;
     const list = this.ambientSources;
     for (const s of list) s.d2 = (s.x - L.x) ** 2 + (s.y - L.y) ** 2 + (s.z - L.z) ** 2;
-    list.sort((a, b) => a.d2 - b.d2);
+    list.sort(nearestFirst);
     for (const slot of this.loops.values()) slot.selected = false;
     let count = 0;
     for (const source of list) {
       const range = source.range ?? 120;
-      if (source.d2 > range * range || ++count > this.limits.loops) break;
+      // (each has a range of its own: one out of earshot, a crowd's murmur, doesn't hide a party's music further on)
+      if (source.d2 > range * range) continue;
+      if (++count > this.limits.loops) break;
       let slot = this.loops.get(source.id);
       if (!slot) {
         const ref = source.kind === 'sizzle' ? 1.5 : source.kind === 'crowd' ? 3 : 7;

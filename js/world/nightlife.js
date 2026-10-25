@@ -1,8 +1,8 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { isOpen } from './venues.js';
-import { Bystanders } from '../sim/bystanders.js';
-import { OUTFIT_SEED } from '../sim/pedestrians.js';
+import { hash } from './hash.js';
+import { Bystanders, BYSTANDER_STYLES } from '../sim/bystanders.js';
 
 // js/world/nightlife.js
 // Tepic at night: the cantinas and bars open from the afternoon, the antros from ten (the Tapanko on the Libramiento,
@@ -20,11 +20,10 @@ const MAX_LIGHTS = 8;
 const MAX_ROCKETS = 8;
 const PARTY_SHARE = 1 / 120; // of the colonias' houses that throw a party on a Friday or Saturday night
 
-const hash = (x, z, k = 0) => {
-  const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453;
-  return s - Math.floor(s);
-};
 const NEON = [0xff2bd6, 0x2be0ff, 0x8a5bff, 0xff3b3b, 0x3bff8a, 0xffb02b];
+const LONAS = [0xf1efe6, 0x2a62b8, 0xd8322a, 0xe8c228]; // (a party's lona)
+const PARTY_PARTS = ['lona', 'poles', 'bulbs', 'chairs', 'gear'];
+const byDistance = (a, b) => a.distance - b.distance;
 
 class Nightlife {
   /**
@@ -150,6 +149,7 @@ class Nightlife {
       gear: inst(gearGeo, new THREE.MeshStandardNodeMaterial({ color: 0x18181a, roughness: 0.6 }), MAX_PARTIES)
     };
     this.meshes.lona.castShadow = true;
+    this.meshList = Object.values(this.meshes);
     const rocketMat = new THREE.MeshBasicNodeMaterial({ color: 0xffd27a });
     this.rocketMesh = inst(new THREE.SphereGeometry(0.12, 6, 4), rocketMat, MAX_ROCKETS);
     this._m = new THREE.Matrix4();
@@ -193,7 +193,7 @@ class Nightlife {
         }
       }
     }
-    near.sort((a, b) => a.distance - b.distance);
+    near.sort(byDistance);
 
     const M = this.meshes;
     let clubs = 0, parties = 0;
@@ -210,24 +210,24 @@ class Nightlife {
         M.neon.setColorAt(clubs, this._c.setHex(p.neon).multiplyScalar(1.4 + beat * 1.6));
         clubs++;
       } else if (p.kindOf === 'party' && parties < MAX_PARTIES) {
-        for (const k of ['lona', 'poles', 'bulbs', 'chairs', 'gear']) M[k].setMatrixAt(parties, this._m);
-        M.lona.setColorAt(parties, this._c.setHex([0xf1efe6, 0x2a62b8, 0xd8322a, 0xe8c228][p.seed % 4]));
+        for (const k of PARTY_PARTS) M[k].setMatrixAt(parties, this._m);
+        M.lona.setColorAt(parties, this._c.setHex(LONAS[p.seed % LONAS.length]));
         M.chairs.setColorAt(parties, this._c.setHex(p.seed % 3 ? 0xf2f2ee : 0xc62a2a));
         parties++;
       }
     }
     M.neon.count = clubs;
-    for (const k of ['lona', 'poles', 'bulbs', 'chairs', 'gear']) M[k].count = parties;
-    for (const m of Object.values(M)) {
+    for (const k of PARTY_PARTS) M[k].count = parties;
+    for (const m of this.meshList) {
       m.instanceMatrix.needsUpdate = true;
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     }
 
     // light: the clubs' doors in their neon's colour to the beat, the parties' lonas warm
-    this.lights.forEach((light, i) => {
-      const p = near[i];
+    for (let i = 0; i < MAX_LIGHTS; i++) {
+      const light = this.lights[i], p = near[i];
       light.visible = !!p; // (an unlit light is hidden: the clustered lighting takes 256 lights at most)
-      if (!p) return;
+      if (!p) continue;
       const beat = 0.5 + 0.5 * Math.cos(this.time * Math.PI * 2 * (p.bpm / 60));
       if (p.kindOf === 'club') {
         light.color.setHex(p.kind === 'disco' ? NEON[Math.floor(this.time * (p.bpm / 60)) % NEON.length] : p.neon);
@@ -238,7 +238,7 @@ class Nightlife {
         light.position.set(p.x, p.y + 3.1, p.z);
         light.intensity = 30;
       }
-    });
+    }
 
     // the people: a line at an antro's door past its bouncer, smokers outside a bar, dancers under a lona
     const ppl = this.people;
@@ -248,14 +248,14 @@ class Nightlife {
       const ax = p.nz, az = -p.nx; // along the front
       if (p.kindOf === 'club') {
         const disco = p.kind === 'disco';
-        ppl.place(`${p.seed}b`, p.x + ax * 1.2 + p.nx * 0.3, p.z + az * 1.2 + p.nz * 0.3, p.heading, p.distance,
-          { seed: 5 * OUTFIT_SEED + (p.seed % 997) + 0.5, scale: 1.08, female: false }); // (the bouncer, in black)
+        // (kept by number: the place's seed x 32, the bouncer 0, the line 1..)
+        ppl.place(p.seed * 32, p.x + ax * 1.2 + p.nx * 0.3, p.z + az * 1.2 + p.nz * 0.3, p.heading, p.distance, p.seed, BYSTANDER_STYLES.bouncer);
         const n = disco ? 6 + (p.seed % 9) : 2 + (p.seed % 4);
         for (let k = 0; k < n; k++) {
           const along = disco ? 2.2 + k * 0.75 : (k - n / 2) * 1.2 + 3;
           const out = disco ? 0.6 + (k % 2) * 0.35 : 1.2 + hash(p.seed, k, 1) * 1.2;
           const face = disco ? Math.atan2(-ax, -az) : p.heading + Math.PI * (hash(p.seed, k, 2) < 0.5 ? 1 : 0.5);
-          ppl.place(`${p.seed}q${k}`, p.x + ax * along + p.nx * out, p.z + az * along + p.nz * out, face, p.distance, { seed: p.seed + k + 1, sway: 1 });
+          ppl.place(p.seed * 32 + k + 1, p.x + ax * along + p.nx * out, p.z + az * along + p.nz * out, face, p.distance, p.seed + k + 1, BYSTANDER_STYLES.stand);
         }
       } else {
         const n = 8 + (p.seed % 8);
@@ -263,7 +263,7 @@ class Nightlife {
           const u = (hash(p.seed, k, 3) - 0.5) * 6.5, v = (hash(p.seed, k, 4) - 0.5) * 4;
           const x = p.x + ax * u + p.nx * v, z = p.z + az * u + p.nz * v;
           const face = hash(p.seed, k, 5) * Math.PI * 2;
-          ppl.place(`${p.seed}d${k}`, x, z, face, p.distance, { seed: p.seed + k + 1, dance: k % 4 === 0 ? 0.3 : 1 });
+          ppl.place(p.seed * 32 + k + 1, x, z, face, p.distance, p.seed + k + 1, k % 4 === 0 ? BYSTANDER_STYLES.sway : BYSTANDER_STYLES.dance);
         }
       }
     }
@@ -272,8 +272,15 @@ class Nightlife {
     // cohetes: now and then from a party, a rocket whistling up and a bang a second later
     for (const p of near) {
       if (p.kindOf !== 'party' || p.distance > 400 || Math.random() > dt / 25) continue;
-      const rk = this.rockets.find((q) => q.t < 0);
-      if (rk) Object.assign(rk, { t: 0, x: p.x + (Math.random() - 0.5) * 4, y: p.y + 1, z: p.z + (Math.random() - 0.5) * 4, vy: 34 });
+      for (const rk of this.rockets) {
+        if (rk.t >= 0) continue;
+        rk.t = 0;
+        rk.x = p.x + (Math.random() - 0.5) * 4;
+        rk.y = p.y + 1;
+        rk.z = p.z + (Math.random() - 0.5) * 4;
+        rk.vy = 34;
+        break;
+      }
     }
     let n = 0;
     for (const rk of this.rockets) {
@@ -294,15 +301,17 @@ class Nightlife {
   }
 
   // The music & the crowds' talk for the audio's loops: a club's from inside its door (its walls muffle it outside)
+  // (each place's sound records made once, the first time it is heard: they stay where it is)
   sounds(out) {
     for (const p of this.near) {
       if (p.distance > 200) break;
-      if (p.kindOf === 'club') {
-        out.push({ kind: p.music, id: p, x: p.x - p.nx * 3, y: p.y + 1.5, z: p.z - p.nz * 3, gain: p.kind === 'disco' ? 1 : 0.6, range: 160, seed: p.seed });
-      } else {
-        out.push({ kind: p.music, id: p, x: p.x, y: p.y + 1.5, z: p.z, gain: 1, range: 200, seed: p.seed });
-        out.push({ kind: 'crowd', id: p.seed, x: p.x, y: p.y + 1.6, z: p.z, gain: 0.5, range: 35, seed: p.seed });
+      if (!p.sounds) {
+        const club = p.kindOf === 'club';
+        p.sounds = [{ kind: p.music, id: p, x: club ? p.x - p.nx * 3 : p.x, y: p.y + 1.5, z: club ? p.z - p.nz * 3 : p.z,
+          gain: !club || p.kind === 'disco' ? 1 : 0.6, range: club ? 160 : 200, seed: p.seed }];
+        if (!club) p.sounds.push({ kind: 'crowd', id: p.sounds, x: p.x, y: p.y + 1.6, z: p.z, gain: 0.5, range: 35, seed: p.seed });
       }
+      for (const snd of p.sounds) out.push(snd);
     }
     return out;
   }

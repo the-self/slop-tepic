@@ -1,6 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { FloodLevel, rainRate, riverStage, hollows, lowness, floodDepth, riverSpill, FLOOD_SPOTS, floodSpotAt, spotWater, canalSpill } from '../js/world/flood-model.js';
+import { FloodLevel, rainRate, riverStage, hollows, lowness, floodDepth, riverSpill, FLOOD_SPOTS, floodSpotAt, spotWater, canalSpill, nearestBank } from '../js/world/flood-model.js';
+
+test('each cell finds the nearest bank, on the grid or just off it, within ~8%', () => {
+  // a 20 x 20 grid of 6 m cells from (0, 0), ground at 10 m; a canal point at (30, 30) on 9 m ground, one off the grid
+  const n = 20, cell = 6;
+  const heights = new Float32Array(n * n).fill(10);
+  const dist = new Float32Array(n * n), above = new Float32Array(n * n);
+  nearestBank([30, 30, 9, 200, 30, 4], heights, n, cell, 0, 0, 160, dist, above);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const x = j * cell, z = i * cell;
+      const a = Math.hypot(x - 30, z - 30), b = Math.hypot(x - 200, z - 30);
+      const truth = Math.min(a, b);
+      assert.ok(Math.abs(dist[i * n + j] - truth) <= truth * 0.09 + 1e-6, `${x},${z}: ${dist[i * n + j]} vs ${truth}`);
+      assert.equal(above[i * n + j], a <= b ? 1 : 6);
+    }
+  }
+  nearestBank([], heights, n, cell, 0, 0, 160, dist, above);
+  assert.equal(dist[0], Infinity);
+});
 
 test('the places Tepic floods every year: water stands there whatever the ground', () => {
   const clinica = FLOOD_SPOTS.find((s) => /Clínica 24/.test(s.name));
