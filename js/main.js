@@ -1004,6 +1004,7 @@ async function initApp() {
   let frameCount = 0;
   let fpsTimer = 0;
   let nextPlayerSave = 0;
+  let nextRelease = Infinity; // (releaseStaticArrays: from when the first frame is on the GPU)
   let warmedUp = false; // see the first frame below
 
   if (elFps) elFps.textContent = '60';
@@ -1088,6 +1089,11 @@ async function initApp() {
       gatherLights();
       lightsCounted = elapsed;
     }
+    // The parts of the static city drawn for the first time since: their CPU-side copies go too (scene-culling.js)
+    if (now >= nextRelease) {
+      releaseStaticArrays(renderer);
+      nextRelease = now + 3000;
+    }
     for (const l of sceneLights) {
       if (l.intensity <= 0 && l.visible) {
         l.visible = false;
@@ -1128,9 +1134,11 @@ async function initApp() {
       const device = renderer.backend.device;
       Promise.resolve(device && device.queue.onSubmittedWorkDone()).catch(() => {}).then(() => {
         markInit('gpu');
-        // The warm-up drew the whole static city, so the GPU holds all of it now: its CPU-side copies can go
+        // What the warm-up drew of the static city is on the GPU now: its CPU-side copies go, and the rest's as it
+        // gets drawn (below)
         const released = releaseStaticArrays(renderer);
         markInit(`release ${Math.round(released / 1e6)}MB`);
+        nextRelease = performance.now() + 3000;
         console.log(`[init] ${initTimings.join(', ')}`);
         initTimings = null;
         if (loadingOverlay) loadingOverlay.classList.add('hidden');

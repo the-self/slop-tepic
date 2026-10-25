@@ -379,7 +379,7 @@ function setupSceneCulling(scene, roots, shadow = null) {
   state.culled = culled;
 }
 
-const state = { culled: [], frozen: new Set() };
+const state = { culled: [], frozen: new Set(), pendingRelease: null };
 
 // Per frame (after the warm-up frame, which must see everything): hide the chunks beyond their cull distance
 function updateSceneCulling(cameraPosition) {
@@ -421,41 +421,59 @@ function updateDynamicMatrices(scene) {
 const RELEASE_MIN_VERTICES = 2048;
 
 /**
- * Drops the CPU-side copies of the static city's vertex data once the GPU holds it. three.js keeps every attribute's
+ * Drops the CPU-side copies of the static city's vertex data once the GPU holds them. three.js keeps every attribute's
  * array after the upload, so the frozen city (its streets, facades, paint & shadow stand-ins: ~10M vertices) sat twice
- * in memory, ~1 GB of it in the JS heap alone. Call it after a frame that drew everything (the warm-up). Only the
- * attributes the renderer has already uploaded go (an object that has not been drawn yet keeps its own), and never the
- * instance matrices & colours (knocked-over props change theirs: mayhem.js). Each attribute keeps its count and its
- * array's type (the pipelines read both); its array becomes empty, so nothing may read or change it afterwards.
- * Returns the bytes released.
+ * in memory, ~1 GB of it in the JS heap alone. Only the attributes the renderer has already uploaded go, and never the
+ * instance matrices & colours (knocked-over props change theirs: mayhem.js). The warm-up frame draws one object per
+ * shader pipeline, so the first call (after it) frees what it drew and keeps the rest as pending: call it again now and
+ * then (main.js does, every few seconds) and each part of the city goes once it has been drawn. Each attribute keeps
+ * its count and its array's type (the pipelines read both); its array becomes empty, and its geometry is marked
+ * `userData.arraysReleased`: nothing may read, clone or change it afterwards. Returns the bytes released by this call.
  */
 function releaseStaticArrays(renderer) {
   const backend = renderer.backend;
-  const done = new Set();
+  if (!state.pendingRelease) {
+    const entries = new Map(); // attribute (or interleaved buffer) -> { target, geos: the geometries sharing it }
+    state.pendingRelease = [];
+    for (const root of state.frozen) {
+      root.traverse((o) => {
+        const geo = o.geometry;
+        if (!o.isMesh || !geo || geo.userData.keepArrays) return;
+        const pos = geo.attributes.position;
+        if (!pos || pos.count < RELEASE_MIN_VERTICES) return;
+        // (three.js would compute these from the arrays the first time it culled or bounded the object)
+        if (!geo.boundingBox) geo.computeBoundingBox();
+        if (!geo.boundingSphere) geo.computeBoundingSphere();
+        if (o.isInstancedMesh && !o.boundingSphere) o.computeBoundingSphere();
+        const attributes = Object.values(geo.attributes).filter((a) => !a.isInstancedBufferAttribute);
+        if (geo.index) attributes.push(geo.index);
+        for (const attribute of attributes) {
+          const target = attribute.isInterleavedBufferAttribute ? attribute.data : attribute;
+          let entry = entries.get(target);
+          if (!entry) {
+            entries.set(target, (entry = { target, geos: new Set() }));
+            state.pendingRelease.push(entry);
+          }
+          entry.geos.add(geo);
+        }
+      });
+    }
+  }
   let bytes = 0;
-  const release = (attribute) => {
-    const target = attribute.isInterleavedBufferAttribute ? attribute.data : attribute;
-    if (done.has(target)) return;
-    done.add(target);
+  let kept = 0;
+  const pending = state.pendingRelease;
+  for (const entry of pending) {
+    const { target, geos } = entry;
     const data = backend.has(target) ? backend.get(target) : null;
-    if (!data || !(data.buffer || data.bufferGPU) || !target.array?.length) return;
+    if (!data || !(data.buffer || data.bufferGPU)) {
+      pending[kept++] = entry; // (not drawn yet)
+      continue;
+    }
     bytes += target.array.byteLength;
     target.array = new target.array.constructor(0);
-  };
-  for (const root of state.frozen) {
-    root.traverse((o) => {
-      const geo = o.geometry;
-      if (!o.isMesh || !geo || geo.userData.keepArrays) return;
-      const pos = geo.attributes.position;
-      if (!pos || pos.count < RELEASE_MIN_VERTICES) return;
-      // (three.js would compute these from the arrays the first time it culled or bounded the object)
-      if (!geo.boundingBox) geo.computeBoundingBox();
-      if (!geo.boundingSphere) geo.computeBoundingSphere();
-      if (o.isInstancedMesh && !o.boundingSphere) o.computeBoundingSphere();
-      for (const attribute of Object.values(geo.attributes)) if (!attribute.isInstancedBufferAttribute) release(attribute);
-      if (geo.index) release(geo.index);
-    });
+    for (const geo of geos) geo.userData.arraysReleased = true;
   }
+  pending.length = kept;
   return bytes;
 }
 
