@@ -22,7 +22,7 @@ export interface FarGround {
   span: THREE.Vector2;
 }
 
-const SIZE = 2048; // texels a side (the box is ~16 km: ~8 m a texel, a street a texel or two at 1 km and more)
+const SIZE = 2048; // texels a side (the box is ~19 km: ~9.5 m a texel, a street a texel or two at 1 km and more)
 const COLORS = {
   asphalt: '#383b40', // the road deck (createRoadSurfaceMaterial's light & dark asphalt)
   sidewalk: '#807f78',

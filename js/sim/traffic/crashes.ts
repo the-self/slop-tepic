@@ -205,20 +205,22 @@ function laneNear(ts: TrafficState, x: number, z: number, yaw: number): { e: Tra
   return best;
 }
 
-// A crashed car's wheels where its body holds them, on their springs, spinning (i: its slot, as placeWheels)
+// A crashed car's wheels where its body holds them, on their springs, spinning (i: its slot, as placeWheels; spots: where
+// a car model's file puts them, in the order of its body's wheels, instead of where its body shape's go)
 const _wheelAt = new THREE.Vector3(), _spin = new THREE.Quaternion(), _xAxis = new THREE.Vector3(1, 0, 0);
-function placeCrashedWheels(ts: TrafficState, crash: CarCrash, i: number, radius: number, baseRadius = 0.35): void {
+function placeCrashedWheels(ts: TrafficState, crash: CarCrash, i: number, radius: number, baseRadius = 0.35, left: THREE.InstancedMesh = ts.carWheelLeftInst, right: THREE.InstancedMesh = ts.carWheelRightInst, spots: readonly { x: number; z: number }[] | null = null): void {
   const o = crash.body.out, wheels = crash.body.def.wheels;
   _q.set(o.qx, o.qy, o.qz, o.qw);
   const scale = radius / baseRadius;
   ts.dummy.scale.set(scale, scale, scale);
   for (let k = 0; k < 4; k++) {
     const w = wheels[k], ow = o.wheels.at(k); // (none yet: at rest on the floor, still)
-    _wheelAt.set(w.x, ow ? ow.y : radius, w.z).applyQuaternion(_q);
+    const at = spots?.[k] ?? w;
+    _wheelAt.set(at.x, ow ? ow.y : radius, at.z).applyQuaternion(_q);
     ts.dummy.position.set(o.x + _wheelAt.x, o.y + _wheelAt.y, o.z + _wheelAt.z);
     ts.dummy.quaternion.copy(_q).multiply(_spin.setFromAxisAngle(_xAxis, ow ? ow.spin : 0));
     ts.dummy.updateMatrix();
-    (k % 2 === 0 ? ts.carWheelLeftInst : ts.carWheelRightInst).setMatrixAt(i * 2 + (k < 2 ? 0 : 1), ts.dummy.matrix);
+    (k % 2 === 0 ? left : right).setMatrixAt(i * 2 + (k < 2 ? 0 : 1), ts.dummy.matrix);
   }
 }
 

@@ -59,14 +59,16 @@ function carPlateTexture() {
 }
 
 /**
- * The material of a car made as a 3D model (models/cars `glb`, modelled white: assets/models/CLAUDE.md): its texture,
- * with the instance's `paintColor` on its body, and its red lamps at the back (-z) lit by `carState`'s brake, as the
- * drawn cars' are. Where the body is comes from the model's paint mask (`paintMap`: its metallic-roughness texture, R
- * the mask and G the roughness, tools/models/prepare.mjs); without one, from where the texture is white. The paint
- * follows the texture's brightness, so its baked shading shows through.
+ * The material of a car made as a 3D model (models/cars `glb`, assets/models/CLAUDE.md): its texture, with the
+ * instance's `paintColor` on its body, and its red lamps at the back (-z) lit by `carState`'s brake, as the drawn
+ * cars' are. With a `paintHex` (the player's car) the paint and the state are uniforms instead,
+ * `material.userData.paint` (a colour) and `material.userData.carState`: one shader for any paint. Where the body is comes from the model's paint mask (`paintMap`: its
+ * metallic-roughness texture, R the mask and G the roughness, tools/models/prepare.mjs); without one, from where the
+ * texture is white. The paint follows the texture's brightness, so its baked shading shows through, under a clear
+ * coat that mirrors the sky as a car's lacquer does; the mask's B is the metal (chrome trim).
  */
-export function createModelCarMaterial(map: THREE.Texture, paintMap: THREE.Texture | null = null): THREE.MeshStandardNodeMaterial {
-  const mat = new THREE.MeshStandardNodeMaterial({ metalness: 0.0 });
+export function createModelCarMaterial(map: THREE.Texture, paintMap: THREE.Texture | null = null, paintHex: number | null = null): THREE.MeshPhysicalNodeMaterial {
+  const mat = new THREE.MeshPhysicalNodeMaterial({ metalness: 0.0 });
   const rgb = texture(map).rgb;
   const lum = rgb.dot(vec3(0.299, 0.587, 0.114));
   let body: Node<'float'>;
@@ -74,15 +76,30 @@ export function createModelCarMaterial(map: THREE.Texture, paintMap: THREE.Textu
     const mask = texture(paintMap);
     body = mask.r;
     mat.roughnessNode = mask.g;
+    mat.metalnessNode = mask.b;
   } else {
     const sat = max(rgb.r, max(rgb.g, rgb.b)).sub(min(rgb.r, min(rgb.g, rgb.b)));
     body = smoothstep(0.5, 0.78, lum).mul(float(1).sub(smoothstep(0.06, 0.16, sat)));
     mat.roughnessNode = mix(float(0.7), float(0.32), body);
   }
-  mat.colorNode = mix(rgb, attribute('paintColor', 'vec3').mul(lum).mul(1.12), body);
+  const stateUniform = paintHex === null ? null : uniform(new THREE.Vector4(0, 0, 0, 0));
+  const paintUniform = paintHex === null ? null : uniform(new THREE.Color(paintHex));
+  if (stateUniform) mat.userData.carState = stateUniform;
+  if (paintUniform) mat.userData.paint = paintUniform;
+  const paint = paintUniform ?? attribute('paintColor', 'vec3');
+  const state = stateUniform ?? attribute('carState', 'vec4');
+  mat.colorNode = mix(rgb, paint.mul(lum).mul(1.12), body);
+  mat.clearcoatNode = body;
+  mat.clearcoatRoughnessNode = float(0.06);
   const lamp = smoothstep(0.2, 0.4, rgb.r.sub(max(rgb.g, rgb.b))).mul(step(positionLocal.z, 0.0));
-  mat.emissiveNode = color(0xff2a1a).mul(lamp).mul(attribute('carState', 'vec4').x.mul(2.2));
+  mat.emissiveNode = color(0xff2a1a).mul(lamp).mul(state.x.mul(2.2));
   return mat;
+}
+
+/** The material of a car model's wheel (its file's, actors/vehicles/car-files.ts): its texture, and its rim's
+ * roughness & metal from the paint mask's G & B (tools/models/prepare.mjs) */
+export function createModelWheelMaterial(map: THREE.Texture, paintMap: THREE.Texture | null): THREE.MeshStandardNodeMaterial {
+  return new THREE.MeshStandardNodeMaterial({ map, roughnessMap: paintMap, metalnessMap: paintMap, metalness: paintMap ? 1 : 0 });
 }
 
 /**

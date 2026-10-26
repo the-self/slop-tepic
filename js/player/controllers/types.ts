@@ -140,6 +140,7 @@ export interface CarEntity extends EntityBase, GroundTilt {
   type: 'car';
   chassisPivot: THREE.Group;
   bodyMesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+  modelBody?: THREE.Mesh | null; // its model's 3D model (actors/vehicles/car-files.ts) instead of bodyMesh, once loaded
   taxiDecals: THREE.Mesh[];
   plates: THREE.Mesh[]; // front, rear
   look: CarLook;

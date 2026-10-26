@@ -8,10 +8,13 @@ import { BODY_SPECS, BUS_SPEC } from '../../actors/actor-models.ts';
 import { clamp } from './constants.ts';
 import type { Bus, Car, Vehicle } from './types.ts';
 import type { TrafficState } from './state.ts';
+import type { ModelBody, ModelLevel } from './meshes.ts';
+import { lodFor } from '../../actors/vehicles/car-files.ts';
 import { surfaceAt } from './surface.ts';
 import { visible } from './view.ts';
 import { placeCrashedWheels } from './crashes.ts';
 
+// (A car model of its own is drawn at its level of detail before that: car-files.ts lodFor.)
 // Beyond CAR_PROXY_DISTANCE, cars use the ~250-triangle stand-in with built-in wheels instead of the full lofted
 // body + 4 separate wheel instances; vehicles outside the view frustum (with a margin for cast shadows and headlight
 // cones) are skipped altogether.
@@ -60,14 +63,15 @@ function flagAttribute(geo: THREE.BufferGeometry, name: string, n: number) {
 
 // 3D spinning alloy wheels & tires (left & right, front & rear), exact 1:1 ground rolling, steering front wheels.
 // The wheel geometry is modelled at baseRadius (the sedan's 0.35 m car wheel), scaled to the vehicle's radius
-function placeWheels(ts: TrafficState, v: Vehicle, i: number, rotY: number, roll: number, radius: number, halfTrack: number, halfBase: number, leftInst: THREE.InstancedMesh, rightInst: THREE.InstancedMesh, baseRadius = 0.35): void {
+// (mid: the axles' middle ahead of the origin, m: a car model's file has its wheels where its maker put them)
+function placeWheels(ts: TrafficState, v: Vehicle, i: number, rotY: number, roll: number, radius: number, halfTrack: number, halfBase: number, leftInst: THREE.InstancedMesh, rightInst: THREE.InstancedMesh, baseRadius = 0.35, mid = 0): void {
   const sinY = Math.sin(rotY);
   const cosY = Math.cos(rotY);
   const scale = radius / baseRadius;
   ts.dummy.scale.set(scale, scale, scale);
   const rise = -Math.tan(v.gp || 0); // the ground's rise per metre ahead
   for (let w = 0; w < 2; w++) {
-    const wz = w === 0 ? halfBase : -halfBase;
+    const wz = mid + (w === 0 ? halfBase : -halfBase);
     const y = radius + (v.hy || 0) + wz * rise;
     ts.dummy.rotation.set(v.wheelSpin + w * 0.55, rotY + (w === 0 ? v.steer : 0), roll, 'YXZ');
     ts.dummy.position.set(v.x - halfTrack * cosY + wz * sinY, y, v.z + halfTrack * sinY + wz * cosY);
@@ -94,15 +98,19 @@ function renderCar(ts: TrafficState, c: Car): void {
   const sinY = Math.sin(rotY);
   const cosY = Math.cos(rotY);
   const spec = BODY_SPECS[c.bodyType];
+  // (its model's own body, once its file has loaded, and its wheels' size)
+  const model = c.model ? ts.modelBodies.get(c.model.id) : undefined;
+  const wheelR = model?.wheels?.radius ?? spec.wheelRadius * c.sw;
   const forwardDist = (c.x - c.prevX) * sinY + (c.z - c.prevZ) * cosY;
-  const rawStep = forwardDist / (spec.wheelRadius * c.sw);
+  const rawStep = forwardDist / wheelR;
   c.wheelSpin = (c.wheelSpin + Math.sign(rawStep) * Math.min(Math.abs(rawStep), 0.48)) % (Math.PI * 2);
   if (ts.hasView && !visible(ts, c.x, c.z, 18, (c.hy || 0) + 1)) return;
 
-  const near = Math.hypot(c.x - ts.focusX, c.z - ts.focusZ) < CAR_PROXY_DISTANCE;
-  // (a model of its own near the camera: at its real size already, its wheels in it; no crumpling)
-  const own = near && c.model ? ts.modelBodies.get(c.model.id) : undefined;
-  const bodyInst = own ?? (near ? ts.bodies[c.bodyType].near : ts.bodies[c.bodyType].far);
+  const dist = Math.hypot(c.x - ts.focusX, c.z - ts.focusZ), near = dist < CAR_PROXY_DISTANCE;
+  // (a model of its own near the camera: at its real size already, its wheels its file's; no crumpling)
+  // (its level by distance, car-files.ts lodFor)
+  const own = near && model ? model.levels[lodFor(dist, model.levels.length)] : undefined;
+  const bodyInst = own?.mesh ?? (near ? ts.bodies[c.bodyType].near : ts.bodies[c.bodyType].far);
   const slot = bodyInst.count++;
 
   ts.dummy.position.set(c.x, c.hy || 0, c.z);
@@ -173,11 +181,26 @@ function renderCar(ts: TrafficState, c: Car): void {
     }
   }
 
-  if (own) return;
+  if (own && model) {
+    placeModelWheels(ts, c, model, own, rotY);
+    return;
+  }
   if (near && c.crash) placeCrashedWheels(ts, c.crash, ts.wheelCars++, spec.wheelRadius * c.sw);
   else if (near) {
     placeWheels(ts, c, ts.wheelCars++, rotY, c.roll, spec.wheelRadius * c.sw, spec.wheelX * c.sx, spec.wheelZ * c.sz, ts.carWheelLeftInst, ts.carWheelRightInst);
   }
+}
+
+// A car model's own wheels (its file's, sim/traffic/meshes.ts): two more on each side, where its file puts them, or
+// where its crashed body's are
+function placeModelWheels(ts: TrafficState, c: Car, model: ModelBody, own: ModelLevel, rotY: number): void {
+  const w = model.wheels, left = own.left, right = own.right;
+  if (!w || !left || !right) return;
+  const i = left.count >> 1;
+  left.count += 2;
+  right.count += 2;
+  if (c.crash) placeCrashedWheels(ts, c.crash, i, w.radius, w.radius, left, right, model.spots);
+  else placeWheels(ts, c, i, rotY, c.roll, w.radius, w.x, (w.front - w.rear) / 2, left, right, w.radius, (w.front + w.rear) / 2);
 }
 
 function renderBus(ts: TrafficState, b: Bus): void {
