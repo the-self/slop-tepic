@@ -1,14 +1,15 @@
 import * as THREE from 'three/webgpu';
 import { GEO } from './city-geodata.js';
-import { groundHeight, landHeight, decks } from './ground.ts';
+import { groundHeight, landHeight, decks, underpasses } from './ground.ts';
 import { drapeGeometry } from './drape.ts';
 import { createRoadSurfaceMaterial, createBridgeConcreteMaterial, createTrackBedMaterial, createUnderpassEarthMaterial } from '../render/tsl-materials.ts';
 import type { Collider } from './buildings.ts';
 
 // js/world/bridges.ts
-// The overpasses, their ramps and the railway, drawn from the lifts the geodata builder solved for every road link and
-// rail line (tools/build-tepic-geodata.mjs, 3B: dm over the ground at each vertex, piecewise linear between them) — the
-// same heights the traffic drives (road-network.ts edgeLift) and the player stands on (ground.ts deckLift).
+// The overpasses, their ramps, the underpasses and the railway, drawn from the lifts the geodata builder solved for
+// every road link and rail line (tools/build-tepic-geodata.mjs, 3B: dm over the ground at each vertex, piecewise linear
+// between them) — the same heights the traffic drives (road-network.ts edgeLift) and the player stands on (ground.ts
+// deckLift, and the underpasses' cuts in the ground, underpasses.ts).
 // A deck is asphalt over concrete: its walls run down to the ground while it is low (a ramp's embankment), and once it
 // is OPEN m up it is a slab on piers, which stand off whatever road or track passes under it. Parapets line a deck from
 // PARAPET m up, and the at-grade bridges over the streams. Under a span the ground is bare earth (the town's asphalt,
@@ -421,6 +422,16 @@ function buildBridges(scene: THREE.Scene): { group: THREE.Group; colliders: Coll
         for (const side of [1, -1]) parapet(at(f0), at(f1), mat(f0), mat(f1), 0, 0, line.half + 0.4, side, walked + len * f0 <= t0 + 0.01, walked + len * f1 >= t1 - 0.01);
       }
       walked += len;
+    }
+  }
+
+  // The underpasses: their cuts' walls, beds, roofs and parapets (underpasses.ts), the parapets stopping who is beside
+  // them
+  if (underpasses) {
+    const rims = underpasses.meshData((a, b, c, d, n) => { concrete.quad(a, b, c, d, n); }, (a, b, c, d, n) => { asphalt.quad(a, b, c, d, n); });
+    for (const r of rims) {
+      const g = groundHeight((r.ax + r.bx) / 2, (r.az + r.bz) / 2);
+      wallCollider(r.ax, r.az, r.bx, r.bz, 0, PARAPET_T / 2 + 0.05, g - 0.2, g + PARAPET_H);
     }
   }
 

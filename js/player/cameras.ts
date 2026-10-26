@@ -110,7 +110,7 @@ class CameraSystem {
   declare _chaseLookY: number;
   declare _clearPointers: () => void; // (bindPointerControls)
   declare _chaseAhead: number;
-  groundAt?: ((x: number, z: number) => number) | null;
+  groundAt?: ((x: number, z: number, fromY?: number) => number) | null;
   obstacleAt?: ((x: number, y: number, z: number) => boolean) | null;
   interior?: CameraRoom | null;
   // on foot the orbit holds its world yaw while the player turns about under it: the heading it was last frame (rad)
@@ -526,10 +526,11 @@ class CameraSystem {
     }
 
     // never under the hills (terrain.ts): over the ground where the camera is, and over the ground halfway to its
-    // target so a ridge between them doesn't hide the player
+    // target so a ridge between them doesn't hide the player (at its target's level: following someone down in a
+    // tunnel or a channel under a bridge, their floor, not the street over it)
     if (this.groundAt) {
       const p = this.currentPos, t = this.currentLookAt;
-      const g = Math.max(this.groundAt(p.x, p.z), this.groundAt((p.x + t.x) / 2, (p.z + t.z) / 2) - 0.5);
+      const g = Math.max(this.groundAt(p.x, p.z, t.y), this.groundAt((p.x + t.x) / 2, (p.z + t.z) / 2, t.y) - 0.5);
       const clearance = entity.type === 'person' && this.activePresetId === 'chase' ? FOOT_CLEARANCE : 1.2;
       if (p.y < g + clearance) p.y = g + clearance;
     }
@@ -700,7 +701,7 @@ class CameraSystem {
   }
 
   // Height of the ground (the hills over the flat city) at (x, z): the cameras keep above it
-  setGroundQuery(fn: ((x: number, z: number) => number) | null | undefined): void {
+  setGroundQuery(fn: ((x: number, z: number, fromY?: number) => number) | null | undefined): void {
     this.groundAt = typeof fn === 'function' ? fn : null;
   }
 }

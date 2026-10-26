@@ -18,7 +18,7 @@ import { Tachometer } from './ui/tachometer.ts';
 import { gearLabel } from './player/drivetrain.ts';
 import { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices, releaseStaticArrays } from './render/scene-culling.ts';
 import { CityAudioSystem } from './audio/audio-system.ts';
-import { groundHeight, townHeight, landHeight, deckLift, surfaceHeight } from './world/ground.ts';
+import { groundHeight, gradeHeight, townHeight, landHeight, deckLift, surfaceHeight } from './world/ground.ts';
 import { CrimeSystem } from './sim/crime.ts';
 import { CrimeHud } from './ui/crime-hud.ts';
 import { WeaponWheel } from './ui/weapon-wheel.ts';
@@ -111,7 +111,7 @@ async function initApp(): Promise<void> {
   const controllerManager = new ThirdPersonControllerManager(scene, colliders);
   // The ground (world/ground.ts): the town's own slopes and the hills over them (the flat city with ?slopes=0)
   controllerManager.setTerrain(groundHeight, townHeight, landHeight, deckLift); // (and the bridges' decks over it)
-  trafficSystem.setHillQuery(groundHeight);
+  trafficSystem.setHillQuery(gradeHeight); // (the roads' lifts are over the ground at grade: down an underpass, < 0)
   trafficSystem.setSurfaceQuery(surfaceHeight);
   // People, bicycles & hydrants knocked flying bounce off the buildings' walls (sim/mayhem.ts)
   const solidAt = (x: number, z: number) => controllerManager.isSolidAt(x, z, 1.5, groundHeight(x, z));
