@@ -12,6 +12,7 @@ import { liftAt } from './ground.ts';
 import { drapeGeometry } from './drape.ts';
 import { indexHouses } from './lot-greenery.ts';
 import { hash } from './hash.ts';
+import { PARK_WALK_Y as PARK_Y } from './park-floor.ts';
 import { carParks, inCarPark, inMouth, layStalls, parkCars, STALL_D, STALL_W } from './parking.ts';
 import { createPavementMaterial, createRoadPaintMaterial, createRoadSurfaceMaterial } from '../render/tsl-materials.ts';
 import { BODY_SPECS, bodyDims, buildCarGeometry, buildCarProxyGeometry, createLoftedCarMaterial } from '../actors/actor-models.ts';
@@ -20,10 +21,9 @@ import type { CarPark, ParkedCar } from './parking.ts';
 import type { Collider } from './buildings.ts';
 import type { TileStreamer } from './streaming.ts';
 
-// The ground's heights the city-grid lays (city-grid.ts): a block's open ground just over its sidewalks, a park's walks,
-// the open country's meadow; the lot a hair over each, its paint a hair over that
+// The ground's heights the city-grid lays (city-grid.ts): a block's open ground just over its sidewalks, a park's walks
+// (PARK_Y: park-floor.ts), the open country's meadow; the lot a hair over each, its paint a hair over that
 const SW_TOP = 0.22;
-const PARK_Y = 0.26;
 const PAINT = 0.012;
 // The driveways: at an entrance the curb drops in a ramp from the gutter, RAMP_OUT m out on the roadway, up to the lot's
 // level RAMP_IN m in past the curb's edge (over the curb's 0.18 m and the sidewalk's 0.22 m all the way), then a paved

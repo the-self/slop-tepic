@@ -67,3 +67,28 @@ export function deformCar(c: CarEntity): void {
   // front-left, front-right, rear-left, rear-right camber
   for (const w of c.wheels) w.steerPivot.rotation.z = c.damage.camber[(w.isFront ? 0 : 2) + (w.side > 0 ? 0 : 1)];
 }
+
+// A tyre of the car burst (bit i of its damage's flats: the physics' wheel i): shot, or run over a spike strip. Whether
+// it was whole
+export function popTyre(ctl: ThirdPersonControllerManager, i: number): boolean {
+  const c = ctl.entities.car;
+  if (i < 0 || i >= c.wheels.length || (c.damage.flats >> i) & 1) return false;
+  c.damage.flats |= 1 << i;
+  c.cameraKick = Math.max(c.cameraKick || 0, 0.35);
+  return true;
+}
+
+// The car's tyres over a spike strip lying across the road: the strip's middle (cx, cz), its heading (rad, along it),
+// half its length & width (m). How many burst
+export function popTyresOn(ctl: ThirdPersonControllerManager, cx: number, cz: number, heading: number, halfLen: number, halfW: number): number {
+  const c = ctl.entities.car;
+  const sn = Math.sin(c.heading), cs = Math.cos(c.heading);
+  const ax = Math.sin(heading), az = Math.cos(heading);
+  let n = 0;
+  c.wheels.forEach((w, i) => {
+    const p = w.steerPivot.position;
+    const dx = c.position.x + p.x * cs + p.z * sn - cx, dz = c.position.z - p.x * sn + p.z * cs - cz;
+    if (Math.abs(dx * ax + dz * az) <= halfLen && Math.abs(dx * az - dz * ax) <= halfW + 0.15 && popTyre(ctl, i)) n++;
+  });
+  return n;
+}

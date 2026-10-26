@@ -29,6 +29,8 @@ const LEFT_CARS = 4; // cars the player left for another kept where they stood (
 // HUD names of the player's characters & vehicles, in the city's language (the moto's: its model's)
 const LABELS: Record<Exclude<PlayerMode, 'moto'>, string> = { person: 'Peatón', car: 'Taxi de Tepic', cyclist: 'Ciclista', helicopter: 'Helicóptero turístico' };
 const groundCollider = { type: 'ground' };
+// The player's own person, on foot and riding (a Meshy model on the crowd's skeleton: tools/models/jobs/people/player.json)
+const PLAYER_PERSON = 'assets/models/people/player.glb';
 // (a saved look may name a model there no longer is)
 const MODEL_BY_ID: Partial<Record<string, CarModel>> = CAR_MODEL_BY_ID;
 // (...and a body shape by a name it may not have)
@@ -51,6 +53,12 @@ const GET_UP = 2.5;
 // Getting out faster than this (m/s, ~15 km/h) the player jumps out of the car, or off the moto, and tumbles along the
 // road (boarding.ts leaveVehicle), GTA-style
 const BAIL_SPEED = 4;
+// The car's tank (L) and what it burns (L/s): idling, and more with the throttle down. A full tank lasts about an hour
+// with the foot down (~2 h of town driving): a few times thirstier than a real car, so a long drive across the city
+// still ends at a gas station now and then
+const FUEL_TANK = 50;
+const FUEL_IDLE = 0.0012;
+const FUEL_BURN = 0.0127;
 // A moto's or bicycle's rider goes over the bars hitting something head on at ~30 km/h (or from any side at 1.5 times
 // that), or sliding along at that once it is down on its side (leant over past DOWN_LEAN rad, off its tyres)
 const THROW_SPEED = 8.3;
@@ -66,6 +74,7 @@ const personGround = (controllers: ThirdPersonControllerManager, x: number, z: n
 
 
 export {
-  START, SPAWN, LEFT_CARS, LABELS, groundCollider, SPEC_BY_NAME, modelFor, AIM_WALK, EJECT_SPEED, GET_UP, BAIL_SPEED, THROW_SPEED,
+  START, SPAWN, LEFT_CARS, LABELS, groundCollider, PLAYER_PERSON, SPEC_BY_NAME, modelFor, AIM_WALK, EJECT_SPEED, GET_UP, BAIL_SPEED, FUEL_TANK,
+  FUEL_IDLE, FUEL_BURN, THROW_SPEED,
   DOWN_LEAN, BRAKE_LIMIT, SMOKE_PUFFS, BICYCLE_BODY, personGround
 };

@@ -5,7 +5,7 @@ import * as THREE from 'three/webgpu';
 import { PersonCrowd, PersonRig } from '../../sim/pedestrians.ts';
 import { ISLAND_BOUNDS } from '../../world/city-config.ts';
 import { createContactShadowMaterial } from '../../render/tsl-materials.ts';
-import { SPAWN, LABELS, AIM_WALK, GET_UP, personGround } from './constants.ts';
+import { SPAWN, LABELS, AIM_WALK, GET_UP, PLAYER_PERSON, personGround } from './constants.ts';
 import type { ThrowOptions } from '../../sim/ragdolls.ts';
 import type { PersonEntity } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
@@ -19,8 +19,9 @@ export function createPersonEntity(ctl: ThirdPersonControllerManager): PersonEnt
   const root = new THREE.Group();
   root.name = 'PlayerPerson';
 
-  // One skinned person, posed in world space every frame by its rig (walk, run, turn, jump)
-  const crowd = new PersonCrowd(1, { farDistance: Infinity });
+  // One skinned person, posed in world space every frame by its rig (walk, run, turn, jump), drawn as the player's model
+  // once it loads
+  const crowd = new PersonCrowd(1, { farDistance: Infinity, model: PLAYER_PERSON });
   crowd.meshes.forEach((m) => ctl.scene.add(m));
   const rig = new PersonRig({ seed: 4.2, scale: 1.0, girth: 1.02, hair: 0.18, armSwing: 1.0 });
 

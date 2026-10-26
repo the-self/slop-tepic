@@ -10,7 +10,7 @@ import { buildSpec } from '../drivetrain.ts';
 import { TAXI_MODEL } from '../../models/cars/index.ts';
 import { createDamage } from '../vehicle-damage.ts';
 import { createStains } from '../car-blood.ts';
-import { SPAWN, LABELS } from './constants.ts';
+import { SPAWN, LABELS, FUEL_TANK } from './constants.ts';
 import type { CarWheel, CarStateUniform, CarEntity } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
 
@@ -200,6 +200,7 @@ export function createCarEntity(ctl: ThirdPersonControllerManager): CarEntity {
     halfL: 2.18,
     drive: null, // drivetrain.ts state: gear, revs, nitro (made on the first drive)
     damage: createDamage(),
+    fuel: FUEL_TANK,
     dented: null, // its own copy of the body mesh once it has dents
     drifting: false,
     impactArmed: false,

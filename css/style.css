@@ -1599,6 +1599,8 @@ body[data-mode='moto'] .tacho {
 
 .tacho-nitro .tacho-fill { background: var(--nitro); }
 .tacho-health .tacho-fill { background: var(--ok); }
+.tacho-fuel .tacho-fill { background: #e8b23a; }
+.tacho.is-low .tacho-fuel .tacho-fill { background: var(--bad); }
 .tacho.is-hurt .tacho-health .tacho-fill { background: var(--bad); }
 
 .tacho-warning {

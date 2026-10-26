@@ -207,6 +207,26 @@ Use `--keep-width` for props that stand alone.
     (a Hum3D plate on a "free" car gives one away).
   - **Downloading** needs a Sketchfab login (the user's, in their browser): the API's download is 401 without one.
 - **People**: pedestrians are one instanced, GPU-skinned crowd on a 15-bone skeleton (`sim/pedestrians.ts`), with
-  outfits from a per-person seed. A Meshy person in A-pose has to be skinned to those bones: two bones and a
-  weight per vertex, from the bind pose. Each model is one fixed look, and the morphs (build, female
-  proportions, hair) are lost. The pilot is `tools/models/jobs/person.json`.
+  outfits from a per-person seed. A crowd can be drawn as a person model instead (`PersonCrowd`'s `model`, loaded by
+  `actors/person-files.ts`): each model is one fixed look, and the morphs (build, female proportions, hair) are lost.
+  The player is the first (`people/player.glb`, `tools/models/jobs/people/player.json`): on foot and riding, the same
+  walk, run, aim and ragdoll as everyone.
+  - **Drawing it**: Nano Banana Pro in A-pose, a front view (text-to-image) and a back view (image-to-image with that
+    task as the reference), then Meshy 7.1 multi-image-to-3d on the two (Ultra geometry, 4K texture: 35 credits).
+    **No side profile**: an arm held out to the side hangs straight down in profile, and Meshy made one arm reach
+    forward and the other back. Check the arms in a point splat (front and side) before preparing it.
+  - **Preparing it**: `node tools/models/prepare-person.mjs model.glb assets/models/people/<name>.glb [--debug bones.png]`
+    scales it to 1.75 m, finds its joints from its shape (the crotch and the armpits where its legs and arms stop
+    reaching each other over the mesh's edges; the shoulder 5 cm under the shoulder's top on the arm's line, which runs
+    from the fingertips through the forearm; the elbow and wrist at the game's proportions; the hips at the game's
+    0.92 m, since jeans hang their crotch low; the chin where the neck's profile steps out), weights each vertex by the
+    drawn body's rules along its limb, blurs the weights over the mesh's edges, and turns the limbs into the game's
+    bind pose. `--debug` draws the bones each vertex follows, before and after.
+  - **Traps**: a chin below the drawn body's 1.52 m left the jaw with the chest, and the mouth stretched open at every
+    turn of the head (hence the chin rule). Stretching the legs to the game's lengths from a crotch-based hip squashed
+    the hips by 10 cm. Meshy brightens the colours: its heather-grey t-shirt reads almost white in the midday sun. The
+    far level is simplified with its corners joined by place: Meshy's atlas seams stopped the simplifier at ~12k
+    triangles. The skeleton and its weights are `js/sim/person-skeleton.ts`, shared with the drawn body: prepare the
+    models again if they change.
+  - **Loading**: the loading screen waits (8 s at most) for the player's file before the shaders compile, so its
+    pipelines are built with the rest. Remote players (`net/multiplayer.ts`) are drawn as the same model.
