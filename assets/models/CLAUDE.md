@@ -225,4 +225,8 @@ Use `--keep-width` for props that stand alone.
   - **Traps**: a chin below the drawn body's 1.52 m left the jaw with the chest, and the mouth stretched open at every
     turn of the head (hence the chin rule). Stretching the legs to the game's lengths from a crotch-based hip squashed
     the hips by 10 cm. Meshy brightens the colours: its heather-grey t-shirt reads almost white in the midday sun. The
-    hexagonal pavers and the lawns are drawn a few centimetres above the ground people walk on, and hide the shoes.
+    far level is simplified with its corners joined by place: Meshy's atlas seams stopped the simplifier at ~12k
+    triangles. The skeleton and its weights are `js/sim/person-skeleton.ts`, shared with the drawn body: prepare the
+    models again if they change.
+  - **Loading**: the loading screen waits (8 s at most) for the player's file before the shaders compile, so its
+    pipelines are built with the rest. Remote players (`net/multiplayer.ts`) are drawn as the same model.

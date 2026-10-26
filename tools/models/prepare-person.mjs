@@ -6,16 +6,21 @@
 //   node tools/models/prepare-person.mjs <in.glb> <out.glb> [--faces 30000] [--far 3000] [--texture 2048] [--debug <png>]
 // --faces: the near body's triangles; --far: the far level's ('lod1', for the crowd beyond its farDistance); --debug: a
 // picture of the bones each vertex follows (front and side), before and after reposing.
-// The weights follow the drawn body's own rules (torsoSkin, armSkin, legSkin, shoeSkin in pedestrians.ts), given by
+// The weights follow the drawn body's own rules (torsoSkin, armSkin, legSkin, shoeSkin in person-skeleton.ts), given by
 // where each vertex lies along its limb, then blurred over the surface, so the joints bend as the drawn people's do;
 // the blur goes over the mesh's edges, so it never jumps from an arm to the side it hangs by. The vertices carry
 // _SKIN = (bone A, bone B, the weight of B, 0).
-// Keep the numbers below in step with pedestrians.ts (the male bind pose).
+// The skeleton, its male bind pose and those rules come from js/sim/person-skeleton.ts: run it again on the Meshy
+// model after they change.
 import { NodeIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
-import { weld, simplifyPrimitive, prune } from '@gltf-transform/functions';
+import { weld, simplifyPrimitive, compactPrimitive, prune, clearNodeTransform } from '@gltf-transform/functions';
 import { MeshoptSimplifier } from 'meshoptimizer';
 import sharp from 'sharp';
+import {
+  BONE, LIMB, SIDES, THIGH, SHIN, ANKLE_H, HIP_X, HIP_Y, UPPER_ARM, FOREARM, ARM_BIND_ABDUCTION, ARM_REACH, PERSON_HEIGHT, shoulderJoint,
+  torsoSkin, legSkin, armSkin, shoeSkin
+} from '../../js/sim/person-skeleton.ts';
 
 const args = process.argv.slice(2);
 const opt = (name, dflt) => {
@@ -27,56 +32,10 @@ const faces = Number(opt('faces', 30000)), far = Number(opt('far', 3000)), textu
 const debug = opt('debug', null);
 if (!inp || !out || inp.startsWith('--')) throw new Error('usage: node tools/models/prepare-person.mjs <in.glb> <out.glb> [--faces 30000] [--far 3000] [--texture 2048] [--debug <png>]');
 
-// ---- the game's skeleton (pedestrians.ts: BONE, bindJoints(false), the limbs' lengths) ----
-const B = { PELVIS: 0, CHEST: 1, HEAD: 2, UA: [3, 5], FA: [4, 6], TH: [7, 11], SH: [8, 12], FT: [9, 13], TO: [10, 14] };
-const SIDES = [1, -1]; // left (+x), right (-x)
-const HEIGHT = 1.75; // m, the bind pose's person
-const THIGH = 0.42, SHIN = 0.42, ANKLE_H = 0.08, HIP_X = 0.09, HIP_Y = ANKLE_H + SHIN + THIGH;
-const UPPER_ARM = 0.3, FOREARM = 0.255, ARM_TIP = 0.728, ABDUCTION = 0.14;
-const SHOULDER = [0.185, 1.43, -0.015];
-
-// the drawn body's weights (pedestrians.ts): [bone A, bone B, weight of B]
-function torsoSkin(y) {
-  if (y > 1.6) return [B.CHEST, B.HEAD, 1];
-  if (y > 1.56) return [B.CHEST, B.HEAD, 0.65];
-  if (y > 1.52) return [B.CHEST, B.HEAD, 0.2];
-  if (y > 1.15) return [B.CHEST, B.CHEST, 0];
-  if (y > 1.1) return [B.PELVIS, B.CHEST, 0.5];
-  if (y > 1.03) return [B.PELVIS, B.CHEST, 0.15];
-  return [B.PELVIS, B.PELVIS, 0];
-}
-function legSkin(y, k) {
-  const th = B.TH[k], sh = B.SH[k], ft = B.FT[k];
-  if (y > 0.95) return [B.PELVIS, th, 0.05];
-  if (y > 0.9) return [B.PELVIS, th, 0.3];
-  if (y > 0.84) return [B.PELVIS, th, 0.72];
-  if (y > 0.74) return [B.PELVIS, th, 0.93];
-  if (y > 0.55) return [th, th, 0];
-  if (y > 0.52) return [th, sh, 0.12];
-  if (y > 0.48) return [th, sh, 0.5];
-  if (y > 0.44) return [th, sh, 0.88];
-  if (y > 0.15) return [sh, sh, 0];
-  if (y > 0.115) return [sh, ft, 0.25];
-  return [sh, ft, 0.5];
-}
-function armSkin(d, k) {
-  const ua = B.UA[k], fa = B.FA[k];
-  if (d < -0.03) return [B.CHEST, ua, 0.32];
-  if (d < 0) return [B.CHEST, ua, 0.6];
-  if (d < 0.06) return [B.CHEST, ua, 0.88];
-  if (d < 0.26) return [ua, ua, 0];
-  if (d < 0.29) return [ua, fa, 0.15];
-  if (d < 0.315) return [ua, fa, 0.5];
-  if (d < 0.36) return [ua, fa, 0.85];
-  return [fa, fa, 0];
-}
-function shoeSkin(z, k) {
-  const ft = B.FT[k], to = B.TO[k];
-  if (z < 0.07) return [ft, ft, 0];
-  if (z < 0.11) return [ft, to, 0.12];
-  if (z < 0.15) return [ft, to, 0.55];
-  return [to, to, 0];
-}
+// ---- the game's skeleton (js/sim/person-skeleton.ts: the bones, the bind pose's measures, the drawn body's weights) ----
+const B = { PELVIS: BONE.PELVIS, CHEST: BONE.CHEST, HEAD: BONE.HEAD, UA: LIMB.upperArm, FA: LIMB.forearm, TH: LIMB.thigh, SH: LIMB.shin, FT: LIMB.foot, TO: LIMB.toe };
+const HEIGHT = PERSON_HEIGHT, ARM_TIP = ARM_REACH, ABDUCTION = ARM_BIND_ABDUCTION;
+const SHOULDER = shoulderJoint(false);
 
 // ---- small vector helpers (arrays of 3) ----
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -124,6 +83,8 @@ const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
 const doc = await io.read(inp);
 const meshes = doc.getRoot().listMeshes();
 if (meshes.length !== 1 || meshes[0].listPrimitives().length !== 1) throw new Error('expected one mesh of one primitive (as Meshy gives)');
+// (its node's transform baked into the vertices, so a model placed off the origin, turned or scaled is measured as drawn)
+for (const nd of doc.getRoot().listNodes()) if (nd.getMesh()) clearNodeTransform(nd);
 const prim = meshes[0].listPrimitives()[0];
 const posA = prim.getAttribute('POSITION'), norA = prim.getAttribute('NORMAL');
 const P = posA.getArray(), N = norA.getArray(), I = prim.getIndices().getArray();
@@ -139,14 +100,23 @@ const scale = HEIGHT / (yMax - yMin);
 for (let i = 0; i < n * 3; i++) P[i] *= scale;
 for (let i = 0; i < n; i++) P[i * 3 + 1] -= yMin * scale;
 {
+  // (the middle of the torso's band, 1.0-1.3 m: the middle of its widest extent, then the mean of what lies within
+  // 0.2 m of it, so the hands held out to either side don't count)
+  let x0 = Infinity, x1 = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const y = P[i * 3 + 1];
+    if (y >= 1.0 && y <= 1.3) (x0 = Math.min(x0, P[i * 3])), (x1 = Math.max(x1, P[i * 3]));
+  }
+  const mid = (x0 + x1) / 2;
   let cx = 0, cz = 0, c = 0;
   for (let i = 0; i < n; i++) {
     const y = P[i * 3 + 1];
-    if (y < 1.0 || y > 1.3 || Math.abs(P[i * 3]) > 0.2) continue;
+    if (y < 1.0 || y > 1.3 || Math.abs(P[i * 3] - mid) > 0.2) continue;
     cx += P[i * 3];
     cz += P[i * 3 + 2];
     c++;
   }
+  if (!c) throw new Error('found no torso between 1.0 and 1.3 m: is it a standing person?');
   for (let i = 0; i < n; i++) {
     P[i * 3] -= cx / c;
     P[i * 3 + 2] -= cz / c;
@@ -398,6 +368,11 @@ const moved = (b, p) => {
   const along = dot(u, bone.axis);
   return add(bone.to, apply(bone.rot, add(u, mul(bone.axis, along * (bone.stretch - 1)))));
 };
+// a normal turned with a bone (the inverse transpose of its stretch along the axis, then its turn)
+const turned = (b, nn) => {
+  const bone = bones[b];
+  return apply(bone.rot, add(nn, mul(bone.axis, dot(nn, bone.axis) * (1 / bone.stretch - 1))));
+};
 const R = V.map((p, v) => {
   const [a, b, w] = skin.subarray(v * 3, v * 3 + 3);
   return add(mul(moved(a, p), 1 - w), mul(moved(b, p), w));
@@ -407,7 +382,7 @@ for (let i = 0; i < n; i++) {
   P.set(R[v], i * 3);
   const [a, b, w] = skin.subarray(v * 3, v * 3 + 3);
   const nn = [N[i * 3], N[i * 3 + 1], N[i * 3 + 2]];
-  N.set(unit(add(mul(apply(bones[a].rot, nn), 1 - w), mul(apply(bones[b].rot, nn), w))), i * 3);
+  N.set(unit(add(mul(turned(a, nn), 1 - w), mul(turned(b, nn), w))), i * 3);
 }
 posA.setArray(P);
 norA.setArray(N);
@@ -449,12 +424,46 @@ const count = (ms) => ms.listPrimitives().reduce((s, p) => s + p.getIndices().ge
 const tris = count(mesh);
 console.log(`${tris} triangles from Meshy`);
 simplifyPrimitive(mesh.listPrimitives()[0], { simplifier: MeshoptSimplifier, ratio: Math.min(1, faces / tris), error: 0.0005 });
+// the far level: simplified with its corners joined by place (Meshy's atlas splits half the vertices along its seams, and
+// the simplifier won't move a seam: it stopped at ~12k triangles), each corner then the vertex of that place whose
+// texture coordinate lies nearest its triangle's first corner's (the same chart of the atlas, mostly)
+function farIndices(prim, target) {
+  const P = prim.getAttribute('POSITION').getArray(), UV = prim.getAttribute('TEXCOORD_0').getArray(), I = prim.getIndices().getArray();
+  const place = new Map(), at = new Uint32Array(P.length / 3), pos = [], members = [];
+  for (let v = 0; v < P.length / 3; v++) {
+    const key = `${Math.round(P[v * 3] * 2e4)},${Math.round(P[v * 3 + 1] * 2e4)},${Math.round(P[v * 3 + 2] * 2e4)}`;
+    let id = place.get(key);
+    if (id === undefined) {
+      id = members.length;
+      place.set(key, id);
+      members.push([]);
+      pos.push(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]);
+    }
+    members[id].push(v);
+    at[v] = id;
+  }
+  const [kept] = MeshoptSimplifier.simplify(Uint32Array.from(I, (v) => at[v]), Float32Array.from(pos), 3, Math.floor(target) * 3, 0.05, []);
+  const out = new Uint32Array(kept.length);
+  for (let t = 0; t < kept.length; t += 3) {
+    const a = members[kept[t]][0];
+    out[t] = a;
+    for (let k = 1; k < 3; k++) {
+      let best = -1, bestD = Infinity;
+      for (const m of members[kept[t + k]]) {
+        const d = (UV[m * 2] - UV[a * 2]) ** 2 + (UV[m * 2 + 1] - UV[a * 2 + 1]) ** 2;
+        if (d < bestD) (bestD = d), (best = m);
+      }
+      out[t + k] = best;
+    }
+  }
+  return out;
+}
 const farPrim = mesh.listPrimitives()[0].clone();
 for (const sem of farPrim.listSemantics()) farPrim.setAttribute(sem, farPrim.getAttribute(sem).clone());
-farPrim.setIndices(farPrim.getIndices().clone());
+farPrim.setIndices(farPrim.getIndices().clone().setArray(farIndices(farPrim, far)));
+compactPrimitive(farPrim);
 const farMesh = doc.createMesh('lod1').addPrimitive(farPrim);
 doc.getRoot().listScenes()[0].addChild(doc.createNode('lod1').setMesh(farMesh));
-simplifyPrimitive(farMesh.listPrimitives()[0], { simplifier: MeshoptSimplifier, ratio: Math.min(1, far / count(mesh)), error: 0.05 });
 for (const ms of [mesh, farMesh]) console.log(`${ms.getName()}: ${count(ms)} triangles`);
 
 for (const tex of doc.getRoot().listTextures()) {

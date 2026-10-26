@@ -68,6 +68,7 @@ function keyboardHarness(nyc = {}) {
     'js/actors/actor-models.ts': {},
     'js/actors/vehicles/car-files.ts': { loadCarFiles() {}, onCarFile() {}, carFile() {} },
     'js/sim/pedestrians.ts': {},
+    'js/world/park-floor.ts': { isRaisedPark: () => false, parkFloorAt: () => 0 },
     'js/actors/vehicle-lights.ts': {},
     'js/player/drivetrain.ts': drivetrain,
     'js/player/vehicle-damage.ts': vehicleDamage,

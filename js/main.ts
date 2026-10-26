@@ -44,6 +44,8 @@ import { buildCity } from './app/city.ts';
 import { playerStateKey, restorePlayer, savePlayer } from './app/player-state.ts';
 import { createRenderPipeline } from './app/render-pipeline.ts';
 import { precompileShaders, warmUpFrame } from './app/shaders.ts';
+import { loadPersonFile } from './actors/person-files.ts';
+import { PLAYER_PERSON } from './player/controllers/constants.ts';
 import { Hud, wirePopovers } from './app/hud.ts';
 import { createTeleport, wireTeleportButtons } from './app/teleport.ts';
 import { Boarding } from './app/boarding.ts';
@@ -62,6 +64,7 @@ interface GameEvents {
 }
 
 const isWeatherSample = (name: string | null): name is WeatherSampleName => name !== null && name in WEATHER_SAMPLES;
+const PERSON_WAIT = 8000; // ms the loading screen waits for the player's person model (3 MB) before the shaders compile
 
 async function initApp(): Promise<void> {
   const params = new URLSearchParams(location.search);
@@ -524,6 +527,12 @@ async function initApp(): Promise<void> {
     scene.add(streamWarmup);
     loading.mark(`tiles ${streamer.stats.shown}`);
   }
+
+  // The player's person model (actors/person-files.ts) in before the shaders compile, so its pipelines are among them
+  // rather than built in play the frame it comes in; a slow connection waits PERSON_WAIT at most (it then comes in late)
+  loading.status('Dressing the player...');
+  await Promise.race([loadPersonFile(PLAYER_PERSON).catch(() => null), new Promise((resolve) => setTimeout(resolve, PERSON_WAIT))]);
+  loading.mark('person');
 
   // The loading screen stays up while the shaders compile and until the first frame is on screen
   loading.status('Compiling Shaders & Render Pipelines...');

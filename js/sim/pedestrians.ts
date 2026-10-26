@@ -27,6 +27,11 @@ import type { Node, StorageBufferNode } from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { loadPersonFile } from '../actors/person-files.ts';
 import type { PersonFile } from '../actors/person-files.ts';
+import {
+  BONE, BONE_COUNT, THIGH, SHIN, ANKLE_H, HIP_X, UPPER_ARM, FOREARM, ARM_BIND_ABDUCTION, PELVIS_Y, HIP_Y, SIDES, LIMB, shoulderJoint,
+  torsoSkin, legSkin, armSkin, shoeSkin
+} from './person-skeleton.ts';
+import type { SkinWeights } from './person-skeleton.ts';
 
 // js/sim/pedestrians.ts
 // Skinned, procedurally animated New Yorkers: the sidewalk crowds (traffic.ts), the player's pedestrian and the
@@ -44,53 +49,10 @@ import type { PersonFile } from '../actors/person-files.ts';
 //   with its feet together, steps up & down curbs, runs, jumps, and rides a bicycle (feet on the pedals).
 
 // ============================================================================
-// 1. SKELETON
+// 1. SKELETON (its bones and measures: person-skeleton.ts)
 // ============================================================================
-const BONE = {
-  PELVIS: 0,
-  CHEST: 1,
-  HEAD: 2,
-  UPPER_ARM_L: 3,
-  FOREARM_L: 4,
-  UPPER_ARM_R: 5,
-  FOREARM_R: 6,
-  THIGH_L: 7,
-  SHIN_L: 8,
-  FOOT_L: 9,
-  TOE_L: 10,
-  THIGH_R: 11,
-  SHIN_R: 12,
-  FOOT_R: 13,
-  TOE_R: 14
-};
-const BONE_COUNT = 15;
 // vec4s per person in the pose buffer: (quaternion) and (translation, scale) per bone, then (seed, female, girth, hair)
 const STRIDE = BONE_COUNT * 2 + 1;
-
-// Bind pose (metres, a 1.75 m person standing at the origin facing +Z, +X on their left): legs straight down, arms
-// hanging 8 degrees out from the body
-const THIGH = 0.42;
-const SHIN = 0.42;
-const ANKLE_H = 0.08;
-const HIP_X = 0.09;
-const UPPER_ARM = 0.3;
-const FOREARM = 0.255;
-const ARM_BIND_ABDUCTION = 0.14;
-const PELVIS_Y = 0.96;
-const HIP_Y = ANKLE_H + SHIN + THIGH;
-const SIDES = [1, -1] as const; // left (+X), right (-X)
-const LIMB = {
-  upperArm: [BONE.UPPER_ARM_L, BONE.UPPER_ARM_R],
-  forearm: [BONE.FOREARM_L, BONE.FOREARM_R],
-  thigh: [BONE.THIGH_L, BONE.THIGH_R],
-  shin: [BONE.SHIN_L, BONE.SHIN_R],
-  foot: [BONE.FOOT_L, BONE.FOOT_R],
-  toe: [BONE.TOE_L, BONE.TOE_R]
-};
-
-function shoulderJoint(female: boolean): [x: number, y: number, z: number] {
-  return female ? [0.165, 1.415, -0.015] : [0.185, 1.43, -0.015];
-}
 
 function bindJoints(female: boolean): THREE.Vector3[] {
   const sh = shoulderJoint(female);
@@ -117,8 +79,6 @@ const BIND = [bindJoints(false), bindJoints(true)];
 // ============================================================================
 const PART = { BODY: 0, LEG: 1, SHOE: 2, ARM: 3, HAND: 4, HEAD: 5, HAIR: 6, LONG_HAIR: 7 };
 
-/** Two bones a vertex is skinned to and the weight of the second */
-type SkinWeights = [boneA: number, boneB: number, weightB: number];
 /** A ring of a loft: the male base and the morph targets (female, more hair volume, long hair), the bones it follows
  *  and the axis girth pushes out from (none: girth leaves it be) */
 interface LoftRow {
@@ -353,15 +313,6 @@ const TORSO = {
   ]
 };
 
-function torsoSkin(y: number): SkinWeights {
-  if (y > 1.6) return [BONE.CHEST, BONE.HEAD, 1];
-  if (y > 1.56) return [BONE.CHEST, BONE.HEAD, 0.65];
-  if (y > 1.52) return [BONE.CHEST, BONE.HEAD, 0.2];
-  if (y > 1.15) return [BONE.CHEST, BONE.CHEST, 0];
-  if (y > 1.1) return [BONE.PELVIS, BONE.CHEST, 0.5];
-  if (y > 1.03) return [BONE.PELVIS, BONE.CHEST, 0.15];
-  return [BONE.PELVIS, BONE.PELVIS, 0];
-}
 
 // [y, rx, rzFront, rzBack, centreZ, keepInFarLod] around each leg's axis (x = +-HIP_X)
 const LEG = {
@@ -401,23 +352,6 @@ const LEG = {
   ]
 };
 
-function legSkin(y: number, k: number): SkinWeights {
-  const thigh = LIMB.thigh[k];
-  const shin = LIMB.shin[k];
-  const foot = LIMB.foot[k];
-  // the hip bends over 0.75-0.95 m, below the jacket's hem, so the thigh tops stay inside the pelvis
-  if (y > 0.95) return [BONE.PELVIS, thigh, 0.05];
-  if (y > 0.9) return [BONE.PELVIS, thigh, 0.3];
-  if (y > 0.84) return [BONE.PELVIS, thigh, 0.72];
-  if (y > 0.74) return [BONE.PELVIS, thigh, 0.93];
-  if (y > 0.55) return [thigh, thigh, 0];
-  if (y > 0.52) return [thigh, shin, 0.12];
-  if (y > 0.48) return [thigh, shin, 0.5];
-  if (y > 0.44) return [thigh, shin, 0.88];
-  if (y > 0.15) return [shin, shin, 0];
-  if (y > 0.115) return [shin, foot, 0.25];
-  return [shin, foot, 0.5];
-}
 
 // [distance along the arm from the shoulder, rx, rz, offset towards the body's side, offset forward, keepInFarLod]
 const ARM = [
@@ -449,18 +383,6 @@ const HAND = [
 ];
 const HAND_TWIST = 0.45; // relaxed hands: palms turned from facing the thighs towards the back
 
-function armSkin(d: number, k: number): SkinWeights {
-  const ua = LIMB.upperArm[k];
-  const fa = LIMB.forearm[k];
-  if (d < -0.03) return [BONE.CHEST, ua, 0.32];
-  if (d < 0) return [BONE.CHEST, ua, 0.6];
-  if (d < 0.06) return [BONE.CHEST, ua, 0.88];
-  if (d < 0.26) return [ua, ua, 0];
-  if (d < 0.29) return [ua, fa, 0.15];
-  if (d < 0.315) return [ua, fa, 0.5];
-  if (d < 0.36) return [ua, fa, 0.85];
-  return [fa, fa, 0];
-}
 
 // [y, rx, rzFront, rzBack, centreZ, keepInFarLod]
 const HEAD = {
@@ -578,14 +500,6 @@ function shoeRing(cx: number, z: number, hw: number, top: number, sole: number, 
   return out;
 }
 
-function shoeSkin(z: number, k: number): SkinWeights {
-  const foot = LIMB.foot[k];
-  const toe = LIMB.toe[k];
-  if (z < 0.07) return [foot, foot, 0];
-  if (z < 0.11) return [foot, toe, 0.12];
-  if (z < 0.15) return [foot, toe, 0.55];
-  return [toe, toe, 0];
-}
 
 const _geometryCache = new Map<number, THREE.BufferGeometry>();
 
