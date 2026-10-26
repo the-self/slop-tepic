@@ -93,7 +93,7 @@ export function trace(crime: CrimeSystem, ox: number, oy: number, oz: number, ya
   }
   // the world's own: a gas station's pumps (sim/gas-stations.ts)
   for (const pr of crime.props) {
-    if (Math.abs(pr.x - ox) > best + 2 || Math.abs(pr.z - oz) > best + 2) continue;
+    if (pr.blown || Math.abs(pr.x - ox) > best + 2 || Math.abs(pr.z - oz) > best + 2) continue;
     const t = rayCircle(ox, oz, dx, dz, pr.x, pr.z, pr.r);
     if (t < from || t >= best) continue;
     if (pitched && !inBody(oy + slope * t - pr.y, pr.top)) continue;

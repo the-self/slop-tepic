@@ -1,15 +1,17 @@
+// js/sim/gas-stations.ts
+// Tepic's gas stations (the geodata's `fuel`, Overture Maps' places): a canopy over two pump islands laid on the lot
+// beside each, along its street, the islands solid. Stopped by a pump in the car, it fills up (its tank:
+// player/controllers' fuel) for the pesos it costs, and its flat tyres are mended; a pump shot to pieces, rammed hard
+// or caught in a blast goes up, the other with it, and the station burns (the bomberos come, fires.ts); it stands
+// again once the player has long gone.
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GEO } from '../world/city-geodata.js';
 import { blockAt, nearestRoads } from '../world/city-config.ts';
 import type { ShotProp } from './crime/types.ts';
 import type { FireKind } from './fires.ts';
-
-// js/sim/gas-stations.ts
-// Tepic's gas stations (the geodata's `fuel`, Overture Maps' places): a canopy over two pump islands laid on the lot
-// beside each, along its street. Stopped by a pump in the car, it fills up (its tank: player/controllers' fuel) for
-// the pesos it costs, and its flat tyres are mended; a pump shot to pieces, rammed hard or caught in a blast goes up, the other with it, and the
-// station burns (the bomberos come, fires.ts); it stands again once the player has long gone.
+import { boxHit } from './mayhem.ts';
+import type { PlayerCollider } from '../player/controllers/types.ts';
 
 interface XZ {
   x: number;
@@ -24,6 +26,7 @@ interface Pump extends ShotProp {
   fuse: number;
   byPlayer: boolean;
   index: number; // its instance
+  collider: PlayerCollider; // its island, solid to the player and the car (broken: gone with it)
 }
 /** A station: its canopy's middle (m), turn (rad: world = c + R_y(yaw)·local, local x along the street), name, pumps;
  *  burnt: s since it went up (0: whole) */
@@ -48,8 +51,10 @@ interface StationsWorld {
     explode(x: number, y: number, z: number, radius: number, damage: number, byPlayer: boolean): void;
   };
   car: { speed: number; fuel: number; damage: { flats: number } };
-  /** what the player is in (or on foot): where, how fast (m/s), half its length (m) */
-  active(): { position: XZ; speed: number; halfL?: number };
+  /** what the player is in (or on foot): where, its heading (rad), how fast (m/s), half its width & length (m) */
+  active(): { position: XZ; heading: number; speed: number; halfW?: number; halfL?: number };
+  /** the pumps' islands made solid (player/controllers.ts: walls for the player, the car's physics) */
+  addColliders(list: PlayerCollider[]): void;
   activeMode(): string;
   ignite(kind: FireKind, x: number, z: number, size?: number): unknown;
 }
@@ -67,6 +72,8 @@ const REBUILT = 240; // s a burnt station takes to stand again, once the player 
 const REBUILD_AWAY = 450;
 const CANOPY: [along: number, across: number, height: number] = [13, 8, 5]; // m
 const PUMPS_AT = 3; // m either side of the canopy's middle, along the street
+const ISLAND: [halfLong: number, halfWide: number] = [1.6, 0.5]; // m: a pump's island
+const ISLAND_END = ISLAND[0] - ISLAND[1]; // m from the pump to the middle of each of its island's rounded ends
 
 const box = (w: number, h: number, d: number, x: number, y: number, z: number) => new THREE.BoxGeometry(w, h, d).translate(x, y + h / 2, z).toNonIndexed();
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _up = new THREE.Vector3(0, 1, 0);
@@ -82,6 +89,8 @@ class GasStations {
   filling: Station | null = null;
   paid = 0; // $ this fill so far
   litres = 0;
+  broke = false; // (told there's not the money for it: till the car leaves the pump)
+  lastSpeed = 0; // m/s the player went at last frame (a ram is judged by the speed it came in at, not what the island left)
 
   constructor(world: StationsWorld) {
     this.world = world;
@@ -123,10 +132,17 @@ class GasStations {
     for (const s of this.stations) {
       for (const side of [-1, 1]) {
         const ux = Math.cos(s.yaw), uz = -Math.sin(s.yaw); // (local x in the world)
+        const x = s.x + ux * side * PUMPS_AT, z = s.z + uz * side * PUMPS_AT;
+        // (the island's box turned with the station: its length along the street, as boarding.ts leaveCarBehind's; waist
+        // high, so a round aimed at the dispenser over it isn't stopped by it)
+        const cs = Math.cos(s.yaw), sn = Math.sin(s.yaw), hx = ISLAND[0], hz = ISLAND[1];
+        const ex = Math.abs(cs) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
+        const collider: PlayerCollider = {
+          minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez, minY: s.y - 0.3, maxY: s.y + 0.9, obb: { cx: x, cz: z, hx, hz, cs, sn }, broken: false
+        };
         const p: Pump = {
-          station: s, x: s.x + ux * side * PUMPS_AT, z: s.z + uz * side * PUMPS_AT, y: s.y, r: 0.55, top: 1.95, hp: PUMP_HP,
-          blown: false, fuse: Infinity, byPlayer: false, index: this.pumps.length,
-          shot: (damage, byPlayer) => { this.hurt(p, damage, byPlayer); }
+          station: s, x, z, y: s.y, r: 0.55, top: 1.95, hp: PUMP_HP, blown: false, fuse: Infinity, byPlayer: false,
+          index: this.pumps.length, collider, shot: (damage, byPlayer) => { this.hurt(p, damage, byPlayer); }
         };
         s.pumps.push(p);
         this.pumps.push(p);
@@ -134,6 +150,7 @@ class GasStations {
       }
       this.draw(s);
     }
+    world.addColliders(this.pumps.map((p) => p.collider));
     this.canopy.count = this.ruin.count = this.stations.length;
     this.pumpMesh.count = this.pumps.length;
     this.canopy.computeBoundingSphere();
@@ -232,6 +249,7 @@ class GasStations {
   // Pump p goes up: a blast, the other pump after it, the station burning (the bomberos are called, fires.ts)
   blow(p: Pump): void {
     p.blown = true;
+    p.collider.broken = true;
     p.fuse = Infinity;
     const s = p.station;
     const w = this.world;
@@ -262,11 +280,18 @@ class GasStations {
     let at: Pump | null = null;
     for (const p of this.pumps) {
       if (p.blown || Math.abs(p.x - player.x) > 12 || Math.abs(p.z - player.z) > 12) continue;
-      const d = Math.hypot(p.x - player.x, p.z - player.z);
-      // driven into hard: it goes up
-      if (driving && d < (me.halfL ?? 1) * 0.6 + 0.6 && Math.abs(me.speed) > RAM) this.setOff(p, 0, true);
-      else if (mode === 'car' && d < NEAR) at = p;
+      // driven into hard (its box, a little grown, reaching the island: two circles along it): it goes up
+      let hit = false;
+      if (driving && Math.max(Math.abs(me.speed), this.lastSpeed) > RAM) {
+        const ux = Math.cos(p.station.yaw) * ISLAND_END, uz = -Math.sin(p.station.yaw) * ISLAND_END;
+        const hw = (me.halfW ?? 0.5) + 0.3, hl = (me.halfL ?? 1) + 0.3;
+        hit = boxHit(player.x, player.z, me.heading, hw, hl, p.x + ux, p.z + uz, ISLAND[1]) !== null ||
+          boxHit(player.x, player.z, me.heading, hw, hl, p.x - ux, p.z - uz, ISLAND[1]) !== null;
+      }
+      if (hit) this.setOff(p, 0, true);
+      else if (mode === 'car' && Math.hypot(p.x - player.x, p.z - player.z) < NEAR) at = p;
     }
+    this.lastSpeed = driving ? Math.abs(me.speed) : 0;
     this.fill(at, dt);
     for (const s of this.stations) {
       if (!s.burnt) continue;
@@ -274,7 +299,7 @@ class GasStations {
       if (s.burnt > REBUILT && Math.hypot(s.x - player.x, s.z - player.z) > REBUILD_AWAY) {
         s.burnt = 0;
         for (const p of s.pumps) {
-          p.blown = false;
+          p.blown = p.collider.broken = false;
           p.hp = PUMP_HP;
           p.byPlayer = false;
         }
@@ -298,8 +323,11 @@ class GasStations {
       }
     }
     const wants = at && Math.abs(car.speed) < 0.6 && car.fuel < TANK - 0.05;
-    if (!wants) {
+    if (!at) this.broke = false;
+    if (!wants || this.broke) {
       if (this.filling && this.litres > 0.5) w.crime.toast(`Gas: ${Math.round(this.litres)} L, $${Math.round(this.paid)}`);
+      // (paid in whole pesos)
+      if (this.filling) w.crime.money = Math.floor(w.crime.money);
       this.filling = null;
       this.litres = this.paid = 0;
       return;
@@ -310,8 +338,8 @@ class GasStations {
     }
     const litres = Math.min(FILL * dt, TANK - car.fuel, w.crime.money / PRICE);
     if (litres <= 0) {
-      if (w.crime.money < PRICE) w.crime.toast('Not enough money for gas');
-      this.filling = null;
+      w.crime.toast('Not enough money for gas');
+      this.broke = true;
       return;
     }
     car.fuel += litres;

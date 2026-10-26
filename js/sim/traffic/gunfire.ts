@@ -6,7 +6,7 @@ import { blastFalloff, rayBox, rayCircle } from '../weapons.ts';
 import { createDamage } from '../../player/vehicle-damage.ts';
 import { BODY_SPECS } from '../../actors/actor-models.ts';
 import { KNOCK_SPEED, MASS, massOf } from './constants.ts';
-import type { Ped, RayAccept, TrafficRayHit, Vehicle } from './types.ts';
+import type { Car, Ped, RayAccept, TrafficRayHit, Vehicle } from './types.ts';
 import type { TrafficState } from './state.ts';
 import { hillAt } from './surface.ts';
 import { hurtVehicle, killedIfDead } from './collisions.ts';
@@ -169,19 +169,32 @@ function knockBox(ts: TrafficState, x: number, z: number, heading: number, hw: n
   return thrown;
 }
 
-// A shot striking car v at (x, y, z), low (its wheels' height): the tyre nearest, within 0.6 m of it, bursts. Whether one
-// did (a bus's and a bike's are left whole)
+// Where car v's wheels are drawn (render.ts): its model's own (its file's), else its body shape's stretched to its size.
+// Its tyres' middles either side (m), its front & rear axles' z (m, the rear's negative), their radius (m)
+const _wheels = { x: 0, front: 0, rear: 0, radius: 0 };
+function wheelsOf(ts: TrafficState, v: Car): typeof _wheels {
+  const own = v.model ? ts.modelBodies.get(v.model.id)?.wheels : null;
+  if (own) return Object.assign(_wheels, own);
+  const spec = BODY_SPECS[v.bodyType];
+  _wheels.x = spec.wheelX * v.sx;
+  _wheels.front = spec.wheelZ * v.sz;
+  _wheels.rear = -spec.wheelZ * v.sz;
+  _wheels.radius = spec.wheelRadius * v.sw;
+  return _wheels;
+}
+
+// A shot striking car v at (x, y, z), low (its wheels' height): the tyre nearest, within 0.45 m of its tread, bursts.
+// Whether one did (a bus's and a bike's are left whole)
 function shootTyre(ts: TrafficState, v: Vehicle, x: number, y: number, z: number): boolean {
   if (v.bus || v.bike || v.moto || !v.edge) return false;
-  const spec = BODY_SPECS[v.bodyType];
-  const r = spec.wheelRadius * v.sw;
+  const w = wheelsOf(ts, v), r = w.radius;
   if (y - (v.hy ?? hillAt(ts, x, z)) > r * 2 + 0.1) return false;
   const yaw = v.yaw + v.yawOffset, sn = Math.sin(yaw), cs = Math.cos(yaw);
   // (in its frame: + to its left, + ahead)
   const lx = (x - v.x) * cs - (z - v.z) * sn, lz = (x - v.x) * sn + (z - v.z) * cs;
-  const wx = spec.wheelX * v.sx, wz = spec.wheelZ * v.sz;
-  const bit = (lx < 0 ? 2 : 0) + (lz < 0 ? 1 : 0);
-  if (Math.hypot(Math.abs(lx) - wx, Math.abs(lz) - wz) > r + 0.45 || (v.flats >> bit) & 1) return false;
+  const bit = (lx < 0 ? 2 : 0) + (lz < (w.front + w.rear) / 2 ? 1 : 0);
+  const wz = bit & 1 ? w.rear : w.front;
+  if (Math.hypot(Math.abs(lx) - w.x, lz - wz) > r + 0.45 || (v.flats >> bit) & 1) return false;
   v.flats |= 1 << bit;
   spawnCollisionSparks(ts, x, 0.25, z, -sn, -cs, 4, v.hy ?? hillAt(ts, x, z));
   return true;
@@ -193,10 +206,10 @@ function spikeTraffic(ts: TrafficState, cx: number, cz: number, heading: number,
   const ax = Math.sin(heading), az = Math.cos(heading);
   for (const v of ts.cars) {
     if (!v.edge || Math.abs(v.x - cx) > halfLen + 4 || Math.abs(v.z - cz) > halfLen + 4) continue;
-    const spec = BODY_SPECS[v.bodyType];
+    const w = wheelsOf(ts, v);
     const yaw = v.yaw + v.yawOffset, sn = Math.sin(yaw), cs = Math.cos(yaw);
     for (let bit = 0; bit < 4; bit++) {
-      const lx = (bit & 2 ? -1 : 1) * spec.wheelX * v.sx, lz = (bit & 1 ? -1 : 1) * spec.wheelZ * v.sz;
+      const lx = (bit & 2 ? -1 : 1) * w.x, lz = bit & 1 ? w.rear : w.front;
       const dx = v.x + lx * cs + lz * sn - cx, dz = v.z - lx * sn + lz * cs - cz;
       if (Math.abs(dx * ax + dz * az) <= halfLen && Math.abs(dx * az - dz * ax) <= halfW + 0.15) v.flats |= 1 << bit;
     }

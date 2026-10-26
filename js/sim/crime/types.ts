@@ -255,12 +255,14 @@ interface RemoteTarget extends XZ {
 }
 /**
  * Something of the world's that shots strike (crime.props: a gas station's pumps, sim/gas-stations.ts): a post `r` m
- * round at (x, z), from the ground y up to `top` m over it; `shot` is told of each round (its damage, the player's)
+ * round at (x, z), from the ground y up to `top` m over it (none once blown); `shot` is told of each round (its damage,
+ * the player's)
  */
 interface ShotProp extends XZ {
   r: number;
   y: number;
   top: number;
+  blown?: boolean; // (gone: shots pass where it stood)
   shot(damage: number, byPlayer: boolean): void;
 }
 type TraceTarget = Agent | Cruiser | Helicopter | Ped | Vehicle | RemoteTarget | ShotProp;

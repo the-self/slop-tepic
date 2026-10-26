@@ -244,6 +244,7 @@ async function initApp(): Promise<void> {
     isSolidAt: (x, z, height, ground) => controllerManager.isSolidAt(x, z, height, ground),
     groundAt: (x, z) => controllerManager.getGroundHeight(x, z, 'person'),
     active: () => controllerManager.getActiveEntity(), activeMode: () => controllerManager.activeMode,
+    addColliders: (list) => { controllerManager.addColliders(list); },
     ignite: (kind, x, z, size) => fires.ignite(kind, x, z, size)
   });
   controllerManager.onFuelOut = () => { crimeSystem.toast('Out of gas: fill up at a gas station'); };
