@@ -30,7 +30,8 @@ export interface Footprint {
 export type RoadAxis = 'ave' | 'st';
 /** A move's kind of turn at a junction: left, straight on, right */
 export type Turn = 'L' | 'S' | 'R';
-/** On a bridge or ramp: [distance from the edge's `from` node along it (m), lift over the ground (m)], ascending */
+/** On a bridge or ramp: [distance from the edge's `from` node along it (m), lift over the ground (m; < 0 down in an
+ *  underpass)], ascending */
 export type LiftProfile = [number, number][];
 
 /** An intersection or junction of the road graph (or a centreline street's bend: `shape`) */
@@ -701,15 +702,22 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
       return { half, axis, fwd: each, back: each };
     }
     const DEG = Math.PI / 180;
+    const farther = (a: number, b: number) => (Math.abs(b) > Math.abs(a) ? b : a); // (the lift farther from grade)
     for (const l of links) {
       const A = junction(find(l.a));
       const B = junction(find(l.b));
       if (A === B) continue;
-      // a junction on a bridge or ramp stands as high as the highest of the links' ends meeting there
-      A.lift = Math.max(A.lift || 0, l.pts[0].lift || 0);
-      B.lift = Math.max(B.lift || 0, l.pts[l.pts.length - 1].lift || 0);
+      // a junction on a bridge or ramp stands as high as the highest of the links' ends meeting there (down in an
+      // underpass's cut, as low as the lowest)
+      A.lift = farther(A.lift || 0, l.pts[0].lift || 0);
+      B.lift = farther(B.lift || 0, l.pts[l.pts.length - 1].lift || 0);
       const pts: LinkPoint[] = [{ x: A.x, z: A.z, lift: l.pts[0].lift || 0 }, ...l.pts.slice(1, -1), { x: B.x, z: B.z, lift: l.pts[l.pts.length - 1].lift || 0 }];
+      // a raised (or sunk) link's lift along each run: the link's points from one station to the next
+      const raised = pts.some((p) => (p.lift ?? 0) !== 0);
       // stations along it: the ends and every bend over 12° at least 15 m from the last station and from the far end
+      // (on a bridge or down an underpass every bend over 3° at least 8 m on: the traffic drives straight from station
+      // to station, and the chord of a curving deck runs off it, into the air)
+      const [minTurn, minRun] = raised ? [3 * DEG, 8] : [12 * DEG, 15];
       const stations = [A];
       let last = pts[0];
       let rest = l.len;
@@ -720,7 +728,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
         rest -= Math.hypot(p1.x - pts[k - 1].x, p1.z - pts[k - 1].z);
         let turn = Math.abs(Math.atan2(p2.z - p1.z, p2.x - p1.x) - Math.atan2(p1.z - last.z, p1.x - last.x));
         if (turn > Math.PI) turn = 2 * Math.PI - turn;
-        if (turn < 12 * DEG || d0 < 15 || rest < 15) continue;
+        if (turn < minTurn || d0 < minRun || rest < minRun) continue;
         const s: RoadNode = { x: p1.x, z: p1.z, hx: 0, hz: 0, signal: false, in: [], out: [], general: true, shape: true, lift: p1.lift || 0, arms: [], id: -1, sideCount: 0, groupCount: 0 };
         nodes.push(s);
         stations.push(s);
@@ -728,8 +736,6 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
       }
       stations.push(B);
       const lanes = lanesOf(l);
-      // a raised link's lift along each run: the link's points from one station to the next
-      const raised = pts.some((p) => (p.lift ?? 0) > 0);
       let at = 0;
       for (let k = 0; k + 1 < stations.length; k++) {
         let profile: LinkPoint[] | null = null;
@@ -818,7 +824,8 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
   }
   // A divided road drawn as two one-way roadways between the same two junctions (most of the Bowery) runs both ways
   // along one centreline here: each way keeps to the right of it, as on a two-way street, and the road is as wide as
-  // both roadways
+  // both roadways. Not on a bridge or down an underpass: each roadway there has a deck or a cut of its own, and its
+  // traffic keeps to it (on the other's centreline it would drive off the deck, in the air)
   const travel = (r: StreetRun) => (r.fwd.length ? [r.from, r.to] : [r.to, r.from]);
   const oneWays = new Map<RoadNode, Map<RoadNode, StreetRun>>(); // node -> next node -> the one-way run from one to the other
   for (const r of genRuns) {
@@ -829,10 +836,10 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     next.set(b, r);
   }
   for (const r of genRuns) {
-    if (!r.fwd.length === !r.back.length || r.divided) continue;
+    if (!r.fwd.length === !r.back.length || r.divided || r.profile) continue;
     const [a, b] = travel(r);
     const o = oneWays.get(b)?.get(a);
-    if (!o || o.divided) continue;
+    if (!o || o.divided || o.profile) continue;
     for (const q of [r, o]) {
       const lanes = q.fwd.length ? q.fwd : q.back;
       const right = lanes.map((x) => x - lanes[0] + 1.8); // as on a two-way street, from 1.8 m right of the centreline
@@ -859,9 +866,9 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
   }
   edges = edges.filter((e) => keptEdge.get(e.from)?.get(e.to) === e);
   // ...and where only some of the junctions on both sides of its median became one (Pike St), the stretches of its two
-  // roadways that run on top of each other the same way
+  // roadways that run on top of each other the same way (but on bridges and down underpasses, as above)
   {
-    const oneWay = edges.filter((e) => e.general && !e.divided && e.cand[0] <= 0); // lanes about its centreline
+    const oneWay = edges.filter((e) => e.general && !e.divided && !e.lift && e.cand[0] <= 0); // lanes about its centreline
     const cells = new Map<number, RoadEdge[]>(); // 16 m cells -> the one-way edges passing within 4 m
     oneWay.forEach((e, i) => {
       e.oneWay = i;
@@ -1586,7 +1593,8 @@ function curvePoint(c: LaneCurve, s: number, out: CurvePoint): CurvePoint {
   return out;
 }
 
-/** An edge's lift (m over the ground: a bridge, a ramp) at distance t from its `from` node along it; 0 at grade */
+/** An edge's lift (m over the ground: a bridge, a ramp; < 0 down an underpass) at distance t from its `from` node along
+ *  it; 0 at grade */
 function edgeLift(e: { lift?: LiftProfile | null }, t: number): number {
   const p = e.lift;
   if (!p) return 0;

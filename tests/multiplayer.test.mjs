@@ -6,13 +6,21 @@ import {
   STATE_BYTES,
   ROW_BYTES,
   sanitizeName,
+  sanitizeChat,
   isRegion,
   encodeHello,
   encodeState,
+  encodeChat,
+  encodeShot,
+  encodeHit,
+  encodeDown,
   decodeClient,
   encodeWelcome,
   encodeTick,
   encodeError,
+  encodeChatLine,
+  encodeShotSeen,
+  encodeHurt,
   decodeServer
 } from '../shared/protocol.ts';
 import { RoomManager } from '../server/rooms.ts';
@@ -114,4 +122,40 @@ test('the area of interest returns the nearest players within the radius, capped
   grid.remove(6);
   assert.deepEqual(nearestInView(grid, positions, 1, 800, 10), [3, 4]);
   assert.equal(grid.cells.size, 5, 'emptied cells are dropped (one per remaining occupied cell)');
+});
+
+test('a passenger travels as its own mode, at the end of the list (the older modes keep their indices)', () => {
+  const msg = decodeClient(encodeState(entity(1, 2, 3, 0, 4), 'passenger'));
+  assert.equal(msg.state.m, 5);
+  assert.equal(decodeClient(encodeState(entity(1, 2, 3, 0, 4), 'moto')).state.m, 4);
+  const tick = decodeServer(encodeTick(1, [], [], [[7, msg.state]]));
+  assert.equal(tick.moved[0].mode, 'passenger');
+});
+
+test('chat lines go out raw and come back cleaned, capped, with the speaker; empty ones are nothing', () => {
+  assert.deepEqual(decodeClient(encodeChat('hola\n  carnal')), { op: OP.CHAT, text: 'hola\n  carnal' });
+  assert.equal(sanitizeChat('  hola\n  carnal\u202e '), 'hola carnal');
+  assert.equal(sanitizeChat(' \u200b\n '), '');
+  assert.equal(Array.from(sanitizeChat('á'.repeat(500))).length, 140);
+  assert.deepEqual(decodeServer(encodeChatLine(3, 'Lalo', 'vámonos')), { op: OP.CHAT_LINE, from: 3, name: 'Lalo', text: 'vámonos' });
+});
+
+test('a shot round-trips at centimetre precision; one that reaches too far or names a strange weapon is dropped', () => {
+  const shot = { ox: 10.004, oy: 1.4, oz: -20, ex: 40.5, ey: 1.25, ez: -20, weapon: 'rifle', rocket: false };
+  const msg = decodeClient(encodeShot(shot));
+  assert.equal(msg.op, OP.SHOT);
+  assert.deepEqual(msg.shot, { ox: 1000, oy: 140, oz: -2000, ex: 4050, ey: 125, ez: -2000, weapon: 'rifle', flags: 0 });
+  const seen = decodeServer(encodeShotSeen(9, msg.shot));
+  assert.deepEqual(seen, { op: OP.SHOT_SEEN, from: 9, shot: { ox: 10, oy: 1.4, oz: -20, ex: 40.5, ey: 1.25, ez: -20, weapon: 'rifle', rocket: false } });
+  assert.equal(decodeClient(encodeShot({ ...shot, rocket: true })).shot.flags, 1);
+  assert.equal(decodeClient(encodeShot({ ...shot, ex: 900 })), null, 'its ends ~890 m apart');
+  assert.equal(decodeClient(encodeShot({ ...shot, weapon: '<img src=x>' })), null);
+});
+
+test('hits carry their target and capped damage; a death names its killer', () => {
+  assert.deepEqual(decodeClient(encodeHit(12, 34.4)), { op: OP.HIT, target: 12, damage: 34 });
+  assert.equal(decodeClient(encodeHit(12, 950)).damage, 100);
+  assert.equal(decodeClient(encodeHit(0, 10)), null, 'nobody is player 0');
+  assert.deepEqual(decodeClient(encodeDown(12)), { op: OP.DOWN, killer: 12 });
+  assert.deepEqual(decodeServer(encodeHurt(4, 22)), { op: OP.HURT, from: 4, damage: 22 });
 });

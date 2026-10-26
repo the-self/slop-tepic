@@ -43,11 +43,11 @@ export interface GeoFrame {
 export type Road = [name: string, width: number, dir: 'TW' | 'FT' | 'TF', lanes: number, major: Flag, pts: FlatPoints];
 
 /** A road-graph link between two nodes: [a, b (node indices), name (index into `names`), width (m), lanes,
- *  dir, inner (flat interior points, a → b), lifts (dm over the ground at a, inner..., b; 0 when all at grade),
- *  bridge (1: a bridge way)]. */
+ *  dir, inner (flat interior points, a → b), lifts (dm over the ground at a, inner..., b, < 0 down in an underpass's
+ *  cut; 0 when all at grade), way (1: a bridge way, 2: a tunnel way, 0 neither)]. */
 export type GraphLink = [
   a: number, b: number, name: number, width: number, lanes: number, dir: LinkDir,
-  inner: FlatPoints, lifts: number[] | 0, bridge: Flag
+  inner: FlatPoints, lifts: number[] | 0, way: 0 | 1 | 2
 ];
 
 export interface RoadGraph {

@@ -10,8 +10,9 @@ import { Wanted, GANGS } from './crime-rules.ts';
 import { GunfireFX } from './gunfire-fx.ts';
 import type {
   CrimeState, DownKind, AgentKind, Faction, PickupKind, Blips, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers,
-  CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, TraceHit
+  CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, TraceHit, RemoteTarget
 } from './crime/types.ts';
+import type { Shot } from '../../shared/protocol.ts';
 import { MAX_AGENTS, MAX_PICKUPS, COP_SIGHT, CRUISER_SIGHT, HELI_SIGHT, rand, zero } from './crime/constants.ts';
 import { buildGuns, buildCruisers, buildHelicopter } from './crime/models.ts';
 import { spawnHeli, removeHeli, damageHeli, updateHeli } from './crime/helicopter.ts';
@@ -20,7 +21,7 @@ import { buildRoadGraph, nearestNode, route, clearLine } from './crime/road-grap
 import {
   bindInput, updatePlayer, placePlayerGun, findTarget, muzzle, playerFire, punch, hurt, down, updateDown, playerSize
 } from './crime/player.ts';
-import { aimAlong, trace, hitScan, updateRockets, explode } from './crime/gunfire.ts';
+import { aimAlong, trace, hitScan, updateRockets, explode, showShot, blastSeen } from './crime/gunfire.ts';
 import {
   spawnAgent, angerGang, removeAgent, damageAgent, knockAgent, kill, updateAgent, walkAgent, findFoe, npcShoot
 } from './crime/agents.ts';
@@ -63,6 +64,12 @@ class CrimeSystem {
   solidAt: (x: number, z: number) => boolean;
   audio: CrimeAudio | null;
   onRespawn: ((kind: DownKind) => void) | null;
+  // multiplayer (net/multiplayer.ts): the other players near (as targets), each shot the player fires (for the others to
+  // see), a hit on one of them (its damage in hit points), and no firing while riding in someone else's car
+  remotes: RemoteTarget[] = [];
+  onPlayerShot: ((shot: Shot) => void) | null = null;
+  onRemoteHit: ((id: number, damage: number) => void) | null = null;
+  fireBlocked = false;
   personGround: (owner: unknown, x: number, z: number) => number;
   // (a burning wreck where a blast went off: fires.ts, from main.ts)
   onExplosion?: (x: number, y: number, z: number, radius: number) => void;
@@ -412,6 +419,14 @@ class CrimeSystem {
     updateRockets(this, dt);
   }
 
+  showShot(s: Shot): void {
+    showShot(this, s);
+  }
+
+  blastSeen(x: number, y: number, z: number, radius: number): void {
+    blastSeen(this, x, y, z, radius);
+  }
+
   explode(x: number, y: number, z: number, radius: number, damage: number, byPlayer: boolean): void {
     explode(this, x, y, z, radius, damage, byPlayer);
   }
@@ -567,6 +582,6 @@ class CrimeSystem {
 export type {
   CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, NpcGun, CrimePlayer,
   CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter,
-  RocketFlight, Pickup, LockTarget, TraceHit
+  RocketFlight, Pickup, LockTarget, RemoteTarget, TraceHit
 } from './crime/types.ts';
 export { CrimeSystem };

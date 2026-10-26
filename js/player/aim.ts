@@ -3,6 +3,8 @@
 // comes in over the player's right shoulder (cameras.ts) with a crosshair in the middle of the screen. The mouse turns
 // the player and tilts the aim (pointer lock), the left button (or X) fires along the crosshair (crime.ts), and WASD
 // walks and strafes (controllers.ts). The crosshair turns red over someone or something the shot would hit.
+// The pointer stays locked after (the mouse goes on looking around, cameras.ts), and on foot the left button fires
+// from the hip then, at whoever is ahead (crime.ts' lock-on).
 // No three.js: only the DOM, the controllers' person entity and its keys.
 
 import type { ThirdPersonControllerManager } from './controllers.ts';
@@ -68,13 +70,15 @@ class AimControl {
     const canvas = this.canvas;
     const doc = this.doc;
     const onFoot = () => this.controllers.activeMode === 'person' && this.allowed;
-    // (in the capture phase, ahead of the camera's own drag: a left click while aiming is a shot, not a drag)
+    // a left click aiming, or on foot with the pointer locked, is a shot
+    const shot = () => this.active || (onFoot() && doc.pointerLockElement === canvas);
+    // (in the capture phase, ahead of the camera's own drag)
     window.addEventListener('pointerdown', (e) => {
       if (e.pointerType !== 'mouse' || (e.target !== canvas && doc.pointerLockElement !== canvas)) return;
       if (e.button === 2) {
         this.held = true;
         if (onFoot()) this.lock();
-      } else if (e.button === 0 && this.active) {
+      } else if (e.button === 0 && shot()) {
         this.fire = true;
         e.stopPropagation();
         e.preventDefault();
@@ -86,7 +90,7 @@ class AimControl {
       if (e.button === 2 && !this.held) {
         this.held = true;
         if (onFoot()) this.lock();
-      } else if (e.button === 0 && this.active) {
+      } else if (e.button === 0 && shot()) {
         this.fire = true;
       }
     }, true);
@@ -128,10 +132,6 @@ class AimControl {
     }
   }
 
-  unlock(): void {
-    if (this.doc.pointerLockElement === this.canvas) this.doc.exitPointerLock?.();
-  }
-
   release(): void {
     this.held = false;
     this.toggled = false;
@@ -145,8 +145,8 @@ class AimControl {
     const was = this.active;
     this.active = onFoot && (this.held || this.toggled);
     if (this.active && !was) this.pitch = 0;
-    if (!this.active) this.fire = false;
-    if (was && !this.active) this.unlock();
+    // (letting go of the aim lets go of the trigger too; the hip's is the left button held on foot)
+    if (!onFoot || (was && !this.active)) this.fire = false;
     this.controllers.aiming = this.active;
     this.blend += ((this.active ? 1 : 0) - this.blend) * (1 - Math.exp(-dt * BLEND_RATE));
     if (!this.active && this.blend < 0.002) this.blend = 0;

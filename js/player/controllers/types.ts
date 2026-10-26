@@ -332,6 +332,8 @@ export interface TakenVehicle {
   kind: VehicleMode;
   x: number;
   z: number;
+  /** the road's surface under it (m): on a bridge its deck, down an underpass its cut */
+  y?: number;
   heading: number;
   speed: number;
   color?: number;

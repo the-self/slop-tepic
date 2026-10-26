@@ -57,6 +57,7 @@ function hijack(ts: TrafficState, v: Hijackable): TakenVehicle {
           kind: 'car', x: v.x, z: v.z, heading: yaw, speed: v.speed, bodyType: v.bodyType, police: v.isPolice, model: v.model?.id,
           paint: new THREE.Color().setRGB(v.paint[0], v.paint[1], v.paint[2]).getHex(), route
         };
+  taken.y = v.hy; // (the player's takes its place on the deck it drove, not on the ground under the bridge)
   // out of the driver's door (on the left: heading 0 faces +z, left is +x; a camión's driver sits at its nose), or
   // off the bicycle or the moto
   const two = v.bike || v.moto;

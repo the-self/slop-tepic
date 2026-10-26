@@ -58,7 +58,8 @@ export function update(ctl: ThirdPersonControllerManager, dt: number, elapsed: n
   const prevZ = active.position.z;
 
   if (ctl.activeMode === 'person') {
-    ctl.updatePerson(dt);
+    // (riding in a friend's car, net/multiplayer.ts: the walker waits where it got in, out of sight)
+    if (!ctl.seated) ctl.updatePerson(dt);
   } else {
     // The pedestrian rides along (out of sight) in the vehicle it got into
     const p = ctl.entities.person;

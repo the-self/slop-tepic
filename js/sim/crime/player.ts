@@ -1,5 +1,5 @@
 // js/sim/crime/player.ts
-// The player in the street's crime (sim/crime.ts): its input (fire: X, the left button while aiming on foot (aim.ts),
+// The player in the street's crime (sim/crime.ts): its input (fire: X, the left button on foot (aim.ts),
 // the right button from a vehicle; touch & gamepad through controllers.keys.fire; weapons 1-4, R to cycle, Tab for the
 // wheel: ui/weapon-wheel.ts), firing, aiming and punching, getting hurt, and being WASTED or BUSTED.
 import type { Point3 } from '../ragdolls.ts';
@@ -36,10 +36,11 @@ export function bindInput(crime: CrimeSystem, canvas: HTMLElement | null): void 
 export function updatePlayer(crime: CrimeSystem, dt: number, _elapsed: number): void {
   const c = crime.controllers;
   const p = c.entities.person;
-  // aiming on foot (aim.ts): the shots go where the crosshair is, and the right button aims rather than fires
+  // aiming on foot (aim.ts): the shots go where the crosshair is, and the right button aims rather than fires; on
+  // foot the left button fires (aim.ts: aiming, or from the hip with the pointer locked)
   const aimCtl = crime.aim;
   const free = aimCtl != null && aimCtl.active && crime.mode === 'person';
-  const mouse = free ? aimCtl.fire : crime.mouseFire && (crime.mode !== 'person' || !crime.aim);
+  const mouse = crime.mode === 'person' && aimCtl ? aimCtl.fire : crime.mouseFire;
   const held = Boolean(c.keys.fire) || mouse;
   const w = crime.arsenal.weapon;
   // a change of weapon (the keys, the wheel, the mouse wheel, or out of rounds): the last one put away, this one
@@ -54,7 +55,7 @@ export function updatePlayer(crime: CrimeSystem, dt: number, _elapsed: number): 
   }
   crime.drawT = Math.max(0, crime.drawT - dt);
   // what this weapon can do from here: no guns from the helicopter, no fists or bazooka from a car or a bicycle
-  const usable = crime.mode === 'person' || (crime.mode !== 'helicopter' && !w.melee && !w.rocket);
+  const usable = !crime.fireBlocked && (crime.mode === 'person' || (crime.mode !== 'helicopter' && !w.melee && !w.rocket));
   const shots = crime.arsenal.trigger(held && usable && crime.onStreet, dt);
   if (held && usable) crime.aimHold = w.melee ? 0.2 : 0.7;
   else crime.aimHold = Math.max(0, crime.aimHold - dt);
@@ -62,7 +63,7 @@ export function updatePlayer(crime: CrimeSystem, dt: number, _elapsed: number): 
   if (free) {
     crime.lockTarget = null;
     const hit = crime.aimAlong(crime.camera, w);
-    aimCtl.onTarget = !w.melee && (hit.kind === 'agent' || hit.kind === 'ped' || hit.kind === 'cruiser' || hit.kind === 'vehicle' || hit.kind === 'heli');
+    aimCtl.onTarget = !w.melee && (hit.kind === 'agent' || hit.kind === 'ped' || hit.kind === 'cruiser' || hit.kind === 'vehicle' || hit.kind === 'heli' || hit.kind === 'remote');
   } else if (crime.aim) {
     crime.aim.onTarget = false;
   }
@@ -116,6 +117,7 @@ export function findTarget(crime: CrimeSystem, x: number, z: number, heading: nu
   const list = crime.candidates;
   list.length = 0;
   for (const a of crime.agents) if (!a.fallen) list.push(a);
+  for (const r of crime.remotes) list.push(r);
   const person = pickTarget(x, z, heading, list, range, cone);
   if (person) return person;
   list.length = 0;
@@ -180,6 +182,8 @@ export function playerFire(crime: CrimeSystem, w: Weapon): void {
   crime.report('gunfire', crime.witnessed(m.x, m.z));
   if (w.rocket) {
     const pitch = Math.atan(slope ?? 0);
+    const reach = w.range * Math.cos(pitch);
+    crime.onPlayerShot?.({ ox: m.x, oy: m.y, oz: m.z, ex: m.x + Math.sin(yaw) * reach, ey: m.y + Math.sin(pitch) * w.range, ez: m.z + Math.cos(yaw) * reach, weapon: w.id, rocket: true });
     const r = crime.fx.launchRocket(m.x, m.y, m.z, yaw, -pitch);
     if (r) crime.rockets.push({ r, x: m.x, y: m.y, z: m.z, dx: Math.sin(yaw), dz: Math.cos(yaw), dh: Math.cos(pitch), dy: Math.sin(pitch), t: 0 });
     return;
@@ -209,6 +213,17 @@ export function punch(crime: CrimeSystem): void {
   for (const a of crime.agents) if (!a.fallen) consider(a);
   for (const ped of crime.traffic.peds) {
     if (ped.placed && !ped.fallen && Math.abs(ped.x - crime.px) < 3 && Math.abs(ped.z - crime.pz) < 3) consider(ped);
+  }
+  // another player on foot within reach, and nearer than anyone else in front: the punch is theirs
+  for (const r of crime.remotes) {
+    if (!r.person) continue;
+    const dx = r.x - crime.px, dz = r.z - crime.pz;
+    const d = Math.hypot(dx, dz);
+    if (d > bestD || (dx * fx + dz * fz) < d * 0.45) continue;
+    crime.audio?.gunfire?.('punch', r.x, r.y + 1.2, r.z);
+    crime.onRemoteHit?.(r.id, WEAPONS.fists.damage);
+    crime.report('punch');
+    return;
   }
   if (!best) return;
   const d = Math.max(0.01, bestD);

@@ -25,7 +25,7 @@ type CruiserState = 'chase' | 'leave';
 // What lies about to be picked up: money, health, armour, or a gun
 type PickupKind = 'money' | 'health' | 'armor' | StreetGun | 'bazooka';
 // What a shot meets first (trace)
-type TraceKind = 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'vehicle' | 'heli';
+type TraceKind = 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'vehicle' | 'heli' | 'remote';
 // The radar's blips, flat: kind ('cop' | 'soldier' | 'thief' | 'rojos' | 'verdes' | 'narcos' | 'cruiser' | 'truck' |
 // 'army' | 'heli' | a PickupKind, or fires.ts's 'fire'), x, z, kind, x, z, ...
 type Blips = (string | number)[];
@@ -181,6 +181,7 @@ interface Cruiser extends XZ {
 // A rocket in flight: where (m), its heading (dx, dz) and climb (dh along, dy up per m), t s since it was fired
 interface RocketFlight {
   r: Rocket;
+  remote?: boolean; // another player's (net/multiplayer.ts): seen and heard here, its harm judged by its shooter
   x: number;
   y: number;
   z: number;
@@ -232,7 +233,21 @@ interface LockTarget extends XZ {
   y?: number;
   mesh?: unknown;
 }
-type TraceTarget = Agent | Cruiser | Helicopter | Ped | Vehicle;
+/**
+ * Another player, in multiplayer (net/multiplayer.ts), as shots, blows and blasts find it: its id, where it is (m) and
+ * faces (rad), and its body: on foot a person's (BODY_R, PERSON_H), else its vehicle's half width & length and height
+ * (m). What the player does to it goes out through CrimeSystem.onRemoteHit: its own game takes the damage.
+ */
+interface RemoteTarget extends XZ {
+  id: number;
+  y: number;
+  heading: number;
+  person: boolean;
+  halfW: number;
+  halfL: number;
+  height: number;
+}
+type TraceTarget = Agent | Cruiser | Helicopter | Ped | Vehicle | RemoteTarget;
 // What a shot met (trace, reused): t m along it
 interface TraceHit {
   t: number;
@@ -241,5 +256,5 @@ interface TraceHit {
 }
 
 export type {
-  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, TraceTarget, TraceHit
+  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, RemoteTarget, TraceTarget, TraceHit
 };

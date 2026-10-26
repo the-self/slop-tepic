@@ -1,8 +1,8 @@
 // js/app/boarding.ts
 // GTA-style boarding (F, the gamepad's Y, the touch button): on foot, get into the nearest of the player's own vehicles,
 // take the nearest car, bicycle or moto from the traffic (its driver is left in the street), rob a store's till, buy
-// from a taco stand or go in through a door; in a vehicle, get out (a helicopter once it has landed). And the prompt
-// for what F would do here.
+// from a taco stand or go in through a door; in a vehicle, get out (a helicopter once it has landed). In multiplayer,
+// by a friend's car, get in with them (and F again gets out). And the prompt for what F would do here.
 import type { ThirdPersonControllerManager, LeftCar, VehicleMode } from '../player/controllers.ts';
 import type { TrafficSystem } from '../sim/traffic.ts';
 import type { CrimeSystem } from '../sim/crime.ts';
@@ -38,8 +38,17 @@ export interface BoardingSystems {
   onModeChange: () => void;
 }
 
+/** Riding in a friend's car (net/multiplayer.ts), once multiplayer has loaded */
+export interface RideHook {
+  readonly riding: boolean;
+  rideTarget(): { id: number; name: string } | null;
+  startRide(id: number): void;
+  leaveRide(): void;
+}
+
 export class Boarding {
   private readonly systems: BoardingSystems;
+  ride: RideHook | null = null;
 
   constructor(systems: BoardingSystems) {
     this.systems = systems;
@@ -79,12 +88,24 @@ export class Boarding {
   board(): void {
     const { controllers, traffic, crime, interiors, streetFood, mapOpen, onModeChange } = this.systems;
     if (mapOpen() || crime.state !== 'play') return;
+    if (this.ride?.riding) {
+      this.ride.leaveRide();
+      onModeChange();
+      return;
+    }
     if (controllers.activeMode !== 'person') {
       if (controllers.exitVehicle()) onModeChange();
       return;
     }
     if (interiors.active) {
       interiors.act(); // (inside: the counter, or out of the door)
+      return;
+    }
+    // by a friend's car: in with them
+    const friend = this.ride?.rideTarget();
+    if (friend && this.ride) {
+      this.ride.startRide(friend.id);
+      onModeChange();
       return;
     }
     const target = this.target();
@@ -115,6 +136,9 @@ export class Boarding {
   /** What F would do here ('' for nothing) */
   prompt(): string {
     const { controllers, interiors, streetFood } = this.systems;
+    if (this.ride?.riding) return 'Bajar del coche';
+    const friend = this.ride?.rideTarget();
+    if (friend) return `Subir con ${friend.name}`;
     if (controllers.activeMode === 'person') {
       const target = this.target();
       if (!target) return (interiors.active ? '' : streetFood.prompt()) || interiors.prompt();

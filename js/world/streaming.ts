@@ -135,8 +135,9 @@ class TileStreamer {
 
   /**
    * `lattice`: the ground's (ground.ts LATTICE, null in the flat city); `ground`: GEO.ground on the slopes (else null);
-   * `box`: the rectangle the hills' floor is masked over; `holes`: the river channels' holes in the road deck
-   * (waterways.ts holes(): flat triangles x0 z0 x1 z1 x2 z2), cut out of the layers that ask for it once laid.
+   * `box`: the rectangle the hills' floor is masked over; `holes`: the river channels' and the open underpasses'
+   * holes in the road deck (ground.ts deckHoles(): flat triangles x0 z0 x1 z1 x2 z2), cut out of the layers that ask
+   * for it once laid.
    */
   constructor({ scene, lattice, ground, box = null, holes = null, workers = 2 }: TileStreamerOptions) {
     this.grid = createTileGrid(lattice, TILE_CELLS);

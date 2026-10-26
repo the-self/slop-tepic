@@ -4,13 +4,17 @@
 import { createDriveState, stepDrive } from '../drivetrain.ts';
 import { enginePower } from '../vehicle-damage.ts';
 import { wash } from '../car-blood.ts';
-import { suspensionOf } from '../car-physics.ts';
+import { suspensionOf, steerLimit } from '../car-physics.ts';
 import { EJECT_SPEED } from './constants.ts';
 import type { DriveInput, DriveSpec, DriveState } from '../drivetrain.ts';
 import type { CarDamage } from '../vehicle-damage.ts';
 import type { CarBodyDef, CarPhysics, PhysicsVehicle, VehicleOut } from '../car-physics.ts';
 import type { HeldGearKeys, CarWheel, CarEntity, CyclistEntity, MotoEntity } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
+
+const STEER_IN = 5; // 1/s the wheels turn towards the lock asked (~0.2 s)...
+const STEER_BACK = 10; // ...and back towards the middle
+const SLIDE = 0.05; // rad (~3°) of sideways slide before the steering catches it
 
 // The car: a rigid body on its sprung wheels in Jolt Physics (car-physics.ts, set up by main.ts before the first
 // frame). Before the world's step (stepVehicles): what the traffic did to it since the last one carried over, and
@@ -76,9 +80,16 @@ export function driveCar(ctl: ThirdPersonControllerManager, dt: number, driving:
   let steerInput = 0;
   if (driving && ctl.keys.left) steerInput = Number(ctl.keys.left);
   if (driving && ctl.keys.right) steerInput = -Number(ctl.keys.right);
-  // speed-sensitive steering: the wheels turn less the faster it goes; a bent front corner pulls it to one side
-  const lock = spec.steerLock / (1 + Math.abs(u) / 16);
-  c.steerAngle += (steerInput * lock - c.steerAngle) * Math.min(1, dt * 10);
+  // The steering, a game's (the keys are all or nothing): the wheels turn no more than the front tyres hold at this
+  // speed (steerLimit), in over STEER_IN's ~0.2 s and back twice as quick; sliding sideways going forward, they point
+  // the way it goes, as a driver catches it (less the slide's first SLIDE rad); a bent front corner pulls it aside
+  const lock = steerLimit(spec.steerLock, spec.wheelbase, spec.grip * input.grip, u);
+  const sideways = c.vx * cs0 - c.vz * sn0; // m/s to its left
+  const slide = u > 3 ? Math.atan2(sideways, u) : 0;
+  const catchIt = Math.sign(slide) * Math.max(0, Math.abs(slide) - SLIDE) * Math.min(1, (u - 3) / 5);
+  const target = Math.max(-spec.steerLock, Math.min(spec.steerLock, steerInput * lock + catchIt));
+  const back = Math.abs(target) < Math.abs(c.steerAngle) || target * c.steerAngle < 0;
+  c.steerAngle += (target - c.steerAngle) * Math.min(1, dt * (back ? STEER_BACK : STEER_IN));
   const steer = c.steerAngle + dmg.pull * Math.min(1, Math.abs(u) / 5);
 
   const body = v.out;
@@ -93,6 +104,7 @@ export function driveCar(ctl: ThirdPersonControllerManager, dt: number, driving:
   go.hold = !throttle && !brake && Math.abs(u) < 0.5;
   go.grip = spec.grip * input.grip;
   go.spinning = d.wheelspin;
+  go.assist = driving; // (the stability control: car-physics.ts stabilise, off while the handbrake swings it round)
   const frame = (c.frame ??= { throttle: 0, steer: 0, water: 0 });
   frame.throttle = throttle;
   frame.steer = steer;

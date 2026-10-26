@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { waterways } from './ground.ts';
+import { waterways, deckHoles } from './ground.ts';
 import { cutHoles } from './waterways.ts';
 import { drapeGeometry } from './drape.ts';
 import { createRiverBankMaterial, createRiverWaterMaterial, createCurbMaterial } from '../render/tsl-materials.ts';
@@ -8,7 +8,8 @@ import type { ChannelMesh } from './waterways.ts';
 // js/world/river-channels.ts
 // Draws the river channels of waterways.ts (the Río Mololoa, its old bed, the arroyos): their stone banks & silty bed,
 // the water in them and the bridges' decks seen from below, laid on the town's slopes (drape.ts), and opens the road
-// deck over them (cutRiverHoles), so the channels are seen sunk into the ground instead of under the asphalt.
+// deck over them and over the open underpasses (cutDeckHoles), so the channels and the cuts are seen sunk into the
+// ground instead of under the asphalt.
 
 /** The channels drawn: their group, and the water's mesh (null without channels), which rises with a flood. */
 export interface RiverChannels {
@@ -53,12 +54,16 @@ function buildRiverChannels(scene: THREE.Object3D): RiverChannels {
   return { group, water: waterMesh };
 }
 
-/** The road deck's geometry (non-indexed or indexed, as city-grid.ts leaves it) with the channels' holes taken out */
-function cutRiverHoles(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
-  if (!waterways) return geometry;
+/**
+ * The road deck's geometry (non-indexed or indexed, as city-grid.ts leaves it) with the channels' holes taken out, and
+ * the open underpasses' (bridges.ts draws them)
+ */
+function cutDeckHoles(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const holes = deckHoles();
+  if (!holes.length) return geometry;
   const names = Object.keys(geometry.attributes).sort((a, b) => (a === 'position' ? -1 : b === 'position' ? 1 : 0));
   const attrs = names.map((n) => geometry.attributes[n]);
-  const out = cutHoles(attrs.map((a) => a.array), attrs.map((a) => a.itemSize), geometry.index ? geometry.index.array : null, waterways.holes());
+  const out = cutHoles(attrs.map((a) => a.array), attrs.map((a) => a.itemSize), geometry.index ? geometry.index.array : null, holes);
   const cut = new THREE.BufferGeometry();
   names.forEach((n, k) => cut.setAttribute(n, new THREE.BufferAttribute(out[k], attrs[k].itemSize, attrs[k].normalized)));
   cut.computeBoundingBox();
@@ -67,4 +72,4 @@ function cutRiverHoles(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   return cut;
 }
 
-export { buildRiverChannels, cutRiverHoles };
+export { buildRiverChannels, cutDeckHoles };

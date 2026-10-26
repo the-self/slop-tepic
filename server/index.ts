@@ -4,12 +4,18 @@
 // one a single binary TICK frame (shared/protocol.ts) about the nearest VIEW_MAX players within VIEW_RADIUS
 // (server/aoi.ts): who left the view, who entered it, and only the poses that changed since that client last heard
 // them, so traffic per client stays flat however many players share the room and parked players cost nothing. It
-// relays poses as sent (no physics), only checking their shape.
+// relays poses as sent (no physics), only checking their shape. It passes on what players do to each other: chat lines
+// to the room, shots to those who see the shooter, and the hits a shooter's client found to the player struck.
+// With STATIC_DIR it also serves the game's page (index.html, css/, dist/, assets/ under it), so one address, behind
+// one tunnel (tools/play.ts), is the game and its server.
 //
 //   node server/index.ts        PORT=8787 ROOM_CAPACITY=200 VIEW_RADIUS=800 VIEW_MAX=64 MAX_PLAYERS=5000
 //                                ALLOWED_ORIGINS=https://example.com,http://localhost:8765 (unset = any origin)
+//                                STATIC_DIR=.. (unset = no page)
 
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
@@ -20,12 +26,17 @@ import {
   PROTOCOL_VERSION,
   TICK_HZ,
   OP,
+  HIT_REACH,
   sanitizeName,
+  sanitizeChat,
   isRegion,
   decodeClient,
   encodeWelcome,
   encodeTick,
-  encodeError
+  encodeError,
+  encodeChatLine,
+  encodeShotSeen,
+  encodeHurt
 } from '../shared/protocol.ts';
 import type { WirePose } from '../shared/protocol.ts';
 
@@ -33,6 +44,8 @@ const HELLO_TIMEOUT_MS = 5000;
 const PING_MS = 15000;
 const MAX_MSGS_PER_SEC = 40; // a client sends ~10 poses/s; far more is a bug or abuse
 const MAX_BUFFERED = 256 * 1024; // skip snapshots to a client whose socket is this far behind
+const CHAT_PER_SEC = 1; // chat lines a player may say a second, sustained...
+const CHAT_BURST = 5; // ...after a burst of this many
 
 export interface ServerOptions {
   port?: number; // 0 picks a free one
@@ -43,6 +56,7 @@ export interface ServerOptions {
   maxPlayers?: number; // connected at once, over all rooms
   allowedOrigins?: readonly string[] | null; // null: any origin
   tickHz?: number;
+  staticDir?: string | null; // the game's folder, to serve its page from (null: none)
   log?: (message: string) => void;
 }
 
@@ -57,6 +71,8 @@ export interface Player {
   alive: boolean; // answered the last ping
   budget: number; // messages left in its token bucket
   budgetAt: number; // ms (Date.now()) the bucket was last refilled
+  chatBudget: number; // chat lines left in its own bucket
+  chatAt: number; // ms (Date.now()) that one was last refilled
 }
 
 /** GET /health: the rooms, plus moving averages of the tick's cost (ms) and of the bytes it sends */
@@ -79,6 +95,7 @@ function createServer({
   maxPlayers = 5000,
   allowedOrigins = null,
   tickHz = TICK_HZ,
+  staticDir = null,
   log = console.log
 }: ServerOptions = {}): Promise<RunningServer> {
   // Poses stay in wire units (centimetres) server-side, so the grid's 250 m cells are 25 000 cm
@@ -102,6 +119,7 @@ function createServer({
       res.end(JSON.stringify(health));
       return;
     }
+    if (staticDir && serveStatic(staticDir, req, res)) return;
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('slop multiplayer server: connect over WebSocket, or GET /health\n');
   });
@@ -130,7 +148,9 @@ function createServer({
       sent: new Map(), // id → the pose this client last received for that player (its local player list)
       alive: true,
       budget: MAX_MSGS_PER_SEC,
-      budgetAt: Date.now()
+      budgetAt: Date.now(),
+      chatBudget: CHAT_BURST,
+      chatAt: Date.now()
     };
     if (!p.id) {
       fail(p, 'full');
@@ -177,6 +197,30 @@ function createServer({
         // Keep the old object for an unchanged pose, so ticks can tell "moved" by identity and skip parked players
         if (!samePose(p.state, st)) p.state = st;
         p.room.grid.update(p.id, st.x, st.z);
+      } else if (msg.op === OP.CHAT && p.room) {
+        // its own, slower bucket: a line a second after a burst of five; past it, lines are dropped (not the socket)
+        p.chatBudget = Math.min(CHAT_BURST, p.chatBudget + ((now - p.chatAt) / 1000) * CHAT_PER_SEC);
+        p.chatAt = now;
+        const text = sanitizeChat(msg.text);
+        if (!text || p.chatBudget < 1) return;
+        p.chatBudget -= 1;
+        const line = encodeChatLine(p.id, p.name ?? '', text);
+        for (const other of p.room.players.values()) send(other, line);
+      } else if (msg.op === OP.SHOT && p.room) {
+        // to those who have the shooter in view (they hear and see it), not back to the shooter
+        const frame = encodeShotSeen(p.id, msg.shot);
+        for (const other of p.room.players.values()) if (other !== p && other.sent.has(p.id)) send(other, frame);
+      } else if (msg.op === OP.HIT && p.room && p.state) {
+        const target = p.room.players.get(msg.target);
+        if (!target || target === p || !target.state) return;
+        const reach = Math.hypot(target.state.x - p.state.x, target.state.y - p.state.y, target.state.z - p.state.z) / 100;
+        if (reach <= HIT_REACH) send(target, encodeHurt(p.id, msg.damage));
+      } else if (msg.op === OP.DOWN && p.room) {
+        // the room hears who killed whom, as a line from the server
+        const killer = msg.killer && msg.killer !== p.id ? p.room.players.get(msg.killer) : undefined;
+        const text = killer ? `${killer.name ?? ''} mató a ${p.name ?? ''}` : `${p.name ?? ''} murió`;
+        const line = encodeChatLine(0, '', text);
+        for (const other of p.room.players.values()) send(other, line);
       }
     });
 
@@ -265,6 +309,46 @@ function createServer({
   });
 }
 
+// The game's page and what it loads, from `root`: index.html for /, and the files under css/, dist/ and assets/ (the
+// rest of the folder, its sources, tools and dotfiles among them, is never served). True when it answered.
+const STATIC_FOLDERS = ['css', 'dist', 'assets'];
+const CONTENT_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.map': 'application/json', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.ktx2': 'image/ktx2',
+  '.bin': 'application/octet-stream', '.glb': 'model/gltf-binary', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wasm': 'application/wasm'
+};
+function serveStatic(root: string, req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
+  } catch {
+    return false;
+  }
+  const parts = pathname.split('/').filter(Boolean);
+  if (parts.some((part) => part.startsWith('.') || part.includes('\\'))) return false; // (no dotfiles, no climbing out)
+  const allowed = parts.length === 0 || (parts.length === 1 && parts[0] === 'index.html') || (parts.length > 1 && STATIC_FOLDERS.includes(parts[0]));
+  if (!allowed) return false;
+  const base = path.resolve(root);
+  const file = path.resolve(base, parts.length ? parts.join('/') : 'index.html');
+  if (!file.startsWith(base + path.sep)) return false;
+  const type = CONTENT_TYPES[path.extname(file).toLowerCase()];
+  if (!type) return false;
+  let size: number;
+  try {
+    const stat = fs.statSync(file);
+    if (!stat.isFile()) return false;
+    size = stat.size;
+  } catch {
+    return false;
+  }
+  res.writeHead(200, { 'content-type': type, 'content-length': size, 'cache-control': 'no-cache' });
+  if (req.method === 'HEAD') res.end();
+  else fs.createReadStream(file).pipe(res);
+  return true;
+}
+
 function samePose(a: WirePose | null, b: WirePose): boolean {
   return !!a && a.x === b.x && a.y === b.y && a.z === b.z && a.h === b.h && a.m === b.m && a.s === b.s;
 }
@@ -283,7 +367,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     viewRadius: intEnv('VIEW_RADIUS', 800),
     viewMax: intEnv('VIEW_MAX', 64),
     maxPlayers: intEnv('MAX_PLAYERS', 5000),
-    allowedOrigins: origins
+    allowedOrigins: origins,
+    staticDir: process.env.STATIC_DIR || null
   }).then(({ port }) => { console.log(`[mp] listening on :${port} (rooms of ${intEnv('ROOM_CAPACITY', 200)})`); });
 }
 

@@ -26,6 +26,7 @@ import { bailWalk, renderBailed } from './carjacking.ts';
 import { spawnPed, spawnVehicle } from './spawning.ts';
 import { gatherCurbs } from './sidewalks.ts';
 import { meet, walk } from './walking.ts';
+import { rideStep } from './pickups.ts';
 import { allowance, kindOf, retirePed, retireVehicle } from './population.ts';
 
 function update(ts: TrafficState, dt: number, elapsed: number, focusPos: { x: number; z: number } | null = null, playerEntity: TrafficPlayerEntity | null = null, activeMode = 'car', camera: THREE.Camera | null = null): void {
@@ -258,7 +259,9 @@ function update(ts: TrafficState, dt: number, elapsed: number, focusPos: { x: nu
       continue;
     }
     if (p.bail) bailWalk(ts, p, dt);
-    else walk(ts, p, dt);
+    else if (p.ride) {
+      if (!rideStep(ts, p, dt)) continue; // (got on)
+    } else walk(ts, p, dt);
     const hit = playerHits(ts, p.x, p.z, 0.3);
     if (hit) {
       knockPed(ts, p, hit);

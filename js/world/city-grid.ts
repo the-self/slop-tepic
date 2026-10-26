@@ -16,7 +16,7 @@ import {
 import { GEO } from './city-geodata.js';
 import { SLOPES, liftAt, groundSlope } from './ground.ts';
 import { drapeMeshes, streamMeshes, cutOnCells } from './drape.ts';
-import { cutRiverHoles } from './river-channels.ts';
+import { cutDeckHoles } from './river-channels.ts';
 import { openness } from './lot-greenery.ts';
 import { cyclewayRuns, CYCLEWAY_HALF } from './medians.ts';
 import { insidePoly, insideRing } from './rings.ts';
@@ -727,11 +727,12 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   } else {
     // ...and lay them on the town's slopes; the valley floor beyond the hills' grid stays flat
     drapeMeshes(group, new Set([valleyMesh]));
-    // ...and open the deck over the river channels (river-channels.ts draws them sunk into the ground): in the flat
+    // ...and open the deck over the river channels and the open underpasses (river-channels.ts and bridges.ts draw
+    // them sunk into the ground): in the flat
     // city, cut in small cells first like the slopes' lattice cuts it (the holes cut out of its few triangles kilometres
     // across would split them into pieces without end)
     if (!SLOPES) roadMesh.geometry = cutOnCells(roadMesh.geometry);
-    roadMesh.geometry = cutRiverHoles(roadMesh.geometry);
+    roadMesh.geometry = cutDeckHoles(roadMesh.geometry);
   }
 
   scene.add(group);

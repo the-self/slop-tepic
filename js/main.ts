@@ -18,7 +18,7 @@ import { Tachometer } from './ui/tachometer.ts';
 import { gearLabel } from './player/drivetrain.ts';
 import { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices, releaseStaticArrays } from './render/scene-culling.ts';
 import { CityAudioSystem } from './audio/audio-system.ts';
-import { groundHeight, townHeight, landHeight, deckLift, surfaceHeight } from './world/ground.ts';
+import { groundHeight, gradeHeight, townHeight, landHeight, deckLift, surfaceHeight } from './world/ground.ts';
 import { CrimeSystem } from './sim/crime.ts';
 import { CrimeHud } from './ui/crime-hud.ts';
 import { WeaponWheel } from './ui/weapon-wheel.ts';
@@ -111,7 +111,7 @@ async function initApp(): Promise<void> {
   const controllerManager = new ThirdPersonControllerManager(scene, colliders);
   // The ground (world/ground.ts): the town's own slopes and the hills over them (the flat city with ?slopes=0)
   controllerManager.setTerrain(groundHeight, townHeight, landHeight, deckLift); // (and the bridges' decks over it)
-  trafficSystem.setHillQuery(groundHeight);
+  trafficSystem.setHillQuery(gradeHeight); // (the roads' lifts are over the ground at grade: down an underpass, < 0)
   trafficSystem.setSurfaceQuery(surfaceHeight);
   // People, bicycles & hydrants knocked flying bounce off the buildings' walls (sim/mayhem.ts)
   const solidAt = (x: number, z: number) => controllerManager.isSolidAt(x, z, 1.5, groundHeight(x, z));
@@ -170,6 +170,8 @@ async function initApp(): Promise<void> {
   const aimControl = new AimControl({ canvas: renderer.domElement, controllers: controllerManager });
   cameraSystem.aim = aimControl;
   cameraSystem.setGroundQuery(groundHeight); // the chase cameras stay over the ground
+  // ...and in front of the walls between them and the player (what is under 1 m across, a pole, left out)
+  cameraSystem.setObstacleQuery((x, y, z) => controllerManager.isSolidAt(x, z, 0, y, 1));
   // The scenic cameras frame the city's own spots (see cameras.ts)
   const T = TELEPORT_LOCATIONS;
   cameraSystem.setScenicAnchors({
@@ -499,7 +501,10 @@ async function initApp(): Promise<void> {
           console.info('[mp] no server to connect to: add &mp-server=wss://… (or serve from localhost)');
           return;
         }
-        multiplayer = new Multiplayer({ scene, controllers: controllerManager, camera: cameraSystem.camera, ...options });
+        multiplayer = new Multiplayer({
+          scene, controllers: controllerManager, camera: cameraSystem.camera, crime: crimeSystem, cameras: cameraSystem, ...options
+        });
+        boarding.ride = multiplayer; // (F by a friend's car: in with them)
       })
       .catch((err: unknown) => { console.warn('[mp] could not start multiplayer:', err); });
   }
@@ -544,6 +549,8 @@ async function initApp(): Promise<void> {
     .run('player', ({ frameDt, elapsed }) => {
       // out of breath, no sprinting
       controllerManager.canSprint = stamina.canSprint;
+      // on foot WASD go the way the camera looks (cameras.ts)
+      controllerManager.viewHeading = cameraSystem.viewHeading();
       // the player keeps real time down to 10 fps, in steps of at most 1/30 s: a slow frame mustn't stretch a car's
       // 0-100 km/h or slow its speed over the ground
       const playerSteps = Math.ceil(frameDt * 30 - 1e-6);
@@ -561,6 +568,8 @@ async function initApp(): Promise<void> {
       aimControl.allowed = crimeSystem.state === 'play' && !weaponWheel.isOpen;
       aimControl.update(dt);
     })
+    // riding in a friend's car (multiplayer): the ride where the car is, before the cameras follow it
+    .run('passenger', () => { multiplayer?.seat(); })
     .run('cameras', ({ dt, elapsed }) => {
       cameraSystem.update(dt, elapsed);
       streetDetails.signalClock.value = elapsed;
@@ -630,7 +639,7 @@ async function initApp(): Promise<void> {
     Object.assign(window, { __slop: {
       scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, controllerManager, trafficSystem,
       cameraSystem, streetDetails, cityGrid: city.cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl,
-      weaponWheel, weaponIcons, scheduler
+      weaponWheel, weaponIcons, scheduler, boarding, multiplayer: () => multiplayer
     } });
   }
 

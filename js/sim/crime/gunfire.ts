@@ -5,7 +5,8 @@ import type * as THREE from 'three/webgpu';
 import type { Weapon } from '../weapons.ts';
 import type { Ped, Vehicle } from '../traffic.ts';
 import { WEAPONS, rayCircle, rayBox, blastFalloff } from '../weapons.ts';
-import type { TraceKind, XZ, Agent, Cruiser, TraceTarget, TraceHit } from './types.ts';
+import type { TraceKind, XZ, Agent, Cruiser, TraceTarget, TraceHit, RemoteTarget } from './types.ts';
+import type { Shot } from '../../../shared/protocol.ts';
 import { BODY_R, PERSON_H, CAR_H, BUS_H, HELI_R, inBody, clamp } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
 
@@ -82,6 +83,14 @@ export function trace(crime: CrimeSystem, ox: number, oy: number, oz: number, ya
     kind = 'cruiser';
     target = cr;
   }
+  for (const r of crime.remotes) {
+    const t = r.person ? rayCircle(ox, oz, dx, dz, r.x, r.z, BODY_R) : rayBox(ox, oz, dx, dz, r.x, r.z, r.heading, r.halfW, r.halfL);
+    if (t < from || t >= best) continue;
+    if (pitched && !inBody(oy + slope * t - r.y, r.height)) continue;
+    best = t;
+    kind = 'remote';
+    target = r;
+  }
   // the helicopter, only to a shot aimed up at it
   const h = crime.heli;
   if (slope !== null && h.active && h.state !== 'down') {
@@ -121,8 +130,10 @@ export function hitScan(crime: CrimeSystem, ox: number, oy: number, oz: number, 
     if (kind === 'agent' || kind === 'ped') ey = crime.groundAt(ex, ez) + 1.2;
     else if (kind === 'cruiser' || kind === 'vehicle') ey = crime.groundAt(ex, ez) + 0.85;
   }
+  if (kind === 'remote') ey = (target as RemoteTarget).y + ((target as RemoteTarget).person ? 1.2 : 0.85);
   if (kind === 'ground') ey = crime.groundAt(ex, ez) + 0.03;
   crime.fx.tracer(ox, oy, oz, ex, ey, ez);
+  if (byPlayer) crime.onPlayerShot?.({ ox, oy, oz, ex, ey, ez, weapon: w.id, rocket: false });
 
   if (kind === 'wall' || kind === 'ground') crime.fx.impact(ex, ey, ez, 'dust', -dx, -dz);
   else if (kind === 'agent') {
@@ -142,6 +153,14 @@ export function hitScan(crime: CrimeSystem, ox: number, oy: number, oz: number, 
     crime.fx.impact(ex, ey, ez, 'metal', -dx, -dz);
     crime.traffic.shootVehicle(target as Vehicle, ex, ey, ez, dx, dz);
     if (byPlayer) crime.report('shootCar');
+  } else if (kind === 'remote') {
+    // another player: its game takes the damage (a vehicle shields it as the player's own does, crime.hurt)
+    const r = target as RemoteTarget;
+    crime.fx.impact(ex, ey, ez, r.person ? 'blood' : 'metal', r.person ? dx : -dx, r.person ? dz : -dz);
+    if (byPlayer) {
+      crime.onRemoteHit?.(r.id, w.damage);
+      crime.report('shootPed');
+    }
   }
 }
 
@@ -178,11 +197,43 @@ export function updateRockets(crime: CrimeSystem, dt: number): void {
     if (hit) {
       crime.fx.dropRocket(k.r);
       crime.rockets.splice(i, 1);
-      crime.explode(k.x, Math.max(k.y, crime.groundAt(k.x, k.z) + 0.4), k.z, w.blast, w.damage, true);
+      const y = Math.max(k.y, crime.groundAt(k.x, k.z) + 0.4);
+      if (k.remote) crime.blastSeen(k.x, y, k.z, w.blast);
+      else crime.explode(k.x, y, k.z, w.blast, w.damage, true);
     } else {
       crime.fx.placeRocket(k.r, k.x, k.y, k.z, Math.atan2(k.dx, k.dz), -Math.asin(k.dy || 0));
     }
   }
+}
+
+// Another player's shot (multiplayer): its flash, tracer and strike, its sound, and the passers-by running; a rocket
+// flies here as it does there. What it hits is the shooter's game to judge (onRemoteHit, its HIT): nothing is hurt
+export function showShot(crime: CrimeSystem, s: Shot): void {
+  const yaw = Math.atan2(s.ex - s.ox, s.ez - s.oz);
+  crime.fx.muzzle(s.ox, s.oy, s.oz, yaw, s.rocket);
+  crime.audio?.gunfire?.(s.weapon, s.ox, s.oy, s.oz);
+  crime.traffic.panic(s.ox, s.oz, s.rocket ? 45 : 35);
+  if (s.rocket) {
+    const along = Math.hypot(s.ex - s.ox, s.ez - s.oz);
+    const pitch = Math.atan2(s.ey - s.oy, Math.max(0.01, along));
+    const r = crime.fx.launchRocket(s.ox, s.oy, s.oz, yaw, -pitch);
+    if (r) crime.rockets.push({ r, remote: true, x: s.ox, y: s.oy, z: s.oz, dx: Math.sin(yaw), dz: Math.cos(yaw), dh: Math.cos(pitch), dy: Math.sin(pitch), t: 0 });
+    return;
+  }
+  crime.fx.tracer(s.ox, s.oy, s.oz, s.ex, s.ey, s.ez);
+  crime.fx.impact(s.ex, s.ey, s.ez, 'dust', -Math.sin(yaw), -Math.cos(yaw));
+}
+
+// Another player's rocket going off here: the blast seen, heard and felt, the street thrown about, nobody hurt by it
+// (its shooter's game sends the hits)
+export function blastSeen(crime: CrimeSystem, x: number, y: number, z: number, radius: number): void {
+  crime.fx.explosion(x, y, z, radius);
+  crime.onExplosion?.(x, y, z, radius);
+  crime.audio?.gunfire?.('explosion', x, y, z);
+  const near = Math.hypot(crime.camera ? crime.camera.position.x - x : 0, crime.camera ? crime.camera.position.z - z : 0);
+  crime.shake = Math.min(1.6, crime.shake + clamp(1.6 - near / 40, 0, 1.6));
+  crime.traffic.blast(x, z, radius * 1.4, 24);
+  crime.traffic.panic(x, z, 70);
 }
 
 // An explosion at (x, y, z) of `radius` m: fire & smoke, people thrown, cars shoved, patrol cars and the player hurt
@@ -213,6 +264,13 @@ export function explode(crime: CrimeSystem, x: number, y: number, z: number, rad
     cr.vx += nx * 14 * k;
     cr.vz += nz * 14 * k;
     if (!cr.wreck) crime.damageCruiser(cr, damage * k, byPlayer);
+  }
+  // the other players (multiplayer): as hard as the player would be hit there
+  if (byPlayer) {
+    for (const r of crime.remotes) {
+      const d = Math.hypot(r.x - x, r.z - z);
+      if (d < radius * 1.3) crime.onRemoteHit?.(r.id, 95 * blastFalloff(d, radius * 1.3));
+    }
   }
   const h = crime.heli;
   if (h.active && h.state !== 'down') {

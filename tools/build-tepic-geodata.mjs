@@ -89,8 +89,10 @@ const nodeKey = (g) => `${g.lat.toFixed(7)},${g.lon.toFixed(7)}`;
 // The detailed city: a box around the centro (metres in the grid frame). Everything the game builds lives in here.
 // From Lo de Lamedo & Las Brisas (west) to San Cayetano & Vistas de la Cantera (east), from El Tajo (north) to the south
 // of Xalisco: the whole metropolitan area of Tepic & Xalisco, and the airport (Pantanal, its terminal & access roads
-// at x ~9400-10100, its runway along grid z 6000-9100)
-const BOX = { x0: -5800, x1: 10400, z0: -4800, z1: 10100 };
+// at x ~9400-10100, its runway along grid z 6000-9100). East of it the box takes in the highway that leads there: the
+// Autopista Tepic - Compostela (MEX 200D, x ~11700-12900) from its junction with the Libramiento Norte (MEX 15D,
+// x ~12750, z ~3950) down to the Ramal Aeropuerto (x ~10100-11700, z ~7100-8850) that runs west to the terminal
+const BOX = { x0: -5800, x1: 13500, z0: -4800, z1: 10100 };
 log(`detail box corners: ${[[BOX.x0, BOX.z0], [BOX.x1, BOX.z0], [BOX.x1, BOX.z1], [BOX.x0, BOX.z1]].map(([x, z]) => toLonLat(x, z).map((v) => v.toFixed(4)).reverse().join(',')).join('  ')}`);
 const inBox = (x, z) => x >= BOX.x0 && x <= BOX.x1 && z >= BOX.z0 && z <= BOX.z1;
 const boxRing = [[BOX.x0, BOX.z0], [BOX.x0, BOX.z1], [BOX.x1, BOX.z1], [BOX.x1, BOX.z0]]; // negative shoelace area (x, z)
@@ -225,10 +227,10 @@ for (const w of ways) {
 }
 
 // =====================================================================================================================
-// 3B. BRIDGES & RAMPS: the overpasses (a bridge over another road or the railway) raised over what passes under them,
-//     their approaches ramping up to them; the roads through tunnels kept at grade with the roads over them raised
-//     instead (the ground is one surface: no trench is cut). Each link gets the lift of every vertex over the ground
-//     (piecewise linear between them), the same for the traffic, the player and the deck drawn
+// 3B. BRIDGES, UNDERPASSES & RAMPS: the overpasses (a bridge over another road or the railway) raised over what passes
+//     under them, the roads through tunnels sunk under the roads over them (in a cut, the road over it kept at grade),
+//     their approaches ramping to them. Each link gets the lift of every vertex over the ground (< 0 down in a cut;
+//     piecewise linear between them), the same for the traffic, the player and the deck or cut drawn
 // =====================================================================================================================
 const CLEARANCE = 6.0; // m: an overpass's deck over the road under it (~5 m of headroom under a ~1 m deck)
 const RAIL_CLEARANCE = 7.0;
@@ -286,7 +288,7 @@ const crossings = (owner) => {
 };
 // Vertices put into a line at the points the solve needs: { line, at: [x, z], lift?, pin? } (insertion keeps the
 // line's shape, only splitting a segment)
-const fixes = []; // { owner, x, z, lift } raised to `lift`; lift 0: held at grade
+const fixes = []; // { owner, x, z, lift } raised to `lift` (> 0) or sunk to it (< 0); lift 0: held at grade
 for (const d of linkDrafts) {
   if (!d.bridge && !d.tunnel) continue;
   for (const c of crossings(d)) {
@@ -298,12 +300,11 @@ for (const d of linkDrafts) {
       for (const p of d.line) fixes.push({ owner: d, x: p[0], z: p[1], lift });
       fixes.push({ owner: o, x: c.x, z: c.z, lift: 0 });
     } else if (d.tunnel && oRoad && !o.tunnel && !o.bridge) {
-      // a road through a tunnel: the road over it raised across it instead (its deck ~as wide as the tunnel's road)
-      const half = d.spec.w / 2 + 3;
-      const [ax, az] = o.line[c.j], [bx, bz] = o.line[c.j + 1];
-      const L = Math.hypot(bx - ax, bz - az) || 1, ux = (bx - ax) / L, uz = (bz - az) / L;
-      for (const k of [-half, 0, half]) fixes.push({ owner: o, x: c.x + ux * k, z: c.z + uz * k, lift: CLEARANCE });
-      fixes.push({ owner: d, x: c.x, z: c.z, lift: 0 });
+      // a road through a tunnel under another (Insurgentes under Av. México, the Nodo Vial de la Cruz): sunk in its cut
+      // all along the tunnel, the road over it held at grade (the cut's roof: ground.ts, underpasses.ts)
+      for (const p of d.line) fixes.push({ owner: d, x: p[0], z: p[1], lift: -CLEARANCE });
+      fixes.push({ owner: d, x: c.x, z: c.z, lift: -CLEARANCE });
+      fixes.push({ owner: o, x: c.x, z: c.z, lift: 0 });
     }
   }
 }
@@ -334,9 +335,35 @@ for (const f of fixes) {
   line.splice(seg + 1, 0, v);
   f.v = v;
 }
+// The junctions a ramp may not climb through: where a cross street meets the road (two of the links there leave it
+// 50-130° apart), the cross street stays at grade, so the junction does too and the road's ramp comes down before it.
+// A road that only forks there (an interchange's slip road peeling off) or a way split in two ramps on through it.
+const CROSS_MIN = Math.cos((50 * Math.PI) / 180), CROSS_MAX = Math.cos((130 * Math.PI) / 180);
+const heldJunctions = (() => {
+  const out = new Map(); // node -> unit directions of the links leaving it
+  for (const d of linkDrafts) {
+    for (const [n, p, q] of [[d.a, d.line[0], d.line[1]], [d.b, d.line[d.line.length - 1], d.line[d.line.length - 2]]]) {
+      const L = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+      if (!out.has(n)) out.set(n, []);
+      out.get(n).push([(q[0] - p[0]) / L, (q[1] - p[1]) / L]);
+    }
+  }
+  const held = new Set();
+  for (const [n, dirs] of out) {
+    if (dirs.length < 3) continue;
+    let cross = false;
+    for (let i = 0; i < dirs.length && !cross; i++) for (let j = i + 1; j < dirs.length; j++) {
+      const c = dirs[i][0] * dirs[j][0] + dirs[i][1] * dirs[j][1];
+      if (c < CROSS_MIN && c > CROSS_MAX) { cross = true; break; }
+    }
+    if (cross) held.add(n);
+  }
+  return held;
+})();
 // The lifts: from each raised vertex down every way out at RAMP (a graph of the links' vertices, joined at the junction
-// nodes; the rails apart), held to RAMP x the distance from any vertex kept at grade
-function solveLifts(lines, nodeOf) {
+// nodes; the rails apart), held to RAMP x the distance from any vertex kept at grade (and from the junctions in
+// `heldNodes`), and stopped there: a ramp spreading on past a street kept at grade would raise the streets beyond it
+function solveLifts(lines, nodeOf, heldNodes = []) {
   const verts = new Map(); // vertex array -> id
   const adj = [];
   const idOf = (line, i) => {
@@ -353,8 +380,9 @@ function solveLifts(lines, nodeOf) {
       adj[b].push([a, L]);
     }
   }
-  const spread = (seeds, value, step) => {
-    // the largest of value(seed) - step x distance (a max-plus Dijkstra), cut off at 0 (in doubles: a float array
+  const spread = (seeds, value) => {
+    // the largest value reached from a seed, value(v, L, n) being v's at a vertex L m on to its neighbour n (a
+    // max-plus Dijkstra), cut off at 0 (in doubles: a float array
     // would round what it keeps above what the heap holds, and the vertex would never be spread from)
     const best = new Float64Array(adj.length);
     const heap = [];
@@ -365,55 +393,111 @@ function solveLifts(lines, nodeOf) {
       const [v, id] = pop();
       if (v < best[id]) continue;
       for (const [n, L] of adj[id]) {
-        const nv = value(v, L, step);
+        const nv = value(v, L, n);
         if (nv > best[n]) { best[n] = nv; push(n, nv); }
       }
     }
     return best;
   };
-  const raised = [], held = [];
+  const raised = [], sunk = [], held = [];
   const mine = new Set(lines);
   for (const f of fixes) {
     if (!f.v || !mine.has(f.owner.line)) continue;
     const i = f.owner.line.indexOf(f.v);
-    (f.lift > 0 ? raised : held).push([idOf(f.owner.line, i), f.lift]);
+    const id = idOf(f.owner.line, i);
+    if (f.lift > 0) raised.push([id, f.lift]);
+    else if (f.lift < 0) sunk.push([id, -f.lift]);
+    else held.push([id, 0]);
   }
-  const up = spread(raised, (v, L) => v - RAMP * L);
+  for (const n of heldNodes) if (verts.has(`n${n}`)) held.push([verts.get(`n${n}`), 0]);
   // how far below its cap each vertex must stay: RAMP x its distance from the nearest one held at grade, as a "height"
   // spreading down from a large value
   const BIG = 1000;
-  const down = spread(held.map(([id]) => [id, BIG]), (v, L) => v - RAMP * L);
-  const lift = (line, i) => {
+  const fromHeld = spread(held.map(([id]) => [id, BIG]), (v, L) => v - RAMP * L);
+  const capOf = (id) => (fromHeld[id] > 0 ? BIG - fromHeld[id] : Infinity);
+  // (each step held to its vertex's cap, so nothing climbs on through a vertex kept at grade; the cuts' depths alike)
+  const ramp = (seeds) => spread(seeds.map(([id, v]) => [id, Math.min(v, capOf(id))]), (v, L, n) => Math.min(v - RAMP * L, capOf(n)));
+  const up = ramp(raised), deep = ramp(sunk);
+  return (line, i) => {
     const id = idOf(line, i);
-    const cap = down[id] > 0 ? BIG - down[id] : Infinity;
-    return Math.max(0, Math.min(up[id], cap));
+    const l = Math.max(0, Math.min(up[id], capOf(id))), s = Math.max(0, Math.min(deep[id], capOf(id)));
+    return l >= s ? l : -s;
   };
-  return lift;
 }
 const nodeOfDraft = new Map();
 for (const d of linkDrafts) nodeOfDraft.set(d.line, d);
 const roadLift = solveLifts(linkDrafts.map((d) => d.line), (line, i) => {
   const d = nodeOfDraft.get(line);
   return i === 0 ? d.a : i === line.length - 1 ? d.b : null;
-});
+}, heldJunctions);
 const railLift = solveLifts(railLines.map((r) => r.line), null);
-let raisedLinks = 0, raisedLen = 0;
+for (const d of linkDrafts) d.lifts = d.line.map((_, i) => Math.round(roadLift(d.line, i) * 10));
+// A sunk road as wide as its cut can be between the roads beside it: OpenStreetMap draws Insurgentes' four roadways
+// through the underpass ~5 m apart, each tagged 10 m wide, so the cut would swallow the laterales at grade on either
+// side and the traffic's lanes would run on top of each other. Wherever it is down in its cut (its ramps' tails too,
+// which would widen the cut they open into), each roadway keeps clear of the lanes of the roads alongside it at grade
+// (and of the wall, CUT_SIDE) and of half the gap to another one sunk beside it, down to one lane.
+const CUT_SIDE = 0.9; // m from the roadway's edge to the lanes beyond the cut's wall (the shoulder, the wall)
+const LANE_MIN = 3.2;
 for (const d of linkDrafts) {
-  const lifts = d.line.map((_, i) => Math.round(roadLift(d.line, i) * 10));
-  const inner = d.line.slice(1, -1).flatMap(([x, z]) => [q(x), q(z)]);
-  const any = lifts.some((v) => v > 0);
-  if (any) {
-    raisedLinks++;
-    for (let i = 0; i + 1 < d.line.length; i++) if (lifts[i] > 0 || lifts[i + 1] > 0) raisedLen += Math.hypot(d.line[i + 1][0] - d.line[i][0], d.line[i + 1][1] - d.line[i][1]);
+  if (!d.lifts.some((v) => v < 0)) continue;
+  let half = d.spec.w / 2;
+  const x0 = Math.min(...d.line.map((p) => p[0])) - 25, x1 = Math.max(...d.line.map((p) => p[0])) + 25;
+  const z0 = Math.min(...d.line.map((p) => p[1])) - 25, z1 = Math.max(...d.line.map((p) => p[1])) + 25;
+  const near = linkDrafts.filter((o) => o !== d && o.a !== d.a && o.a !== d.b && o.b !== d.a && o.b !== d.b && o.line.some((p) => p[0] > x0 && p[0] < x1 && p[1] > z0 && p[1] < z1));
+  for (let i = 0; i + 1 < d.line.length; i++) {
+    const [ax, az] = d.line[i], [bx, bz] = d.line[i + 1];
+    const L = Math.hypot(bx - ax, bz - az);
+    if (L < 0.5) continue;
+    const ux = (bx - ax) / L, uz = (bz - az) / L;
+    for (let k = 0; k <= Math.ceil(L / 4); k++) {
+      const f = Math.min(1, (k * 4) / L);
+      if (d.lifts[i] + (d.lifts[i + 1] - d.lifts[i]) * f >= 0) continue;
+      const px = ax + (bx - ax) * f, pz = az + (bz - az) * f;
+      for (const o of near) {
+        const sunk = o.lifts.some((v) => v < 0);
+        for (let j = 0; j + 1 < o.line.length; j++) {
+          const [cx, cz] = o.line[j], [ex, ez] = o.line[j + 1];
+          const M = Math.hypot(ex - cx, ez - cz);
+          if (M < 0.5 || Math.abs(((ex - cx) * ux + (ez - cz) * uz) / M) < 0.85) continue; // (alongside it, not across)
+          const t = ((px - cx) * (ex - cx) + (pz - cz) * (ez - cz)) / (M * M);
+          if (t < 0 || t > 1) continue; // (beside it, not on past its end: the same road's next link ahead)
+          const dist = Math.hypot(px - cx - (ex - cx) * t, pz - cz - (ez - cz) * t);
+          if (dist > 20) continue;
+          // (the lanes of a road at grade: as many as its width takes, 3.5 m each, about its centreline)
+          const lanesOut = Math.min(o.spec.w / 2, (o.spec.dir === 0 ? Math.max(2, o.spec.lanes) : o.spec.lanes) * 1.75);
+          half = Math.min(half, sunk ? dist / 2 - 0.1 : dist - lanesOut - CUT_SIDE);
+        }
+      }
+    }
   }
-  // [a, b, name, width, lanes, dir, inner, lifts (dm over the ground at a, inner..., b) or 0, bridge (1: a bridge way)]
-  links.push([d.a, d.b, d.ni, d.spec.w, d.spec.lanes, d.spec.dir, inner, any ? lifts : 0, d.bridge ? 1 : 0]);
+  half = Math.max(LANE_MIN / 2, half);
+  if (half < d.spec.w / 2 - 0.05) {
+    const w = Math.round(half * 20) / 10;
+    d.spec = { ...d.spec, w, lanes: Math.max(1, Math.min(d.spec.lanes, Math.floor(w / LANE_MIN))) };
+  }
+}
+let raisedLinks = 0, raisedLen = 0, sunkLinks = 0, sunkLen = 0;
+for (const d of linkDrafts) {
+  const lifts = d.lifts;
+  const inner = d.line.slice(1, -1).flatMap(([x, z]) => [q(x), q(z)]);
+  const any = lifts.some((v) => v !== 0);
+  if (lifts.some((v) => v > 0)) raisedLinks++;
+  if (lifts.some((v) => v < 0)) sunkLinks++;
+  for (let i = 0; i + 1 < d.line.length; i++) {
+    const L = Math.hypot(d.line[i + 1][0] - d.line[i][0], d.line[i + 1][1] - d.line[i][1]);
+    if (lifts[i] > 0 || lifts[i + 1] > 0) raisedLen += L;
+    if (lifts[i] < 0 || lifts[i + 1] < 0) sunkLen += L;
+  }
+  // [a, b, name, width, lanes, dir, inner, lifts (dm over the ground at a, inner..., b; < 0 down in a cut) or 0,
+  //  way (1: a bridge way, 2: a tunnel way, 0 neither)]
+  links.push([d.a, d.b, d.ni, d.spec.w, d.spec.lanes, d.spec.dir, inner, any ? lifts : 0, d.bridge ? 1 : d.tunnel ? 2 : 0]);
 }
 const rails = railLines.map((r) => {
   const lifts = r.line.map((_, i) => Math.round(railLift(r.line, i) * 10));
   return [flat(r.line), lifts.some((v) => v > 0) ? lifts : 0, r.bridge ? 1 : 0, r.main ? 1 : 0];
 });
-log(`bridges: ${raisedLinks} links raised over ${(raisedLen / 1000).toFixed(1)} km (overpasses & their ramps); ${rails.length} rail lines, ${(railLines.reduce((t, r) => t + r.line.reduce((s2, p, i, a) => s2 + (i ? Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) : 0), 0), 0) / 1000).toFixed(1)} km`);
+log(`bridges: ${raisedLinks} links raised over ${(raisedLen / 1000).toFixed(1)} km (overpasses & their ramps), ${sunkLinks} sunk over ${(sunkLen / 1000).toFixed(1)} km (underpasses); ${rails.length} rail lines, ${(railLines.reduce((t, r) => t + r.line.reduce((s2, p, i, a) => s2 + (i ? Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) : 0), 0), 0) / 1000).toFixed(1)} km`);
 log(`road graph: ${gnodes.length} nodes, ${links.length} links, ${names.length} street names`);
 
 // Traffic signals on drivable streets
@@ -735,7 +819,42 @@ const houses = [];
     for (const ring of elemRings(e)) stores.push({ ring, box: bbox(ring), mall: t.shop === 'mall' || /^plaza\b|centro comercial/i.test(t.name || '') });
   }
   const storeAt = (x, z) => stores.find((s) => x > s.box.x0 && x < s.box.x1 && z > s.box.z0 && z < s.box.z1 && inRing(s.ring, x, z));
-  let read = 0, small = 0, outside = 0, squeezed = 0, bigBoxes = 0;
+  // The open canals, drains & ditches (not underground), in 50 m cells. A footprint standing on one in a green block
+  // (a camellón, a park) is an ML footprint's mistake: Ciudad del Valle's canal runs down Paseo de Hamburgo's planted
+  // median, where Overture had a house. (Elsewhere a drain under a hall or across a yard is more likely a culvert.)
+  const CH = 50;
+  const channels = new Map();
+  for (const [kind, , , flags, pts] of waterways) {
+    if (!/^(canal|drain|ditch)$/.test(kind) || flags & 2) continue;
+    for (let i = 0; i + 3 < pts.length; i += 2) {
+      const seg = pts.slice(i, i + 4);
+      for (let ix = Math.floor(Math.min(seg[0], seg[2]) / CH); ix <= Math.floor(Math.max(seg[0], seg[2]) / CH); ix++) {
+        for (let iz = Math.floor(Math.min(seg[1], seg[3]) / CH); iz <= Math.floor(Math.max(seg[1], seg[3]) / CH); iz++) {
+          const k = `${ix},${iz}`;
+          if (!channels.has(k)) channels.set(k, []);
+          channels.get(k).push(seg);
+        }
+      }
+    }
+  }
+  // whether a channel runs within 0.5 m of the oriented box (centre, size, turn's cos & sin), sampled every 0.25 m
+  const onChannel = (cx, cz, w, d, cs, sn) => {
+    const r = Math.hypot(w, d) / 2 + 1;
+    for (let ix = Math.floor((cx - r) / CH); ix <= Math.floor((cx + r) / CH); ix++) {
+      for (let iz = Math.floor((cz - r) / CH); iz <= Math.floor((cz + r) / CH); iz++) {
+        for (const [x0, z0, x1, z1] of channels.get(`${ix},${iz}`) || []) {
+          const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 0.25));
+          for (let k = 0; k <= n; k++) {
+            const dx = x0 + ((x1 - x0) * k) / n - cx, dz = z0 + ((z1 - z0) * k) / n - cz;
+            // (world = c + R(θ)·local, so local = R(−θ)·(p − c))
+            if (Math.abs(dx * cs - dz * sn) <= w / 2 + 0.5 && Math.abs(dx * sn + dz * cs) <= d / 2 + 0.5) return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+  let read = 0, small = 0, outside = 0, squeezed = 0, onCanal = 0, bigBoxes = 0;
   if (fs.existsSync(file)) {
     const text = fs.readFileSync(file, 'utf8');
     let start = 0;
@@ -779,6 +898,8 @@ const houses = [];
         if (w < 3 || d < 3) break;
       }
       if (!ok || w < 3 || d < 3) { squeezed++; continue; }
+      const block = byLab.get(labAt(cx, cz));
+      if (block && !block.rural && block.park >= 0.6 && onChannel(cx, cz, w, d, cs, sn)) { onCanal++; continue; }
       // Front: the side with the nearest roadway straight out from its middle (w, e, n, s of the house's own frame)
       const outs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
       let front = 0, bestD = Infinity;
@@ -818,7 +939,7 @@ const houses = [];
         front + (shop ? KIND.shop : 0) + (big ? KIND.big : 0) + (strip ? KIND.strip : 0), 0);
     }
   }
-  log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets), ${bigBoxes} big boxes`);
+  log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets, ${onCanal} on a canal through green), ${bigBoxes} big boxes`);
 }
 
 // =====================================================================================================================
@@ -1673,8 +1794,8 @@ const GEO = {
   broadway: [],
   plazas: [],
   roads: roadLines.map((r) => [r.name, q(r.w), r.dir, r.lanes, r.hw ? 1 : 0, flat(r.pts)]),
-  // links: [a, b, name, width, lanes, dir, inner, lifts (dm over the ground at a, inner..., b; 0 when all at grade),
-  // bridge (1: a bridge way)]
+  // links: [a, b, name, width, lanes, dir, inner, lifts (dm over the ground at a, inner..., b, < 0 down in an
+  // underpass; 0 when all at grade), way (1: a bridge way, 2: a tunnel way, 0 neither)]
   roadGraph: { nodes: gnodes.flatMap(([x, z]) => [q(x), q(z)]), links, names, signals },
   // The railway: [flat points, lifts (dm, or 0), bridge (1: a bridge way), main line (1) or siding / yard (0)]
   rails,

@@ -1,20 +1,31 @@
 import * as THREE from 'three/webgpu';
 import { PersonCrowd, PersonRig } from '../sim/pedestrians.ts';
+import { isTypingInField } from '../world/city-config.ts';
 import {
   SEND_HZ,
   OP,
+  CHAT_MAX,
   encodeHello,
   encodeState,
+  encodeChat,
+  encodeShot,
+  encodeHit,
+  encodeDown,
   decodeServer
 } from '../../shared/protocol.ts';
-import type { Mode, MovedPlayer, PoseSource, ServerMessage } from '../../shared/protocol.ts';
+import type { Mode, MovedPlayer, PoseSource, ServerMessage, Shot } from '../../shared/protocol.ts';
+import type { CrimeSystem, RemoteTarget } from '../sim/crime.ts';
+import type { CarEntity, PersonEntity, PlayerEntity } from '../player/controllers.ts';
 
 // js/net/multiplayer.ts
 // Browser side of the room server (server/index.ts), loaded only with ?multiplayer=1 (see main.ts). Sends the active
 // player's pose SEND_HZ times a second, keeps a local list of the players the server says are in view, and draws them
-// INTERP_DELAY_MS in the past, interpolating between the poses it received so 10 Hz updates look smooth.
+// INTERP_DELAY_MS in the past, interpolating between the poses it received so 10 Hz updates look smooth. And what the
+// players do to each other: a chat (Enter), shots seen and heard, the hits the player's shots, blows and blasts land
+// on the others (sim/crime.ts traces them against their poses) and theirs on the player, who killed whom, and riding
+// in a friend's car (F by it: the camera rides along, and F again gets out).
 //
-//   ?multiplayer=1               connect (to ws://<this host>:8787 when served from localhost)
+//   ?multiplayer=1               connect (to the page's own server, tools/play.ts; ws://<host>:8787 from localhost)
 //   &mp-server=wss://host/path   another server
 //   &mp-region=nayarit           room region (default: this map's, see DEFAULT_REGION)
 //   &mp-name=Lalo                display name (remembered)
@@ -28,8 +39,20 @@ const MAX_REMOTE_PEOPLE = 96; // walkers + cyclists' riders drawn by the shared 
 const LABEL_DISTANCE = 140; // m within which name tags show
 const RETRY_MAX_MS = 10000;
 const NAME_KEY = 'mp-name';
+const RIDE_REACH = 3.2; // m from a friend's car to get in
+const KILL_WINDOW_MS = 10000; // a player's hit this recent killed the player
+const CHAT_LINES = 8; // lines kept on screen
+const CHAT_FADE_MS = 15000; // a line fades after this long
+// A remote player's body to shots, per mode: half width & length (m; a person's is a circle, BODY_R in crime.ts) and height
+const BODIES: Partial<Record<Mode, { halfW: number; halfL: number; height: number }>> = {
+  car: { halfW: 0.95, halfL: 2.3, height: 1.6 },
+  cyclist: { halfW: 0.4, halfL: 0.95, height: 1.75 },
+  moto: { halfW: 0.45, halfL: 1.05, height: 1.7 },
+  helicopter: { halfW: 1.4, halfL: 5.5, height: 3.4 }
+};
 
 const _v = new THREE.Vector3();
+const _view = new THREE.Vector3();
 
 // The local player's meshes a remote player's look is cloned from (player/controllers.ts entities)
 interface EntityLook {
@@ -50,17 +73,35 @@ export interface GroundTilt {
 
 /** What multiplayer uses of the controller manager (player/controllers.ts ThirdPersonControllerManager) */
 export interface MultiplayerControllers {
-  entities: Readonly<Partial<Record<Mode, EntityLook>>> & { readonly cyclist: BikeLook; readonly moto: BikeLook };
+  entities: Readonly<Partial<Record<Mode, EntityLook>>> & {
+    readonly cyclist: BikeLook;
+    readonly moto: BikeLook;
+    readonly car: CarEntity;
+    readonly person: PersonEntity;
+  };
   activeMode: string;
+  seated: boolean; // riding in a friend's car: the walker stands still, out of sight
+  syncOccupants(): void;
+  resetInput(): void;
   getActiveEntity(): PoseSource;
   getGroundHeight(x: number, z: number, mode?: string): number;
   groundTilt(x: number, z: number, heading: number, along: number, across: number, out: GroundTilt): GroundTilt;
+}
+
+/** What multiplayer uses of sim/crime.ts's CrimeSystem: the player's state, its targets and hooks, its hurts, the shots seen */
+export type MultiplayerCrime = Pick<CrimeSystem, 'state' | 'remotes' | 'onPlayerShot' | 'onRemoteHit' | 'fireBlocked' | 'hurt' | 'showShot' | 'toast'>;
+/** What multiplayer uses of player/cameras.ts's CameraSystem: what it follows instead of the player's own entity */
+export interface MultiplayerCameras {
+  follow: PlayerEntity | null;
+  resetForTeleport(): void;
 }
 
 export interface MultiplayerOptions {
   scene: THREE.Scene;
   controllers: MultiplayerControllers;
   camera: THREE.Camera;
+  crime?: MultiplayerCrime | null;
+  cameras?: MultiplayerCameras | null;
   url: string; // ws:// or wss://
   region?: string;
   name?: string;
@@ -196,11 +237,30 @@ class Multiplayer {
   _tilt: GroundTilt;
   badge: HTMLDivElement;
   labels: HTMLDivElement;
+  crime: MultiplayerCrime | null;
+  cameras: MultiplayerCameras | null;
+  targets: RemoteTarget[]; // the others as crime's shots find them (reused objects, crime.remotes)
+  lastHurtBy: number; // the player whose hit last struck the player, and when (performance.now() ms)
+  lastHurtAt: number;
+  playing: boolean; // the player was alive last frame (crime.state 'play')
+  rideId: number; // the friend whose car the player rides in (0: none)
+  ride: CarEntity; // what the camera follows riding: the player's own car's look, at the friend's car's pose
+  chat: HTMLDivElement;
+  chatLog: HTMLDivElement;
+  chatInput: HTMLInputElement;
 
-  constructor({ scene, controllers, camera, url, region = DEFAULT_REGION, name = '' }: MultiplayerOptions) {
+  constructor({ scene, controllers, camera, crime = null, cameras = null, url, region = DEFAULT_REGION, name = '' }: MultiplayerOptions) {
     this.scene = scene;
     this.controllers = controllers;
     this.camera = camera;
+    this.crime = crime;
+    this.cameras = cameras;
+    this.targets = [];
+    this.lastHurtBy = 0;
+    this.lastHurtAt = -Infinity;
+    this.playing = true;
+    this.rideId = 0;
+    this.ride = { ...controllers.entities.car, position: new THREE.Vector3(), heading: 0, speed: 0, cameraKick: 0 };
     this.url = url;
     this.region = region;
     this.name = name;
@@ -230,7 +290,87 @@ class Multiplayer {
     // under the brand panel, top left, so it never collides with the toolbar
     (document.querySelector('.hud-top-left') ?? document.body).append(this.badge);
     this.renderBadge();
+    [this.chat, this.chatLog, this.chatInput] = this.buildChat();
+    if (crime) {
+      crime.remotes = this.targets;
+      crime.onPlayerShot = (shot: Shot) => { this.sendFrame(encodeShot(shot)); };
+      crime.onRemoteHit = (id: number, damage: number) => { if (damage >= 1) this.sendFrame(encodeHit(id, damage)); };
+    }
     this.connect();
+  }
+
+  // A frame to the server, when connected and in the room
+  sendFrame(frame: Uint8Array<ArrayBuffer>): void {
+    if (this.ws?.readyState === WebSocket.OPEN && this.status === 'online') this.ws.send(frame);
+  }
+
+  // The chat: the lines said in the room (bottom left), and a field Enter opens (Enter again says it, Esc lets it go)
+  buildChat(): [HTMLDivElement, HTMLDivElement, HTMLInputElement] {
+    const chat = document.createElement('div');
+    chat.className = 'mp-chat';
+    const log = document.createElement('div');
+    log.className = 'mp-chat-log';
+    log.setAttribute('role', 'log');
+    log.setAttribute('aria-live', 'polite');
+    const input = document.createElement('input');
+    input.className = 'mp-chat-input';
+    input.type = 'text';
+    input.maxLength = CHAT_MAX;
+    input.placeholder = 'Escribe y pulsa Enter · Esc para cerrar';
+    input.setAttribute('aria-label', 'Chat');
+    input.hidden = true;
+    const button = document.createElement('button');
+    button.className = 'mp-chat-btn';
+    button.type = 'button';
+    button.textContent = 'Chat';
+    chat.append(log, input, button);
+    // over the minimap, bottom left (in the HUD's column there)
+    (document.querySelector('.hud-bottom-left') ?? document.body).prepend(chat);
+    const open = () => {
+      input.hidden = false;
+      button.hidden = true;
+      this.controllers.resetInput(); // (whatever key was held stays held otherwise)
+      input.focus();
+    };
+    const close = () => {
+      input.value = '';
+      input.hidden = true;
+      button.hidden = false;
+      input.blur();
+    };
+    button.addEventListener('click', open);
+    window.addEventListener('keydown', (e) => {
+      if (e.code !== 'Enter' || !input.hidden || isTypingInField(e)) return;
+      e.preventDefault();
+      open();
+    });
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation(); // (the game's keys stay out of it)
+      if (e.code === 'Escape') close();
+      if (e.code !== 'Enter') return;
+      const text = input.value.trim();
+      if (text) this.sendFrame(encodeChat(text));
+      close();
+    });
+    input.addEventListener('blur', () => { if (!input.value) close(); });
+    return [chat, log, input];
+  }
+
+  // A line in the chat (from 0: the server's, like who killed whom); the oldest go past CHAT_LINES, each fades in time
+  addChatLine(from: number, name: string, text: string): void {
+    const line = document.createElement('div');
+    line.className = from ? 'mp-chat-line' : 'mp-chat-line mp-chat-system';
+    if (from) {
+      const who = document.createElement('span');
+      who.className = 'mp-chat-name';
+      who.textContent = from === this.id ? `${name} (tú)` : name;
+      line.append(who, document.createTextNode(` ${text}`));
+    } else {
+      line.textContent = text;
+    }
+    this.chatLog.append(line);
+    while (this.chatLog.childElementCount > CHAT_LINES) this.chatLog.firstElementChild?.remove();
+    setTimeout(() => { line.classList.add('mp-chat-old'); }, CHAT_FADE_MS);
   }
 
   connect(): void {
@@ -285,6 +425,26 @@ class Multiplayer {
       this.renderBadge(msg.code);
       return;
     }
+    if (msg.op === OP.CHAT_LINE) {
+      this.addChatLine(msg.from, msg.name, msg.text);
+      return;
+    }
+    if (msg.op === OP.SHOT_SEEN) {
+      this.crime?.showShot(msg.shot);
+      return;
+    }
+    if (msg.op === OP.HURT) {
+      // from where the shooter is now (the blood & the flash point back at it)
+      const by = this.remotes.get(msg.from);
+      const crime = this.crime;
+      if (crime?.state !== 'play') return;
+      this.lastHurtBy = msg.from;
+      this.lastHurtAt = performance.now();
+      const p = by?.samples.at(-1);
+      if (p) crime.hurt(msg.damage, p.x, p.z);
+      else crime.hurt(msg.damage);
+      return;
+    }
     const now = performance.now();
     this.roomPlayers = msg.roomPlayers;
     for (const id of msg.gone) this.removeRemote(id);
@@ -323,6 +483,10 @@ class Multiplayer {
   removeRemote(id: number): void {
     const r = this.remotes.get(id);
     if (!r) return;
+    if (this.rideId === id) {
+      this.seat(); // (where the car was last)
+      this.leaveRide();
+    }
     if (r.visual) r.visual.removeFromParent();
     if (r.label) r.label.remove();
     this.remotes.delete(id);
@@ -337,13 +501,33 @@ class Multiplayer {
   update(dt: number, _elapsed: number): void {
     const now = performance.now();
     this.sendPose(now);
+    this.watchDeath(now);
 
     const renderTime = now - INTERP_DELAY_MS;
     const cam = this.camera;
+    const targets = this.targets;
+    let n = 0;
     this.crowd.begin();
     for (const r of this.remotes.values()) {
       if (!r.mode || r.samples.length === 0) continue;
       const p = r.sample(renderTime);
+      // a passenger rides inside its driver's car: nothing of it to draw or to shoot, its name over the car
+      if (r.mode === 'passenger') {
+        this.placeLabel(r, p, Math.hypot(p.x - cam.position.x, p.z - cam.position.z));
+        continue;
+      }
+      const t = targets[n] ?? (targets[n] = { id: 0, x: 0, y: 0, z: 0, heading: 0, person: true, halfW: 0, halfL: 0, height: 1.85 });
+      n++;
+      const body = BODIES[r.mode];
+      t.id = r.id;
+      t.x = p.x;
+      t.y = p.y;
+      t.z = p.z;
+      t.heading = p.heading;
+      t.person = !body;
+      t.halfW = body?.halfW ?? 0;
+      t.halfL = body?.halfL ?? 0;
+      t.height = body?.height ?? 1.85;
       const dist = Math.hypot(p.x - cam.position.x, p.z - cam.position.z);
       if (r.visual) {
         r.visual.position.set(p.x, p.y, p.z);
@@ -374,14 +558,108 @@ class Multiplayer {
       }
       this.placeLabel(r, p, dist);
     }
+    targets.length = n;
     this.crowd.end();
+  }
+
+  // The player killed (crime.state turned 'wasted'): the room hears it, and by whom when another player's hit was
+  // the last to strike it, lately
+  watchDeath(now: number): void {
+    const crime = this.crime;
+    if (!crime) return;
+    const playing = crime.state === 'play';
+    if (this.playing && crime.state === 'wasted') {
+      const killer = now - this.lastHurtAt < KILL_WINDOW_MS && this.remotes.has(this.lastHurtBy) ? this.lastHurtBy : 0;
+      this.sendFrame(encodeDown(killer));
+      if (this.rideId) this.leaveRide();
+    }
+    this.playing = playing;
+  }
+
+  // ---- riding in a friend's car -----------------------------------------------------------------------------------
+
+  // The friend whose car the walker stands by, to get in with (F, app/boarding.ts): { id, name } or null
+  rideTarget(): { id: number; name: string } | null {
+    if (this.rideId || this.controllers.activeMode !== 'person') return null;
+    const p = this.controllers.entities.person.position;
+    let best: RemotePlayer | null = null;
+    let bestD = RIDE_REACH;
+    for (const r of this.remotes.values()) {
+      const s = r.samples.at(-1);
+      if (r.mode !== 'car' || !s) continue;
+      const d = Math.hypot(s.x - p.x, s.z - p.z) - 1.0; // (from its side, not its middle)
+      if (d < bestD) {
+        best = r;
+        bestD = d;
+      }
+    }
+    return best ? { id: best.id, name: best.name } : null;
+  }
+
+  get riding(): boolean {
+    return this.rideId !== 0;
+  }
+
+  // Into friend `id`'s car: the walker stays put out of sight (no traffic runs into it, the police find nobody there),
+  // the camera rides along with the car (seat), and the others see a passenger there
+  startRide(id: number): void {
+    const r = this.remotes.get(id);
+    if (r?.mode !== 'car' || this.controllers.activeMode !== 'person') return;
+    this.rideId = id;
+    this.controllers.seated = true;
+    this.controllers.resetInput();
+    this.controllers.entities.person.mesh.visible = false;
+    for (const m of this.controllers.entities.person.crowd.meshes) m.visible = false;
+    if (this.crime) this.crime.fireBlocked = true;
+    this.seat();
+    if (this.cameras) {
+      this.cameras.follow = this.ride;
+      this.cameras.resetForTeleport();
+    }
+    this.crime?.toast(`En el coche de ${r.name} · F para bajar`);
+  }
+
+  // Out of the car: the walker stands at its right-hand door (where the car is now), the camera back on it
+  leaveRide(): void {
+    if (!this.rideId) return;
+    const c = this.ride;
+    const p = this.controllers.entities.person;
+    // (right of the heading is (-cos, sin))
+    p.position.set(c.position.x - Math.cos(c.heading) * 1.6, c.position.y, c.position.z + Math.sin(c.heading) * 1.6);
+    p.position.y = this.controllers.getGroundHeight(p.position.x, p.position.z, 'person');
+    p.heading = c.heading;
+    p.speed = 0;
+    this.rideId = 0;
+    this.controllers.seated = false;
+    this.controllers.syncOccupants();
+    if (this.crime) this.crime.fireBlocked = false;
+    if (this.cameras) {
+      this.cameras.follow = null;
+      this.cameras.resetForTeleport();
+    }
+  }
+
+  // Before the cameras, each frame: the ride at the friend's car's pose (drawn INTERP_DELAY_MS back, as the car is),
+  // or out of it when the friend got out, drove off in something else or left
+  seat(): void {
+    if (!this.rideId) return;
+    const r = this.remotes.get(this.rideId);
+    if (r?.mode !== 'car') {
+      this.leaveRide();
+      return;
+    }
+    const p = r.sample(performance.now() - INTERP_DELAY_MS);
+    this.ride.position.set(p.x, p.y, p.z);
+    this.ride.heading = p.heading;
+    this.ride.speed = p.speed;
   }
 
   sendPose(now: number): void {
     const ws = this.ws;
     if (ws?.readyState !== WebSocket.OPEN || this.status !== 'online' || now < this.nextSendAt) return;
     this.nextSendAt = now + 1000 / SEND_HZ;
-    const frame = encodeState(this.controllers.getActiveEntity(), this.controllers.activeMode);
+    // (riding: the friend's car's pose, as a passenger)
+    const frame = this.rideId ? encodeState(this.ride, 'passenger') : encodeState(this.controllers.getActiveEntity(), this.controllers.activeMode);
     const same = this.lastSent?.length === frame.length && this.lastSent.every((b, i) => b === frame[i]);
     if (same && now - this.lastSentAt < KEEPALIVE_MS) return;
     ws.send(frame);
@@ -399,9 +677,13 @@ class Multiplayer {
       r.label = label;
     }
     if (!r.label) return;
-    const height = r.mode === 'helicopter' ? 3.6 : r.mode === 'car' ? 2.2 : 2.25;
-    _v.set(p.x, p.y + height, p.z).project(this.camera);
-    const visible = show && _v.z > -1 && _v.z < 1 && Math.abs(_v.x) < 1.1 && Math.abs(_v.y) < 1.1;
+    const height = r.mode === 'helicopter' ? 3.6 : r.mode === 'car' ? 2.2 : r.mode === 'passenger' ? 2.6 : 2.25;
+    _v.set(p.x, p.y + height, p.z);
+    // (in front of the camera, by its view space: with the reversed depth buffer a point behind it still projects to
+    // a depth inside (-1, 1), so its tag showed in the middle of the screen)
+    const ahead = _view.copy(_v).applyMatrix4(this.camera.matrixWorldInverse).z < -0.1;
+    _v.project(this.camera);
+    const visible = show && ahead && Math.abs(_v.x) < 1.1 && Math.abs(_v.y) < 1.1;
     r.label.hidden = !visible;
     if (!visible) return;
     const x = (_v.x * 0.5 + 0.5) * window.innerWidth;
@@ -424,12 +706,14 @@ class Multiplayer {
 
 const groundFor = (controllers: MultiplayerControllers, x: number, z: number) => controllers.getGroundHeight(x, z, 'person');
 
-// Reads ?multiplayer & friends; returns null when multiplayer is off or there is no server to reach
-function multiplayerOptions(search = location.search, host = location.hostname): Pick<MultiplayerOptions, 'url' | 'region' | 'name'> | null {
+// Reads ?multiplayer & friends; returns null when multiplayer is off or there is no server to reach. The server is
+// &mp-server, else (from localhost) the one on DEFAULT_PORT, else the page's own (tools/play.ts serves both)
+function multiplayerOptions(search = location.search, host = location.hostname, origin = location.origin): Pick<MultiplayerOptions, 'url' | 'region' | 'name'> | null {
   const params = new URLSearchParams(search);
   if (!params.has('multiplayer') || params.get('multiplayer') === '0') return null;
   const local = host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.localhost');
-  const url = params.get('mp-server') || (local ? `ws://${host}:${DEFAULT_PORT}` : null);
+  const own = /^https?:\/\//.test(origin) ? origin.replace(/^http/, 'ws') : null;
+  const url = params.get('mp-server') || (local ? `ws://${host}:${String(DEFAULT_PORT)}` : own);
   if (!url || !/^wss?:\/\//.test(url)) return null;
   let name = params.get('mp-name') || '';
   try {
@@ -437,6 +721,15 @@ function multiplayerOptions(search = location.search, host = location.hostname):
     else name = localStorage.getItem(NAME_KEY) || '';
   } catch {
     // storage blocked: the server hands out a numbered name
+  }
+  // the first time, asked for (the others see it over the player's head)
+  if (!name && typeof window.prompt === 'function') {
+    name = (window.prompt('¿Cómo te llamas? Los demás lo verán sobre tu cabeza.') ?? '').trim();
+    try {
+      if (name) localStorage.setItem(NAME_KEY, name);
+    } catch {
+      // (asked again next time)
+    }
   }
   // the flat city (?slopes=0) is a world of its own: everyone else stands up to 300 m higher on the town's slopes
   // (the region name is 32 characters at most, the suffix included)

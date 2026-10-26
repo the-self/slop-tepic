@@ -7,11 +7,12 @@ import type { LaneEntry, Vehicle } from './types.ts';
 import type { TrafficState } from './state.ts';
 import { ahead } from './occupancy.ts';
 
-// Where the player is relative to v: metres ahead, metres to the right, how fast it moves v's way and how big it
-// is. A vehicle the player left standing in the road (main.ts: setParked) counts instead when it is nearer ahead
-// in v's own lane
+// Where the player is relative to v: metres ahead, metres to the right, how fast it moves v's way (negative: at v)
+// and across, and how big it is. A vehicle the player left standing in the road (main.ts: setParked) counts instead
+// when it is nearer ahead in v's own lane
 function relateToPlayer(ts: TrafficState, v: Vehicle): void {
   v.pAhead = Infinity;
+  v.pParked = false;
   const fx = Math.sin(v.yaw);
   const fz = Math.cos(v.yaw);
   if (ts.player.active) {
@@ -20,7 +21,8 @@ function relateToPlayer(ts: TrafficState, v: Vehicle): void {
     if (Math.abs(dx) <= LOOKAHEAD + 10 && Math.abs(dz) <= LOOKAHEAD + 10) {
       v.pAhead = dx * fx + dz * fz;
       v.pRight = dz * fx - dx * fz;
-      v.pSpeed = Math.max(0, ts.player.vx * fx + ts.player.vz * fz);
+      v.pSpeed = ts.player.vx * fx + ts.player.vz * fz;
+      v.pSide = ts.player.vz * fx - ts.player.vx * fz;
       v.pHalfW = ts.player.halfW;
       v.pHalfL = ts.player.halfL;
     }
@@ -35,17 +37,30 @@ function relateToPlayer(ts: TrafficState, v: Vehicle): void {
     if (v.pAhead >= 0 && v.pAhead < ahead && Math.abs(v.pRight) <= v.halfWidth + v.pHalfW + 0.4) continue;
     v.pAhead = ahead;
     v.pRight = right;
-    v.pSpeed = 0;
+    v.pSpeed = v.pSide = 0;
     v.pHalfW = o.halfW;
     v.pHalfL = o.halfL;
+    v.pParked = true;
   }
 }
 
-// Gap to the player if it is ahead in the lane whose centre is `off` metres to the right of v
+// Gap to the player if it is ahead in the lane whose centre is `off` metres to the right of v. Not when it is
+// alongside rather than ahead (passing v or squeezing by: no driver stops for that, and touching is collisions.ts's),
+// nor when it is crossing v's way and will be out of it before v gets there (looked at no more than 1.5 s on: one
+// changing lanes into v's stops moving sideways once in it)
 function playerGap(v: Vehicle, off: number): number {
   if (v.pAhead < 0 || v.pAhead > LOOKAHEAD) return Infinity;
-  if (Math.abs(v.pRight - off) > v.halfWidth + v.pHalfW + 0.4) return Infinity;
-  return v.pAhead - v.half - v.pHalfL;
+  const clear = v.halfWidth + v.pHalfW + (v.pParked ? 0.4 : 0.25);
+  const across = v.pRight - off;
+  if (Math.abs(across) > clear) return Infinity;
+  const gap = v.pAhead - v.half - v.pHalfL;
+  if (v.pParked) return gap;
+  if (gap < -0.5) return Infinity;
+  if (Math.abs(v.pSide) > 1.5) {
+    const t = Math.min(1.5, Math.max(gap, 0) / Math.max(v.speed - v.pSpeed, 0.5));
+    if (Math.abs(across + v.pSide * t) > clear + 0.8) return Infinity;
+  }
+  return gap;
 }
 
 // Intelligent Driver Model: acceleration on a free road, and the braking term for an obstacle `gap` metres

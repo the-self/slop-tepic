@@ -107,6 +107,8 @@ function spawnPed(ts: TrafficState, p: Ped, rMin: number, rMax: number, protectV
     p.goalTime = 0;
     p.restTime = ts.clock + 25 + Math.random() * 45;
     p.socialTime = ts.clock + 5 + Math.random() * 15;
+    p.wish = Math.random();
+    p.ride = null;
     p.rig.placed = false; // stands afresh where it now is
     p.placed = true;
     if (crosswalk) atCurb(ts, p);
