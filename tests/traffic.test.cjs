@@ -395,3 +395,177 @@ test('a vehicle bumped or caught in a blast on a bridge reports and sparks over 
   blast({ peds: [], vehicles: [vehicle(DECK)] }, 3, 0, 10, 20);
   assert.deepEqual(sparks, [DECK]);
 });
+
+// A driver on a long straight road (lane 1.8 m right of the centreline, curb 4.55 m), driven by the real IDM, lane
+// keeping, dodging and curb stops (pickups real or stubbed), with the player as the traffic sees it. Its pose is set by
+// hand (heading +z, the right to -x) as locate() would.
+function roadHarness({ pickups, lanes = [1.8], lane = 0, half = 4.55 } = {}) {
+  const idm = trafficModule('idm', { './constants.ts': constants, './occupancy.ts': { ahead: () => null } });
+  const population = { retirePed: (ts, p) => { p.placed = false; p.ride = null; } };
+  const curb = pickups ? trafficModule('pickups', { './constants.ts': constants, './idm.ts': idm, './population.ts': population }) : null;
+  const driving = trafficModule('driving', {
+    './constants.ts': constants,
+    './signals.ts': { phaseOf: () => 'green' },
+    './occupancy.ts': { ahead: () => null, cross() {}, straddle: () => 0 },
+    './idm.ts': idm,
+    './routing.ts': { nearestLane: (m, l) => l },
+    './right-of-way.ts': { holdsOn: () => false, mergingAhead: () => null, pedsOut: () => null },
+    './junctions.ts': { enter() {}, leave() {}, mayEnter: () => true, signalAhead: () => 0 },
+    './pickups.ts': curb ?? { curbBrake: () => 0, curbside() {} }
+  });
+  const edge = { len: 600, lanes, half, occ: lanes.map(() => []), to: {}, sx: 0, sz: 0, dx: 0, dz: 1, rx: -1, rz: 0 };
+  const v = {
+    bus: false, half: 2.25, halfWidth: 0.86, axle: 1.38, driver: constants.CAR_DRIVER, v0: 13, edge, lane, s: 50,
+    speed: 12, acc: 0, gap: Infinity, leaderSpeed: 0, move: { to: edge, out: lanes.map(() => 0), turn: 'S' }, conn: null, cs: 0,
+    trail: null, commit: null, claimed: false, yielding: false, wait: 0, laneTimer: 1e9, dl: 0, dlv: 0, x: -lanes[lane], z: 50,
+    yaw: 0, wrecked: false, fleet: null, isTaxi: false, isPolice: false, pAhead: Infinity, pRight: 0, pSpeed: 0,
+    pSide: 0, pHalfW: 0.86, pHalfL: 2.18, pParked: false, pSeen: 0, react: 0.5, swerve: 0, stop: null, pullOver: 0,
+    nextStop: 0, fare: 0
+  };
+  const ts = {
+    clock: 0, caution: 1, headway: 1, roadGrip: 1, parked: [], peds: [], pedRoutes: { along: () => [] },
+    player: { active: false, x: 0, z: 0, vx: 0, vz: 0, halfW: 0.86, halfL: 2.18 }
+  };
+  const step = (dt = 1 / 60) => {
+    ts.clock += dt;
+    ts.player.x += ts.player.vx * dt;
+    ts.player.z += ts.player.vz * dt;
+    idm.relateToPlayer(ts, v);
+    driving.drive(ts, v, dt);
+    v.x = -(edge.lanes[v.lane] + v.dl);
+    v.z = v.s;
+  };
+  return { ts, v, step, curb, idm };
+}
+
+test('a driver doesn\'t stop dead for the player passing alongside, but brakes for them ahead once seen', () => {
+  const { ts, v, step, idm } = roadHarness();
+  // the player's car overtaking close by on its left, level with it
+  Object.assign(ts.player, { active: true, x: -1.8 + 1.9, z: 51, vx: 0, vz: 15 });
+  step();
+  assert.ok(v.speed > 11.5, `kept its speed (${v.speed.toFixed(2)} m/s)`);
+  // ...and crossing its way ahead, quick enough to be gone before it gets there
+  Object.assign(ts.player, { x: -1.8 + 1.5, z: 80, vx: -9, vz: 0 });
+  idm.relateToPlayer(ts, v);
+  assert.equal(idm.playerGap(v, 0), Infinity);
+  // standing in its lane ahead: no braking for the reaction time, then braking
+  Object.assign(ts.player, { x: -1.8, z: v.s + 30, vx: 0, vz: 0 });
+  step();
+  assert.ok(v.acc > -1, 'not braking before it has seen them');
+  for (let i = 0; i < 40; i++) step();
+  assert.ok(v.acc < -2, `braking once it has (${v.acc.toFixed(2)} m/s²)`);
+});
+
+test('a driver swerves to the right for the player coming head on in its lane, and not for oncoming traffic', () => {
+  const head = roadHarness();
+  Object.assign(head.ts.player, { active: true, x: -1.8, z: 150, vx: 0, vz: -12 });
+  let closest = Infinity;
+  for (let i = 0; i < 480 && head.ts.player.z > head.v.z - 6; i++) {
+    head.step();
+    if (Math.abs(head.ts.player.z - head.v.z) < 4.4) closest = Math.min(closest, Math.abs(head.ts.player.x - head.v.x));
+  }
+  assert.ok(head.v.dl > 0.9, `off to the right (${head.v.dl.toFixed(2)} m)`);
+  assert.ok(head.v.dl < 4.55 - 1.8 - 0.86 + 0.01, 'not over the curb');
+  assert.ok(closest > 0.86 + 0.86, `passed without touching (${closest.toFixed(2)} m apart, centre to centre)`);
+
+  const oncoming = roadHarness();
+  Object.assign(oncoming.ts.player, { active: true, x: 1.8, z: 100, vx: 0, vz: -12 });
+  for (let i = 0; i < 180; i++) oncoming.step();
+  assert.ok(Math.abs(oncoming.v.dl) < 0.05, 'kept to its lane');
+  assert.ok(oncoming.v.speed > 11, 'and its speed');
+});
+
+test('a combi pulls in for someone hailing it, waits while they get on, and drives on', () => {
+  const { ts, v, step, curb } = roadHarness({ pickups: true });
+  v.fleet = 'combi';
+  v.react = 0.4; // (wants() salts each person's wish with it)
+  const p = { placed: true, fallen: null, bail: null, ride: null, node: null, conversation: null, wish: 0, x: -5.6, z: 110, v: 1 };
+  while ((p.wish * 9.7 + v.react * 31.3) % 1 >= 0.2) p.wish += 0.01; // (someone who wants this one)
+  ts.peds.push(p);
+  let stoppedAt = null;
+  for (let i = 0; i < 60 * 30 && p.placed; i++) {
+    step();
+    if (p.ride) curb.rideStep(ts, p, 1 / 60);
+    if (!stoppedAt && v.stop?.stopped) stoppedAt = { z: v.z, dl: v.dl };
+  }
+  assert.ok(stoppedAt, 'it stopped');
+  assert.ok(Math.abs(stoppedAt.z + 0.1 - 110) < 1.5, `beside them (${stoppedAt.z.toFixed(2)})`);
+  assert.ok(stoppedAt.dl > 1, `pulled in to the curb (${stoppedAt.dl.toFixed(2)} m)`);
+  assert.equal(p.placed, false, 'they got on');
+  for (let i = 0; i < 60 * 12; i++) step();
+  assert.equal(v.stop, null);
+  assert.ok(v.speed > 5 && v.dl < 0.3, 'back in its lane and on its way');
+});
+
+// The closest the player and v come side by side (m, centre to centre) as the player drives past it head on
+function headOn(h, x, z, speed = 12) {
+  Object.assign(h.ts.player, { active: true, x, z, vx: 0, vz: -speed });
+  let closest = Infinity;
+  for (let i = 0; i < 600 && h.ts.player.z > h.v.z - 6; i++) {
+    h.step();
+    if (Math.abs(h.ts.player.z - h.v.z) < 4.4) closest = Math.min(closest, Math.abs(h.ts.player.x - h.v.x));
+  }
+  return closest;
+}
+
+test('with no room to its right, a driver swerves left round the player coming head on', () => {
+  // a one-way street's curb lane, 0.6 m from the curb
+  const h = roadHarness({ lanes: [-3.03, 0, 3.03], lane: 2, half: 4.55 });
+  const closest = headOn(h, -3.03, 150);
+  assert.ok(h.v.dl < -1, `off to the left (${h.v.dl.toFixed(2)} m)`);
+  assert.ok(closest > 0.86 + 0.86, `passed without touching (${closest.toFixed(2)} m apart)`);
+});
+
+test('a driver who sees the player head on late keeps swerving till they are past, and one standing still doesn\'t slide', () => {
+  const late = roadHarness();
+  // creeping along, the player rolling at it in its lane, a little left of its centre, pulling in 25 m off: once it
+  // steers out of their path it holds on (they aren't forgotten, seconds later) till they are past
+  late.v.speed = late.v.v0 = 5;
+  Object.assign(late.ts.player, { active: true, x: -1.8 + 0.4, z: late.v.z + 25, vx: 0, vz: -3.5 });
+  let swerved = false, letGo = false, apart = 0;
+  for (let i = 0; i < 300 && late.v.pAhead > -(late.v.half + late.v.pHalfL); i++) {
+    late.step();
+    apart = Math.max(apart, Math.abs(late.v.pRight));
+    if (late.v.swerve !== 0) swerved = true;
+    else if (swerved && late.v.pAhead > -(late.v.half + late.v.pHalfL)) letGo = true;
+  }
+  assert.ok(apart > 0.86 + 0.86 + 0.25, 'out of their path');
+  assert.ok(swerved && !letGo, 'swerved, and held it');
+  assert.ok(late.v.dl > 1, `off to the right (${late.v.dl.toFixed(2)} m)`);
+
+  // ...even having seen them only just long enough to react when it got out of their path
+  const just = roadHarness();
+  Object.assign(just.ts.player, { active: true, x: -1.8 + 0.4, z: just.v.z + 20, vx: 0, vz: -4 });
+  Object.assign(just.v, { dl: 1.84, swerve: 1.84, pSeen: just.v.react + 0.005 });
+  for (let i = 0; i < 30; i++) just.step();
+  assert.notEqual(just.v.swerve, 0, 'still swerving');
+
+  const standing = roadHarness();
+  standing.v.speed = 0;
+  standing.v.v0 = 0.01; // (waiting at a light)
+  headOn(standing, -1.8, 100);
+  assert.ok(Math.abs(standing.v.dl) < 0.05, `stayed put (${standing.v.dl.toFixed(2)} m)`);
+});
+
+test('a driver brakes for the player merging into its lane at an angle ahead', () => {
+  const { ts, v, idm } = roadHarness();
+  // 1.5 m to its right, moving over into its path at 1.6 m/s, 2 m/s slower
+  Object.assign(ts.player, { active: true, x: -1.8 - 1.5, z: v.z + 14.4, vx: 1.6, vz: 10 });
+  idm.relateToPlayer(ts, v);
+  assert.ok(idm.playerGap(v, 0) < 15, 'in its way');
+});
+
+test('a combi pulls out again when whoever hailed it is knocked down', () => {
+  const { ts, v, step } = roadHarness({ pickups: true });
+  v.fleet = 'combi';
+  v.react = 0.4;
+  const p = { placed: true, fallen: null, bail: null, ride: null, node: null, conversation: null, wish: 0, x: -5.6, z: 110, v: 1 };
+  while ((p.wish * 9.7 + v.react * 31.3) % 1 >= 0.2) p.wish += 0.01;
+  ts.peds.push(p);
+  for (let i = 0; i < 120 && !v.stop; i++) step();
+  assert.ok(v.stop, 'pulling in for them');
+  p.fallen = {}; // (run over: throwPed leaves a ragdoll)
+  step();
+  assert.equal(v.stop, null, 'gave up on them');
+  assert.equal(p.ride, null);
+});

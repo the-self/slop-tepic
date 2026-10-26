@@ -37,6 +37,7 @@ function retirePed(ts: TrafficState, p: Ped): void {
   ts.ragdolls?.release(p.fallen); // (its body out of the world: its rig is the next walker's)
   p.fallen = null;
   p.bail = null;
+  p.ride = null;
   p.nextRoute = null;
 }
 

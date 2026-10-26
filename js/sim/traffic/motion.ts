@@ -108,7 +108,9 @@ function place(ts: TrafficState, v: Vehicle, e: TrafficEdge, lane: number, s: nu
   v.wait = 0;
   v.speed = v.v0 * 0.5;
   v.acc = 0;
-  v.dl = v.dlv = 0;
+  v.dl = v.dlv = v.swerve = v.pullOver = 0;
+  v.stop = null; // (whoever was waiting for it walks on, pickups.ts)
+  v.fare = 0;
   v.vx = v.vz = v.yawOffset = v.yawVel = v.pitch = v.pitchVel = v.roll = v.rollVel = 0;
   v.damage = null; // (it comes back as another car, like new)
   v.wrecked = false;
