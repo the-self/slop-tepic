@@ -1,7 +1,7 @@
 // js/sim/emergency/stations.ts
 // Where the bomberos and the ambulances set out from (sim/emergency.ts): the real stations of Tepic, as Overture Maps'
-// places (ODbL) have them, put in the world frame the geodata is in. No three.js: node --test imports it.
-import { GEO } from '../../world/city-geodata.js';
+// places (ODbL) have them, put in the world frame the geodata is in (world/geo.ts). No three.js: node --test imports it.
+import { geoToWorld } from '../../world/geo.ts';
 
 /** A station: its name, and where it stands (m, the world frame) */
 export interface Station {
@@ -10,24 +10,10 @@ export interface Station {
   z: number;
 }
 
-// The WGS84 ellipsoid, for the local east-north metres round the frame's origin (as tools/build-tepic-geodata.mjs)
-const A = 6378137.0;
-const E2 = 6.69437999014e-3;
-
-/**
- * Pure: (lat, lon) in degrees to the world frame (m: x east along the centro's grid, z south), as the geodata builder
- * projects OpenStreetMap's points: east & north metres round the Plaza Principal, turned by the grid's bearing
- */
-export function geoToWorld(lat: number, lon: number, frame: { lat0: number; lon0: number; bearingDeg: number } = GEO.frame): { x: number; z: number } {
-  const phi = (frame.lat0 * Math.PI) / 180, s = Math.sin(phi);
-  const kx = (Math.PI / 180) * (A / Math.sqrt(1 - E2 * s * s)) * Math.cos(phi);
-  const ky = (Math.PI / 180) * ((A * (1 - E2)) / Math.pow(1 - E2 * s * s, 1.5));
-  const e = (lon - frame.lon0) * kx, n = (lat - frame.lat0) * ky;
-  const t = (frame.bearingDeg * Math.PI) / 180, c = Math.cos(t), sn = Math.sin(t);
-  return { x: e * c - n * sn, z: -(e * sn + n * c) };
-}
-
-const station = (name: string, lat: number, lon: number): Station => ({ name, ...geoToWorld(lat, lon) });
+const station = (name: string, lat: number, lon: number): Station => {
+  const [x, z] = geoToWorld(lat, lon);
+  return { name, x, z };
+};
 
 // The bomberos: the state's Protección Ciudadana y Bomberos on Av. Insurgentes Ote., the Heroico Cuerpo de Bomberos'
 // station that answers Tepic's & Xalisco's fires (the only fire station in the data)

@@ -41,9 +41,13 @@ function mishaps(ts: TrafficState, dt: number): void {
   const m = ts.mishap;
   const v = m.v, o = m.o;
   if (v) {
+    // (taken out of the traffic meanwhile, and maybe placed again elsewhere: retireVehicle has it look up)
+    if (!(v.distracted > 0) || !o || o.crash || !o.edge || !v.edge || v.crash || v.distracted > LOOK_AWAY) {
+      lookUp(ts);
+      return;
+    }
     v.distracted += dt;
-    if (!o || o.crash || !v.edge || v.crash || v.distracted > LOOK_AWAY) lookUp(ts);
-    else if (v.gap < 0.6) {
+    if (v.gap < 0.6) {
       // struck: both thrown about in Jolt (v at its speed, into o)
       if (crash(ts, v)) crash(ts, o);
       lookUp(ts);

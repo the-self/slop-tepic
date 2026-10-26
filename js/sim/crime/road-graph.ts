@@ -109,14 +109,24 @@ export function nearestNode(crime: CrimeSystem, x: number, z: number): number {
 // up after `limit` intersections (a chase's route is short; a fire truck's across the city is not); `oneWay`: only
 // the ways the lanes run (crime.ways)
 export function route(crime: CrimeSystem, x0: number, z0: number, x1: number, z1: number, limit = 4000, oneWay = false): XZ[] | null {
-  const s = crime.nearestNode(x0, z0), g = crime.nearestNode(x1, z1);
-  if (s < 0 || g < 0) return null;
-  if (s === g) return [crime.nodes[g]];
+  const s = crime.nearestNode(x0, z0);
+  return s < 0 ? null : routeFrom(crime, [[s, 0]], x1, z1, limit, oneWay);
+}
+
+// The same from whichever of `starts` ([node, m already come to it]) gives the shortest way: one search for them all
+export function routeFrom(crime: CrimeSystem, starts: readonly (readonly [number, number])[], x1: number, z1: number, limit = 4000, oneWay = false): XZ[] | null {
+  const g = crime.nearestNode(x1, z1);
+  if (g < 0 || !starts.length) return null;
   const goal = crime.nodes[g];
-  const cost = new Map([[s, 0]]);
+  const cost = new Map<number, number>();
   const from = new Map<number, number>();
   const open = new Heap();
-  open.push(0, s);
+  for (const [s, c] of starts) {
+    if (s === g) return [goal];
+    cost.set(s, c);
+    const n = crime.nodes[s];
+    open.push(c + Math.hypot(n.x - goal.x, n.z - goal.z), s);
+  }
   let expanded = 0;
   while (open.size && expanded < limit) {
     const [, i] = open.pop();

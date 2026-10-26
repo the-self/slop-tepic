@@ -68,6 +68,7 @@ const SAME_SCENE = 45; // m: a call this near an open one is the same
 const WORK_TIME = 30; // s the paramédicos take
 const LINGER = 12; // s the bomberos stay once the fire is out
 const GONE = 320; // m from the camera going back: out of sight, back in its station
+const GIVE_UP = 300; // s on its way before it gives up (stuck somewhere: across the city takes 3 at most)
 const CREW = 3; // bomberos per truck
 const PARAMEDICS = 2;
 
@@ -200,12 +201,23 @@ class EmergencyServices {
             u.t = 0;
             const p = this.crime.player.position;
             if (u.slot === 0 && call.service === 'fire' && Math.hypot(p.x - call.x, p.z - call.z) < 800) this.crime.toast('The bomberos are on their way');
-          } else u.t = -5; // (no way there: it tries again)
+          } else {
+            // (no way there: nobody can get to it)
+            call.open = false;
+            this.detach(u);
+            u.phase = 'idle';
+          }
         }
         return;
       }
       case 'go': {
         if (!call?.open) {
+          this.goBack(u);
+          return;
+        }
+        // hopelessly stuck on the way: it turns back (and the hurt are taken some other way)
+        if (u.t > GIVE_UP) {
+          if (call.service === 'ambulance') call.open = false;
           this.goBack(u);
           return;
         }
