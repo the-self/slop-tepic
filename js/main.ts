@@ -283,7 +283,7 @@ async function initApp(): Promise<void> {
   // City-wide static geometry: chunk & distance-cull the small props, shadow stand-ins for the big casters
   // (render/scene-culling.ts)
   const named = (names: readonly string[]) => names.map((name) => scene.getObjectByName(name)).filter((o) => o !== undefined);
-  const cullingRoots = named(['CityGrid', 'CityBlocks', 'StreetDetails', 'Hills', 'Rivers', 'Bridges']);
+  const cullingRoots = named(['CityGrid', 'CityBlocks', 'StreetDetails', 'Hills', 'Rivers', 'Bridges', 'Bardas']);
   setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
   // ...whose world matrices never change again: rendering stops walking them (the loop updates the rest of the scene)
   const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Airport', 'RoadMarkings', 'Pavements', 'Topes', 'StreamedTiles'])

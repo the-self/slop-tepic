@@ -230,6 +230,10 @@ export type ParkingEntrance = [x: number, z: number, angle: number, width: numbe
  *  its entrances]. */
 export type ParkingLot = [name: string, surface: ParkingSurface, theta: number, ring: FlatPoints, entrances: ParkingEntrance[]];
 
+/** A wall or fence as OpenStreetMap maps it (barrier=wall | fence), cut off the streets & buildings: [kind (0 a wall,
+ *  1 a fence), height (m, 0 unmapped), flat points]. */
+export type OsmWall = [kind: 0 | 1, height: number, pts: FlatPoints];
+
 export interface CityGeodata {
   version: number;
   frame: GeoFrame;
@@ -275,6 +279,7 @@ export interface CityGeodata {
   airport: Airport;
   overrides: BuildingOverride[];
   parking: ParkingLot[];
+  walls: OsmWall[];
 }
 
 export declare const GEO: CityGeodata;

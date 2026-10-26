@@ -1072,6 +1072,23 @@ const houses = [];
   log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets, ${onCanal} on a canal through green, ${onLot} in a car park), ${bigBoxes} big boxes (${hallsOnLots} on a mapped car park)`);
 }
 
+// The houses in 20 m cells: whether (x, z) lies in one, `pad` m round it (no driveway or wall through a building)
+const HC = 20;
+const houseCells = new Map();
+for (let k = 0; k < houses.length; k += HS) {
+  const cx = houses[k] / 10, cz = houses[k + 1] / 10, r = Math.hypot(houses[k + 2], houses[k + 3]) / 20;
+  for (let ix = Math.floor((cx - r) / HC); ix <= Math.floor((cx + r) / HC); ix++) {
+    for (let iz = Math.floor((cz - r) / HC); iz <= Math.floor((cz + r) / HC); iz++) {
+      const key = ix * 100003 + iz;
+      if (!houseCells.has(key)) houseCells.set(key, []);
+      houseCells.get(key).push(k);
+    }
+  }
+}
+const inHouse = (x, z, pad) => (houseCells.get(Math.floor(x / HC) * 100003 + Math.floor(z / HC)) || []).some((k) => {
+  const th = houses[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th), dx = x - houses[k] / 10, dz = z - houses[k + 1] / 10;
+  return Math.abs(cs * dx - sn * dz) < houses[k + 2] / 20 + pad && Math.abs(sn * dx + cs * dz) < houses[k + 3] / 20 + pad;
+});
 // --- Car parks' entrances: where a lot opens onto the street ---------------------------------------------------------
 // Where a service road or aisle that runs through a lot (OSM highway=service: the parking aisles, the driveways, the
 // plazas' access roads) leaves the lot's block onto the street: the point on the curb it crosses (found to a few cm
@@ -1089,23 +1106,6 @@ const houses = [];
     if (!pieces.has(lot.lab)) pieces.set(lot.lab, []);
     pieces.get(lot.lab).push(lot);
   }
-  // the houses in 20 m cells: no driveway through a building
-  const HC = 20;
-  const houseCells = new Map();
-  for (let k = 0; k < houses.length; k += HS) {
-    const cx = houses[k] / 10, cz = houses[k + 1] / 10, r = Math.hypot(houses[k + 2], houses[k + 3]) / 20;
-    for (let ix = Math.floor((cx - r) / HC); ix <= Math.floor((cx + r) / HC); ix++) {
-      for (let iz = Math.floor((cz - r) / HC); iz <= Math.floor((cz + r) / HC); iz++) {
-        const key = ix * 100003 + iz;
-        if (!houseCells.has(key)) houseCells.set(key, []);
-        houseCells.get(key).push(k);
-      }
-    }
-  }
-  const inHouse = (x, z, pad) => (houseCells.get(Math.floor(x / HC) * 100003 + Math.floor(z / HC)) || []).some((k) => {
-    const th = houses[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th), dx = x - houses[k] / 10, dz = z - houses[k + 1] / 10;
-    return Math.abs(cs * dx - sn * dz) < houses[k + 2] / 20 + pad && Math.abs(sn * dx + cs * dz) < houses[k + 3] / 20 + pad;
-  });
   // the drivable roadways (drivePieces) in 50 m cells: a street, not a footpath's or a river's gap between the blocks
   const RC = 50;
   const roadCells = new Map();
@@ -1224,6 +1224,41 @@ const houses = [];
   }
   log(`car parks: ${found} entrances from the street where OSM maps them, ${made} more on the sides facing a street, ` +
     `${parkingLots.filter((p) => !p.entrances.length).length} lots with none (facing no street)`);
+}
+
+// --- Walls: OpenStreetMap's barrier=wall & fence ways, the bardas round the ranchos, the schools, the lienzos ---------
+// As mapped, cut where they cross a roadway (a wall mapped across the street's mouth, a gate's gap) or a building (a
+// house built against it: its own walls stand there): [kind (0 a wall, 1 a fence), height (m, 0: unmapped), flat
+// points]. The game draws them (js/world/bardas.ts), and walls the big open plots OSM has none round
+const osmWalls = [];
+{
+  let cut = 0;
+  for (const e of landOSM.elements) {
+    const t = e.tags || {};
+    if (e.type !== 'way' || !/^(wall|fence)$/.test(t.barrier || '') || !e.geometry) continue;
+    const kind = t.barrier === 'fence' ? 1 : 0;
+    const height = Math.min(6, Math.max(0, num(t.height) || 0));
+    const pts = e.geometry.map((g) => toWorld(g.lon, g.lat));
+    // sampled every metre: a piece is kept where its middle is on a block, out of the buildings
+    let chain = [];
+    const flush = () => {
+      if (chain.length > 1) osmWalls.push([kind, height, flat(rdp(chain, 0.15))]);
+      chain = [];
+    };
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az)));
+      for (let k = 0; k < n; k++) {
+        const x0 = ax + ((bx - ax) * k) / n, z0 = az + ((bz - az) * k) / n, x1 = ax + ((bx - ax) * (k + 1)) / n, z1 = az + ((bz - az) * (k + 1)) / n;
+        const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+        if (!inBox(mx, mz) || !labAt(mx, mz) || inHouse(mx, mz, -0.2)) { cut++; flush(); continue; }
+        if (!chain.length) chain.push([x0, z0]);
+        chain.push([x1, z1]);
+      }
+    }
+    flush();
+  }
+  log(`walls: ${osmWalls.length} pieces of wall & fence from OSM (${Math.round(osmWalls.reduce((t, w) => { let L = 0; for (let i = 2; i + 1 < w[2].length; i += 2) L += Math.hypot(w[2][i] - w[2][i - 2], w[2][i + 1] - w[2][i - 1]); return t + L; }, 0) / 1000)} km), ${cut} m cut off the streets & buildings`);
 }
 
 // =====================================================================================================================
@@ -2151,7 +2186,10 @@ const GEO = {
   // Surface car parks (4), inside the property lines: [name ('' none), surface (0 asphalt, 1 concrete, 2 setts, 3 earth
   // or gravel), the stall rows' direction θ (mrad: along (cos θ, -sin θ)), outline (flat ring), entrances ([x, z on
   // the curb (m), the way in square to it (mrad, atan2 of z over x), width (m), path from the curb to the lot (flat)])]
-  parking: parkingLots.map((p) => [p.name, p.surface, Math.round(p.th * 1000), flat(p.poly), p.entrances])
+  parking: parkingLots.map((p) => [p.name, p.surface, Math.round(p.th * 1000), flat(p.poly), p.entrances]),
+  // Walls & fences as OpenStreetMap maps them, off the streets & buildings: [kind (0 wall, 1 fence), height (m, 0
+  // unmapped), flat points]
+  walls: osmWalls
 };
 
 const json = JSON.stringify(GEO);

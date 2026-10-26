@@ -12,7 +12,7 @@ import { liftAt } from './ground.ts';
 import { drapeGeometry } from './drape.ts';
 import { indexHouses } from './lot-greenery.ts';
 import { hash } from './hash.ts';
-import { carParks, inCarPark, layStalls, parkCars, STALL_D, STALL_W } from './parking.ts';
+import { carParks, inCarPark, inMouth, layStalls, parkCars, STALL_D, STALL_W } from './parking.ts';
 import { createPavementMaterial, createRoadPaintMaterial, createRoadSurfaceMaterial } from '../render/tsl-materials.ts';
 import { BODY_SPECS, bodyDims, buildCarGeometry, buildCarProxyGeometry, createLoftedCarMaterial } from '../actors/actor-models.ts';
 import { paintsOf, pickBody, pickModel } from '../models/cars/index.ts';
@@ -394,12 +394,31 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     }
   }
 
+  // Whether (x, z) is ground that stays open to the street: a lot, a driveway or an entrance's mouth (the lots by
+  // RAMP_CELL cell, with the reach of their driveways round them)
+  const lotCells = new Map<number, CarPark[]>();
+  for (const lot of lots) {
+    let x0 = lot.minX, x1 = lot.maxX, z0 = lot.minZ, z1 = lot.maxZ;
+    for (const e of lot.entrances) for (const p of e.path) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); }
+    for (let ix = Math.floor((x0 - 12) / RAMP_CELL); ix <= Math.floor((x1 + 12) / RAMP_CELL); ix++) {
+      for (let iz = Math.floor((z0 - 12) / RAMP_CELL); iz <= Math.floor((z1 + 12) / RAMP_CELL); iz++) {
+        const k = ix * 4096 + iz;
+        let list = lotCells.get(k);
+        if (!list) lotCells.set(k, (list = []));
+        list.push(lot);
+      }
+    }
+  }
+  const keepsOpen = (x: number, z: number) =>
+    lotCells.get(Math.floor(x / RAMP_CELL) * 4096 + Math.floor(z / RAMP_CELL))?.some((l) => inCarPark(l, x, z) || inMouth(l, x, z)) ?? false;
+
   console.info(`[car parks] ${lots.length} lots, ${ramps.length} entrances, ${stallCount} stalls, ${placed.length} cars parked`);
   return {
     lots,
     colliders,
     /** Whether (x, z) lies in a car park */
     contains: (px: number, pz: number) => lots.some((l) => inCarPark(l, px, pz)),
+    keepsOpen,
     rampAt,
     update
   };
