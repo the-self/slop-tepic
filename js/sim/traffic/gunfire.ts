@@ -4,6 +4,7 @@ import { boxHit } from '../mayhem.ts';
 import { bleedOf } from '../ragdolls.ts';
 import { blastFalloff, rayBox, rayCircle } from '../weapons.ts';
 import { createDamage } from '../../player/vehicle-damage.ts';
+import { BODY_SPECS } from '../../actors/actor-models.ts';
 import { KNOCK_SPEED, MASS, massOf } from './constants.ts';
 import type { Ped, RayAccept, TrafficRayHit, Vehicle } from './types.ts';
 import type { TrafficState } from './state.ts';
@@ -168,4 +169,38 @@ function knockBox(ts: TrafficState, x: number, z: number, heading: number, hw: n
   return thrown;
 }
 
-export { rayHit, shootPed, shootVehicle, blast, panic, knockBox };
+// A shot striking car v at (x, y, z), low (its wheels' height): the tyre nearest, within 0.6 m of it, bursts. Whether one
+// did (a bus's and a bike's are left whole)
+function shootTyre(ts: TrafficState, v: Vehicle, x: number, y: number, z: number): boolean {
+  if (v.bus || v.bike || v.moto || !v.edge) return false;
+  const spec = BODY_SPECS[v.bodyType];
+  const r = spec.wheelRadius * v.sw;
+  if (y - (v.hy ?? hillAt(ts, x, z)) > r * 2 + 0.1) return false;
+  const yaw = v.yaw + v.yawOffset, sn = Math.sin(yaw), cs = Math.cos(yaw);
+  // (in its frame: + to its left, + ahead)
+  const lx = (x - v.x) * cs - (z - v.z) * sn, lz = (x - v.x) * sn + (z - v.z) * cs;
+  const wx = spec.wheelX * v.sx, wz = spec.wheelZ * v.sz;
+  const bit = (lx < 0 ? 2 : 0) + (lz < 0 ? 1 : 0);
+  if (Math.hypot(Math.abs(lx) - wx, Math.abs(lz) - wz) > r + 0.45 || (v.flats >> bit) & 1) return false;
+  v.flats |= 1 << bit;
+  spawnCollisionSparks(ts, x, 0.25, z, -sn, -cs, 4, v.hy ?? hillAt(ts, x, z));
+  return true;
+}
+
+// Every tyre of the traffic's cars on a spike strip lying across the road: its middle (cx, cz), heading (rad, along
+// it), half its length & width (m)
+function spikeTraffic(ts: TrafficState, cx: number, cz: number, heading: number, halfLen: number, halfW: number): void {
+  const ax = Math.sin(heading), az = Math.cos(heading);
+  for (const v of ts.cars) {
+    if (!v.edge || Math.abs(v.x - cx) > halfLen + 4 || Math.abs(v.z - cz) > halfLen + 4) continue;
+    const spec = BODY_SPECS[v.bodyType];
+    const yaw = v.yaw + v.yawOffset, sn = Math.sin(yaw), cs = Math.cos(yaw);
+    for (let bit = 0; bit < 4; bit++) {
+      const lx = (bit & 2 ? -1 : 1) * spec.wheelX * v.sx, lz = (bit & 1 ? -1 : 1) * spec.wheelZ * v.sz;
+      const dx = v.x + lx * cs + lz * sn - cx, dz = v.z - lx * sn + lz * cs - cz;
+      if (Math.abs(dx * ax + dz * az) <= halfLen && Math.abs(dx * az - dz * ax) <= halfW + 0.15) v.flats |= 1 << bit;
+    }
+  }
+}
+
+export { rayHit, shootPed, shootVehicle, shootTyre, spikeTraffic, blast, panic, knockBox };

@@ -296,6 +296,8 @@ interface VehicleBase {
   distracted: number;
   /** a siren close behind (sim/emergency.ts): it pulls over to the right and crawls till it has gone by */
   sirenNear: boolean;
+  /** its flat tyres (shot, a spike strip), bit (right ? 2 : 0) + (rear ? 1 : 0): it limps along to the curb */
+  flats: number;
   /** m off the lane centre (right +) it is steering to, out of the way of the player coming at it */
   swerve: number;
   /** a camión, combi or taxi (pickups.ts): the curb it is pulling in to, or null; m to the right it pulls over to;

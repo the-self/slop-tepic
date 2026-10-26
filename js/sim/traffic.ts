@@ -33,7 +33,7 @@ import { setCollisionListener, setMayhemListener, setKnockListener, setRagdolls,
 import { setHillQuery, setSurfaceQuery } from './traffic/surface.ts';
 import { setHour } from './traffic/near.ts';
 import { setPhysics, setSmokeEmitter } from './traffic/crashes.ts';
-import { rayHit, shootPed, shootVehicle, blast, panic, knockBox } from './traffic/gunfire.ts';
+import { rayHit, shootPed, shootVehicle, shootTyre, spikeTraffic, blast, panic, knockBox } from './traffic/gunfire.ts';
 import { sparksAt } from './traffic/sparks.ts';
 import { bumpBody } from './traffic/collisions.ts';
 import { roadSpot, sidewalkSpot } from './traffic/spawning.ts';
@@ -60,6 +60,8 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
       rayHit(ts, ox, oz, dx, dz, range, accept),
     shootPed: (p: Ped, dx: number, dz: number, power?: number): void => { shootPed(ts, p, dx, dz, power); },
     shootVehicle: (v: Vehicle, x: number, y: number, z: number, dx: number, dz: number): void => { shootVehicle(ts, v, x, y, z, dx, dz); },
+    shootTyre: (v: Vehicle, x: number, y: number, z: number): boolean => shootTyre(ts, v, x, y, z),
+    spikeTraffic: (cx: number, cz: number, heading: number, halfLen: number, halfW: number): void => { spikeTraffic(ts, cx, cz, heading, halfLen, halfW); },
     sparks: (x: number, y: number, z: number, nx: number, nz: number, speed: number): void => { sparksAt(ts, x, y, z, nx, nz, speed); },
     blast: (x: number, z: number, radius: number, power: number): number => blast(ts, x, z, radius, power),
     panic: (x: number, z: number, radius: number): void => { panic(ts, x, z, radius); },

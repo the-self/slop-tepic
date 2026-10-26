@@ -102,6 +102,8 @@ class ThirdPersonControllerManager {
   // (main.ts: the driver or rider thrown out, impact in m/s (0: stepped off), at (x, z), off which vehicle; `bail`: they
   // jumped out at that speed, boarding.ts leaveVehicle)
   onEject?: (impact: number, x: number, z: number, kind: VehicleMode, bail?: boolean) => void;
+  // (main.ts: the car's tank run dry)
+  onFuelOut?: () => void;
 
   constructor(scene: THREE.Scene, colliders: PlayerCollider[] = []) {
     this.scene = scene;
@@ -306,6 +308,8 @@ class ThirdPersonControllerManager {
   recordVelocity(c: CarEntity): void { CarCrashes.recordVelocity(c); }
   impactCar(c: CarEntity, dvx: number, dvz: number): number { return CarCrashes.impactCar(this, c, dvx, dvz); }
   deformCar(c: CarEntity): void { CarCrashes.deformCar(c); }
+  popTyre(i: number): boolean { return CarCrashes.popTyre(this, i); }
+  popTyresOn(cx: number, cz: number, heading: number, halfLen: number, halfW: number): number { return CarCrashes.popTyresOn(this, cx, cz, heading, halfLen, halfW); }
 
   // The smoke puffs (controllers/smoke.ts)
   createSmoke(): void { Smoke.createSmoke(this); }

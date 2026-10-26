@@ -879,6 +879,31 @@ for (const e of landOSM.elements) {
 }
 log(`${places.length} neighbourhoods, ${pois.length} points of interest`);
 
+// The gas stations (Overture Maps' places, basic_category gas_station, the surer ones): where each stands and its name.
+// One station's several entries (its shop, its pumps, a GasCard kiosk...) as one, the surest of them. The game lays its
+// pumps beside them (world/gas-stations.ts)
+const fuel = [];
+{
+  const file = path.join(DATA, 'overture', 'places.geojsonl');
+  const found = [];
+  if (fs.existsSync(file)) {
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      const f = JSON.parse(line);
+      const p = f.properties || {};
+      if (p.basic_category !== 'gas_station' || (p.confidence || 0) < 0.55 || !f.geometry || f.geometry.type !== 'Point') continue;
+      const [x, z] = toWorld(f.geometry.coordinates[0], f.geometry.coordinates[1]);
+      if (!inBox(x, z)) continue;
+      const name = ((p.names && p.names.primary) || 'Gasolinera').replace(/"/g, '').trim();
+      if (/vulcaniz|llant|refacc/i.test(name)) continue; // (a tyre shop filed as one)
+      found.push({ x, z, conf: p.confidence, name });
+    }
+  }
+  found.sort((a, b) => b.conf - a.conf);
+  for (const s of found) if (!fuel.some(([x, z]) => Math.hypot(x - s.x, z - s.z) < 70)) fuel.push([q(s.x), q(s.z), s.name]);
+}
+log(`${fuel.length} gas stations`);
+
 const landmarks = {};
 for (const e of bldOSM.elements) {
   const t = e.tags || {};
@@ -1981,6 +2006,8 @@ const GEO = {
   points: {},
   places,
   pois,
+  // The gas stations (5): [x, z (m), name]
+  fuel,
   teleports,
   // Real buildings (Overture Maps), 8 integers each: centre x, z (dm), width, depth (dm, local x / z), turn θ
   // (mrad, world = c + R_y(θ)·local), storeys, front side (0 w, 1 e, 2 n, 3 s of the local frame) + KIND bits (4 a shop, 8 a big box, 16 a strip plaza, 32 a coto's house, its number + 1 from bit 6 up), sign

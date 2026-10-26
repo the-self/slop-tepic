@@ -51,6 +51,11 @@ const GET_UP = 2.5;
 // Getting out faster than this (m/s, ~15 km/h) the player jumps out of the car, or off the moto, and tumbles along the
 // road (boarding.ts leaveVehicle), GTA-style
 const BAIL_SPEED = 4;
+// The car's tank (L) and what it burns (L/s): idling, and more with the throttle down (a full tank lasts ~18 min with
+// the foot down, GTA-quick rather than real)
+const FUEL_TANK = 50;
+const FUEL_IDLE = 0.003;
+const FUEL_BURN = 0.043;
 // A moto's or bicycle's rider goes over the bars hitting something head on at ~30 km/h (or from any side at 1.5 times
 // that), or sliding along at that once it is down on its side (leant over past DOWN_LEAN rad, off its tyres)
 const THROW_SPEED = 8.3;
@@ -66,6 +71,6 @@ const personGround = (controllers: ThirdPersonControllerManager, x: number, z: n
 
 
 export {
-  START, SPAWN, LEFT_CARS, LABELS, groundCollider, SPEC_BY_NAME, modelFor, AIM_WALK, EJECT_SPEED, GET_UP, BAIL_SPEED, THROW_SPEED,
+  START, SPAWN, LEFT_CARS, LABELS, groundCollider, SPEC_BY_NAME, modelFor, AIM_WALK, EJECT_SPEED, GET_UP, BAIL_SPEED, FUEL_TANK, FUEL_IDLE, FUEL_BURN, THROW_SPEED,
   DOWN_LEAN, BRAKE_LIMIT, SMOKE_PUFFS, BICYCLE_BODY, personGround
 };

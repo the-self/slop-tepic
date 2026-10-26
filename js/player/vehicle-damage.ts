@@ -24,7 +24,8 @@ export interface Dent {
 
 /**
  * The car's damage: each side's crush and the engine's wear 0..1, the steering's pull (rad), the dents, each wheel's
- * camber (rad: front-left, front-right, rear-left, rear-right), and a version bumped by every hit
+ * camber (rad: front-left, front-right, rear-left, rear-right), its flat tyres (bit i: the physics' wheel i, shot or
+ * on a spike strip), and a version bumped by every hit
  */
 export interface CarDamage {
   front: number;
@@ -35,13 +36,14 @@ export interface CarDamage {
   pull: number;
   dents: Dent[];
   camber: [number, number, number, number];
+  flats: number;
   version: number;
 }
 
 type Zone = 'front' | 'rear' | 'left' | 'right';
 
 function createDamage(): CarDamage {
-  return { front: 0, rear: 0, left: 0, right: 0, engine: 0, pull: 0, dents: [], camber: [0, 0, 0, 0], version: 0 };
+  return { front: 0, rear: 0, left: 0, right: 0, engine: 0, pull: 0, dents: [], camber: [0, 0, 0, 0], flats: 0, version: 0 };
 }
 
 /**

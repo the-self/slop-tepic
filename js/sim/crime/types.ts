@@ -26,7 +26,7 @@ type CruiserState = 'chase' | 'leave';
 // What lies about to be picked up: money, health, armour, or a gun
 type PickupKind = 'money' | 'health' | 'armor' | StreetGun | 'bazooka';
 // What a shot meets first (trace)
-type TraceKind = 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'vehicle' | 'heli' | 'remote';
+type TraceKind = 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'vehicle' | 'heli' | 'remote' | 'prop';
 // The radar's blips, flat: kind ('cop' | 'soldier' | 'thief' | 'rojos' | 'verdes' | 'narcos' | 'cruiser' | 'truck' |
 // 'army' | 'heli' | a PickupKind, or fires.ts's 'fire'), x, z, kind, x, z, ...
 type Blips = (string | number)[];
@@ -75,11 +75,14 @@ interface CrimeControllers {
   resetInput(): void;
   // someone the player's car struck at (x, z), `speed` m/s: their blood on it (player/car-blood.ts)
   bloodyCar?(x: number, z: number, speed: number): void;
+  // the car's tyre i burst (shot), or those over a spike strip (its middle, heading, half length & width, m): how many
+  popTyre?(i: number): boolean;
+  popTyresOn?(cx: number, cz: number, heading: number, halfLen: number, halfW: number): number;
 }
 // What crime uses of sim/traffic.ts's traffic: the road graph, its people & vehicles, and what shots, blasts and
 // patrol cars do to them (walking round its vehicles only where it can tell where they are)
 type CrimeTraffic = Pick<TrafficSystem, 'network' | 'peds' | 'cars' | 'buses' | 'setKnockListener' | 'panic' | 'rayHit' | 'shootPed'
-  | 'shootVehicle' | 'blast' | 'roadSpot' | 'sidewalkSpot' | 'sparks' | 'bumpBody' | 'knockBox' | 'withdraw'>
+  | 'shootVehicle' | 'shootTyre' | 'spikeTraffic' | 'blast' | 'roadSpot' | 'sidewalkSpot' | 'sparks' | 'bumpBody' | 'knockBox' | 'withdraw'>
   & Partial<Pick<TrafficSystem, 'vehicleBoxAt' | 'vehicleAt'>>;
 // The sounds crime plays (audio/audio-system.ts CityAudioSystem)
 interface CrimeAudio {
@@ -250,7 +253,17 @@ interface RemoteTarget extends XZ {
   halfL: number;
   height: number;
 }
-type TraceTarget = Agent | Cruiser | Helicopter | Ped | Vehicle | RemoteTarget;
+/**
+ * Something of the world's that shots strike (crime.props: a gas station's pumps, sim/gas-stations.ts): a post `r` m
+ * round at (x, z), from the ground y up to `top` m over it; `shot` is told of each round (its damage, the player's)
+ */
+interface ShotProp extends XZ {
+  r: number;
+  y: number;
+  top: number;
+  shot(damage: number, byPlayer: boolean): void;
+}
+type TraceTarget = Agent | Cruiser | Helicopter | Ped | Vehicle | RemoteTarget | ShotProp;
 // What a shot met (trace, reused): t m along it
 interface TraceHit {
   t: number;
@@ -259,5 +272,5 @@ interface TraceHit {
 }
 
 export type {
-  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, RemoteTarget, TraceTarget, TraceHit
+  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, RemoteTarget, ShotProp, TraceTarget, TraceHit
 };

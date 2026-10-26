@@ -26,6 +26,7 @@ function withdraw(v: Vehicle): void {
 // Off the streets until wanted again (like a hijacked vehicle, without its driver getting out)
 function retireVehicle(v: Vehicle): void {
   v.distracted = 0; // (its driver looks up: the next to drive it is another, mishaps.ts)
+  v.flats = 0; // (and its tyres are whole)
   v.edge = null;
   v.conn = null;
   v.trail = null;

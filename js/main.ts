@@ -38,6 +38,8 @@ import { Nightlife } from './world/nightlife.ts';
 import { Interiors } from './world/interiors.ts';
 import { Fires } from './sim/fires.ts';
 import { EmergencyServices } from './sim/emergency.ts';
+import { GasStations } from './sim/gas-stations.ts';
+import { FUEL_TANK } from './player/controllers/constants.ts';
 import { Scheduler } from './core/scheduler.ts';
 import type { FrameStep } from './core/scheduler.ts';
 import { EventBus } from './core/events.ts';
@@ -235,7 +237,20 @@ async function initApp(): Promise<void> {
   trafficSystem.setSirens(emergency.sirens); // (the cars ahead of them pull over)
   // Burning wrecks, house fires, the dry season's quemas, and the bomberos who come for them (sim/fires.ts)
   const fires = new Fires({ scene, crime: crimeSystem, services: emergency, controllers: controllerManager, houses: GEO.houses, stride: GEO.houseStride || 8 });
-  crimeSystem.onExplosion = (x, y, z, radius) => { fires.onExplosion(x, y, z, radius); };
+  // Tepic's gas stations (sim/gas-stations.ts): the car fills up stopped by a pump; a pump shot, rammed or caught in a
+  // blast goes up
+  const gasStations = new GasStations({
+    scene, crime: crimeSystem, car: controllerManager.entities.car,
+    isSolidAt: (x, z, height, ground) => controllerManager.isSolidAt(x, z, height, ground),
+    groundAt: (x, z) => controllerManager.getGroundHeight(x, z, 'person'),
+    active: () => controllerManager.getActiveEntity(), activeMode: () => controllerManager.activeMode,
+    ignite: (kind, x, z, size) => fires.ignite(kind, x, z, size)
+  });
+  controllerManager.onFuelOut = () => { crimeSystem.toast('Out of gas: fill up at a gas station'); };
+  crimeSystem.onExplosion = (x, y, z, radius) => {
+    fires.onExplosion(x, y, z, radius);
+    gasStations.onExplosion(x, y, z, radius);
+  };
   // Someone killed or badly hurt (shot dead, thrown hard) come to rest: an ambulance for them. Not for the player
   // (killed on foot or thrown out of a vehicle), who comes round at the hospital or gets up
   events.on('settle', (h) => {
@@ -470,7 +485,8 @@ async function initApp(): Promise<void> {
     onTeleport: teleportTo
   });
   wireTeleportButtons(document.querySelectorAll('[data-teleport]'), TELEPORT_LOCATIONS, teleportTo, closePopovers);
-  mapSystem.setBlipSource(() => fires.blips(crimeSystem.blips())); // (the police, gangs, pickups & fires on the radar)
+  // (the police, gangs, pickups, fires & gas stations on the radar)
+  mapSystem.setBlipSource(() => gasStations.blips(fires.blips(crimeSystem.blips())));
   document.getElementById('btn-open-map')?.addEventListener('click', () => { mapSystem.toggleFullMap(true); });
 
   hudToggleBtn?.addEventListener('click', () => {
@@ -585,7 +601,8 @@ async function initApp(): Promise<void> {
       if (mode === 'car' || mode === 'moto') {
         const v = controllerManager.entities[mode];
         const engine = 'damage' in v ? 1 - v.damage.engine : 1; // (a moto has no engine damage)
-        tachometer.update(v.spec, v.drive, Math.round(Math.abs(v.speed) * 3.6), engine, engine <= 0, v.drive ? gearLabel(v.drive, v.spec) : '1');
+        const fuel = 'fuel' in v ? v.fuel / FUEL_TANK : 1; // (a moto runs on air)
+        tachometer.update(v.spec, v.drive, Math.round(Math.abs(v.speed) * 3.6), engine, engine <= 0 || fuel <= 0, v.drive ? gearLabel(v.drive, v.spec) : '1', fuel);
       }
     })
     .run('aim', ({ dt }) => {
@@ -631,6 +648,8 @@ async function initApp(): Promise<void> {
     })
     // the bomberos & ambulances on their way, at work, going back (sim/emergency.ts)
     .run('emergency', ({ dt }) => { emergency.update(dt, cameraSystem.camera); })
+    // pumps going up, the car filling up (sim/gas-stations.ts)
+    .run('gas stations', ({ dt }) => { gasStations.update(dt); })
     .run('hud', ({ dt, now }) => {
       stamina.update(dt, crimeSystem.state === 'play' ? controllerManager.sprintingMode() : null);
       crimeHud.update(crimeSystem, dt, stamina);
@@ -664,7 +683,7 @@ async function initApp(): Promise<void> {
   if (debug) {
     // Debugging handle for the console, only with ?debug in the URL
     Object.assign(window, { __slop: {
-      scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, emergency, controllerManager, trafficSystem,
+      scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, emergency, gasStations, controllerManager, trafficSystem,
       cameraSystem, streetDetails, cityGrid: city.cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl,
       weaponWheel, weaponIcons, scheduler, boarding, multiplayer: () => multiplayer
     } });

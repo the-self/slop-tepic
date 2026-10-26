@@ -1,7 +1,8 @@
 // js/ui/tachometer.ts
 // The car's instrument cluster in the HUD, shown only while driving (css: body[data-mode='car']): a rev counter dial
 // with its red zone at the engine's redline (drivetrain.ts), the gear in its centre, the speed in km/h, the gearbox
-// (automatic or manual), the nitro left and the engine's health. Built with createElementNS & textContent only.
+// (automatic or manual), the nitro left, the fuel in the tank and the engine's health. Built with createElementNS &
+// textContent only.
 
 import type { DriveState } from '../player/drivetrain.ts';
 
@@ -22,14 +23,16 @@ interface TachoShown {
   speed: number;
   manual: string | null;
   nitro: number;
+  fuel: number;
   health: number;
   limiter: boolean | null;
   shiftNow: boolean | null;
   nitroOn: boolean | null;
   dead: boolean | null;
   hurt: boolean | null;
+  low: boolean | null;
 }
-type TachoFlag = 'limiter' | 'shiftNow' | 'nitroOn' | 'dead' | 'hurt';
+type TachoFlag = 'limiter' | 'shiftNow' | 'nitroOn' | 'dead' | 'hurt' | 'low';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const SIZE = 148; // px, the dial's viewBox
@@ -74,13 +77,14 @@ class Tachometer {
   side: HTMLDivElement;
   box: HTMLSpanElement;
   nitroBar: HTMLSpanElement;
+  fuelBar: HTMLSpanElement;
   healthBar: HTMLSpanElement;
   warning: HTMLSpanElement;
 
   constructor(root: HTMLElement | null) {
     this.root = root;
     this.specName = '';
-    this.shown = { angle: NaN, gear: '', speed: -1, manual: null, nitro: -1, health: -1, limiter: null, shiftNow: null, nitroOn: null, dead: null, hurt: null };
+    this.shown = { angle: NaN, gear: '', speed: -1, manual: null, nitro: -1, fuel: -1, health: -1, limiter: null, shiftNow: null, nitroOn: null, dead: null, hurt: null, low: null };
     this.electric = false;
     this.max = NaN;
     this.redline = NaN;
@@ -101,6 +105,7 @@ class Tachometer {
     this.box.className = 'tacho-box';
     this.side.appendChild(this.box);
     this.nitroBar = this.bar('Nitro', 'tacho-nitro');
+    this.fuelBar = this.bar('Fuel', 'tacho-fuel');
     this.healthBar = this.bar('Engine', 'tacho-health');
     this.warning = document.createElement('span');
     this.warning.className = 'tacho-warning';
@@ -157,7 +162,8 @@ class Tachometer {
   }
 
   // Every frame while driving: only what changed touches the DOM
-  update(spec: TachoSpec, drive: TachoDrive | null | undefined, kmh: number, health: number, dead: boolean, gear: string): void {
+  /** `fuel`: the tank's share left, 0..1 */
+  update(spec: TachoSpec, drive: TachoDrive | null | undefined, kmh: number, health: number, dead: boolean, gear: string, fuel = 1): void {
     const root = this.root;
     if (!root || !drive) return;
     this.setSpec(spec);
@@ -173,6 +179,8 @@ class Tachometer {
     if (box !== s.manual) this.box.textContent = s.manual = box;
     const nitro = Math.round(drive.nitro * 100);
     if (nitro !== s.nitro) this.nitroBar.style.transform = `scaleX(${(s.nitro = nitro) / 100})`;
+    const tank = Math.round(fuel * 100);
+    if (tank !== s.fuel) this.fuelBar.style.transform = `scaleX(${(s.fuel = tank) / 100})`;
     const hp = Math.round(health * 100);
     if (hp !== s.health) this.healthBar.style.transform = `scaleX(${(s.health = hp) / 100})`;
     const toggle = (key: TachoFlag, cls: string, on: boolean) => {
@@ -185,6 +193,7 @@ class Tachometer {
     toggle('nitroOn', 'is-nitro', drive.nitroOn);
     toggle('dead', 'is-dead', dead);
     toggle('hurt', 'is-hurt', health < 0.35);
+    toggle('low', 'is-low', fuel < 0.15);
   }
 }
 

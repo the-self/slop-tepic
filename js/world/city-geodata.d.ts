@@ -251,6 +251,8 @@ export interface CityGeodata {
   points: Record<string, never>;
   places: Place[];
   pois: Poi[];
+  /** The gas stations (Overture Maps' places): where each stands (m) and its name. */
+  fuel: [x: number, z: number, name: string][];
   teleports: Record<string, Teleport>;
   /** Integers per house in `houses` (8). */
   houseStride: number;
