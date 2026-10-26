@@ -503,14 +503,15 @@ interface RouteLook {
   sign: number;
   livery: number;
 }
-/** What the player took (hijack): its kind, where, heading (rad), speed (m/s), its looks */
-type TakenVehicle =
+/** What the player took (hijack): its kind, where (y: the road's surface under it, m), heading (rad), speed (m/s),
+ *  its looks */
+type TakenVehicle = { y?: number } & (
   | { kind: 'cyclist'; x: number; z: number; heading: number; speed: number; color: number }
   | { kind: 'moto'; x: number; z: number; heading: number; speed: number; model: string; paint: number }
   | {
     kind: 'car'; bus?: boolean; x: number; z: number; heading: number; speed: number; bodyType: string; police: boolean;
     model: string | undefined; paint: number; route: RouteLook | null;
-  };
+  });
 /** The look of a vehicle the player drives (controllers.ts setCarLook), as lookKit reads it */
 interface VehicleLook {
   bodyType?: string;

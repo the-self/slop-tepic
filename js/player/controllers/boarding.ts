@@ -133,7 +133,9 @@ export function enterVehicle(ctl: ThirdPersonControllerManager, mode: PlayerMode
     if (mode === 'car') ctl.setCarLook(taken.bodyType, taken.paint, taken.police, taken.model, taken.route);
     else if (mode === 'cyclist') ctl.setBikeColor(taken.color);
     else if (mode === 'moto') ctl.setMotoLook(taken.model, taken.paint);
-    ent.position.set(taken.x, ctl.getGroundHeight(taken.x, taken.z, mode), taken.z); // just where it was
+    // just where it was: on the bridge's deck or down in the underpass it drove (from the road under it, or the
+    // player's feet beside it)
+    ent.position.set(taken.x, ctl.getGroundHeight(taken.x, taken.z, mode, taken.y ?? ctl.entities.person.position.y), taken.z);
     ent.heading = taken.heading;
     ctl.settle(ent);
     ent.speed = Math.max(0, taken.speed) * 0.4;
