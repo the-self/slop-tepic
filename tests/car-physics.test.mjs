@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { wheelLayout, headingOf, isDrive, steerLimit, overTurn } from '../js/player/car-physics.ts';
+import { tipExcess, rollExcess, crashRolls, kerbScrub } from '../js/player/car-physics/aids.ts';
 
 test('the wheels hang on springs that settle them where the body shape draws them', () => {
   const [w] = wheelLayout([{ x: 0.8, z: 1.4, radius: 0.35, front: true }], 1.4);
@@ -52,4 +53,34 @@ test('the stability control takes off only the turn past what the wheels steer, 
   // (no more asked than the tyres hold: full lock at speed asks for what grip allows)
   const most = grip * 9.81 / u;
   assert.ok(overTurn(most * 1.5, 0.5, u, wheelbase, grip) > 0);
+});
+
+test('a car someone drives rolls and pitches freely, only what would tip it over is held', () => {
+  assert.equal(tipExcess(0.4), 0, 'a hard corner\'s body roll');
+  assert.equal(tipExcess(-0.4), 0);
+  assert.ok(Math.abs(tipExcess(2.6) - 1.9) < 1e-9, 'a kerb throwing one side up at 2.6 rad/s');
+  assert.ok(Math.abs(tipExcess(-2.6) + 1.9) < 1e-9);
+  // on all four wheels, leant on a slope: only the excess, never a push upright
+  assert.equal(rollExcess(0.3, 0.5, true), 0);
+  // come down on one side's wheels leant over 30° to its right: turned back at TIP_RIGHT, falling on or not
+  const lean = 0.52;
+  assert.ok(rollExcess(0.3, lean, false) > 0, 'toppling on over: held');
+  assert.ok(rollExcess(-0.5, lean, false) === 0, 'righting itself at the rate the aid would');
+  assert.ok(rollExcess(-0.3, -lean, false) < 0, 'the same over to its left');
+  assert.equal(rollExcess(0.3, 0.2, false), 0, 'leant a little on three wheels: left alone');
+});
+
+test('a crash may roll a car over, the ground under it never does', () => {
+  assert.equal(crashRolls(8, 0.1, false), true, 'into a wall');
+  assert.equal(crashRolls(8, 0.9, true), true, 'another car, from above or below');
+  assert.equal(crashRolls(8, 0.95, false), false, 'landing on the road');
+  assert.equal(crashRolls(2, 0.1, false), false, 'a scrape');
+});
+
+test('a kerb taken fast costs a share of the speed for each wheel that strikes its bump stop, no more than it has', () => {
+  assert.ok(Math.abs(kerbScrub(10, 1) - 0.3) < 1e-9, '3% at 36 km/h');
+  assert.ok(Math.abs(kerbScrub(25, 2) - 1.5) < 1e-9, '...two wheels at 90 km/h');
+  assert.equal(kerbScrub(50, 1), 1, 'at most 1 m/s a wheel');
+  assert.equal(kerbScrub(0.5, 4), 0.06);
+  assert.equal(kerbScrub(1, 100), 1, 'never past a standstill');
 });

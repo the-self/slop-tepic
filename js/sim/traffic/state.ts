@@ -163,6 +163,8 @@ interface TrafficState extends VehicleMeshes {
   hour: number;
   weighedHour: number;
   nearCarWeights: number[];
+  /** ...the same, the avenues left out: where cyclists are placed (spawning.ts) */
+  nearBikeWeights: number[];
   nearPedWeights: number[];
   /** how many cars and people the hour has around the focus */
   carTarget: number;
@@ -389,6 +391,7 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     hour: 14,
     weighedHour: NaN,
     nearCarWeights: [],
+    nearBikeWeights: [],
     nearPedWeights: [],
     carTarget: NUM_CARS,
     pedTarget: NUM_PEDS,

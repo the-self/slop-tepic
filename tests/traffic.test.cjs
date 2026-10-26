@@ -185,20 +185,22 @@ function populationContext() {
     clock: 0, hour: 14,
     nearEdges: [], nearTransitEdges: [], nearSignals: [], track: {},
     transit: { paths: [] }, vehicles: [], wallAt: null,
-    // (the hour's weighing, traffic-demand.js: uniform here)
-    nearCarWeights: [], nearPedWeights: [],
+    // (the hour's weighing, traffic-demand.js: uniform here, unless a test sets carDensity)
+    nearCarWeights: [], nearBikeWeights: [], nearPedWeights: [], carDensity: 0,
     sidewalkTrack: () => false, crosswalkTrack: () => false
   };
   const globals = { Math: Object.assign(Object.create(Math), { random: () => 0.5 }) };
   const near = trafficModule('near', {
     './constants.ts': constants,
-    '../traffic-demand.ts': { roadClass: () => 'street', carDensity: () => 0, peopleDensity: () => 0, busyFactor: () => 1 }
+    '../traffic-demand.ts': {
+      AVENUE: 2, roadClass: (e) => (e.axis === 'ave' ? 2 : 0), carDensity: () => ts.carDensity, peopleDensity: () => 0, busyFactor: () => 1
+    }
   }, globals);
   const spawning = trafficModule('spawning', {
     './constants.ts': constants,
     './surface.ts': { hillAt: () => 0 },
     './view.ts': { visible: (...args) => ts.visible(...args) },
-    './near.ts': { pickWeighted: (list) => list[Math.floor(Math.random() * list.length)] },
+    './near.ts': { pickWeighted: (list, weights) => near.pickWeighted(list, weights) },
     './occupancy.ts': { laneClear: () => true },
     './fleet.ts': { drawModel: () => {} },
     './bodies.ts': { vehicleAt: () => false },
@@ -261,6 +263,43 @@ test('long roads are available near their ends and spawn only in the local secti
   assert.equal(spawnVehicle(car, 0, 350, false), true);
   assert.ok(edge.sz + car.s <= 350);
   assert.ok(car.s >= car.half + 5);
+});
+
+test('cyclists are placed on the streets around, never on an avenue', () => {
+  const { ts: context, refreshNear, spawnVehicle } = populationContext();
+  const avenue = Object.assign(straightEdge(100, 400), { axis: 'ave', lanes: [0, 3.5], occ: [[], []] });
+  const street = Object.assign(straightEdge(100, 400), { axis: 'st' });
+  Object.assign(context, { edges: [avenue], nodes: [], nearX: Infinity, nearZ: Infinity, carDensity: 20 });
+  refreshNear();
+  const bike = { half: 0.9, bike: true };
+  assert.equal(spawnVehicle(bike, 0, 350, false), false, 'nothing but an avenue around');
+  const car = { half: 2.25 };
+  assert.equal(spawnVehicle(car, 0, 350, false), true, 'a car goes on it');
+  context.edges.push(street);
+  context.nearX = Infinity;
+  refreshNear();
+  assert.equal(context.nearBikeWeights[0], 0, 'the avenue weighs nothing for a cyclist');
+  for (let i = 0; i < 5; i++) {
+    assert.equal(spawnVehicle(bike, 0, 350, false), true);
+    assert.equal(bike.edge, street);
+  }
+});
+
+test('a cyclist turns off an avenue where it can, and onto one only where the street leads nowhere else', () => {
+  const globals = { Math: Object.assign(Object.create(Math), { random: () => 0.5 }) };
+  const routing = trafficModule('routing', {
+    '../traffic-demand.ts': { AVENUE: 2, ROUTE_PULL: [1, 2.5, 6], roadClass: (e) => (e.axis === 'ave' ? 2 : 0) }
+  }, globals);
+  const avenue = { axis: 'ave', lanes: [0] }, street = { axis: 'st', lanes: [0] };
+  // on an avenue whose lane runs on along it: it changes lanes to turn off into the street
+  const along = { axis: 'ave', len: 100, moves: [{ turn: 'S', to: avenue, out: [0] }, { turn: 'L', to: street, out: [-1] }] };
+  const bike = { bike: true, edge: along, lane: 0, s: 50, path: null };
+  assert.equal(routing.chooseMove({}, bike, true).to, street);
+  // a car keeps to the avenue
+  assert.equal(routing.chooseMove({}, { ...bike, bike: false }, true).to, avenue);
+  // a street ending on an avenue (a T): onto it, there being no other way
+  const tee = { axis: 'st', len: 100, moves: [{ turn: 'R', to: avenue, out: [0] }, { turn: 'L', to: avenue, out: [0] }] };
+  assert.equal(routing.chooseMove({}, { ...bike, edge: tee }, true).to, avenue);
 });
 
 test('combis and buses spawn on the roads of routes their fleet serves, joining the route there', () => {
