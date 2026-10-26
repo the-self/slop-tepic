@@ -166,7 +166,7 @@ async function initApp(): Promise<void> {
   events.on('settle', (h) => {
     if (!(h.bleed > 0.05)) return;
     bloodPools.add(h.px, h.pz, h.py + 0.3, 0.9 + h.bleed * 1.7);
-    // ...and smeared along the ground from where they were struck to where they lie
+    // ...and smeared along the ground from where they came down onto it (not through the air) to where they lie
     bloodPools.trail(h.x0, h.z0, h.px, h.pz, h.py + 0.3, h.bleed);
   });
   loading.mark('physics');
@@ -246,9 +246,15 @@ async function initApp(): Promise<void> {
   // Thrown out through the windscreen (controllers.ts ejectDriver), or off the moto (ejectRider; stepping off it as it
   // falls over, offMoto, impact 0): on foot now, bleeding; out of the car hurt by how hard it hit (off the moto, the
   // crash itself already hurt, crashDamage)
-  controllerManager.onEject = (impact, x, z, kind) => {
+  controllerManager.onEject = (impact, x, z, kind, bail = false) => {
     syncMode();
     const v = controllerManager.entities[kind];
+    // jumped out at speed (boarding.ts leaveVehicle): grazed, not thrown through glass; past ~50 km/h it bleeds
+    if (bail) {
+      if (impact > 14) crimeSystem.fx.splatter(x, v.position.y + 1, z, impact * 0.5, Math.sin(v.heading), Math.cos(v.heading));
+      crimeSystem.hurt(Math.min(60, Math.max(0, impact - 6) * 2.5), x, z);
+      return;
+    }
     if (impact > 0) crimeSystem.fx.splatter(x, v.position.y + 1, z, impact, Math.sin(v.heading), Math.cos(v.heading));
     if (kind === 'car') crimeSystem.hurt(Math.min(95, 25 + (impact - 19) * 4), x, z);
   };

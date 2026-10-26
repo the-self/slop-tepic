@@ -18,7 +18,16 @@ const MASS = {
 // (by body: none for the shapes not listed)
 const MASS_OF_BODY: Partial<Record<string, number>> = MASS;
 const massOf = (v: Vehicle): number => (v.bus ? MASS.bus : v.mass || MASS_OF_BODY[v.bodyType] || MASS.sedan);
-const DOWN_TIME = 9; // s a knocked-over person lies still before getting up (out of sight, see spawnPed)
+const DOWN_TIME = 9; // s a knocked-over cyclist lies still before getting up (out of sight, see spawnPed)
+// Someone on foot knocked over, GTA-style: how badly they bleed (ragdolls.ts bleedOf, from how hard they were hit: a
+// car at ~28 km/h or less, nothing worse than bruises) decides whether they get up. Under SURVIVE everyone does, after
+// GET_UP s, and runs off; over LETHAL nobody; between, fewer the harder. A body lies DEAD_TIME s, till out of sight
+// (BODY_TIME s at most; one an ambulance is coming for, till the paramédicos take it)
+const SURVIVE = 0.35;
+const LETHAL = 0.65;
+const GET_UP = 3.5;
+const DEAD_TIME = 40;
+const BODY_TIME = 180;
 // A car of the traffic crashing within CRASH_RANGE m of the player (into the player, a car already thrown about, or
 // another car knocked into it) faster than CRASH_SPEED m/s becomes a body in Jolt (player/car-physics.ts) until it has
 // come to rest; at most MAX_CRASHED at once, the stillest back in the traffic first
@@ -76,7 +85,8 @@ const onEdge = (v: Vehicle): v is OnEdge => v.edge !== null;
 const ridden = (v: Vehicle): v is TwoWheeler => v.kit !== undefined;
 
 export {
-  NUM_CARS, NUM_BUSES, NUM_PEDS, NUM_BIKES, NUM_MOTOS, KNOCK_SPEED, MASS, MASS_OF_BODY, massOf, DOWN_TIME,
+  NUM_CARS, NUM_BUSES, NUM_PEDS, NUM_BIKES, NUM_MOTOS, KNOCK_SPEED, MASS, MASS_OF_BODY, massOf, DOWN_TIME, SURVIVE, LETHAL, GET_UP,
+  DEAD_TIME, BODY_TIME,
   CRASH_RANGE, CRASH_SPEED, MAX_CRASHED, CRASH_LOOKAHEAD, CRASH_STILL, CRASH_BRAKE, MISHAP_FIRST, MISHAP_EVERY, CAR_DRIVER, BUS_DRIVER,
   BIKE_DRIVER, MOTO_DRIVER, LOOKAHEAD, VEHICLE_RADIUS, PED_RADIUS, NEAR_RADIUS, VEHICLE_SPAWN_DISTANCE,
   ROUTE_HEADWAY, PED_SPAWN_DISTANCE, LIVERIES, liveryOf, clamp, VEHICLE_KINDS, onRoad, onEdge, ridden

@@ -99,8 +99,9 @@ class ThirdPersonControllerManager {
   rain: number; // the rain falling, 0..1 (main.ts: washing the blood off the car)
   carPhysics?: CarPhysics | null;
   ragdolls?: Ragdolls | null; // (sim/ragdolls.ts, main.ts)
-  // (main.ts: the driver or rider thrown out, impact in m/s (0: stepped off), at (x, z), off which vehicle)
-  onEject?: (impact: number, x: number, z: number, kind: VehicleMode) => void;
+  // (main.ts: the driver or rider thrown out, impact in m/s (0: stepped off), at (x, z), off which vehicle; `bail`: they
+  // jumped out at that speed, boarding.ts leaveVehicle)
+  onEject?: (impact: number, x: number, z: number, kind: VehicleMode, bail?: boolean) => void;
 
   constructor(scene: THREE.Scene, colliders: PlayerCollider[] = []) {
     this.scene = scene;
@@ -252,6 +253,7 @@ class ThirdPersonControllerManager {
     return Boarding.enterVehicle(this, mode, taken);
   }
   exitVehicle(): boolean { return Boarding.exitVehicle(this); }
+  leaveVehicle(): boolean { return Boarding.leaveVehicle(this); }
   parkedVehicles(): ParkedVehicle[] { return Boarding.parkedVehicles(this); }
 
   // On foot, and thrown as a ragdoll (controllers/person.ts)
@@ -322,7 +324,7 @@ class ThirdPersonControllerManager {
   createMotoEntity(): MotoEntity { return BikeModels.createMotoEntity(this); }
 
   // The bicycle and the moto in Jolt (controllers/two-wheelers.ts)
-  ejectRider(m: CyclistEntity | MotoEntity, impact: number): void { TwoWheelers.ejectRider(this, m, impact); }
+  ejectRider(m: CyclistEntity | MotoEntity, impact: number, bail = false): void { TwoWheelers.ejectRider(this, m, impact, bail); }
   stepOff(m: CyclistEntity | MotoEntity): void { TwoWheelers.stepOff(this, m); }
   driveTwoWheeler(m: CyclistEntity | MotoEntity, dt: number, riding: boolean): void {
     TwoWheelers.driveTwoWheeler(this, m, dt, riding);

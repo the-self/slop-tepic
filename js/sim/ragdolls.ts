@@ -98,7 +98,9 @@ interface ThrowOptions {
   bleed?: number;
 }
 // A ragdoll: px, py, pz (the pelvis, m; `at` the same as a point, handed out as a focus), x0, z0 (where it was thrown
-// from, m), rest (s it has lain still), settled; parts, joints & ground are null once it is frozen
+// from, m; once it comes to rest, where it came down onto the ground and slid from: landing), rest (s it has lain
+// still), settled; track: the pelvis every TRACK_EVERY s (x, y, z, the last TRACK of them); parts, joints & ground are
+// null once it is frozen
 interface RagdollHandle {
   rig: RagdollRig;
   base: Float32Array;
@@ -125,6 +127,9 @@ interface RagdollHandle {
   speed: number; // m/s, its fastest part's
   settled: boolean;
   bleed: number;
+  track: Float32Array;
+  tracked: number;
+  trackT: number;
   down?: boolean; // (traffic.ts: it has been told it lies on the ground)
   awaiting?: boolean; // (sim/emergency.ts: an ambulance is on its way: they lie there till the paramédicos take them)
 }
@@ -182,6 +187,11 @@ const MASS = 75; // kg, a person
 const MAX_ACTIVE = 14; // ragdolls simulated at once: a slow one (on the ground) freezes as a new one starts...
 const MAX_ACTIVE_HARD = 24; // ...or, none slow, the stillest once this many are moving
 const SETTLE_SPEED = 0.35; // m/s every part under for SETTLE_TIME: still
+// The pelvis's path, sampled every TRACK_EVERY s (the last TRACK samples), for where it came down: the first sample of
+// the run down to where it lies that is no more than LOW m over where it lies (on the ground, sliding)
+const TRACK = 48;
+const TRACK_EVERY = 0.1;
+const LOW = 0.45;
 const SETTLE_TIME = 0.8;
 const SLOW = 1; // m/s: a body moving no faster than this lies on the ground (slipping, twitching): freezing it shows
 const MAX_LIFE = 9; // s after which one only crawling along (SLOW) freezes; any one after MAX_LIFE_HARD
@@ -235,6 +245,24 @@ function throwVelocity(vx: number, vz: number, nx: number, nz: number): { vx: nu
     vy: 1.6 + Math.min(9, speed * 0.32),
     vz: vz * 0.85 + nz * (1.2 + speed * 0.12)
   };
+}
+
+/**
+ * Pure: where h came down onto the ground, into (x0, z0): back along its tracked path from where it lies while the
+ * pelvis was down low (LOW m over where it lies: sliding, rolling on the ground); not where it was struck, when it flew
+ * from there through the air
+ */
+function landing(h: Pick<RagdollHandle, 'track' | 'tracked' | 'px' | 'py' | 'pz' | 'x0' | 'z0'>): void {
+  let x = h.px, z = h.pz;
+  const n = Math.min(h.tracked, TRACK);
+  for (let i = 1; i <= n; i++) {
+    const k = ((h.tracked - i) % TRACK) * 3;
+    if (h.track[k + 1] > h.py + LOW) break;
+    x = h.track[k];
+    z = h.track[k + 2];
+  }
+  h.x0 = x;
+  h.z0 = z;
 }
 
 /** Pure: how badly (0..1) someone hit at `speed` m/s bleeds where they come to rest: nothing from a knock */
@@ -336,7 +364,10 @@ function createRagdolls(physics: RagdollPhysics): Ragdolls {
     h.parts = h.joints = h.ground = null;
     if (!h.settled) {
       h.settled = true;
-      if (h.speed <= SLOW) api.onSettle?.(h);
+      if (h.speed <= SLOW) {
+        landing(h);
+        api.onSettle?.(h);
+      }
     }
   }
 
@@ -422,7 +453,8 @@ function createRagdolls(physics: RagdollPhysics): Ragdolls {
       rig, base, parts, joints, ground: null, gx: NaN, gz: NaN, gy: NaN,
       rot0: layout.map((l) => l.rotation), pos0: layout.map((l) => l.position),
       rot: layout.map(() => [0, 0, 0, 1]), pos: layout.map(() => [0, 0, 0]), delta: layout.map(() => [0, 0, 0, 1]),
-      px: p[0], py: p[1], pz: p[2], at: { x: p[0], y: p[1], z: p[2] }, x0: p[0], z0: p[2], age: 0, still: 0, rest: 0, speed: Infinity, settled: false, bleed
+      px: p[0], py: p[1], pz: p[2], at: { x: p[0], y: p[1], z: p[2] }, x0: p[0], z0: p[2], age: 0, still: 0, rest: 0, speed: Infinity, settled: false, bleed,
+      track: new Float32Array(TRACK * 3), tracked: 0, trackT: TRACK_EVERY
     };
     handles.add(h);
     return h;
@@ -465,6 +497,14 @@ function createRagdolls(physics: RagdollPhysics): Ragdolls {
       poseFromParts(h.rig.pose, h.base, h.rot0, h.pos0, h.rot, h.pos, h.delta);
       h.px = h.at.x = h.pos[0][0]; h.py = h.at.y = h.pos[0][1]; h.pz = h.at.z = h.pos[0][2];
       h.speed = fastest;
+      h.trackT += dt;
+      if (h.trackT >= TRACK_EVERY) {
+        h.trackT = 0;
+        const k = (h.tracked++ % TRACK) * 3;
+        h.track[k] = h.px;
+        h.track[k + 1] = h.py;
+        h.track[k + 2] = h.pz;
+      }
       h.still = fastest < SETTLE_SPEED ? h.still + dt : 0;
       h.rest = h.still;
       // still; or long after, only crawling along the ground; or very long after, whatever it is doing
@@ -485,4 +525,4 @@ function createRagdolls(physics: RagdollPhysics): Ragdolls {
 }
 
 export type { Vec3, Quat, Point3, BindJoints, RagdollRig, PartSpec, Part, PartLayout, PartJoint, RagdollPhysics, ThrowOptions, RagdollHandle, Ragdolls };
-export { createRagdolls, throwVelocity, bleedOf, partLayout, poseFromParts, PARTS, PART_OF_BONE, qmul, qrot };
+export { createRagdolls, throwVelocity, bleedOf, landing, partLayout, poseFromParts, PARTS, PART_OF_BONE, qmul, qrot };

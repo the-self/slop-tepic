@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { throwVelocity, bleedOf, partLayout, poseFromParts, PARTS, PART_OF_BONE, qmul, qrot } from '../js/sim/ragdolls.ts';
+import { throwVelocity, bleedOf, landing, partLayout, poseFromParts, PARTS, PART_OF_BONE, qmul, qrot } from '../js/sim/ragdolls.ts';
 
 // pedestrians.js's bind joints for a man (1.75 m, facing +z, +x his left), as plain points
 const V = (x, y, z) => ({ x, y, z });
@@ -28,6 +28,20 @@ test('a knock draws no blood; a hit bleeds more the faster it came, up to all of
   assert.equal(bleedOf(4), 0);
   assert.ok(bleedOf(10) > 0 && bleedOf(10) < bleedOf(18));
   assert.equal(bleedOf(40), 1);
+});
+
+test('the blood smear starts where the body came down, not where it flew from through the air', () => {
+  // the pelvis every 0.1 s: struck at x 0 standing (0.95 m), flying 6 m through the air, then sliding 4 m on the ground
+  const path = [[0, 0.95], [2, 1.6], [4, 1.4], [6, 0.3], [7.5, 0.25], [9, 0.2], [10, 0.18]];
+  const track = new Float32Array(48 * 3);
+  path.forEach(([x, y], i) => track.set([x, y, 0], i * 3));
+  const h = { track, tracked: path.length, px: 10, py: 0.18, pz: 0, x0: 0, z0: 0 };
+  landing(h);
+  assert.equal(h.x0, 6);
+  // knocked down where it stood (it never left the ground): no slide
+  const still = { track: new Float32Array(48 * 3), tracked: 0, px: 3, py: 0.2, pz: 1, x0: 0, z0: 0 };
+  landing(still);
+  assert.deepEqual([still.x0, still.z0], [3, 1]);
 });
 
 test('the parts lie along the bones of the pose, each joined to its parent where the joint is', () => {

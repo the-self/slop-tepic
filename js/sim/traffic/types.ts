@@ -152,8 +152,9 @@ interface Ped {
   socialTime: number;
   conversation: Conversation | null;
   rig: PersonRig;
-  /** knocked over: their ragdoll */
+  /** knocked over: their ragdoll; and whether for good (peds.ts throwPed: their body lies there), else they get up */
   fallen?: RagdollHandle | null;
+  dead?: boolean;
   bail?: Bail | null;
   /** s to the next look for a wall ahead, and how long they've stood blocked */
   wallT?: number;
