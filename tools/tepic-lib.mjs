@@ -281,30 +281,7 @@ export function extractBlocks({ land, w: W, h: H, x0, z0, res: RES, sidewalk, mi
   function traceComponent(c) {
     const at = (i, j) => (i >= 0 && j >= 0 && i < W && j < H && lab[j * W + i] === c.id ? 1 : 0);
     const si = c.start % W, sj = (c.start - si) / W;
-    const DX = [1, 0, -1, 0], DZ = [0, 1, 0, -1];
-    let cx = si, cz = sj, dir = 0;
-    const pts = [];
-    const start = cx + ',' + cz + ',' + dir;
-    let guard = 0;
-    do {
-      pts.push([x0 + cx * RES, z0 + cz * RES]);
-      cx += DX[dir];
-      cz += DZ[dir];
-      let left, right;
-      if (dir === 0) { left = at(cx, cz - 1); right = at(cx, cz); }
-      else if (dir === 1) { left = at(cx, cz); right = at(cx - 1, cz); }
-      else if (dir === 2) { left = at(cx - 1, cz); right = at(cx - 1, cz - 1); }
-      else { left = at(cx - 1, cz - 1); right = at(cx, cz - 1); }
-      if (left && right) dir = (dir + 3) % 4;
-      else if (!right) dir = (dir + 1) % 4;
-      if (++guard > 4e6) break;
-    } while (cx + ',' + cz + ',' + dir !== start);
-    const out = [];
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[(i + pts.length - 1) % pts.length], q = pts[i], n = pts[(i + 1) % pts.length];
-      if ((q[0] - p[0]) * (n[1] - q[1]) - (q[1] - p[1]) * (n[0] - q[0]) !== 0) out.push(q);
-    }
-    return destair(out, RES * 1.5);
+    return traceOutline(at, si, sj, x0, z0, RES);
   }
 
   // Property line: square erosion of each island by the sidewalk width
@@ -527,7 +504,37 @@ export function extractBlocks({ land, w: W, h: H, x0, z0, res: RES, sidewalk, mi
   return { blocks, lab, prop };
 }
 
-// Scanline fill of a ring over a labelled raster: calls fn(label) for each covered cell with a label
+// The outline of the 4-connected patch of cells where at(i, j) is 1 around cell (si, sj), its top-left one (the first
+// met row by row): walked round its edge with the patch on the right, the stairs of its slanted sides straightened
+// (destair). In world metres, cell (i, j) spanning x0 + i·res .. x0 + (i + 1)·res
+export function traceOutline(at, si, sj, x0, z0, res) {
+  const DX = [1, 0, -1, 0], DZ = [0, 1, 0, -1];
+  let cx = si, cz = sj, dir = 0;
+  const pts = [];
+  const start = cx + ',' + cz + ',' + dir;
+  let guard = 0;
+  do {
+    pts.push([x0 + cx * res, z0 + cz * res]);
+    cx += DX[dir];
+    cz += DZ[dir];
+    let left, right;
+    if (dir === 0) { left = at(cx, cz - 1); right = at(cx, cz); }
+    else if (dir === 1) { left = at(cx, cz); right = at(cx - 1, cz); }
+    else if (dir === 2) { left = at(cx - 1, cz); right = at(cx - 1, cz - 1); }
+    else { left = at(cx - 1, cz - 1); right = at(cx, cz - 1); }
+    if (left && right) dir = (dir + 3) % 4;
+    else if (!right) dir = (dir + 1) % 4;
+    if (++guard > 4e6) break;
+  } while (cx + ',' + cz + ',' + dir !== start);
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[(i + pts.length - 1) % pts.length], q = pts[i], n = pts[(i + 1) % pts.length];
+    if ((q[0] - p[0]) * (n[1] - q[1]) - (q[1] - p[1]) * (n[0] - q[0]) !== 0) out.push(q);
+  }
+  return destair(out, res * 1.5);
+}
+
+// Scanline fill of a ring over a labelled raster: calls fn(label, cell index) for each covered cell with a label
 export function ringCells(ring, { lab, w: W, h: H, x0, z0, res }, fn) {
   const bb = bbox(ring);
   const j0 = Math.max(0, Math.floor((bb.z0 - z0) / res)), j1 = Math.min(H - 1, Math.ceil((bb.z1 - z0) / res));
@@ -544,7 +551,7 @@ export function ringCells(ring, { lab, w: W, h: H, x0, z0, res }, fn) {
       const i0 = Math.max(0, Math.ceil((xs[n] - x0) / res - 0.5)), i1 = Math.min(W - 1, Math.floor((xs[n + 1] - x0) / res - 0.5));
       for (let i = i0; i <= i1; i++) {
         const L = lab[j * W + i];
-        if (L) fn(L);
+        if (L) fn(L, j * W + i);
       }
     }
   }

@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { log, ringArea, bbox, centroid, rdp, rdpRing, extractBlocks, ringCells, clearCapsule, minAreaRect, decodePNG, createRouteMatcher, houseAt } from './tepic-lib.mjs';
+import { log, ringArea, bbox, centroid, rdp, rdpRing, extractBlocks, ringCells, traceOutline, clearCapsule, minAreaRect, decodePNG, createRouteMatcher, houseAt } from './tepic-lib.mjs';
 import { BUILDING_OVERRIDES } from '../js/world/building-overrides.ts';
 import { STOREFRONTS } from '../js/world/storefronts/index.ts';
 
@@ -513,6 +513,7 @@ const FOOT_CURB = 1.0; // m: the deck reaches this far past the roadway's edge b
 const FOOT_WAY = /^(footway|path|pedestrian|cycleway|steps)$/;
 const footDecks = []; // { deck: points along the way between the stairs' tops, out: [unit heading away from the deck at
 // its start, at its end], half: half its width (m) }
+const footOthers = []; // { line, half }: the bridge ways over no road (over the arroyos & drains, see 6C)
 {
   // the bridge ways, joined end to end into whole bridges where OSM splits one (at a median, at a lamp)
   const pieces = ways.filter((w) => FOOT_WAY.test(w.tags.highway) && w.tags.bridge && w.tags.bridge !== 'no' && (num(w.tags.layer) ?? 1) > 0)
@@ -578,6 +579,7 @@ const footDecks = []; // { deck: points along the way between the stairs' tops, 
         s1 = Math.max(s1, s + reach);
         main ||= !o.spec || /^(motorway|trunk|primary|secondary|tertiary)/.test(o.spec.hw);
       }
+      if (!(s1 > s0)) footOthers.push({ line, half });
       if (!main || !(s1 > s0)) continue;
       // the deck from s0 to s1 along the way (the way's own hooks onto the paths beside it left out), and which way
       // it heads at either end: its first and last 3 m
@@ -629,20 +631,71 @@ const bldOSM = load('osm_tepic_buildings.json');
 // ground (js/world/waterways.js): [kind, half-width of the gap left between the blocks (m, 0: none), name, flags
 // (1 intermittent, 2 underground: a culvert or tunnel), flat points]
 const WATERWAY = /^(river|stream|canal|drain|ditch)$/;
+const LINED_HALF = { canal: 3.5, drain: 2.2, ditch: 1.4 }; // m: the gap the blocks leave a concrete-lined channel, either side
 const waterways = [];
+// A canal's, drain's or ditch's stretch running along a street, within its width and the channel's of the roadway's
+// edge: a roadside drain under the sidewalk or the street's own gutter as OpenStreetMap draws it, not a channel through
+// the blocks beside it (its gap would take the sidewalk and the houses' fronts)
+const DRIVE_CELL = 50;
+const driveCells = new Map();
+for (const r of drivePieces) {
+  for (let ix = Math.floor((Math.min(r.x0, r.x1) - r.r) / DRIVE_CELL); ix <= Math.floor((Math.max(r.x0, r.x1) + r.r) / DRIVE_CELL); ix++) {
+    for (let iz = Math.floor((Math.min(r.z0, r.z1) - r.r) / DRIVE_CELL); iz <= Math.floor((Math.max(r.z0, r.z1) + r.r) / DRIVE_CELL); iz++) {
+      const k = ix * 100003 + iz;
+      if (!driveCells.has(k)) driveCells.set(k, []);
+      driveCells.get(k).push(r);
+    }
+  }
+}
+const alongStreet = (a, b, half) => {
+  const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  for (const r of driveCells.get(Math.floor(mx / DRIVE_CELL) * 100003 + Math.floor(mz / DRIVE_CELL)) || []) {
+    const ux = r.x1 - r.x0, uz = r.z1 - r.z0, M = Math.hypot(ux, uz) || 1;
+    if (Math.abs(((b[0] - a[0]) * ux + (b[1] - a[1]) * uz) / (L * M)) < 0.85) continue; // (across it: a culvert's)
+    const t = Math.max(0, Math.min(1, ((mx - r.x0) * ux + (mz - r.z0) * uz) / (M * M)));
+    if (Math.hypot(r.x0 + ux * t - mx, r.z0 + uz * t - mz) < r.r + half + 1) return true;
+  }
+  return false;
+};
 for (const e of landOSM.elements) {
   if (e.type !== 'way' || !e.geometry || !e.tags) continue;
   const t = e.tags;
-  const r = t.railway === 'rail' ? 5 : t.waterway === 'river' ? 6 : t.waterway === 'stream' ? 2.5 : 0;
+  const underground = !!t.tunnel || t.location === 'underground';
+  // (the canals, drenes & ditches open to the sky: OSM's width where it gives one, else as the kind usually runs)
+  const lined = !underground && LINED_HALF[t.waterway] ? Math.min(8, Math.max(LINED_HALF[t.waterway], (num(t.width) ?? 0) / 2 + 0.6)) : 0;
+  const r = t.railway === 'rail' ? 5 : t.waterway === 'river' ? 6 : t.waterway === 'stream' ? 2.5 : lined;
   const pts = e.geometry.map((g) => toWorld(g.lon, g.lat));
+  const flags = (t.intermittent === 'yes' || t.seasonal === 'yes' ? 1 : 0) | (underground ? 2 : 0);
+  if (lined) {
+    // in runs open (a gap and a channel) and along a street (neither)
+    for (const piece of clipChain(pts)) {
+      let run = [piece[0]], side = null;
+      const flush = () => { if (run.length > 1) waterways.push([t.waterway, side ? 0 : r, t.name || '', flags, flat(rdp(run, 0.5))]); };
+      for (let i = 0; i + 1 < piece.length; i++) {
+        const along = alongStreet(piece[i], piece[i + 1], r);
+        if (side !== null && along !== side) { flush(); run = [piece[i]]; }
+        side = along;
+        run.push(piece[i + 1]);
+        if (!along) cutters.push({ x0: piece[i][0], z0: piece[i][1], x1: piece[i + 1][0], z1: piece[i + 1][1], r });
+      }
+      flush();
+    }
+    continue;
+  }
   if (WATERWAY.test(t.waterway || '')) {
-    const flags = (t.intermittent === 'yes' || t.seasonal === 'yes' ? 1 : 0) | (t.tunnel || t.location === 'underground' ? 2 : 0);
     for (const piece of clipChain(pts)) waterways.push([t.waterway, r, t.name || '', flags, flat(rdp(piece, 0.5))]);
   }
   if (!r) continue;
   for (let i = 0; i + 1 < pts.length; i++) cutters.push({ x0: pts[i][0], z0: pts[i][1], x1: pts[i + 1][0], z1: pts[i + 1][1], r });
 }
-log(`${waterways.length} waterways (${waterways.filter((w) => w[0] === 'river').length} river pieces)`);
+// The rivers' whole courses (the Mololoa on down the valley, the Río Puente de Enmedio, the Arroyo Grande), for the
+// stretches beyond the detailed box: water laid on the hills' terrain (js/world/terrain.ts buildFarRivers)
+const farRivers = landOSM.elements.filter((e) => e.type === 'way' && e.geometry && e.tags?.waterway === 'river' && !e.tags.tunnel)
+  .map((e) => [e.tags.name || '', e.geometry.map((g) => toWorld(g.lon, g.lat))])
+  .filter(([, pts]) => pts.some(([x, z]) => !inBox(x, z)))
+  .map(([name, pts]) => [name, flat(rdp(pts, 1.5))]);
+log(`${waterways.length} waterways (${waterways.filter((w) => w[0] === 'river').length} river pieces, ${waterways.filter((w) => LINED_HALF[w[0]] && w[1] > 0).length} open canals, drains & ditches)`);
 // The airport (Aeropuerto Internacional de Tepic – Riviera Nayarit, MMEP; OSM aeroway=*): the runways & taxiways as
 // centrelines with their widths (runway 02/20 is 45 m wide, its taxiways ~18 m), the aprons & helipads as rings. They
 // are cut out of the blocks like roads, and js/world/airport.js lays their pavement & markings over the asphalt.
@@ -852,6 +905,129 @@ const parks = greens.filter((g) => g.name || g.rings.some((r) => Math.abs(ringAr
   rings: g.rings.map((r) => flat(rdpRing(r, 0.8)))
 }));
 
+// --- Car parks (OSM amenity=parking): the open lots in front of the supermarkets, the plazas & the hospitals -----------
+// Each mapped area (parking=surface, or untagged: OSM's default) as it lies inside the property lines: cut to the
+// raster cells inside both, one piece per block it spans (a named service road cuts some in two), traced round and
+// straightened like the blocks. Multi-storey, underground & street-side ones (bays along the curb) are left out. Its
+// rows of stalls run square with its sides, along its longer extent: θ (the rows' direction (cos θ, -sin θ), the houses'
+// frame convention). The houses (5B) leave them clear.
+const PARKING_SKIP = /^(multi-storey|underground|street_side|rooftop|lane|layby|carports|garage_boxes)$/;
+// Car parks OpenStreetMap maps where someone who knows the place says there is none: a point inside each (degrees)
+const NOT_PARKING = [
+  { lat: 21.490935, lon: -104.881585, note: 'beside Walmart Insurgentes, round the lienzo charro: it has no car park' }
+];
+const PARKING_MIN = 150; // m²: smaller pieces are a strip along a wall, not a lot (8 stalls is about 100 m² with its aisle)
+// the lot's surface: 0 asphalt (OSM's untagged lots are, mostly), 1 poured concrete, 2 setts (adoquín, empedrado),
+// 3 earth or gravel
+const PARKING_SURFACE = (t) => /^(concrete|concrete:plates)$/.test(t) ? 1 : /^(paving_stones|sett|cobblestone|unhewn_cobblestone)$/.test(t) ? 2 :
+  /^(unpaved|ground|dirt|earth|gravel|fine_gravel|compacted|grass|sand|mud|pebblestone)$/.test(t) ? 3 : 0;
+const parkingLots = [];
+{
+  let skipped = 0, small = 0;
+  for (const e of landOSM.elements) {
+    const t = e.tags || {};
+    if (t.amenity !== 'parking') continue;
+    if (PARKING_SKIP.test(t.parking || '')) { skipped++; continue; }
+    for (const ring of elemRings(e)) {
+      if (NOT_PARKING.some((n) => inRing(ring, ...toWorld(n.lon, n.lat)))) { skipped++; continue; }
+      // the cells inside the ring and a property line, by block
+      const byBlock = new Map();
+      ringCells(ring, raster, (L, k) => {
+        if (!prop[k] || !byLab.has(L)) return;
+        if (!byBlock.has(L)) byBlock.set(L, []);
+        byBlock.get(L).push(k);
+      });
+      for (const [L, cells] of byBlock) {
+        let i0 = Infinity, i1 = -Infinity, j0 = Infinity, j1 = -Infinity;
+        for (const k of cells) {
+          const i = k % W, j = (k - i) / W;
+          i0 = Math.min(i0, i); i1 = Math.max(i1, i); j0 = Math.min(j0, j); j1 = Math.max(j1, j);
+        }
+        const w = i1 - i0 + 1, h = j1 - j0 + 1;
+        const m = new Uint8Array(w * h);
+        for (const k of cells) { const i = k % W, j = (k - i) / W; m[(j - j0) * w + i - i0] = 1; }
+        const at = (i, j) => (i >= 0 && j >= 0 && i < w && j < h ? m[j * w + i] : 0);
+        // each 4-connected patch (its top-left cell first met row by row), flood-filled off the mask once traced
+        for (let s0 = 0; s0 < w * h; s0++) {
+          if (m[s0] !== 1) continue;
+          const si = s0 % w, sj = (s0 - si) / w;
+          let n = 0;
+          const stack = [s0];
+          m[s0] = 2;
+          while (stack.length) {
+            const k = stack.pop();
+            n++;
+            const i = k % w, j = (k - i) / w;
+            for (const [a, b] of [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]]) {
+              if (a >= 0 && b >= 0 && a < w && b < h && m[b * w + a] === 1) { m[b * w + a] = 2; stack.push(b * w + a); }
+            }
+          }
+          if (n * RES * RES < PARKING_MIN) { small++; continue; }
+          const patch = (i, j) => (at(i, j) === 2 ? 1 : 0);
+          let poly = rdpRing(traceOutline(patch, si, sj, X0 + i0 * RES, Z0 + j0 * RES, RES), 0.5);
+          for (let k = 0; k < w * h; k++) if (m[k] === 2) m[k] = 3; // (traced: no other patch's outline sees it)
+          if (poly.length < 3) continue;
+          if (ringArea(poly) > 0) poly = poly.reverse();
+          // the rows square with the lot's sides: its edges' direction, weighted by their lengths, folded into a
+          // quarter turn (an L-shaped lot round a store keeps both legs square), then turned along its longer extent
+          let sx = 0, sz = 0;
+          for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
+            const dx = poly[a][0] - poly[b][0], dz = poly[a][1] - poly[b][1], L = Math.hypot(dx, dz), phi = Math.atan2(dz, dx);
+            sx += L * Math.cos(4 * phi); sz += L * Math.sin(4 * phi);
+          }
+          const phi = Math.atan2(sz, sx) / 4;
+          const ux = Math.cos(phi), uz = Math.sin(phi);
+          const along = poly.map(([x, z]) => x * ux + z * uz), across = poly.map(([x, z]) => z * ux - x * uz);
+          const long = Math.max(...along) - Math.min(...along) >= Math.max(...across) - Math.min(...across);
+          // (θ: the rows along (cos θ, -sin θ))
+          parkingLots.push({ name: t.name || '', surface: PARKING_SURFACE(t.surface || ''), th: long ? -phi : -phi - Math.PI / 2,
+            poly, box: bbox(poly), area: n * RES * RES, lab: L, entrances: [] });
+        }
+      }
+    }
+  }
+  log(`car parks: ${parkingLots.length} lots inside the property lines (${Math.round(parkingLots.reduce((t, p) => t + p.area, 0) / 1000)}k m²), ` +
+    `${skipped} multi-storey, underground, along the curb or not there left out, ${small} slivers dropped`);
+}
+const parkingAt = (x, z) => parkingLots.find((p) => x > p.box.x0 && x < p.box.x1 && z > p.box.z0 && z < p.box.z1 && inRing(p.poly, x, z));
+// Where OpenStreetMap maps a lot's parking aisles (service=parking_aisle), its rows run along them instead: Walmart's
+// on Insurgentes run square to the avenue, under their long shades, not along the lot's long side. The aisles' own
+// direction, weighted by their lengths in the lot, at its peak (the loop round the lot's edge counts less than the
+// rows' aisles together)
+{
+  const aisles = new Map(); // lot -> [angle mod π, length (m)][]
+  for (const w of ways) {
+    if (w.tags.highway !== 'service' || w.tags.service !== 'parking_aisle') continue;
+    const pts = w.geometry.map((g) => toWorld(g.lon, g.lat));
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const L = Math.hypot(bx - ax, bz - az);
+      const lot = L > 2 && parkingAt((ax + bx) / 2, (az + bz) / 2);
+      if (!lot) continue;
+      if (!aisles.has(lot)) aisles.set(lot, []);
+      aisles.get(lot).push([((Math.atan2(bz - az, bx - ax) % Math.PI) + Math.PI) % Math.PI, L]);
+    }
+  }
+  const DEG = Math.PI / 180;
+  let turned = 0;
+  for (const [lot, list] of aisles) {
+    if (list.reduce((t, [, L]) => t + L, 0) < 25) continue;
+    // the peak of the lengths by direction (5° steps, each aisle spread over ±10°), then the mean round it
+    const near = (a, b) => { const d = Math.abs(a - b) % Math.PI; return Math.min(d, Math.PI - d); };
+    let best = 0, bestScore = -1;
+    for (let k = 0; k < 36; k++) {
+      const score = list.reduce((t, [a, L]) => t + L * Math.max(0, 1 - near(a, k * 5 * DEG) / (10 * DEG)), 0);
+      if (score > bestScore) { bestScore = score; best = k * 5 * DEG; }
+    }
+    let sx = 0, sz = 0;
+    for (const [a, L] of list) if (near(a, best) < 12 * DEG) { sx += L * Math.cos(2 * a); sz += L * Math.sin(2 * a); }
+    const phi = Math.atan2(sz, sx) / 2;
+    lot.th = -phi; // (the rows along (cos θ, -sin θ) = the aisles' (cos φ, sin φ))
+    turned++;
+  }
+  log(`car parks: ${turned} lots laid out along their mapped parking aisles`);
+}
+
 // =====================================================================================================================
 // 5. PLACES, POINTS OF INTEREST, NOTABLE FOOTPRINTS
 // =====================================================================================================================
@@ -977,7 +1153,7 @@ const houses = [];
     }
     return false;
   };
-  let read = 0, small = 0, outside = 0, squeezed = 0, onCanal = 0, bigBoxes = 0;
+  let read = 0, small = 0, outside = 0, squeezed = 0, onCanal = 0, onLot = 0, hallsOnLots = 0, bigBoxes = 0;
   if (fs.existsSync(file)) {
     const text = fs.readFileSync(file, 'utf8');
     let start = 0;
@@ -1052,6 +1228,13 @@ const houses = [];
       const store = storeAt(...centroid(ring));
       const big = (area >= 1500 && Math.min(w, d) >= 20) || (area >= 700 && (!!store || /supermarket|warehouse|industrial|retail|commercial/.test(cls)));
       const strip = !big && !!store && store.mall;
+      // A footprint standing in a car park (25 m² to a few hundred: a guard's booth, a kiosk, the shade over a row of
+      // stalls, an ML footprint of the cars themselves) leaves the lot to the cars. A hall in one is the lot mapped
+      // round the store too: it stays, and the game keeps the stalls off it
+      if (parkingAt(cx, cz)) {
+        if (!big) { onLot++; continue; }
+        hallsOnLots++;
+      }
       if (big) {
         floors = p.num_floors ? Math.min(3, Math.round(p.num_floors)) : area > 6000 ? 3 : 2; // (a hall 6-9 m high)
         bigBoxes++;
@@ -1062,7 +1245,161 @@ const houses = [];
         front + (shop ? KIND.shop : 0) + (big ? KIND.big : 0) + (strip ? KIND.strip : 0), 0);
     }
   }
-  log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets, ${onCanal} on a canal through green), ${bigBoxes} big boxes`);
+  log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets, ${onCanal} on a canal through green, ${onLot} in a car park), ${bigBoxes} big boxes (${hallsOnLots} on a mapped car park)`);
+}
+
+// --- Car parks' entrances: where a lot opens onto the street ---------------------------------------------------------
+// Where a service road or aisle that runs through a lot (OSM highway=service: the parking aisles, the driveways, the
+// plazas' access roads) leaves the lot's block onto the street: the point on the curb it crosses (found to a few cm
+// along the way), the way into the block square to the curb (from the block's cells round it), its width, and its
+// path from the curb to the lot (across the sidewalk, and the strip of grass some lots are mapped short of); one per
+// 10 m of curb. Where OpenStreetMap has none along a side of a lot that faces a street (Walmart's aisles on Insurgentes
+// stop short of it), the lot gets its own: one in the middle of that side, one per FRONTAGE m of a long one. The game
+// drops the curb there in a ramp and paves the way through to the lot
+{
+  const SERVICE_WIDTH = { driveway: 4.5, alley: 4.0 }; // m; the rest (aisles, access roads) two-way, 6 m
+  const FRONTAGE = 80;
+  const REACH = 30; // m from a lot's edge to the curb at most (the grass strip by Walmart's on Insurgentes is ~25 m)
+  const pieces = new Map(); // block label -> its lots
+  for (const lot of parkingLots) {
+    if (!pieces.has(lot.lab)) pieces.set(lot.lab, []);
+    pieces.get(lot.lab).push(lot);
+  }
+  // the houses in 20 m cells: no driveway through a building
+  const HC = 20;
+  const houseCells = new Map();
+  for (let k = 0; k < houses.length; k += HS) {
+    const cx = houses[k] / 10, cz = houses[k + 1] / 10, r = Math.hypot(houses[k + 2], houses[k + 3]) / 20;
+    for (let ix = Math.floor((cx - r) / HC); ix <= Math.floor((cx + r) / HC); ix++) {
+      for (let iz = Math.floor((cz - r) / HC); iz <= Math.floor((cz + r) / HC); iz++) {
+        const key = ix * 100003 + iz;
+        if (!houseCells.has(key)) houseCells.set(key, []);
+        houseCells.get(key).push(k);
+      }
+    }
+  }
+  const inHouse = (x, z, pad) => (houseCells.get(Math.floor(x / HC) * 100003 + Math.floor(z / HC)) || []).some((k) => {
+    const th = houses[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th), dx = x - houses[k] / 10, dz = z - houses[k + 1] / 10;
+    return Math.abs(cs * dx - sn * dz) < houses[k + 2] / 20 + pad && Math.abs(sn * dx + cs * dz) < houses[k + 3] / 20 + pad;
+  });
+  // the drivable roadways (drivePieces) in 50 m cells: a street, not a footpath's or a river's gap between the blocks
+  const RC = 50;
+  const roadCells = new Map();
+  for (const r of drivePieces) {
+    for (let ix = Math.floor((Math.min(r.x0, r.x1) - r.r) / RC); ix <= Math.floor((Math.max(r.x0, r.x1) + r.r) / RC); ix++) {
+      for (let iz = Math.floor((Math.min(r.z0, r.z1) - r.r) / RC); iz <= Math.floor((Math.max(r.z0, r.z1) + r.r) / RC); iz++) {
+        const key = ix * 100003 + iz;
+        if (!roadCells.has(key)) roadCells.set(key, []);
+        roadCells.get(key).push(r);
+      }
+    }
+  }
+  const onRoad = (x, z) => (roadCells.get(Math.floor(x / RC) * 100003 + Math.floor(z / RC)) || []).some((r) => {
+    const dx = r.x1 - r.x0, dz = r.z1 - r.z0, L2 = dx * dx + dz * dz;
+    const t = L2 ? Math.max(0, Math.min(1, ((x - r.x0) * dx + (z - r.z0) * dz) / L2)) : 0;
+    return Math.hypot(x - r.x0 - dx * t, z - r.z0 - dz * t) < r.r;
+  });
+  // From a curb point (cx, cz) in along (nx, nz): how far the lot begins (m), or -1 when a building stands in the way
+  // or the lot is further than REACH; `half`: the driveway's half width (0: its middle only)
+  const depthTo = (lot, cx, cz, nx, nz, half) => {
+    for (let d = 0.5; d <= REACH + 1; d += 0.5) {
+      const x = cx + nx * d, z = cz + nz * d;
+      if (inRing(lot.poly, x, z)) return d;
+      for (const o of [-half, 0, half]) if (inHouse(x - nz * o, z + nx * o, 0.3)) return -1;
+    }
+    return -1;
+  };
+  let found = 0, made = 0;
+  for (const w of ways) {
+    const t = w.tags;
+    if (t.highway !== 'service' || /^(drive-through|emergency_access)$/.test(t.service || '') || /^(private|no)$/.test(t.access || '')) continue;
+    const pts = w.geometry.map((g) => toWorld(g.lon, g.lat));
+    // the way sampled every 0.5 m, and its block label at each sample
+    const samples = [];
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.5));
+      for (let k = i ? 1 : 0; k <= n; k++) samples.push([ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n]);
+    }
+    const labs = samples.map(([x, z]) => labAt(x, z));
+    for (let k = 1; k < samples.length; k++) {
+      const inner = labs[k - 1] || labs[k];
+      if (!!labs[k - 1] === !!labs[k] || !pieces.has(inner)) continue;
+      // the run of the way inside the block on this side must reach one of its lots
+      const step = labs[k - 1] ? -1 : 1;
+      let lot = null;
+      const run = [];
+      for (let j = labs[k - 1] ? k - 1 : k; j >= 0 && j < samples.length && labs[j] === inner && !lot; j += step) {
+        run.push(samples[j]);
+        lot = pieces.get(inner).find((p) => inRing(p.poly, samples[j][0], samples[j][1])) || null;
+      }
+      if (!lot || run.length * 0.5 > 80) continue;
+      // the curb: bisect between the two samples
+      let [ox, oz] = labs[k - 1] ? samples[k - 1] : samples[k], [rx, rz] = labs[k - 1] ? samples[k] : samples[k - 1];
+      for (let it = 0; it < 5; it++) {
+        const mx = (ox + rx) / 2, mz = (oz + rz) / 2;
+        if (labAt(mx, mz) === inner) [ox, oz] = [mx, mz]; else [rx, rz] = [mx, mz];
+      }
+      const cx = (ox + rx) / 2, cz = (oz + rz) / 2;
+      // into the block, square to the curb: the mean direction of the block's cells on a 4 m circle round the point
+      let nx = 0, nz = 0;
+      for (let a = 0; a < 32; a++) {
+        const ux = Math.cos((a * Math.PI) / 16), uz = Math.sin((a * Math.PI) / 16);
+        if (labAt(cx + ux * 4, cz + uz * 4) === inner) { nx += ux; nz += uz; }
+      }
+      const nl = Math.hypot(nx, nz);
+      if (nl < 1e-3 || lot.entrances.some((e) => Math.hypot(e[0] - cx, e[1] - cz) < 10)) continue;
+      nx /= nl; nz /= nl;
+      const width = Math.min(12, Math.max(3.5, Number.parseFloat(t.width) || SERVICE_WIDTH[t.service] || 6));
+      // the way in: the service road itself from the curb to the lot (at least across the sidewalk, square to it)
+      const path = rdp([[cx, cz], [cx + nx * (SIDEWALK + 0.3), cz + nz * (SIDEWALK + 0.3)], ...run.filter(([x, z]) => (x - cx) * nx + (z - cz) * nz > SIDEWALK + 0.8)], 0.3);
+      lot.entrances.push([q(cx), q(cz), Math.round(Math.atan2(nz, nx) * 1000), q(width), flat(path)]);
+      found++;
+    }
+  }
+  for (const lot of parkingLots) {
+    const poly = lot.poly;
+    for (let a = 0; a < poly.length; a++) {
+      const [ax, az] = poly[a], [bx, bz] = poly[(a + 1) % poly.length];
+      const len = Math.hypot(bx - ax, bz - az);
+      if (len < 12) continue;
+      const ux = (bx - ax) / len, uz = (bz - az) / len;
+      // outwards: the side of the edge's middle off the lot
+      let ox = uz, oz = -ux;
+      if (inRing(poly, (ax + bx) / 2 + ox * 0.5, (az + bz) / 2 + oz * 0.5)) { ox = -ox; oz = -oz; }
+      // from a point of the edge out to the curb (the block's last cell): its distance, or -1 past REACH
+      const toCurb = (x, z) => {
+        for (let d = 0; d <= REACH; d += 0.25) if (labAt(x + ox * (d + 0.25), z + oz * (d + 0.25)) !== lot.lab) return d;
+        return -1;
+      };
+      // a side facing a street: from most of it the curb is within REACH and a drivable roadway lies just past it
+      let facing = 0, n = 0;
+      for (let d = 2; d <= len - 2; d += 2, n++) {
+        const x = ax + ux * d, z = az + uz * d, c = toCurb(x, z);
+        if (c >= 0 && onRoad(x + ox * (c + 1.5), z + oz * (c + 1.5))) facing++;
+      }
+      if (!n || facing < n * 0.7) continue;
+      // (the entrances already along this side: off its line no further than the curb, over its length; none is made
+      // within half a FRONTAGE of one)
+      const along = lot.entrances.map(([ex, ez]) => [(ex - ax) * ux + (ez - az) * uz, (ex - ax) * ox + (ez - az) * oz])
+        .filter(([u, v]) => u > -3 && u < len + 3 && v > -2 && v < REACH + 1).map(([u]) => u);
+      const count = Math.max(1, Math.round(len / FRONTAGE));
+      for (let k = 0; k < count; k++) {
+        const d = (len * (k + 0.5)) / count;
+        if (along.some((u) => Math.abs(u - d) < FRONTAGE / 2)) continue;
+        const x = ax + ux * d, z = az + uz * d, c = toCurb(x, z);
+        if (c < 0) continue;
+        const cx = x + ox * (c + 0.12), cz = z + oz * (c + 0.12);
+        const depth = depthTo(lot, cx, cz, -ox, -oz, 3);
+        if (depth < 0) continue;
+        const reach = Math.max(SIDEWALK + 0.3, depth + 0.5);
+        lot.entrances.push([q(cx), q(cz), Math.round(Math.atan2(-oz, -ox) * 1000), 6, flat([[cx, cz], [cx - ox * reach, cz - oz * reach]])]);
+        made++;
+      }
+    }
+  }
+  log(`car parks: ${found} entrances from the street where OSM maps them, ${made} more on the sides facing a street, ` +
+    `${parkingLots.filter((p) => !p.entrances.length).length} lots with none (facing no street)`);
 }
 
 // =====================================================================================================================
@@ -1380,6 +1717,13 @@ const signs = [];
     return best;
   };
 
+  // A supermarket or department store is a place whose own name is the chain's ("Soriana", "Casa Ley Álica", "The Home
+  // Depot Tepic"), not one that names it after something else: the cafés, banks & phone shops inside or beside it
+  // ("Doña Tota Soriana Cigarrera", "BanCoppel", "Credi 7 Chedraui") would otherwise put the store's sign on the
+  // building they stand in (Soriana's on the Burger King of Insurgentes)
+  const leads = (sf) => new RegExp(`^(?:(?:casa|mi|plaza|tienda|the)\\s+)?(?:${sf.match.source})`, 'i');
+  const HALL_MIN = 700; // m²: a supermarket's or department store's hall at least (Tepic's are 1,300-18,000 m²)
+  const chainPlaces = [];
   const file = path.join(DATA, 'overture', 'places.geojsonl');
   const locals = [];
   let chains = 0, named = 0, generic = 0, plazas = 0;
@@ -1401,23 +1745,42 @@ const signs = [];
         const i = houseAt(x, z, 12);
         if (i >= 0 && !(houses[i + 6] & (KIND.big | KIND.coto))) { houses[i + 6] |= KIND.strip | KIND.shop; plazas++; }
       }
-      const chain = CHAINS.find((sf) => sf.match.test(name) || sf.match.test(brand));
+      const chain = CHAINS.find((sf) => (sf.big ? leads(sf).test(name) : sf.match.test(name) || sf.match.test(brand)));
       if (chain) {
-        const i = chain.big ? biggestAt(x, z, 40) : houseAt(x, z, 15);
-        if (i < 0) continue;
-        // (a convenience store or pharmacy inside a hall or a mall: the hall keeps its own front, height & name)
-        if (!chain.big && houses[i + 6] & KIND.big) continue;
-        houses[i + 7] = signIndex.get(`chain:${chain.id}`);
-        houses[i + 6] |= KIND.shop;
-        if (chain.big) houses[i + 6] = (houses[i + 6] | KIND.big) & ~KIND.strip;
-        houses[i + 5] = chain.big ? Math.max(2, Math.min(houses[i + 5], 3)) : 1;
-        chains++;
+        chainPlaces.push({ chain, x, z, conf: p.confidence || 0 });
         continue;
       }
+      // (a business that only names the store it stands in or by: "Doña Tota Soriana Cigarrera", "Afore Coppel")
+      if (CHAINS.some((sf) => sf.big && (sf.match.test(name) || sf.match.test(brand)))) continue;
       const i = houseAt(x, z, 8);
       if (i < 0 || houses[i + 7] || houses[i + 6] & KIND.coto) continue; // (no shops inside a coto)
       locals.push({ i, name, cat, conf: p.confidence || 0, d: Math.hypot(x, z) });
     }
+  }
+  // The chains' stores, the surest first. Overture often has a big store twice (a second, older pin: "Liverpool" 430 m
+  // down Av. México from "Liverpool Centro"): within DUPLICATE m of a surer one of the same chain, a pin both aren't
+  // sure of (confidence 0.9) is that one again. A big store takes the biggest building by its pin if that is a hall
+  // (HALL_MIN), else it is a small branch (a Soriana Express) and signs the building it stands in (or that one), like
+  // the OXXOs
+  const DUPLICATE = 500;
+  chainPlaces.sort((a, b) => Number(b.chain.big) - Number(a.chain.big) || b.conf - a.conf);
+  const kept = [];
+  let duplicates = 0;
+  for (const c of chainPlaces) {
+    if (c.chain.big && kept.some((k) => k.chain === c.chain && Math.min(k.conf, c.conf) < 0.9 && Math.hypot(k.x - c.x, k.z - c.z) < DUPLICATE)) { duplicates++; continue; }
+    kept.push(c);
+    const hall = c.chain.big ? biggestAt(c.x, c.z, 40) : -1;
+    const big = hall >= 0 && (houses[hall + 2] * houses[hall + 3]) / 100 >= HALL_MIN;
+    const at = big ? -1 : houseAt(c.x, c.z, 15);
+    const i = big ? hall : at >= 0 ? at : hall; // (a branch pinned on its car park: the building by it)
+    if (i < 0) continue;
+    // (a convenience store or pharmacy inside a hall or a mall: the hall keeps its own front, height & name)
+    if (!big && houses[i + 6] & KIND.big) continue;
+    houses[i + 7] = signIndex.get(`chain:${c.chain.id}`);
+    houses[i + 6] |= KIND.shop;
+    if (big) houses[i + 6] = (houses[i + 6] | KIND.big) & ~KIND.strip;
+    houses[i + 5] = big ? Math.max(2, Math.min(houses[i + 5], 3)) : 1;
+    chains++;
   }
   // a sign's text: no emoji, no "- Tepic" tacked on the end (Facebook pages' names), something to read left (the emoji
   // and their joiners one code point at a time: in a character class they'd read as one joined sequence)
@@ -1463,7 +1826,7 @@ const signs = [];
     const t = STREET_TRADES[hashS(`${houses[i]},${houses[i + 1]}`) % STREET_TRADES.length];
     houses[i + 7] = signIndex.get(`trade:${t}`);
   }
-  log(`shop signs: ${plazas} shopping centres, ${chains} chain stores, ${named + generic} shops from ${locals.length} local businesses (${named} named, ${generic} by trade), ${signs.length} sign faces`);
+  log(`shop signs: ${plazas} shopping centres, ${chains} chain stores (${duplicates} pinned twice), ${named + generic} shops from ${locals.length} local businesses (${named} named, ${generic} by trade), ${signs.length} sign faces`);
 }
 
 // =====================================================================================================================
@@ -1878,7 +2241,110 @@ const transit = { groups: [], routes: [] };
 }
 
 // =====================================================================================================================
-// 6C. WHAT'S KNOWN OF PARTICULAR BUILDINGS (js/world/building-overrides.js): each entry finds the building it points
+// 6C. THE FOOTBRIDGES' STAIRS (3C): a straight flight down from either end of each deck, in line with it where that
+//     is clear of the buildings (5B) and the roadways, else turned along the road from a landing, to whichever side is
+//     clearer (a roadway counts for ten buildings: a flight can't stand in the street, but OpenStreetMap's stairs stand
+//     where Overture may have drawn a shop). The buildings a flight still stands on go. And the low footbridges: the
+//     bridge ways over no road that cross an open channel (5B's waterways), a walkway just over it
+//     (Before 6D: it takes houses out of the list, whose indices 6D keeps)
+// =====================================================================================================================
+const FOOT_LOW = 0.3; // m: a footbridge's walkway over an arroyo or a drain, over the ground either side
+const footbridges = [];
+{
+  const top = FOOT_CLEARANCE + FOOT_DECK;
+  const run = top / STAIR;
+  let turned = 0, blocked = 0;
+  const gone = new Set(); // houses (index) a flight stands on
+  for (const f of footDecks) {
+    // the buildings and roadway pieces within reach of the bridge
+    const xs = f.deck.map((p) => p[0]), zs = f.deck.map((p) => p[1]);
+    const R = run + 15;
+    const x0 = Math.min(...xs) - R, x1 = Math.max(...xs) + R, z0 = Math.min(...zs) - R, z1 = Math.max(...zs) + R;
+    const near = []; // house indices
+    for (let k = 0; k + HS <= houses.length; k += HS) {
+      const cx = houses[k] / 10, cz = houses[k + 1] / 10;
+      if (cx > x0 && cx < x1 && cz > z0 && cz < z1) near.push(k / HS);
+    }
+    const roads = drivePieces.filter((r) => Math.max(r.x0, r.x1) > x0 && Math.min(r.x0, r.x1) < x1 && Math.max(r.z0, r.z1) > z0 && Math.min(r.z0, r.z1) < z1);
+    const inRoad = (x, z) => roads.some((r) => {
+      const ux = r.x1 - r.x0, uz = r.z1 - r.z0;
+      const t = Math.max(0, Math.min(1, ((x - r.x0) * ux + (z - r.z0) * uz) / (ux * ux + uz * uz || 1)));
+      return Math.hypot(r.x0 + ux * t - x, r.z0 + uz * t - z) < r.r;
+    });
+    // the house (index) at (x, z), or -1
+    const houseIn = (x, z) => {
+      for (const n of near) {
+        const k = n * HS;
+        const cx = houses[k] / 10, cz = houses[k + 1] / 10, hx = houses[k + 2] / 20, hz = houses[k + 3] / 20;
+        const th = houses[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th);
+        const dx = x - cx, dz = z - cz;
+        if (Math.abs(cs * dx - sn * dz) < hx && Math.abs(sn * dx + cs * dz) < hz) return n;
+      }
+      return -1;
+    };
+    // a flight from `from` down along `dir`: its sides and middle every metre (from 2 m down: its top stands by the
+    // roadway it spans), and what each stands in
+    const footprint = (from, dir, fn) => {
+      for (let s = 2; s <= run; s += 1) {
+        for (const o of [-f.half, 0, f.half]) fn(from[0] + dir[0] * s - dir[1] * o, from[1] + dir[1] * s + dir[0] * o);
+      }
+    };
+    const cost = (from, dir) => {
+      let n = 0;
+      footprint(from, dir, (x, z) => { n += inRoad(x, z) ? 10 : houseIn(x, z) >= 0 ? 1 : 0; });
+      return n;
+    };
+    const flight = (end0, out) => {
+      // in line; or from a landing just past the deck's end, along the road either way. Where all three come down in
+      // a street (a lateral beside the road the bridge spans), the deck carries on over it first, up to 25 m
+      let best = null, bestN = Infinity;
+      for (const more of [0, 5, 10, 15, 20, 25]) {
+        const end = [end0[0] + out[0] * more, end0[1] + out[1] * more];
+        const landing = [end[0] + out[0] * (f.half + 0.3), end[1] + out[1] * (f.half + 0.3)];
+        const ways = [{ from: end, dir: out, land: null }, { from: landing, dir: [-out[1], out[0]], land: landing }, { from: landing, dir: [out[1], -out[0]], land: landing }];
+        for (const w of ways) {
+          const n = cost(w.from, w.dir) + (w.land ? 2 : 0) + more * 0.4; // (in line, unless that runs into more)
+          if (n < bestN) { bestN = n; best = { ...w, deckTo: more ? end : null }; }
+        }
+        if (bestN < 10) break;
+      }
+      if (best.land) turned++;
+      if (bestN >= 10) blocked++;
+      footprint(best.from, best.dir, (x, z) => { const n = houseIn(x, z); if (n >= 0) gone.add(n); });
+      if (best.land) {
+        for (const o of [-f.half, 0, f.half]) for (const s of [-f.half, 0, f.half]) {
+          const n = houseIn(best.land[0] + out[0] * s - out[1] * o, best.land[1] + out[1] * s + out[0] * o);
+          if (n >= 0) gone.add(n);
+        }
+      }
+      const foot = [best.from[0] + best.dir[0] * run, best.from[1] + best.dir[1] * run];
+      return [...(best.deckTo ? [best.deckTo] : []), ...(best.land ? [best.land, foot] : [foot])];
+    };
+    const [start, end] = [flight(f.deck[0], f.out[0]), flight(f.deck[f.deck.length - 1], f.out[1])];
+    const pts = [...start.reverse(), ...f.deck, ...end];
+    footbridges.push([flat(pts), pts.map((_, i) => (i === 0 || i === pts.length - 1 ? 0 : Math.round(top * 10))), Math.round(f.half * 20)]);
+  }
+  // (from the last down, so the indices still to go stay put)
+  for (const n of [...gone].sort((a, b) => b - a)) houses.splice(n * HS, HS);
+  log(`footbridge stairs: ${footbridges.length * 2} flights, ${turned} turned along the road, ${blocked} still into a roadway; ${gone.size} buildings under them taken out`);
+
+  // The low footbridges: over an open channel (the waterways the blocks leave a gap for, above ground)
+  const open = waterways.filter((w) => w[1] > 0 && !(w[3] & 2)).map((w) => { const p = []; for (let k = 0; k + 1 < w[4].length; k += 2) p.push([w[4][k], w[4][k + 1]]); return p; });
+  let low = 0;
+  for (const { line, half } of footOthers) {
+    const over = open.some((w) => {
+      for (let i = 0; i + 1 < line.length; i++) for (let j = 0; j + 1 < w.length; j++) if (segCross(line[i], line[i + 1], w[j], w[j + 1])) return true;
+      return false;
+    });
+    if (!over) continue;
+    footbridges.push([flat(line), line.map(() => Math.round(FOOT_LOW * 10)), Math.round(half * 20)]);
+    low++;
+  }
+  log(`low footbridges: ${low} over the arroyos, rivers & drains`);
+}
+
+// =====================================================================================================================
+// 6D. WHAT'S KNOWN OF PARTICULAR BUILDINGS (js/world/building-overrides.js): each entry finds the building it points
 // at; its storeys go into the house, its paint into GEO.overrides [house index, storeys (0: as guessed), paint
 // (0xrrggbb, -1: the palette's)], which also tells buildings.js to draw it whole
 // =====================================================================================================================
@@ -1893,73 +2359,6 @@ for (const o of BUILDING_OVERRIDES) {
   overrides.push([n, storeys, paint]);
 }
 if (BUILDING_OVERRIDES.length) log(`overrides: ${overrides.length} of ${BUILDING_OVERRIDES.length} pinned to a building`);
-
-// =====================================================================================================================
-// 6D. THE FOOTBRIDGES' STAIRS (3C): a straight flight down from either end of each deck, in line with it where that
-//     is clear of the buildings (5B) and the roadways, else turned along the road from a landing, to whichever side is
-//     clearer
-// =====================================================================================================================
-const footbridges = [];
-{
-  const top = FOOT_CLEARANCE + FOOT_DECK;
-  const run = top / STAIR;
-  let turned = 0, blocked = 0;
-  for (const f of footDecks) {
-    // the buildings and roadway pieces within reach of the bridge
-    const xs = f.deck.map((p) => p[0]), zs = f.deck.map((p) => p[1]);
-    const R = run + 15;
-    const x0 = Math.min(...xs) - R, x1 = Math.max(...xs) + R, z0 = Math.min(...zs) - R, z1 = Math.max(...zs) + R;
-    const near = [];
-    for (let k = 0; k + HS <= houses.length; k += HS) {
-      const cx = houses[k] / 10, cz = houses[k + 1] / 10;
-      if (cx > x0 && cx < x1 && cz > z0 && cz < z1) near.push(...houses.slice(k, k + HS));
-    }
-    const roads = drivePieces.filter((r) => Math.max(r.x0, r.x1) > x0 && Math.min(r.x0, r.x1) < x1 && Math.max(r.z0, r.z1) > z0 && Math.min(r.z0, r.z1) < z1);
-    const inRoad = (x, z) => roads.some((r) => {
-      const ux = r.x1 - r.x0, uz = r.z1 - r.z0;
-      const t = Math.max(0, Math.min(1, ((x - r.x0) * ux + (z - r.z0) * uz) / (ux * ux + uz * uz || 1)));
-      return Math.hypot(r.x0 + ux * t - x, r.z0 + uz * t - z) < r.r;
-    });
-    const inHouse = (x, z) => {
-      for (let k = 0; k + HS <= near.length; k += HS) {
-        const cx = near[k] / 10, cz = near[k + 1] / 10, hx = near[k + 2] / 20, hz = near[k + 3] / 20;
-        const th = near[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th);
-        const dx = x - cx, dz = z - cz;
-        if (Math.abs(cs * dx - sn * dz) < hx && Math.abs(sn * dx + cs * dz) < hz) return true;
-      }
-      return false;
-    };
-    // how much of a flight from `from` down along `dir` is in a building or a roadway: its sides and middle every metre
-    const blockedBy = (from, dir) => {
-      let n = 0;
-      for (let s = 0; s <= run; s += 1) {
-        for (const o of [-f.half, 0, f.half]) {
-          const x = from[0] + dir[0] * s - dir[1] * o, z = from[1] + dir[1] * s + dir[0] * o;
-          if (inHouse(x, z) || inRoad(x, z)) n++;
-        }
-      }
-      return n;
-    };
-    const flight = (end, out) => {
-      // in line; or from a landing just past the deck's end, along the road either way
-      const landing = [end[0] + out[0] * (f.half + 0.3), end[1] + out[1] * (f.half + 0.3)];
-      const ways = [{ from: end, dir: out, land: null }, { from: landing, dir: [-out[1], out[0]], land: landing }, { from: landing, dir: [out[1], -out[0]], land: landing }];
-      let best = ways[0], bestN = Infinity;
-      for (const w of ways) {
-        const n = blockedBy(w.from, w.dir) + (w.land ? 2 : 0); // (in line, unless that runs into more)
-        if (n < bestN) { bestN = n; best = w; }
-      }
-      if (best.land) turned++;
-      if (bestN > 2) blocked++;
-      const foot = [best.from[0] + best.dir[0] * run, best.from[1] + best.dir[1] * run];
-      return best.land ? [best.land, foot] : [foot];
-    };
-    const [start, end] = [flight(f.deck[0], f.out[0]), flight(f.deck[f.deck.length - 1], f.out[1])];
-    const pts = [...start.reverse(), ...f.deck, ...end];
-    footbridges.push([flat(pts), pts.map((_, i) => (i === 0 || i === pts.length - 1 ? 0 : Math.round(top * 10))), Math.round(f.half * 20)]);
-  }
-  log(`footbridge stairs: ${footbridges.length * 2} flights, ${turned} turned along the road, ${blocked} still into a building or a roadway`);
-}
 
 // =====================================================================================================================
 // 7. ASSEMBLE
@@ -1989,8 +2388,8 @@ const GEO = {
   roadGraph: { nodes: gnodes.flatMap(([x, z]) => [q(x), q(z)]), links, names, signals },
   // The railway: [flat points, lifts (dm, or 0), bridge (1: a bridge way), main line (1) or siding / yard (0)]
   rails,
-  // The footbridges over the roads (3C): [flat points from one stair's foot to the other's, lifts (dm over the ground
-  // at each; the deck between the stairs' tops), width (dm)]
+  // The footbridges (3C, 6C): [flat points from one stair's foot to the other's, lifts (dm over the ground at each; the
+  // deck between the stairs' tops; a low one over an arroyo FOOT_LOW all along), width (dm)]
   footbridges,
   // [outline, lot rects, park share, park name, rectangular, frontage frames | 0, open country (no buildings) 1 | 0]
   blocks: blocks.map((b) => [flat(b.poly), b.rects.map((r) => r.map(q)), b.park || 0, b.parkName || '', b.rect ? 1 : 0,
@@ -1999,6 +2398,8 @@ const GEO = {
   // [kind (river, stream, canal, drain, ditch), half-width of the gap between the blocks (m), name, flags (1
   // intermittent, 2 underground), flat points downstream]
   waterways,
+  // The rivers' whole courses where they run on beyond the box: [name, flat points downstream]
+  farRivers,
   centralPark: null,
   piers: [],
   bridges: {},
@@ -2031,8 +2432,12 @@ const GEO = {
   // The airport (4): runways & taxiways [ref, width (m), flat centreline], aprons & helipads (flat rings), gates (the
   // boarding bridges [x, z at the terminal, x, z at the aircraft])
   airport,
-  // Buildings drawn as they are (6C): [house index, storeys (0: as guessed), paint (0xrrggbb, -1: the palette's)]
-  overrides
+  // Buildings drawn as they are (6D): [house index, storeys (0: as guessed), paint (0xrrggbb, -1: the palette's)]
+  overrides,
+  // Surface car parks (4), inside the property lines: [name ('' none), surface (0 asphalt, 1 concrete, 2 setts, 3 earth
+  // or gravel), the stall rows' direction θ (mrad: along (cos θ, -sin θ)), outline (flat ring), entrances ([x, z on
+  // the curb (m), the way in square to it (mrad, atan2 of z over x), width (m), path from the curb to the lot (flat)])]
+  parking: parkingLots.map((p) => [p.name, p.surface, Math.round(p.th * 1000), flat(p.poly), p.entrances])
 };
 
 const json = JSON.stringify(GEO);

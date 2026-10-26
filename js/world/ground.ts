@@ -23,6 +23,7 @@ export interface GroundSource {
   waterways?: Waterway[] | null;
   roads?: Road[] | null;
   roadGraph?: RoadGraph | null;
+  footbridges?: Footbridge[] | null;
 }
 /** The town's grid with slopes, its heights decoded (m over the datum), for the shaders. */
 export type TownGrid = Omit<Ground, 'data'> & { data: undefined; heights: Float32Array };
@@ -74,7 +75,11 @@ function createGround(geo: GroundSource, { slopes = false }: { slopes?: boolean 
   const landHeight: HeightFn = town ? (x: number, z: number) => town(x, z) + hillGround(x, z) : hillGround;
   // the channels, sunk into the town's floor where the hills leave it bare, and bridged by the streets
   const waterways = geo.waterways?.length
-    ? createWaterways(geo.waterways, { floor: townHeight, hills: terrainHeight, roads: (geo.roads ?? []).map((r) => ({ w: r[1], pts: r[5] })) })
+    ? createWaterways(geo.waterways, {
+      floor: townHeight, hills: terrainHeight, roads: (geo.roads ?? []).map((r) => ({ w: r[1], pts: r[5] })),
+      // (the low ones, over the arroyos: the others cross the streets, high over them)
+      foot: (geo.footbridges ?? []).filter(([, lifts]) => Math.max(...lifts) < 10).map(([pts, , width]) => ({ w: width / 10, pts }))
+    })
     : null;
   /**
    * Height (m) of the ground at grade at (x, z): the land and the channels cut into it (under a bridge for a body

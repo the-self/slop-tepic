@@ -37,6 +37,8 @@ function createPeds() {
       ux: 0,
       uz: 1,
       len: 1,
+      la: 0,
+      lb: 0,
       t: 0,
       dir: 1,
       node: null, // the intersection of its crosswalk, which side of it, where along it
@@ -76,8 +78,16 @@ function createPeds() {
 // with 2 m of sidewalk (the rig steps down and up the curbs)
 const SIDEWALK_Y = 0.22;
 const CROSSWALK_Y = 0.012;
+// How high over the ground a pedestrian walks along its track: up a footbridge's stairs and over its deck, else 0
+function pedLift(p: Ped): number {
+  if (!p.la && !p.lb) return 0;
+  const t = Math.max(0, Math.min(1, p.t / (p.len || 1)));
+  return p.la + (p.lb - p.la) * t;
+}
 function pedGround(ts: TrafficState, p: Ped, x: number, z: number): number {
   const hill = hillAt(ts, x, z);
+  const lift = p.bail || p.ride ? 0 : pedLift(p);
+  if (lift) return hill + Math.max(SIDEWALK_Y, lift);
   if (p.bail || p.ride) {
     // off its tracks (an ejected driver, someone stepping on or off a camión): in the road, or up on the curb island
     // it walks onto
@@ -105,6 +115,12 @@ function renderPed(ts: TrafficState, p: Ped, dt: number) {
 function playerHits(ts: TrafficState, x: number, z: number, r: number) {
   if (!ts.player.knocks) return null;
   return boxHit(ts.player.x, ts.player.z, ts.player.heading, ts.player.halfW, ts.player.halfL, x, z, r);
+}
+// ...a pedestrian p, the player at about its level: over it on a footbridge, or under one it crosses, it isn't
+function playerHitsPed(ts: TrafficState, p: Ped) {
+  const at = ts.player.entity?.position;
+  if (at && Math.abs(at.y - pedGround(ts, p, p.x, p.z)) > 1.5) return null;
+  return playerHits(ts, p.x, p.z, 0.3);
 }
 
 // Throws pedestrian p to the ground as a ragdoll, hit at velocity (vx, vz) and pushed out along (nx, nz); by the
@@ -171,7 +187,7 @@ function tumblePed(ts: TrafficState, p: Ped, _dt: number): void {
 function getUp(ts: TrafficState, p: Ped, x: number, z: number): void {
   ts.ragdolls?.release(p.fallen);
   p.fallen = null;
-  Object.assign(p, { x, z, node: null, route: null, nextRoute: null, nextLeg: 0, waiting: false, v: 0, pause: 0 });
+  Object.assign(p, { x, z, node: null, route: null, nextRoute: null, nextLeg: 0, waiting: false, v: 0, pause: 0, la: 0, lb: 0 });
   p.rig.placed = false; // (stood up where they lay: rig.update resets it there)
   const fromX = ts.player.x, fromZ = ts.player.z;
   p.bail = {
@@ -180,4 +196,4 @@ function getUp(ts: TrafficState, p: Ped, x: number, z: number): void {
   };
 }
 
-export { createPeds, pedGround, renderPed, playerHits, throwPed, knockPed, tumblePed };
+export { createPeds, pedGround, pedLift, renderPed, playerHits, playerHitsPed, throwPed, knockPed, tumblePed };

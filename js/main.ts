@@ -112,12 +112,13 @@ async function initApp(): Promise<void> {
   // 3. The city: streets, hills, landmarks, blocks, street details & traffic
   loading.status(`Construyendo ${CITY.city || 'la ciudad'}: calles, manzanas y colonias...`);
   const city = buildCity(scene, { stream: params.get('stream') !== '0', mark: (label) => { loading.mark(label); } });
-  const { streamer, rivers, cityBlocks, stores, streetDetails, traffic: trafficSystem, highwayTraffic, colliders } = city;
+  const { streamer, rivers, cityBlocks, stores, carParks, streetDetails, traffic: trafficSystem, highwayTraffic, colliders } = city;
 
   // 4. The player (on foot, car, bicycle, moto, helicopter), its cameras and its input
   const controllerManager = new ThirdPersonControllerManager(scene, colliders);
   // The ground (world/ground.ts): the town's own slopes and the hills over them (the flat city with ?slopes=0)
   controllerManager.setTerrain(groundHeight, townHeight, landHeight, deckLift, walkDeckLift); // (and the bridges' decks over it; on foot the footbridges' too)
+  controllerManager.setCurbRamps(carParks.rampAt); // (the car parks' driveways, up over the curb)
   trafficSystem.setHillQuery(gradeHeight); // (the roads' lifts are over the ground at grade: down an underpass, < 0)
   trafficSystem.setSurfaceQuery(surfaceHeight);
   // People, bicycles & hydrants knocked flying bounce off the buildings' walls (sim/mayhem.ts)
@@ -325,7 +326,7 @@ async function initApp(): Promise<void> {
   const cullingRoots = named(['CityGrid', 'CityBlocks', 'StreetDetails', 'Hills', 'Rivers', 'Bridges']);
   setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
   // ...whose world matrices never change again: rendering stops walking them (the loop updates the rest of the scene)
-  const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'Airport', 'RoadMarkings', 'Pavements', 'Topes', 'StreamedTiles'])
+  const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Airport', 'RoadMarkings', 'Pavements', 'Topes', 'StreamedTiles'])
     .filter((o) => o.parent === scene)];
   freezeStaticMatrices(scene, staticRoots);
   loading.mark('culling');
@@ -664,6 +665,7 @@ async function initApp(): Promise<void> {
       const eye = cameraSystem.currentPos;
       cityBlocks.update(eye.x, eye.z);
       stores.update(eye.x, eye.z);
+      carParks.update(eye.x, eye.z);
       cityBlocks.updateLights(cameraSystem.camera);
       streetDetails.update(cameraSystem.camera);
       lightingSystem.update(eye);

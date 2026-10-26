@@ -50,6 +50,7 @@ const MAP = {
   waterLabel: '#8cc1ee',
   highway: '#b27a35',
   airfield: '#5d6470', // the airport's runway, taxiways & apron
+  parking: '#2b323b', // the car parks: paved ground on the blocks, darker than the streets
   search: '#5fd0ff',
   halo: 'rgba(8, 11, 15, 0.9)'
 };
@@ -208,6 +209,7 @@ interface MapLayers {
   taxiways: TiledLayer;
   blocks: TiledLayer;
   parkBlocks: TiledLayer;
+  parking: TiledLayer;
   mainRoads: TiledLayer;
   highways: Path2D;
 }
@@ -228,6 +230,7 @@ function mapLayers(): MapLayers {
     taxiways: new TiledLayer(1000),
     blocks: new TiledLayer(),
     parkBlocks: new TiledLayer(),
+    parking: new TiledLayer(),
     mainRoads: new TiledLayer(1000),
     highways: new Path2D()
   };
@@ -259,6 +262,7 @@ function mapLayers(): MapLayers {
   for (const [, , pts] of airport.runways) L.runways.line(pts);
   for (const [, , pts] of airport.taxiways) L.taxiways.line(pts);
   for (const b of BLOCKS) (b.park > 0.6 && !b.median ? L.parkBlocks : L.blocks).ring(b.poly);
+  for (const [, , , ring] of GEO.parking) L.parking.ring(ring);
 
   // Street network at low zoom (the wide streets, once the gaps between blocks are under a pixel) and the highways
   for (const r of ROADS) {
@@ -895,6 +899,8 @@ class CityMapSystem {
     }
     ctx.fillStyle = MAP.park;
     L.parkBlocks.each(v, (p) => { ctx.fill(p); });
+    ctx.fillStyle = MAP.parking;
+    L.parking.each(v, (p) => { ctx.fill(p); });
     if (s >= 0.1) {
       ctx.strokeStyle = MAP.parkEdge;
       ctx.lineWidth = px(1);

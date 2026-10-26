@@ -103,13 +103,14 @@ function walk(ts: TrafficState, p: Ped, dt: number): void {
     const nx = p.ax + p.ux * tc, nz = p.az + p.uz * tc;
     p.wallT = (p.wallT || 0) - dt;
     let wall = false;
-    if (ts.wallAt && !p.node && p.wallT <= 0) {
+    const up = !!(p.la || p.lb); // (up a footbridge: over the walls and the cars below)
+    if (ts.wallAt && !p.node && !up && p.wallT <= 0) {
       p.wallT = WALL_CHECK;
       // (one who has grazed a step into the wall turns back out too; only one deep inside it, a step behind as well,
       // walks on out of it)
       wall = ts.wallAt(nx + fx * 0.45, nz + fz * 0.45) && !ts.wallAt(p.x - fx * 0.35, p.z - fz * 0.35);
     }
-    if (wall || stepBlocked(ts, p.x, p.z, nx + fx * 0.25, nz + fz * 0.25)) {
+    if (wall || (!up && stepBlocked(ts, p.x, p.z, nx + fx * 0.25, nz + fz * 0.25))) {
       t = p.t;
       p.v = 0;
       p.blocked = (p.blocked || 0) + dt;
