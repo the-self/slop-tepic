@@ -25,13 +25,16 @@ import {
 } from 'three/tsl';
 import type { Node, StorageBufferNode } from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { loadPersonFile } from '../actors/person-files.ts';
+import type { PersonFile } from '../actors/person-files.ts';
 
 // js/sim/pedestrians.ts
 // Skinned, procedurally animated New Yorkers: the sidewalk crowds (traffic.ts), the player's pedestrian and the
 // cyclist's rider (controllers.ts).
 // - One continuous lofted body (torso & neck, trouser legs, sleeves, hands, head, hair, shoes) skinned to a 15-bone
 //   skeleton, with bind-pose morphs for build (girth), female proportions and hair volume & length; a near and a far
-//   level of detail.
+//   level of detail. Or a person model (actors/person-files.ts: a Meshy person skinned to the same bones by
+//   tools/models/prepare-person.mjs), one fixed look, textured.
 // - A whole crowd is one instanced draw per level of detail: every person's bone transforms (quaternion, translation &
 //   scale) live in a storage buffer the vertex stage skins from, and a per-person seed dresses them (TSL material).
 // - PersonRig walks a body along whatever path its owner moves it on: footsteps are planted in the world (heel strike,
@@ -780,6 +783,20 @@ function pickColorFromPalette(hexArray: readonly number[], tNode: Node<'float'>)
 // v rotated by unit quaternion q
 const qrot = (q: Node<'vec4'>, v: Node<'vec3'>) => v.add(cross(q.xyz, cross(q.xyz, v).add(v.mul(q.w))).mul(2.0));
 
+// (inside a vertex Fn) the bind-pose position p moved by the two bones `skin` names (x, y; z the weight of y) from the
+// instance's transforms at `base` in the pose buffer, and its normal n turned with them
+function skinned(pose: StorageBufferNode<'vec4'>, base: Node<'int'>, skin: Node<'vec4'>, p: Node<'vec3'>, n: Node<'vec3'>): Node<'vec3'> {
+  const w = skin.z;
+  const ia = base.add(int(skin.x).mul(2));
+  const ib = base.add(int(skin.y).mul(2));
+  const qa = pose.element(ia);
+  const ta = pose.element(ia.add(1));
+  const qb = pose.element(ib);
+  const tb = pose.element(ib.add(1));
+  normalLocal.assign(normalize(mix(qrot(qa, n), qrot(qb, n), w)));
+  return mix(qrot(qa, p).mul(ta.w).add(ta.xyz), qrot(qb, p).mul(tb.w).add(tb.xyz), w);
+}
+
 /**
  * Material for one crowd mesh. `pose` is its storage buffer (STRIDE vec4s per instance). The vertex stage morphs the
  * bind pose (girth, female, hair) and skins it with two bones; the fragment stage dresses the person from their seed:
@@ -800,16 +817,7 @@ function createPersonMaterial(pose: StorageBufferNode<'vec4'>): THREE.MeshStanda
       .add(vec3(extra.x, 0.0, extra.y).mul(info.z.sub(1.0)))
       .add(attribute('femaleDelta', 'vec3').mul(info.y))
       .add(attribute('hairDelta', 'vec3').mul(hairAmount));
-    const n = attribute('normal', 'vec3');
-    const w = skin.z;
-    const ia = base.add(int(skin.x).mul(2));
-    const ib = base.add(int(skin.y).mul(2));
-    const qa = pose.element(ia);
-    const ta = pose.element(ia.add(1));
-    const qb = pose.element(ib);
-    const tb = pose.element(ib.add(1));
-    normalLocal.assign(normalize(mix(qrot(qa, n), qrot(qb, n), w)));
-    return mix(qrot(qa, p).mul(ta.w).add(ta.xyz), qrot(qb, p).mul(tb.w).add(tb.xyz), w);
+    return skinned(pose, base, skin, p, attribute('normal', 'vec3'));
   })();
 
   const vInfo = varying(info, 'vPersonInfo');
@@ -937,6 +945,18 @@ function createPersonMaterial(pose: StorageBufferNode<'vec4'>): THREE.MeshStanda
   return mat;
 }
 
+/**
+ * Material for a crowd drawn as a person model (actors/person-files.ts): skinned as createPersonMaterial's, from the
+ * _SKIN each vertex carries, and coloured by the model's own texture. One fixed look: the seed, build and hair morphs
+ * don't reach it.
+ */
+function createModelPersonMaterial(pose: StorageBufferNode<'vec4'>, map: THREE.Texture): THREE.MeshStandardNodeMaterial {
+  const mat = new THREE.MeshStandardNodeMaterial({ map, metalness: 0, roughness: 0.85 });
+  const base = int(instanceIndex).mul(STRIDE);
+  mat.positionNode = Fn(() => skinned(pose, base, attribute('_skin', 'vec4'), attribute('position', 'vec3'), attribute('normal', 'vec3')))();
+  return mat;
+}
+
 // ============================================================================
 // 4. CROWD: ONE INSTANCED, SKINNED DRAW PER LEVEL OF DETAIL
 // ============================================================================
@@ -951,6 +971,8 @@ interface PersonCrowdOptions {
   /** m: people farther than this use the far level of detail */
   farDistance?: number;
   castShadow?: boolean;
+  /** a person model's file (actors/person-files.ts) to draw everyone as once it loads, in place of the lofted body */
+  model?: string;
 }
 
 class PersonCrowd {
@@ -962,7 +984,7 @@ class PersonCrowd {
    * @param maxCount - most people drawn at once
    * @param options - beyond farDistance (m) people use the far LOD
    */
-  constructor(maxCount: number, { farDistance = 34, castShadow = true }: PersonCrowdOptions = {}) {
+  constructor(maxCount: number, { farDistance = 34, castShadow = true, model }: PersonCrowdOptions = {}) {
     this.farDistance = farDistance;
     this.lods = [1, 0].map((detail): CrowdLod => {
       const pose = attributeArray(maxCount * STRIDE, 'vec4').toReadOnly();
@@ -975,6 +997,22 @@ class PersonCrowd {
       return { pose, mesh, count: 0, max: maxCount };
     });
     this.meshes = this.lods.map((l) => l.mesh);
+    if (model) {
+      loadPersonFile(model).then((file) => {
+        this.useModel(file);
+      }, (err: unknown) => {
+        console.warn(`[people] could not load ${model}`, err);
+      });
+    }
+  }
+
+  // Draws everyone as the model: its near body close by, its far level (or the near one) beyond farDistance
+  useModel(file: PersonFile): void {
+    this.lods.forEach((l, i) => {
+      l.mesh.geometry = i === 0 ? file.near : (file.far ?? file.near);
+      l.mesh.material.dispose();
+      l.mesh.material = createModelPersonMaterial(l.pose, file.map);
+    });
   }
 
   begin(): void {
