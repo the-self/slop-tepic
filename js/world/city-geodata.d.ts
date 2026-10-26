@@ -218,6 +218,13 @@ export interface Airport {
 /** A building drawn as it is: [house index, storeys (0: as guessed), paint (0xrrggbb, -1: the palette's)]. */
 export type BuildingOverride = [house: number, storeys: number, paint: number];
 
+/** A car park's surface: 0 asphalt, 1 poured concrete, 2 setts (adoquín, empedrado), 3 earth or gravel. */
+export type ParkingSurface = 0 | 1 | 2 | 3;
+
+/** A surface car park (OSM amenity=parking), cut to the property lines: [name ('' none), surface, the direction its
+ *  rows of stalls run (mrad: along (cos θ, -sin θ), its long side), outline (flat ring)]. */
+export type ParkingLot = [name: string, surface: ParkingSurface, theta: number, ring: FlatPoints];
+
 export interface CityGeodata {
   version: number;
   frame: GeoFrame;
@@ -262,6 +269,7 @@ export interface CityGeodata {
   transit: Transit;
   airport: Airport;
   overrides: BuildingOverride[];
+  parking: ParkingLot[];
 }
 
 export declare const GEO: CityGeodata;

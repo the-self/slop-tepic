@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { log, ringArea, bbox, centroid, rdp, rdpRing, extractBlocks, ringCells, clearCapsule, minAreaRect, decodePNG, createRouteMatcher, houseAt } from './tepic-lib.mjs';
+import { log, ringArea, bbox, centroid, rdp, rdpRing, extractBlocks, ringCells, traceOutline, clearCapsule, minAreaRect, decodePNG, createRouteMatcher, houseAt } from './tepic-lib.mjs';
 import { BUILDING_OVERRIDES } from '../js/world/building-overrides.ts';
 import { STOREFRONTS } from '../js/world/storefronts/index.ts';
 
@@ -754,6 +754,87 @@ const parks = greens.filter((g) => g.name || g.rings.some((r) => Math.abs(ringAr
   rings: g.rings.map((r) => flat(rdpRing(r, 0.8)))
 }));
 
+// --- Car parks (OSM amenity=parking): the open lots in front of the supermarkets, the plazas & the hospitals -----------
+// Each mapped area (parking=surface, or untagged: OSM's default) as it lies inside the property lines: cut to the
+// raster cells inside both, one piece per block it spans (a named service road cuts some in two), traced round and
+// straightened like the blocks. Multi-storey, underground & street-side ones (bays along the curb) are left out. Its
+// rows of stalls run square with its sides, along its longer extent: θ (the rows' direction (cos θ, -sin θ), the houses'
+// frame convention). The houses (5B) leave them clear.
+const PARKING_SKIP = /^(multi-storey|underground|street_side|rooftop|lane|layby|carports|garage_boxes)$/;
+const PARKING_MIN = 150; // m²: smaller pieces are a strip along a wall, not a lot (8 stalls is about 100 m² with its aisle)
+// the lot's surface: 0 asphalt (OSM's untagged lots are, mostly), 1 poured concrete, 2 setts (adoquín, empedrado),
+// 3 earth or gravel
+const PARKING_SURFACE = (t) => /^(concrete|concrete:plates)$/.test(t) ? 1 : /^(paving_stones|sett|cobblestone|unhewn_cobblestone)$/.test(t) ? 2 :
+  /^(unpaved|ground|dirt|earth|gravel|fine_gravel|compacted|grass|sand|mud|pebblestone)$/.test(t) ? 3 : 0;
+const parkingLots = [];
+{
+  let skipped = 0, small = 0;
+  for (const e of landOSM.elements) {
+    const t = e.tags || {};
+    if (t.amenity !== 'parking') continue;
+    if (PARKING_SKIP.test(t.parking || '')) { skipped++; continue; }
+    for (const ring of elemRings(e)) {
+      // the cells inside the ring and a property line, by block
+      const byBlock = new Map();
+      ringCells(ring, raster, (L, k) => {
+        if (!prop[k] || !byLab.has(L)) return;
+        if (!byBlock.has(L)) byBlock.set(L, []);
+        byBlock.get(L).push(k);
+      });
+      for (const cells of byBlock.values()) {
+        let i0 = Infinity, i1 = -Infinity, j0 = Infinity, j1 = -Infinity;
+        for (const k of cells) {
+          const i = k % W, j = (k - i) / W;
+          i0 = Math.min(i0, i); i1 = Math.max(i1, i); j0 = Math.min(j0, j); j1 = Math.max(j1, j);
+        }
+        const w = i1 - i0 + 1, h = j1 - j0 + 1;
+        const m = new Uint8Array(w * h);
+        for (const k of cells) { const i = k % W, j = (k - i) / W; m[(j - j0) * w + i - i0] = 1; }
+        const at = (i, j) => (i >= 0 && j >= 0 && i < w && j < h ? m[j * w + i] : 0);
+        // each 4-connected patch (its top-left cell first met row by row), flood-filled off the mask once traced
+        for (let s0 = 0; s0 < w * h; s0++) {
+          if (m[s0] !== 1) continue;
+          const si = s0 % w, sj = (s0 - si) / w;
+          let n = 0;
+          const stack = [s0];
+          m[s0] = 2;
+          while (stack.length) {
+            const k = stack.pop();
+            n++;
+            const i = k % w, j = (k - i) / w;
+            for (const [a, b] of [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]]) {
+              if (a >= 0 && b >= 0 && a < w && b < h && m[b * w + a] === 1) { m[b * w + a] = 2; stack.push(b * w + a); }
+            }
+          }
+          if (n * RES * RES < PARKING_MIN) { small++; continue; }
+          const patch = (i, j) => (at(i, j) === 2 ? 1 : 0);
+          let poly = rdpRing(traceOutline(patch, si, sj, X0 + i0 * RES, Z0 + j0 * RES, RES), 0.5);
+          for (let k = 0; k < w * h; k++) if (m[k] === 2) m[k] = 3; // (traced: no other patch's outline sees it)
+          if (poly.length < 3) continue;
+          if (ringArea(poly) > 0) poly = poly.reverse();
+          // the rows square with the lot's sides: its edges' direction, weighted by their lengths, folded into a
+          // quarter turn (an L-shaped lot round a store keeps both legs square), then turned along its longer extent
+          let sx = 0, sz = 0;
+          for (let a = 0, b = poly.length - 1; a < poly.length; b = a++) {
+            const dx = poly[a][0] - poly[b][0], dz = poly[a][1] - poly[b][1], L = Math.hypot(dx, dz), phi = Math.atan2(dz, dx);
+            sx += L * Math.cos(4 * phi); sz += L * Math.sin(4 * phi);
+          }
+          const phi = Math.atan2(sz, sx) / 4;
+          const ux = Math.cos(phi), uz = Math.sin(phi);
+          const along = poly.map(([x, z]) => x * ux + z * uz), across = poly.map(([x, z]) => z * ux - x * uz);
+          const long = Math.max(...along) - Math.min(...along) >= Math.max(...across) - Math.min(...across);
+          // (θ: the rows along (cos θ, -sin θ))
+          parkingLots.push({ name: t.name || '', surface: PARKING_SURFACE(t.surface || ''), th: long ? -phi : -phi - Math.PI / 2,
+            poly, box: bbox(poly), area: n * RES * RES });
+        }
+      }
+    }
+  }
+  log(`car parks: ${parkingLots.length} lots inside the property lines (${Math.round(parkingLots.reduce((t, p) => t + p.area, 0) / 1000)}k m²), ` +
+    `${skipped} multi-storey, underground or along the curb left out, ${small} slivers dropped`);
+}
+const parkingAt = (x, z) => parkingLots.find((p) => x > p.box.x0 && x < p.box.x1 && z > p.box.z0 && z < p.box.z1 && inRing(p.poly, x, z));
+
 // =====================================================================================================================
 // 5. PLACES, POINTS OF INTEREST, NOTABLE FOOTPRINTS
 // =====================================================================================================================
@@ -854,7 +935,7 @@ const houses = [];
     }
     return false;
   };
-  let read = 0, small = 0, outside = 0, squeezed = 0, onCanal = 0, bigBoxes = 0;
+  let read = 0, small = 0, outside = 0, squeezed = 0, onCanal = 0, onLot = 0, hallsOnLots = 0, bigBoxes = 0;
   if (fs.existsSync(file)) {
     const text = fs.readFileSync(file, 'utf8');
     let start = 0;
@@ -929,6 +1010,13 @@ const houses = [];
       const store = storeAt(...centroid(ring));
       const big = (area >= 1500 && Math.min(w, d) >= 20) || (area >= 700 && (!!store || /supermarket|warehouse|industrial|retail|commercial/.test(cls)));
       const strip = !big && !!store && store.mall;
+      // A footprint standing in a car park (25 m² to a few hundred: a guard's booth, a kiosk, the shade over a row of
+      // stalls, an ML footprint of the cars themselves) leaves the lot to the cars. A hall in one is the lot mapped
+      // round the store too: it stays, and the game keeps the stalls off it
+      if (parkingAt(cx, cz)) {
+        if (!big) { onLot++; continue; }
+        hallsOnLots++;
+      }
       if (big) {
         floors = p.num_floors ? Math.min(3, Math.round(p.num_floors)) : area > 6000 ? 3 : 2; // (a hall 6-9 m high)
         bigBoxes++;
@@ -939,7 +1027,7 @@ const houses = [];
         front + (shop ? KIND.shop : 0) + (big ? KIND.big : 0) + (strip ? KIND.strip : 0), 0);
     }
   }
-  log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets, ${onCanal} on a canal through green), ${bigBoxes} big boxes`);
+  log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets, ${onCanal} on a canal through green, ${onLot} in a car park), ${bigBoxes} big boxes (${hallsOnLots} on a mapped car park)`);
 }
 
 // =====================================================================================================================
@@ -1837,7 +1925,10 @@ const GEO = {
   // boarding bridges [x, z at the terminal, x, z at the aircraft])
   airport,
   // Buildings drawn as they are (6C): [house index, storeys (0: as guessed), paint (0xrrggbb, -1: the palette's)]
-  overrides
+  overrides,
+  // Surface car parks (4), inside the property lines: [name ('' none), surface (0 asphalt, 1 concrete, 2 setts, 3 earth
+  // or gravel), the stall rows' direction θ (mrad: along (cos θ, -sin θ)), outline (flat ring)]
+  parking: parkingLots.map((p) => [p.name, p.surface, Math.round(p.th * 1000), flat(p.poly)])
 };
 
 const json = JSON.stringify(GEO);
