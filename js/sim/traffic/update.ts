@@ -17,6 +17,7 @@ import { drive } from './driving.ts';
 import { groundPitch, knock, locate, pose } from './motion.ts';
 import { collideWithPlayer, knockOn } from './collisions.ts';
 import { crash, crashedStep, crashes, smokeFrom } from './crashes.ts';
+import { mishaps } from './mishaps.ts';
 import { spawnCollisionSparks, updateSparks } from './sparks.ts';
 import { flagAttribute, flagRange, renderBus, renderCar, updateTrafficLights } from './render.ts';
 import { knockPed, playerHitsPed, renderPed, tumblePed } from './peds.ts';
@@ -155,6 +156,7 @@ function update(ts: TrafficState, dt: number, elapsed: number, focusPos: { x: nu
     } else if (v.bus) renderBus(ts, v);
     else renderCar(ts, v);
   }
+  mishaps(ts, dt);
   ts.riderCrowd.end();
   for (const kit of ts.kits) {
     kit.frame.count = kit.wheels.count = kit.drawn;

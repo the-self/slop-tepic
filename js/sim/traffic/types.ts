@@ -155,8 +155,9 @@ interface Ped {
   socialTime: number;
   conversation: Conversation | null;
   rig: PersonRig;
-  /** knocked over: their ragdoll */
+  /** knocked over: their ragdoll; and whether for good (peds.ts throwPed: their body lies there), else they get up */
   fallen?: RagdollHandle | null;
+  dead?: boolean;
   bail?: Bail | null;
   /** s to the next look for a wall ahead, and how long they've stood blocked */
   wallT?: number;
@@ -294,6 +295,10 @@ interface VehicleBase {
    *  brakes and swerves for the player only once it has seen them that long */
   pSeen: number;
   react: number;
+  /** s its driver has been looking at their phone (mishaps.ts): no eye on the road ahead, it doesn't brake */
+  distracted: number;
+  /** a siren close behind (sim/emergency.ts): it pulls over to the right and crawls till it has gone by */
+  sirenNear: boolean;
   /** m off the lane centre (right +) it is steering to, out of the way of the player coming at it */
   swerve: number;
   /** a camión, combi or taxi (pickups.ts): the curb it is pulling in to, or null; m to the right it pulls over to;
@@ -480,6 +485,14 @@ interface ParkedVehicle {
   heading?: number;
 }
 
+/** A fire truck or ambulance with its siren on (sim/emergency.ts): where (m), its heading (rad); the traffic ahead of
+ *  it going its way pulls over and lets it by */
+interface SirenSource {
+  x: number;
+  z: number;
+  heading: number;
+}
+
 /** A vehicle outside the traffic (a police car chasing the player) that shoves the traffic and is shoved back: its
  *  centre, heading, half sizes (m), speed along its heading and knock velocity (m/s), mass (kg) */
 interface BumpBody {
@@ -585,7 +598,7 @@ export type {
   DriverModel, LaneEntry, TrafficNode, TrafficMove, TrafficEdge, TrafficNetwork, PedTrack, Conversation,
   SidewalkPoint, Bail, Ped, Ride, CurbStop, BikeWreck, TwoWheelKit, VehicleBase, Car, Bus, Bike, Moto, TwoWheeler, Vehicle,
   Hijackable, VehicleKind, DrivenVehicle, OnEdge, CrashBody, CarCrash, CrashedCar, Spark, TrafficPlayer,
-  TrafficPlayerEntity, ParkedVehicle, BumpBody, TrafficCollision, MayhemListener, KnockListener, SmokeEmitter,
+  TrafficPlayerEntity, ParkedVehicle, SirenSource, BumpBody, TrafficCollision, MayhemListener, KnockListener, SmokeEmitter,
   SolidQuery, HillQuery, SurfaceQuery, TrafficRayHit, RayAccept, BodyBox, RoadSpot, RouteLook, TakenVehicle,
   VehicleLook, LookWheel, LookKit
 };

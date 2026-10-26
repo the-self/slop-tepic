@@ -6,7 +6,7 @@ import { PersonCrowd, PersonRig } from '../pedestrians.ts';
 import { boxHit } from '../mayhem.ts';
 import type { BoxContact } from '../mayhem.ts';
 import { bleedOf, throwVelocity } from '../ragdolls.ts';
-import { DOWN_TIME, MASS, NUM_PEDS } from './constants.ts';
+import { BODY_TIME, DEAD_TIME, GET_UP, LETHAL, MASS, NUM_PEDS, SURVIVE } from './constants.ts';
 import type { Ped } from './types.ts';
 import type { TrafficState } from './state.ts';
 import { reportCollision } from './hooks.ts';
@@ -124,8 +124,8 @@ function playerHitsPed(ts: TrafficState, p: Ped) {
 }
 
 // Throws pedestrian p to the ground as a ragdoll, hit at velocity (vx, vz) and pushed out along (nx, nz); by the
-// player's car (`byCar`) its body throws theirs itself. `bleed` (0..1): how badly they bleed where they come to rest;
-// `lift` m/s more up (a blast)
+// player's car (`byCar`) its body throws theirs itself. `bleed` (0..1): how badly they bleed where they come to rest,
+// which decides whether they get up again (SURVIVE, LETHAL); `lift` m/s more up (a blast)
 function throwPed(ts: TrafficState, p: Ped, vx: number, vz: number, nx: number, nz: number, byCar = false, bleed = 0, lift = 0): void {
   // a fresh solved pose to fall from (hidden pedestrians only advance their gait)
   const partner = p.conversation && (p.conversation.a === p ? p.conversation.b : p.conversation.a);
@@ -134,6 +134,9 @@ function throwPed(ts: TrafficState, p: Ped, vx: number, vz: number, nx: number, 
   const v = byCar ? { vx: p.rig.vx || 0, vy: 0, vz: p.rig.vz || 0 } : throwVelocity(vx, vz, nx, nz);
   v.vy += lift;
   if (!ts.ragdolls) return;
+  p.dead = bleed >= LETHAL || (bleed >= SURVIVE && Math.random() < (bleed - SURVIVE) / (LETHAL - SURVIVE));
+  // (one who gets up only grazed: a little blood, no ambulance; one who doesn't, badly: sim/emergency.ts sends one)
+  bleed = p.dead ? Math.max(bleed, 0.5) : Math.min(bleed, 0.3);
   p.fallen = ts.ragdolls.spawn(p.rig, { ...v, spin: byCar ? 0 : 2 + Math.hypot(vx, vz) * 0.3, bleed });
   if (p.conversation) endConversation(ts, p.conversation);
   p.node = null; // off any crosswalk queue (gatherCurbs)
@@ -152,8 +155,9 @@ function knockPed(ts: TrafficState, p: Ped, hit: BoxContact): void {
   if (ts.player.mode !== 'car' && ts.player.entity && typeof ts.player.entity.speed === 'number') ts.player.entity.speed *= ts.player.mass / (ts.player.mass + MASS.person);
 }
 
-// A knocked-over pedestrian flies, lands and lies still (its ragdoll), then gets up out of sight (respawned like any
-// other)
+// A knocked-over pedestrian flies, lands and lies still (its ragdoll). One hit lightly gets up a few seconds on and
+// runs off (or walks back to the sidewalk: carjacking.ts bailWalk); a body lies there a while and is gone once out of
+// sight (respawned like anyone), or, an ambulance coming for it, till the paramédicos take it (sim/emergency.ts)
 function tumblePed(ts: TrafficState, p: Ped, _dt: number): void {
   const f = p.fallen;
   if (!f) return;
@@ -161,7 +165,12 @@ function tumblePed(ts: TrafficState, p: Ped, _dt: number): void {
     f.down = true;
     if (ts.mayhemListener) ts.mayhemListener('down', f.px, f.py - 0.15, f.pz, 0, MASS.person);
   }
-  if (f.rest > DOWN_TIME) {
+  if (!p.dead && f.rest > GET_UP) {
+    getUp(ts, p, f.px, f.pz);
+    return;
+  }
+  const seen = ts.hasView && visible(ts, f.px, f.pz, 4);
+  if (p.dead && !f.awaiting && (f.rest > BODY_TIME || (f.rest > DEAD_TIME && !seen))) {
     ts.ragdolls?.release(f);
     p.fallen = null;
     p.placed = false;
@@ -172,6 +181,19 @@ function tumblePed(ts: TrafficState, p: Ped, _dt: number): void {
   p.z = f.pz;
   if (ts.hasView && !visible(ts, p.x, p.z, 4)) return;
   ts.pedCrowd.add(p.rig, Math.hypot(p.x - ts.focusX, p.z - ts.focusZ));
+}
+
+// Back on their feet where they lay, shaken: they look round at whoever hit them, then run from them (bailWalk)
+function getUp(ts: TrafficState, p: Ped, x: number, z: number): void {
+  ts.ragdolls?.release(p.fallen);
+  p.fallen = null;
+  Object.assign(p, { x, z, node: null, route: null, nextRoute: null, nextLeg: 0, waiting: false, v: 0, pause: 0, la: 0, lb: 0 });
+  p.rig.placed = false; // (stood up where they lay: rig.update resets it there)
+  const fromX = ts.player.x, fromZ = ts.player.z;
+  p.bail = {
+    time: 0, heading: Math.atan2(fromX - x, fromZ - z), flee: true, runFor: 4 + Math.random() * 4, goal: null, nextSearch: 0,
+    best: Infinity, since: 0, fromX, fromZ
+  };
 }
 
 export { createPeds, pedGround, pedLift, renderPed, playerHits, playerHitsPed, throwPed, knockPed, tumblePed };

@@ -10,6 +10,7 @@ import { WEAPONS, Arsenal, pickTarget, wrapAngle } from '../weapons.ts';
 import { isTypingInField } from '../../world/city-config.ts';
 import type { DownKind, Agent, LockTarget } from './types.ts';
 import { PARKED_Y, DRAW_TIME, RESPAWN_TIME, clamp } from './constants.ts';
+import { isResponder } from './cruisers.ts';
 import type { CrimeSystem } from '../crime.ts';
 
 export function bindInput(crime: CrimeSystem, canvas: HTMLElement | null): void {
@@ -314,7 +315,7 @@ export function updateDown(crime: CrimeSystem, dt: number): void {
     if (a.kind === 'cop') a.state = 'leave';
     else if (a.kind === 'gang' && !a.fallen) crime.removeAgent(a);
   }
-  for (const cr of crime.cruisers) if (cr.active) crime.removeCruiser(cr);
+  for (const cr of crime.cruisers) if (cr.active && !isResponder(cr)) crime.removeCruiser(cr); // (the bomberos & ambulances go on)
   crime.removeHeli();
   crime.onRespawn?.(kind);
 }

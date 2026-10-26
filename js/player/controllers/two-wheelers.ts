@@ -8,10 +8,10 @@ import type { TwoWheelerDef } from '../car-physics.ts';
 import type { CyclistEntity, MotoEntity } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
 
-// A moto's or bicycle's rider thrown off it (a crash `impact` m/s hard, or a fall at speed) as a ragdoll, from the
-// seat as they sat, going on at its speed and over the bars; it slides on alone, nobody balancing it
-// (twoWheelerMoved)
-export function ejectRider(ctl: ThirdPersonControllerManager, m: CyclistEntity | MotoEntity, impact: number): void {
+// A moto's or bicycle's rider thrown off it (a crash `impact` m/s hard, a fall at speed, or `bail`: jumping off it at
+// that speed, boarding.ts leaveVehicle) as a ragdoll, from the seat as they sat, going on at its speed and over the
+// bars; it slides on alone, nobody balancing it (twoWheelerMoved)
+export function ejectRider(ctl: ThirdPersonControllerManager, m: CyclistEntity | MotoEntity, impact: number, bail = false): void {
   const p = ctl.entities.person;
   if (!ctl.ragdolls || p.ragdoll || !m.vehicle) return;
   const o = m.vehicle.out;
@@ -21,7 +21,7 @@ export function ejectRider(ctl: ThirdPersonControllerManager, m: CyclistEntity |
   ctl.carPhysics?.unseat(m.vehicle);
   m.loose = true;
   m.restTime = 0;
-  ctl.onEject?.(impact, m.position.x, m.position.z, m.type);
+  ctl.onEject?.(impact, m.position.x, m.position.z, m.type, bail);
 }
 
 // A moto or bicycle gone over at a crawl: its rider steps off it as it falls, on their feet, and it lies down on its
