@@ -12,6 +12,10 @@ import type { CrimeSystem } from '../crime.ts';
 
 const tilt = { pitch: 0, roll: 0 };
 
+// The bomberos' fire trucks and the Cruz Roja's ambulances: in the patrol cars' pool for their driving, collisions,
+// sirens & gunfire, but sent and driven by sim/emergency.ts, never in a chase
+export const isResponder = (cr: Cruiser): boolean => cr.faction === 'fire' || cr.faction === 'ambulance';
+
 // A patrol car (faction 'police'), a cartel truck ('narco') or an army truck ('army') coming after the player, out of
 // sight down the road, or from `at` (a patrol of the traffic taking up the chase: where it is, heading rad, speed m/s)
 export function spawnCruiser(
@@ -54,7 +58,7 @@ export function damageCruiser(crime: CrimeSystem, cr: Cruiser, damage: number, b
   const police = cr.police;
   // (the crew saw who did it; the odd stray round once wanted adds nothing)
   if (byPlayer && police) crime.report('shootCop', damage > 10 || crime.wanted.stars === 0);
-  if (byPlayer && !police) crime.angerGang(NARCO);
+  if (byPlayer && cr.faction === 'narco') crime.angerGang(NARCO);
   if (cr.hp > 0) return;
   // blown up: a burning wreck for a while
   cr.wreck = 20;
@@ -79,6 +83,7 @@ export function updateCruiser(crime: CrimeSystem, cr: Cruiser, dt: number): void
     else crime.moveCruiser(cr, dt, 0);
     return;
   }
+  if (isResponder(cr)) return; // (a fire truck or an ambulance: sim/emergency.ts drives it)
   const stars = crime.wanted.stars;
   const narco = cr.faction === 'narco';
   // the police chase while there are stars, the army from four, the cartel while it is after the player
@@ -293,9 +298,10 @@ export function moveCruiser(crime: CrimeSystem, cr: Cruiser, dt: number, want: n
   }
   if (!cr.wreck) {
     // (they shove the traffic aside as if they weighed three times as much: a chase doesn't wait in line)
-    cr.mass = CRUISER.mass * 3;
+    const mass = cr.mass; // (its own: a fire truck's is not a patrol car's)
+    cr.mass = mass * 3;
     crime.traffic.bumpBody(cr);
-    cr.mass = CRUISER.mass;
+    cr.mass = mass;
     crime.traffic.knockBox(cr.x, cr.z, cr.heading, cr.halfW, cr.halfL,
       Math.sin(cr.heading) * cr.speed + cr.vx, Math.cos(cr.heading) * cr.speed + cr.vz);
     // patrol cars knock down the gangs and thieves in their way, not their own

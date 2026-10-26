@@ -83,4 +83,51 @@ function insideRing(r: Ring, x: number, z: number): boolean {
   return inside;
 }
 
-export { insidePoly, insideRing };
+/** An axis-aligned box (m) */
+interface Box {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+// The polygon's spans [x0, x1, x2, x3, ...] (inside from x0 to x1, x2 to x3...) along the line z (even-odd)
+function spansAt(pts: readonly XZ[], z: number): number[] {
+  const xs: number[] = [];
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[i], b = pts[j];
+    if ((a.z > z) !== (b.z > z)) xs.push(a.x + ((b.x - a.x) * (z - a.z)) / (b.z - a.z));
+  }
+  return xs.sort((p, q) => p - q);
+}
+
+/**
+ * The polygon `pts` as boxes `band` m deep that stay inside it: each band's spans where both its edges are inside (a
+ * diagonal strip's bounding box takes in the roads either side of it; these keep to the strip, short of its outline by
+ * up to a band's run along a slanting edge). Parts narrower than a band's slant across it are left out.
+ */
+function polyCover(pts: readonly XZ[], band: number): Box[] {
+  let z0 = Infinity, z1 = -Infinity;
+  for (const p of pts) {
+    z0 = Math.min(z0, p.z);
+    z1 = Math.max(z1, p.z);
+  }
+  const out: Box[] = [];
+  const rows = Math.max(1, Math.round((z1 - z0) / band));
+  const h = (z1 - z0) / rows;
+  for (let k = 0; k < rows; k++) {
+    const za = z0 + k * h, zb = za + h;
+    // (a micron inside the band: a vertex on its edge counts once, and the outline's top and bottom lines have spans)
+    const top = spansAt(pts, za + 1e-6), bottom = spansAt(pts, zb - 1e-6);
+    for (let i = 0; i + 1 < top.length; i += 2) {
+      for (let j = 0; j + 1 < bottom.length; j += 2) {
+        const x0 = Math.max(top[i], bottom[j]), x1 = Math.min(top[i + 1], bottom[j + 1]);
+        if (x1 > x0) out.push({ minX: x0, maxX: x1, minZ: za, maxZ: zb });
+      }
+    }
+  }
+  return out;
+}
+
+export { insidePoly, insideRing, polyCover };
+export type { Box };

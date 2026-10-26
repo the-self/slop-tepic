@@ -20,12 +20,13 @@ type AgentKind = 'cop' | 'gang' | 'thief';
 // approach (a thief closing in), flee (with the money), idle (a gang on its corner), chase, leave
 type AgentState = 'approach' | 'flee' | 'idle' | 'chase' | 'leave';
 // A patrol car's side: the police, the cartel's black trucks, or the army's olive ones (four stars on)
-type Faction = 'police' | 'narco' | 'army';
+// (the bomberos' trucks & the Cruz Roja's ambulances share the patrol cars' driving: sim/emergency.ts sends them)
+type Faction = 'police' | 'narco' | 'army' | 'fire' | 'ambulance';
 type CruiserState = 'chase' | 'leave';
 // What lies about to be picked up: money, health, armour, or a gun
 type PickupKind = 'money' | 'health' | 'armor' | StreetGun | 'bazooka';
 // What a shot meets first (trace)
-type TraceKind = 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'vehicle' | 'heli' | 'remote';
+type TraceKind = 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'vehicle' | 'heli' | 'remote' | 'prop';
 // The radar's blips, flat: kind ('cop' | 'soldier' | 'thief' | 'rojos' | 'verdes' | 'narcos' | 'cruiser' | 'truck' |
 // 'army' | 'heli' | a PickupKind, or fires.ts's 'fire'), x, z, kind, x, z, ...
 type Blips = (string | number)[];
@@ -74,11 +75,14 @@ interface CrimeControllers {
   resetInput(): void;
   // someone the player's car struck at (x, z), `speed` m/s: their blood on it (player/car-blood.ts)
   bloodyCar?(x: number, z: number, speed: number): void;
+  // the car's tyre i burst (shot), or those over a spike strip (its middle, heading, half length & width, m): how many
+  popTyre?(i: number): boolean;
+  popTyresOn?(cx: number, cz: number, heading: number, halfLen: number, halfW: number): number;
 }
 // What crime uses of sim/traffic.ts's traffic: the road graph, its people & vehicles, and what shots, blasts and
 // patrol cars do to them (walking round its vehicles only where it can tell where they are)
 type CrimeTraffic = Pick<TrafficSystem, 'network' | 'peds' | 'cars' | 'buses' | 'setKnockListener' | 'panic' | 'rayHit' | 'shootPed'
-  | 'shootVehicle' | 'blast' | 'roadSpot' | 'sidewalkSpot' | 'sparks' | 'bumpBody' | 'knockBox' | 'withdraw'>
+  | 'shootVehicle' | 'shootTyre' | 'spikeTraffic' | 'blast' | 'roadSpot' | 'sidewalkSpot' | 'sparks' | 'bumpBody' | 'knockBox' | 'withdraw'>
   & Partial<Pick<TrafficSystem, 'vehicleBoxAt' | 'vehicleAt'>>;
 // The sounds crime plays (audio/audio-system.ts CityAudioSystem)
 interface CrimeAudio {
@@ -130,7 +134,7 @@ interface Agent extends XZ {
   foe: Agent | null;
   foeT: number;
 }
-// A patrol car, a cartel truck or an army truck (m, rad, m/s; police: on the law's side, faction says which): its meshes, its chase (path: the intersections of its route, pathI
+// A patrol car, a cartel truck or an army truck, or a fire truck or ambulance (m, rad, m/s; police: on the law's side, faction says which): its meshes, its chase (path: the intersections of its route, pathI
 // the next; replan s to a new one; goal where the player was then), being stuck (checked every 2 s against check;
 // reverseT s backing out), wreck: s left burning; the hw, hl copies of its half sizes for boxOverlap
 interface Cruiser extends XZ {
@@ -176,6 +180,8 @@ interface Cruiser extends XZ {
   roll: number;
   lift: number; // m a blast threw it up
   vy: number;
+  /** its siren wailing (the audio's; unset: as its faction has it): a fire truck or ambulance going back has it off */
+  siren?: boolean;
   position: THREE.Vector3;
 }
 // A rocket in flight: where (m), its heading (dx, dz) and climb (dh along, dy up per m), t s since it was fired
@@ -247,7 +253,19 @@ interface RemoteTarget extends XZ {
   halfL: number;
   height: number;
 }
-type TraceTarget = Agent | Cruiser | Helicopter | Ped | Vehicle | RemoteTarget;
+/**
+ * Something of the world's that shots strike (crime.props: a gas station's pumps, sim/gas-stations.ts): a post `r` m
+ * round at (x, z), from the ground y up to `top` m over it (none once blown); `shot` is told of each round (its damage,
+ * the player's)
+ */
+interface ShotProp extends XZ {
+  r: number;
+  y: number;
+  top: number;
+  blown?: boolean; // (gone: shots pass where it stood)
+  shot(damage: number, byPlayer: boolean): void;
+}
+type TraceTarget = Agent | Cruiser | Helicopter | Ped | Vehicle | RemoteTarget | ShotProp;
 // What a shot met (trace, reused): t m along it
 interface TraceHit {
   t: number;
@@ -256,5 +274,5 @@ interface TraceHit {
 }
 
 export type {
-  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, RemoteTarget, TraceTarget, TraceHit
+  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, RemoteTarget, ShotProp, TraceTarget, TraceHit
 };

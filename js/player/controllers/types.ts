@@ -166,6 +166,7 @@ export interface CarEntity extends EntityBase, GroundTilt {
   halfL: number;
   drive: DriveState | null;
   damage: CarDamage;
+  fuel: number; // L in its tank (FUEL_TANK full): it burns it driving, none left the engine stops (world/gas-stations.ts fills it)
   dented: DentedBody | null;
   drifting: boolean;
   impactArmed: boolean;
@@ -313,6 +314,7 @@ export interface LeftCar {
   halfL: number;
   look: CarLook;
   damage: CarDamage;
+  fuel: number; // L
   dented: DentedBody | null;
   kit: LookKit | null;
   stains: Stains;

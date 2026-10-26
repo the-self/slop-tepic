@@ -26,7 +26,7 @@ function createVehicle<B extends boolean>(bus: B, half: number, halfWidth: numbe
     pitch: 0, roll: 0, pitchVel: 0, rollVel: 0, vx: 0, vz: 0, yawOffset: 0, yawVel: 0,
     pAhead: Infinity, pRight: 0, pSpeed: 0, pSide: 0, pHalfW: 0.86, pHalfL: 2.18, pParked: false, wheelSpin: Math.random() * Math.PI * 2,
     // (an attentive driver's reaction: 0.35-0.75 s from seeing the player in its way to braking or steering)
-    pSeen: 0, react: 0.35 + Math.random() * 0.4, swerve: 0,
+    pSeen: 0, react: 0.35 + Math.random() * 0.4, distracted: 0, sirenNear: false, flats: 0, swerve: 0,
     stop: null, pullOver: 0, nextStop: 0, fare: 0,
     // crash damage (vehicle-damage.ts createDamage, made on its first hit), and stopped for good once its engine is dead
     damage: null, wrecked: false, smokeCarry: 0,

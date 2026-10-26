@@ -50,6 +50,15 @@ const AIM_WALK = 2.4; // m/s: walking (and strafing) with the gun up (player/aim
 // ragdoll (sim/ragdolls.ts), the car going on without them; they get up once they have lain still GET_UP s
 const EJECT_SPEED = 19;
 const GET_UP = 2.5;
+// Getting out faster than this (m/s, ~15 km/h) the player jumps out of the car, or off the moto, and tumbles along the
+// road (boarding.ts leaveVehicle), GTA-style
+const BAIL_SPEED = 4;
+// The car's tank (L) and what it burns (L/s): idling, and more with the throttle down. A full tank lasts about an hour
+// with the foot down (~2 h of town driving): a few times thirstier than a real car, so a long drive across the city
+// still ends at a gas station now and then
+const FUEL_TANK = 50;
+const FUEL_IDLE = 0.0012;
+const FUEL_BURN = 0.0127;
 // A moto's or bicycle's rider goes over the bars hitting something head on at ~30 km/h (or from any side at 1.5 times
 // that), or sliding along at that once it is down on its side (leant over past DOWN_LEAN rad, off its tyres)
 const THROW_SPEED = 8.3;
@@ -65,6 +74,7 @@ const personGround = (controllers: ThirdPersonControllerManager, x: number, z: n
 
 
 export {
-  START, SPAWN, LEFT_CARS, LABELS, groundCollider, PLAYER_PERSON, SPEC_BY_NAME, modelFor, AIM_WALK, EJECT_SPEED, GET_UP, THROW_SPEED,
+  START, SPAWN, LEFT_CARS, LABELS, groundCollider, PLAYER_PERSON, SPEC_BY_NAME, modelFor, AIM_WALK, EJECT_SPEED, GET_UP, BAIL_SPEED, FUEL_TANK,
+  FUEL_IDLE, FUEL_BURN, THROW_SPEED,
   DOWN_LEAN, BRAKE_LIMIT, SMOKE_PUFFS, BICYCLE_BODY, personGround
 };

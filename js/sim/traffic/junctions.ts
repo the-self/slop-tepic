@@ -58,7 +58,9 @@ function mayEnter(ts: TrafficState, v: DrivenVehicle, d: number): boolean {
   const across = m.turn === 'L' && !!e.opposite;
   const wait = first ? (across ? yieldPoint(ts, v, c, e) : c.len - 3 - v.half) : -1; // < 0: no room inside to wait
   if (m.turn === 'L' ? across && wait < 0 && yieldOncoming(ts, e.opposite, v.wait > 8, v) : e.opposite && e.opposite.lefts > 0) return false;
-  if ((n.signal ? v.isPolice && phase !== 'green' : e.axisIndex !== 0) && yieldToCrossTraffic(ts, v, n)) return false;
+  // Give way: at unsignalised corners to the main road; at a signal, police running it, and the third road of a
+  // junction and on, sharing the street phase with the second
+  if ((n.signal ? (v.isPolice && phase !== 'green') || e.axisIndex > 1 : e.axisIndex !== 0) && yieldToCrossTraffic(ts, v, n)) return false;
   // nobody on the crosswalks while it passes over them, on the way in and on the way out, and a free place to
   // clear the intersection to, taking turns with lanes merging into it
   if (pedestrianOn(n, e.inSide, laneCoord(e, v.lane), 0, timeTo(v, d + 2.5 + 2 * v.half))) return false;

@@ -1,8 +1,9 @@
 // js/app/city.ts
 // Builds the city into the scene, in the order its parts depend on each other: the streamed ground (tiles laid round
 // the camera by workers, world/streaming.ts; ?stream=0 lays all of them at start-up), the streets, the floor painted
-// beyond the tiles, the hills, the rivers, the landmarks, the blocks and stores, the street details, the traffic on the
-// road network, the paint, the pavements, the airport and the overpasses; and gathers what the player collides with.
+// beyond the tiles, the hills, the rivers, the landmarks, the blocks and stores, the car parks, the street details, the
+// traffic on the road network, the paint, the pavements, the airport and the overpasses; and gathers what the player
+// collides with.
 import type * as THREE from 'three/webgpu';
 import { color } from 'three/tsl';
 import { ISLAND_BOUNDS } from '../world/city-config.ts';
@@ -13,6 +14,7 @@ import { createTrafficSystem, createHighwayTraffic } from '../sim/traffic.ts';
 import { buildRoadPaint } from '../world/road-paint.ts';
 import { buildPavements } from '../world/pavements.ts';
 import { buildBridges } from '../world/bridges.ts';
+import { buildFootbridges } from '../world/footbridges.ts';
 import { buildAirport } from '../world/airport.ts';
 import { buildLandmarkModels } from '../world/landmark-models.ts';
 import { buildStores } from '../world/store-interiors.ts';
@@ -23,6 +25,7 @@ import { TileStreamer } from '../world/streaming.ts';
 import { paintFarGround, farGroundColor } from '../world/far-ground.ts';
 import { buildTepicLandmarks } from '../world/tepic-landmarks.ts';
 import { buildCotos } from '../world/cotos.ts';
+import { buildCarParks } from '../world/car-parks.ts';
 import { GEO } from '../world/city-geodata.js';
 import type { Collider } from '../world/buildings.ts';
 
@@ -68,9 +71,15 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   mark('blocks');
   // The gated communities' walls & guard booths (the houses inside are among the blocks')
   const { colliders: cotoColliders } = buildCotos(scene);
+  // The supermarkets', plazas' & hospitals' car parks: their asphalt & stalls, and the cars parked in them
+  const carParks = buildCarParks(scene, streamer);
+  mark('carParks');
   const colliders: Collider[] = [...landmarkColliders, ...modelColliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...cityGrid.colliders];
+  // (one by one, like the bridges' below)
+  for (const c of carParks.colliders) colliders.push(c);
 
-  const streetDetails = buildStreetDetails(scene, stores.reserves);
+  // (no yard tree in a store's hall or a car park)
+  const streetDetails = buildStreetDetails(scene, [...stores.reserves, carParks]);
   mark('streetDetails');
   // Buildings turned along non-grid streets have oriented colliders whose world bounds reach past their lots: they stay
   // inside the property line anyway, so the road network (lanes & sidewalks) doesn't need them.
@@ -92,8 +101,10 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   const bridges = buildBridges(scene);
   // (one by one: spread into push(), tens of thousands of them overflow the call stack)
   for (const c of bridges.colliders) colliders.push(c);
+  // The puentes peatonales over the main roads: their railings, stairs & columns stop the player and the vehicles
+  for (const c of buildFootbridges(scene).colliders) colliders.push(c);
   // The CFE's concrete poles stop the player (not the traffic: they stand on the sidewalks' outer edge)
   for (const c of streetDetails.colliders) colliders.push(c);
   mark('bridges');
-  return { streamer, cityGrid, farGround, rivers, cityBlocks, stores, streetDetails, traffic, highwayTraffic, bridges, colliders };
+  return { streamer, cityGrid, farGround, rivers, cityBlocks, stores, carParks, streetDetails, traffic, highwayTraffic, bridges, colliders };
 }

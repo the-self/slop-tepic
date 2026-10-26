@@ -33,7 +33,7 @@ const RESPAWN_TIME = 4.2; // s on the WASTED / BUSTED screen
 const COP_SIGHT = 45; // m an officer sees the player from (a patrol car: 70)
 const CRUISER_SIGHT = 70;
 const CRUISER = { halfW: 0.92, halfL: 2.3, mass: 1600, accel: 7.5, brake: 14, turn: 1.9 };
-const CRUISER_HP: Readonly<Record<Faction, number>> = { police: 100, narco: 140, army: 180 };
+const CRUISER_HP: Readonly<Record<Faction, number>> = { police: 100, narco: 140, army: 180, fire: 400, ambulance: 140 };
 // The police helicopter (four stars on): it circles HELI_ORBIT m round the player HELI_ALT m over the ground, sees it
 // from HELI_SIGHT m (from above: no wall hides the player), and its gunner fires bursts from the door
 const HELI_ALT = 34;

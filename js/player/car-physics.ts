@@ -26,6 +26,9 @@
 // WASM heap: the ones made here for a moment are reused (tmp*) or destroyed, never left to the garbage collector.
 
 import type Jolt from 'jolt-physics';
+import {
+  ESC_GAIN, ESC_MOST, FRONT_BRAKES, TIP_HOLD, TUMBLE, crashRolls, kerbScrub, overTurn, rollExcess, steerLimit, tipExcess
+} from './car-physics/aids.ts';
 
 /** An initialised jolt-physics module */
 export type JoltApi = typeof Jolt;
@@ -133,6 +136,7 @@ export interface CarStepInput {
   grip?: number;
   spinning?: boolean;
   assist?: boolean; // the stability control on (a car someone drives; never one thrown about in a crash)
+  flats?: number; // bit i: wheel i's tyre flat (shot, a spike strip): on its rim, it grips a fraction as well
 }
 /**
  * A wheel after the step: on the ground, its spin (rad), its steering (rad, + to its left), how far along its spring
@@ -160,7 +164,8 @@ export interface VehicleHit {
 /**
  * A vehicle's state (read, step): its origin (m), rotation, velocity (m/s), angular velocity (rad/s), its own ahead
  * (f) and up (u) in the world, heading (rad), speed along itself (m/s), lean & pitch (rad), wheels on the ground, the
- * wheels and the step's knock
+ * wheels, the step's knock, and `bump`: how hard (m/s up) its wheels striking their bump stops kicked its body this
+ * step (a kerb taken fast, a landing; 0: none)
  */
 export interface VehicleOut extends Point3 {
   qx: number;
@@ -186,6 +191,7 @@ export interface VehicleOut extends Point3 {
   contacts: number;
   wheels: WheelOut[];
   hit: VehicleHit;
+  bump: number;
 }
 /**
  * What else lives in the vehicles' Jolt world (sim/ragdolls.ts, sim/mayhem.ts): before(dt) each step, after(dt) once
@@ -216,7 +222,7 @@ export interface PhysicsVehicle {
   controller: Jolt.WheeledVehicleController;
   listener: Jolt.VehicleConstraintStepListener;
   tyres: Jolt.WheeledVehicleControllerCallbacksJS;
-  state: { grip: number; handbrake: boolean; spinning: boolean };
+  state: { grip: number; handbrake: boolean; spinning: boolean; flats: number };
   layout: WheelMount[];
   def: VehicleDef;
   shapes: Jolt.Shape[]; // its body with its rider, and (a two-wheeler) without
@@ -231,6 +237,10 @@ export interface PhysicsVehicle {
   turn: number; // m/s² its tyres push it across, smoothed (a two-wheeler's)
   rearWheel: number;
   hit: VehicleHit;
+  tumble: number; // s a crash leaves it free to roll over (steady)
+  struck: number; // bit i: wheel i on its bump stop in the last sub-step
+  bumped: boolean; // one struck it this step
+  vy: number; // m/s up at the start of the step (its bump)
   out: VehicleOut;
   owner?: unknown; // what it is in the game, set by whoever added it (traffic.ts: its car of the traffic)
 }
@@ -266,26 +276,23 @@ const WALL_REFRESH = 2; // m the player (or one of them) moves between two looks
 const STEP = 1 / 90; // s, Jolt's step (the frame is cut into as many)
 const SPRING_HZ = 1.4; // the suspension's natural frequency (a road car's 1.2-1.8 Hz), unless the car says otherwise
 const SPRING_DAMPING = 0.55;
-const TRAVEL = 0.26; // m of suspension travel, unless a wheel says otherwise
+// m of suspension travel, unless a wheel says otherwise: the springs' sag (~0.13 m) of it below rest, the rest of it
+// bump, ~0.19 m. With 0.09 m of bump a 22 cm kerb taken at 60 km/h slammed the springs into their stops, and the car
+// flew a metre and rolled over; now the springs take most of it, and it hops (as GTA's do)
+const TRAVEL = 0.36;
 const FLIP_RESCUE = 2.5; // s a car is on its roof or side, all but stopped, before it is set back on its wheels
 const MAX_LEAN = 0.82; // rad a two-wheeler leans over at most (~47°: a street bike's tyres & pegs)
 const LEAN_SPRING = 9; // its rider's hold on its lean, in what gravity topples it by (N·m a radian, per m·g·cg)...
 const LEAN_DAMPING = 1.6; // ...and on its leaning over (per rad/s)
 const YAW_HOLD = 0.4; // ...and on its swinging round on one wheel (per rad/s)
+const FLAT_LAT = 0.35; // share of a tyre's grip across it left on a flat (its rim on the road)
+const FLAT_LONG = 0.5; // ...and along it
 const STOPPIE = 0.2; // share of a moto's weight on its rear wheel under which its rider (its ABS) eases the brakes
 const TURN_SMOOTHING = 0.1; // s over which the rider feels how hard the tyres push the moto across
 const WHEELIE_FROM = 0.3; // rad of the moto's nose up where its rider starts to ease off the throttle...
 const WHEELIE_TO = 0.6; // ...and where none is left (no looping it over backwards)
 const WHEELIE_LEAD = 0.4; // s ahead the rider sees it coming
 const WHEELIE_FAST = 16; // m/s (~60 km/h) from which the rider brings it down
-// The car's driver aids (a game's, as GTA's: the player steers with keys, all or nothing):
-const PEAK_SLIP = 0.07; // rad (~4°) the front tyres may slip at most: Jolt's lateral curve peaks at 3°, a little over
-// it the front gives first (it runs wide), never the rear (it spins)
-const ESC_FROM = 4; // m/s from which the stability control holds the car to the turn its wheels steer...
-const ESC_MARGIN = 0.08; // ...beyond this (rad/s) and 15% more than that turn...
-const ESC_GAIN = 8; // ...taking the excess off at this rate (1/s)...
-const ESC_MOST = 0.5; // ...with a torque of at most this share of what the tyres' grip makes over the wheelbase
-const FRONT_BRAKES = 0.65; // the share of the braking on the front wheels (a road car's bias, 60-70%)
 
 /**
  * Pure: where the wheels attach and how far they hang, from their resting centres (local x, y = radius, z). A wheel's
@@ -328,33 +335,6 @@ const SUSPENSION: Partial<Record<string, [springHz: number, roll: number]>> & { 
 function headingOf(fx: number, fy: number, fz: number, ux: number, uz: number): number {
   if (Math.hypot(fx, fz) > 0.25) return Math.atan2(fx, fz);
   return fy < 0 ? Math.atan2(ux, uz) : Math.atan2(-ux, -uz);
-}
-
-/**
- * Pure: the most a car's front wheels turn (rad) at `speed` (m/s): the turn its tyres hold at that speed on a
- * `wheelbase` (m) with `grip` (the tyres' friction on this road, 1 dry) plus the slip angle their grip peaks at, no
- * more than its full `lock` (rad). A key held at 100 km/h turns them ~6°, not the 12° that spun the car
- */
-function steerLimit(lock: number, wheelbase: number, grip: number, speed: number): number {
-  const vv = speed * speed;
-  if (vv < 1) return lock;
-  return Math.min(lock, Math.atan(wheelbase * grip * 9.81 / vv) + PEAK_SLIP);
-}
-
-/**
- * Pure: how much faster (rad/s, + to its left) a car turning at `rate` (rad/s about its up, + to its left) turns than
- * its driver asks, the stability control's to take off: the turn its front wheels steer (`steer` rad, + left) at
- * `forward` m/s on a `wheelbase` (m), no more than its tyres' `grip` holds. 0 while it turns no faster than that, or
- * less (running wide is the tyres' to fix, not a push that would swing its tail out); slow, 0
- */
-function overTurn(rate: number, steer: number, forward: number, wheelbase: number, grip: number): number {
-  const speed = Math.abs(forward);
-  if (speed < ESC_FROM) return 0;
-  const most = grip * 9.81 / speed;
-  const asked = Math.max(-most, Math.min(most, forward * Math.tan(steer) / wheelbase));
-  const margin = Math.abs(asked) * 0.15 + ESC_MARGIN;
-  const hi = Math.max(asked, 0) + margin, lo = Math.min(asked, 0) - margin;
-  return rate > hi ? rate - hi : rate < lo ? rate - lo : 0;
 }
 
 /**
@@ -773,15 +753,17 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
     // under a pulled handbrake (a moto's locked rear wheel), the driven ones giving way sideways while they spin (power
     // oversteer)
     const tyres = new Jolt.WheeledVehicleControllerCallbacksJS();
-    const state = { grip: 1, handbrake: false, spinning: false };
+    const state = { grip: 1, handbrake: false, spinning: false, flats: 0 };
     const drivenFront = def.drive !== 'rwd', drivenRear = def.drive !== 'fwd';
     tyres.OnTireMaxImpulseCallback = (index, outResult, suspensionImpulse, longFriction, latFriction) => {
       const w = layout[index];
-      let lat = latFriction * suspensionImpulse * state.grip;
+      // (a flat tyre, on its rim: a third of the grip across, half along)
+      const flat = (state.flats >> index) & 1;
+      let lat = latFriction * suspensionImpulse * state.grip * (flat ? FLAT_LAT : 1);
       if (!w.front && state.handbrake) lat *= two ? 0.55 : 0.42;
       if (state.spinning && (w.front ? drivenFront : drivenRear)) lat *= 0.72;
       const out = Jolt.wrapPointer(outResult, Jolt.TireMaxImpulseCallbackResult);
-      out.mLongitudinalImpulse = longFriction * suspensionImpulse * state.grip;
+      out.mLongitudinalImpulse = longFriction * suspensionImpulse * state.grip * (flat ? FLAT_LONG : 1);
       out.mLateralImpulse = lat;
     };
     tyres.SetWheeledVehicleController(controller);
@@ -796,10 +778,10 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
       caster: Math.cos(layout.find((w) => w.front)?.caster || 0), // (its cosine)
       wheelbase: Math.max(...layout.map((w) => w.z)) - Math.min(...layout.map((w) => w.z)),
       upsideDown: 0, input: null, turn: 0, rearWheel: Math.max(0, layout.findIndex((w) => !w.front)),
-      hit,
+      hit, tumble: 0, struck: 0, bumped: false, vy: 0,
       out: {
         x, y, z, qx: 0, qy: 0, qz: 0, qw: 1, vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0,
-        fx: 0, fy: 0, fz: 1, ux: 0, uy: 1, uz: 0, heading: yaw, forward: 0, lean: 0, pitch: 0, contacts: 0, wheels: [], hit
+        fx: 0, fy: 0, fz: 1, ux: 0, uy: 1, uz: 0, heading: yaw, forward: 0, lean: 0, pitch: 0, contacts: 0, wheels: [], hit, bump: 0
       }
     };
     vehicles.add(v);
@@ -854,10 +836,14 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
 
   const negligible = (a: number, b: number, c: number) => Math.abs(a) + Math.abs(b) + Math.abs(c) < 1e-6;
 
-  /** Pushes on vehicle `v`: a velocity change (the traffic's shove), an angular one, a move (dx, dz) */
+  /**
+   * Pushes on vehicle `v`: a velocity change (the traffic's shove), an angular one, a move (dx, dz). A hard spin (a
+   * crash, a blast) lets it roll over freely for a while (steady)
+   */
   function shove(v: PhysicsVehicle, dvx: number, dvy: number, dvz: number, dwx: number, dwy: number, dwz: number, dx = 0, dz = 0): void {
     const id = v.body.GetID();
     if (!negligible(dvx, dvy, dvz)) bodies.AddLinearVelocity(id, vec(dvx, dvy, dvz));
+    if (Math.hypot(dwx, dwy, dwz) > 1.5) v.tumble = TUMBLE;
     if (!negligible(dwx, dwy, dwz)) {
       const w = v.body.GetAngularVelocity();
       bodies.SetAngularVelocity(id, vec(w.GetX() + dwx, w.GetY() + dwy, w.GetZ() + dwz));
@@ -951,6 +937,43 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
     bodies.AddTorque(v.body.GetID(), vec(out.ux * torque, out.uy * torque, out.uz * torque), Jolt.EActivation_Activate);
   }
 
+  // A driven car's roll and pitch held (rollExcess, tipExcess): a kerb or a bump that throws one side or one end of it
+  // up turns it over no faster than it tips freely, in the air too, so it comes down on its wheels, and one come down
+  // on one side's is set back on all of them; for a while after a crash
+  // (tumble), or once it is on its side or nose, nothing holds it. Torques about its length and across it, as
+  // stabilise's about its up
+  function steady(v: PhysicsVehicle, out: VehicleOut, h: number): void {
+    if (v.tumble > 0 || out.uy < 0.5) return;
+    // (its left: up × ahead)
+    const lx = out.uy * out.fz - out.uz * out.fy, ly = out.uz * out.fx - out.ux * out.fz, lz = out.ux * out.fy - out.uy * out.fx;
+    const all = v.wheels.every((w) => w.HasContact());
+    const roll = rollExcess(out.wx * out.fx + out.wy * out.fy + out.wz * out.fz, out.lean, all);
+    const pitch = tipExcess(out.wx * lx + out.wy * ly + out.wz * lz);
+    if (!roll && !pitch) return;
+    const { mass, halfW, halfL, height } = v.def;
+    // (a box its size: about its length, and across it; no more of the excess than one sub-step takes off)
+    const k = Math.min(TIP_HOLD, 1 / h) * mass / 3, hh = height * height / 4;
+    const tr = -roll * k * (halfW * halfW + hh), tp = -pitch * k * (halfL * halfL + hh);
+    bodies.AddTorque(v.body.GetID(), vec(out.fx * tr + lx * tp, out.fy * tr + ly * tp, out.fz * tr + lz * tp), Jolt.EActivation_Activate);
+  }
+
+  // A driven car's wheels striking their bump stops (a kerb taken fast, a landing): each one that has just struck
+  // costs it a share of its speed along the ground (kerbScrub), and the step a bump (settle)
+  function strike(v: PhysicsVehicle, out: VehicleOut): void {
+    let struck = 0, fresh = 0;
+    v.wheels.forEach((w, i) => {
+      if (!w.HasContact() || !w.HasHitHardPoint()) return;
+      struck |= 1 << i;
+      if (!(v.struck & (1 << i))) fresh++;
+    });
+    v.struck = struck;
+    const speed = Math.hypot(out.vx, out.vz);
+    if (!fresh || speed < 1) return;
+    v.bumped = true;
+    const k = -kerbScrub(speed, fresh) / speed;
+    bodies.AddLinearVelocity(v.body.GetID(), vec(out.vx * k, 0, out.vz * k));
+  }
+
   // Vehicle `v`'s force for this sub-step (h s), split over the tyres on the ground that take it (the driven ones
   // under power), at their contact patches along it, each no more than its grip under the weight it carried in the
   // last sub-step; or, all of them off the ground, the air's drag against its motion
@@ -977,6 +1000,10 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
       }
     }
     if (v.kind === 'car' && input.assist && touching >= 2 && !v.state.handbrake) stabilise(v, out, h);
+    if (v.kind === 'car' && input.assist) {
+      steady(v, out, h);
+      strike(v, out);
+    }
     if (takers && force) {
       // (a car's drive evenly over its driven wheels, its braking FRONT_BRAKES on the front ones, the weight going
       // there as it slows; a moto's braking by the weight on each wheel, mostly the front's: an even share would lock
@@ -1050,9 +1077,12 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
       v.state.grip = input?.grip ?? 1;
       v.state.handbrake = Boolean(input?.handbrake);
       v.state.spinning = Boolean(input?.spinning);
+      v.state.flats = input?.flats ?? 0;
       v.controller.SetDriverInput(0, steerOf(v, input), input?.hold ? 1 : 0, input?.handbrake || input?.hold ? 1 : 0);
       v.hit.speed = 0;
       v.hit.other = null;
+      v.vy = v.out.vy;
+      v.bumped = false;
       drives.set(v, input !== null && isDrive(input.force, v.out.forward));
     }
     for (const sys of systems) sys.before?.(dt);
@@ -1083,6 +1113,10 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
       o.z = v.layout[i].attachZ + v.layout[i].dir[2] * o.travel; // ...and along the vehicle
     });
     out.contacts = onGround;
+    // (the bump: how much its wheels striking their stops kicked it up; a crash leaves it free to roll a while)
+    out.bump = v.bumped ? Math.max(0, out.vy - v.vy) : 0;
+    const hit = v.hit;
+    v.tumble = crashRolls(hit.speed, hit.ny, hit.other !== null) ? TUMBLE : Math.max(0, v.tumble - dt);
     // a car on its roof or its side, all but stopped, for a while: back on its wheels (no rocking it back by hand);
     // not one whose def says no `rescue` (the traffic's: it stays there); a moto lies where it fell
     if (v.kind !== 'car' || v.def.rescue === false) return;

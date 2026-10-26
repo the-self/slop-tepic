@@ -94,7 +94,7 @@ export class Boarding {
       return;
     }
     if (controllers.activeMode !== 'person') {
-      if (controllers.exitVehicle()) onModeChange();
+      if (controllers.leaveVehicle()) onModeChange();
       return;
     }
     if (interiors.active) {

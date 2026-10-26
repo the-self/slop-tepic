@@ -13,6 +13,8 @@ import type { AgentKind, NpcGun, Agent } from './types.ts';
 import { MAX_AGENTS, BODY_R, RUN, THIEF_RUN, WALK, DOWN_TIME, DEAD_TIME, DESPAWN, NPC_GUN, FOE_DAMAGE, FOE_RANGE, SKILL, clamp, rand, dummy } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
 
+const TYRE_HIT = 0.08; // share of the rounds hitting the player's car that burst a tyre
+
 // (a soldier, `army`, is one of the police: kind 'cop', in fatigues, with a rifle and more to them)
 export function spawnAgent(
   crime: CrimeSystem, kind: AgentKind, x: number, z: number,
@@ -100,7 +102,8 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
   const dx = crime.px - a.x, dz = crime.pz - a.z;
   const dist = Math.hypot(dx, dz);
   a.t += dt;
-  if (dist > DESPAWN || (a.dead && a.fallen && a.fallen.rest > DEAD_TIME)) {
+  // (a body an ambulance is coming for lies there till the paramédicos take it, sim/emergency.ts)
+  if (dist > DESPAWN || (a.dead && a.fallen && a.fallen.rest > DEAD_TIME && !a.fallen.awaiting)) {
     crime.removeAgent(a);
     return;
   }
@@ -382,6 +385,8 @@ export function npcShoot(crime: CrimeSystem, a: Agent, gun: NpcGun, skill: numbe
     crime.fx.tracer(hx, hy, hz, crime.px, py, crime.pz);
     crime.fx.impact(crime.px, py, crime.pz, crime.mode === 'person' ? 'blood' : 'metal', -Math.sin(yaw), -Math.cos(yaw));
     crime.hurt(gun.damage, a.x, a.z);
+    // a round into the car low: one of its tyres now and then
+    if (crime.mode === 'car' && Math.random() < TYRE_HIT) crime.controllers.popTyre?.(Math.floor(Math.random() * 4));
   } else {
     // a miss: past the player, into whatever is behind
     const miss = rand(0.8, 2.2) * (Math.random() < 0.5 ? -1 : 1);

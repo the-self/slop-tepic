@@ -5,7 +5,7 @@ import type * as THREE from 'three/webgpu';
 import type { Weapon } from '../weapons.ts';
 import type { Ped, Vehicle } from '../traffic.ts';
 import { WEAPONS, rayCircle, rayBox, blastFalloff } from '../weapons.ts';
-import type { TraceKind, XZ, Agent, Cruiser, TraceTarget, TraceHit, RemoteTarget } from './types.ts';
+import type { TraceKind, XZ, Agent, Cruiser, TraceTarget, TraceHit, RemoteTarget, ShotProp } from './types.ts';
 import type { Shot } from '../../../shared/protocol.ts';
 import { BODY_R, PERSON_H, CAR_H, BUS_H, HELI_R, inBody, clamp } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
@@ -91,6 +91,16 @@ export function trace(crime: CrimeSystem, ox: number, oy: number, oz: number, ya
     kind = 'remote';
     target = r;
   }
+  // the world's own: a gas station's pumps (sim/gas-stations.ts)
+  for (const pr of crime.props) {
+    if (pr.blown || Math.abs(pr.x - ox) > best + 2 || Math.abs(pr.z - oz) > best + 2) continue;
+    const t = rayCircle(ox, oz, dx, dz, pr.x, pr.z, pr.r);
+    if (t < from || t >= best) continue;
+    if (pitched && !inBody(oy + slope * t - pr.y, pr.top)) continue;
+    best = t;
+    kind = 'prop';
+    target = pr;
+  }
   // the helicopter, only to a shot aimed up at it
   const h = crime.heli;
   if (slope !== null && h.active && h.state !== 'down') {
@@ -131,6 +141,7 @@ export function hitScan(crime: CrimeSystem, ox: number, oy: number, oz: number, 
     else if (kind === 'cruiser' || kind === 'vehicle') ey = crime.groundAt(ex, ez) + 0.85;
   }
   if (kind === 'remote') ey = (target as RemoteTarget).y + ((target as RemoteTarget).person ? 1.2 : 0.85);
+  if (kind === 'prop' && slope === null) ey = (target as ShotProp).y + 1;
   if (kind === 'ground') ey = crime.groundAt(ex, ez) + 0.03;
   crime.fx.tracer(ox, oy, oz, ex, ey, ez);
   if (byPlayer) crime.onPlayerShot?.({ ox, oy, oz, ex, ey, ez, weapon: w.id, rocket: false });
@@ -151,8 +162,13 @@ export function hitScan(crime: CrimeSystem, ox: number, oy: number, oz: number, 
     if (byPlayer) crime.report('shootPed');
   } else if (kind === 'vehicle') {
     crime.fx.impact(ex, ey, ez, 'metal', -dx, -dz);
+    // (aimed low, at a wheel: its tyre bursts)
+    if (slope !== null) crime.traffic.shootTyre(target as Vehicle, ex, ey, ez);
     crime.traffic.shootVehicle(target as Vehicle, ex, ey, ez, dx, dz);
     if (byPlayer) crime.report('shootCar');
+  } else if (kind === 'prop') {
+    crime.fx.impact(ex, ey, ez, 'metal', -dx, -dz);
+    (target as ShotProp).shot(w.damage, byPlayer);
   } else if (kind === 'remote') {
     // another player: its game takes the damage (a vehicle shields it as the player's own does, crime.hurt)
     const r = target as RemoteTarget;

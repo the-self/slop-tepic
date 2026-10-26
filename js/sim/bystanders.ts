@@ -4,7 +4,7 @@ import { PersonCrowd, PersonRig, OUTFIT, OUTFIT_SEED } from './pedestrians.ts';
 // js/sim/bystanders.ts
 // The people who stay put: the taqueros and their customers at the stalls (street-food.ts), the crowds outside the
 // antros and at the house parties dancing (nightlife.ts), the diners & dancers inside (interiors.ts), the bomberos at a
-// fire (fires.ts). One skinned crowd (pedestrians.ts PersonCrowd) and a pool of rigs, each kept by the key its owner
+// fire (fires.ts), the paramédicos by someone hurt (emergency.ts). One skinned crowd (pedestrians.ts PersonCrowd) and a pool of rigs, each kept by the key its owner
 // gives it (a number: no string is built per frame), so a person keeps their looks and their footing from frame to
 // frame. Every frame: begin(), then place() each person in view, then end(dt).
 
@@ -35,7 +35,8 @@ const STYLES = {
   dance: { dance: 1, sway: 0, outfit: 0, female: null, scale: null },
   sway: { dance: 0.3, sway: 1, outfit: 0, female: null, scale: null },
   bouncer: { dance: 0, sway: 0, outfit: OUTFIT.narco, female: false, scale: 1.08 }, // (black over olive)
-  bombero: { dance: 0, sway: 0, outfit: OUTFIT.bombero, female: false, scale: null }
+  bombero: { dance: 0, sway: 0, outfit: OUTFIT.bombero, female: false, scale: null },
+  paramedic: { dance: 0, sway: 0.4, outfit: OUTFIT.paramedic, female: null, scale: null }
 } satisfies Record<string, BystanderStyle>;
 
 class Bystanders {

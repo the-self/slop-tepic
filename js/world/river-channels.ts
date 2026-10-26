@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import { waterways, deckHoles } from './ground.ts';
 import { cutHoles } from './waterways.ts';
 import { drapeGeometry } from './drape.ts';
-import { createRiverBankMaterial, createRiverWaterMaterial, createCurbMaterial } from '../render/tsl-materials.ts';
+import { createRiverBankMaterial, createRiverWaterMaterial, createCurbMaterial, createBridgeConcreteMaterial } from '../render/tsl-materials.ts';
 import type { ChannelMesh } from './waterways.ts';
 
 // js/world/river-channels.ts
@@ -35,7 +35,7 @@ function buildRiverChannels(scene: THREE.Object3D): RiverChannels {
   group.name = 'Rivers';
   let waterMesh: THREE.Mesh | null = null;
   if (waterways) {
-    const { banks, water, bridges } = waterways.meshData();
+    const { banks, water, bridges, lined } = waterways.meshData();
     const add = (data: ChannelMesh<Float32Array>, material: THREE.Material, shadows: boolean) => {
       if (!data.position.length) return null;
       const mesh = new THREE.Mesh(draped(data), material);
@@ -45,6 +45,7 @@ function buildRiverChannels(scene: THREE.Object3D): RiverChannels {
       return mesh;
     };
     add(banks, createRiverBankMaterial(), false);
+    add(lined, createBridgeConcreteMaterial(), false); // (the canals' & drenes' concrete)
     waterMesh = add(water, createRiverWaterMaterial(), false); // (it rises with a flood, floods.ts)
     const slab = createCurbMaterial();
     slab.side = THREE.DoubleSide;

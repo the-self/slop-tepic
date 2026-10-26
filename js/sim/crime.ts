@@ -10,7 +10,7 @@ import { Wanted, GANGS } from './crime-rules.ts';
 import { GunfireFX } from './gunfire-fx.ts';
 import type {
   CrimeState, DownKind, AgentKind, Faction, PickupKind, Blips, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers,
-  CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, TraceHit, RemoteTarget
+  CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, TraceHit, RemoteTarget, ShotProp
 } from './crime/types.ts';
 import type { Shot } from '../../shared/protocol.ts';
 import { MAX_AGENTS, MAX_PICKUPS, COP_SIGHT, CRUISER_SIGHT, HELI_SIGHT, rand, zero } from './crime/constants.ts';
@@ -29,6 +29,11 @@ import {
   spawnCruiser, takeOverPatrol, removeCruiser, damageCruiser, updateCruiser, pursue, blockerAhead, deployOfficers, moveCruiser, collideCruisers
 } from './crime/cruisers.ts';
 import { dispatch } from './crime/dispatch.ts';
+import { buildSpikes, updateSpikes } from './crime/spikes.ts';
+import type { SpikeStrip } from './crime/spikes.ts';
+
+// A patrol car's (or truck's) blip on the radar (ui/city-map.ts BLIP_STYLES)
+const BLIP_OF: Readonly<Record<Faction, string>> = { police: 'cruiser', army: 'army', narco: 'truck', fire: 'firetruck', ambulance: 'ambulance' };
 import { buildPickups, drop, updatePickups, collect } from './crime/pickups.ts';
 
 // js/sim/crime.ts
@@ -67,6 +72,7 @@ class CrimeSystem {
   // multiplayer (net/multiplayer.ts): the other players near (as targets), each shot the player fires (for the others to
   // see), a hit on one of them (its damage in hit points), and no firing while riding in someone else's car
   remotes: RemoteTarget[] = [];
+  props: ShotProp[] = []; // what of the world's shots strike (a gas station's pumps, sim/gas-stations.ts)
   onPlayerShot: ((shot: Shot) => void) | null = null;
   onRemoteHit: ((id: number, damage: number) => void) | null = null;
   fireBlocked = false;
@@ -109,9 +115,10 @@ class CrimeSystem {
   cruisers: Cruiser[];
   rockets: RocketFlight[];
   pickups: Pickup[];
+  spikes: SpikeStrip[] = []; // the police's spike strips (crime/spikes.ts)
   candidates: LockTarget[];
   // s to the next
-  timers: { dispatch: number; gangs: number; thief: number; health: number; bazooka: number; trucks: number; patrols: number; heli: number };
+  timers: { dispatch: number; gangs: number; thief: number; health: number; bazooka: number; trucks: number; patrols: number; heli: number; spikes: number };
   // the traffic's own patrol cars (traffic.ts: every 40th car keeps the livery): witnesses, and they join a chase
   trafficPolice: Car[];
   heli: Helicopter;
@@ -125,6 +132,7 @@ class CrimeSystem {
   // the road graph (buildRoadGraph): its intersections, each one's links [node, m], and the nodes in 80 m cells
   nodes: XZ[] = [];
   links: [number, number][][] = [];
+  ways: [number, number][][] = []; // (the same, only the ways the lanes run)
   nodeCells = new Map<string, number[]>();
 
   // the frame's (update): the camera, the player's entity & mode, where it is (m) and how fast it goes (m/s)
@@ -187,13 +195,14 @@ class CrimeSystem {
     this.rockets = [];
     this.pickups = [];
     this.candidates = []; // lock-on targets, rebuilt per shot
-    this.timers = { dispatch: 0, gangs: 2, thief: rand(40, 70), health: 30, bazooka: 45, trucks: 0, patrols: 0, heli: 0 };
+    this.timers = { dispatch: 0, gangs: 2, thief: rand(40, 70), health: 30, bazooka: 45, trucks: 0, patrols: 0, heli: 0, spikes: 20 };
     this.trafficPolice = traffic.cars.filter((v) => v.isPolice);
 
     this.buildGuns();
     this.buildCruisers();
     this.heli = buildHelicopter(this);
     this.buildPickups();
+    buildSpikes(this);
     this.buildRoadGraph();
     this.bindInput(canvas);
 
@@ -229,8 +238,8 @@ class CrimeSystem {
     return nearestNode(this, x, z);
   }
 
-  route(x0: number, z0: number, x1: number, z1: number): XZ[] | null {
-    return route(this, x0, z0, x1, z1);
+  route(x0: number, z0: number, x1: number, z1: number, limit?: number, oneWay?: boolean): XZ[] | null {
+    return route(this, x0, z0, x1, z1, limit, oneWay);
   }
 
   // =========================================================================
@@ -296,6 +305,7 @@ class CrimeSystem {
     this.collideCruisers();
     this.updateHeli(dt);
     this.updatePickups(dt, elapsed);
+    updateSpikes(this, dt);
 
     // the police see the player: the stars stay
     let seen = false;
@@ -572,9 +582,10 @@ class CrimeSystem {
   blips(out: Blips = (this._blips ??= [])): Blips {
     out.length = 0;
     for (const a of this.agents) if (!a.dead) out.push(a.kind === 'gang' ? ['rojos', 'verdes', 'narcos'][a.gang] : a.army ? 'soldier' : a.kind, a.x, a.z);
-    for (const cr of this.cruisers) if (cr.active && !cr.wreck) out.push(cr.faction === 'police' ? 'cruiser' : cr.faction === 'army' ? 'army' : 'truck', cr.x, cr.z);
+    for (const cr of this.cruisers) if (cr.active && !cr.wreck) out.push(BLIP_OF[cr.faction], cr.x, cr.z);
     if (this.heli.active && this.heli.state !== 'down') out.push('heli', this.heli.x, this.heli.z);
     for (const p of this.pickups) out.push(p.kind, p.x, p.z);
+    for (const s of this.spikes) if (s.active) out.push('spikes', s.x, s.z);
     return out;
   }
 }

@@ -141,6 +141,18 @@ test('police still wait for crossing traffic, pedestrians and a blocked exit', (
   assert.equal(mayEnter(car, 18), true);
 });
 
+test('at a signal of more than two roads, the third gives way to the second on their shared green', () => {
+  const { car, state, mayEnter } = intersectionHarness();
+  state.phase = 'green';
+  state.conflict = true;
+  car.edge.axisIndex = 1;
+  assert.equal(mayEnter(car, 18), true);
+  car.edge.axisIndex = 2;
+  assert.equal(mayEnter(car, 18), false);
+  state.conflict = false;
+  assert.equal(mayEnter(car, 18), true);
+});
+
 test('police running a red yield to fast cross traffic regardless of how long they waited', () => {
   const car = { edge: { axisIndex: 0 }, wait: 20 };
   const lead = { s: 85, v: { speed: 10 } };
@@ -185,20 +197,22 @@ function populationContext() {
     clock: 0, hour: 14,
     nearEdges: [], nearTransitEdges: [], nearSignals: [], track: {},
     transit: { paths: [] }, vehicles: [], wallAt: null,
-    // (the hour's weighing, traffic-demand.js: uniform here)
-    nearCarWeights: [], nearPedWeights: [],
+    // (the hour's weighing, traffic-demand.js: uniform here, unless a test sets carDensity)
+    nearCarWeights: [], nearBikeWeights: [], nearPedWeights: [], carDensity: 0,
     sidewalkTrack: () => false, crosswalkTrack: () => false
   };
   const globals = { Math: Object.assign(Object.create(Math), { random: () => 0.5 }) };
   const near = trafficModule('near', {
     './constants.ts': constants,
-    '../traffic-demand.ts': { roadClass: () => 'street', carDensity: () => 0, peopleDensity: () => 0, busyFactor: () => 1 }
+    '../traffic-demand.ts': {
+      AVENUE: 2, roadClass: (e) => (e.axis === 'ave' ? 2 : 0), carDensity: () => ts.carDensity, peopleDensity: () => 0, busyFactor: () => 1
+    }
   }, globals);
   const spawning = trafficModule('spawning', {
     './constants.ts': constants,
     './surface.ts': { hillAt: () => 0 },
     './view.ts': { visible: (...args) => ts.visible(...args) },
-    './near.ts': { pickWeighted: (list) => list[Math.floor(Math.random() * list.length)] },
+    './near.ts': { pickWeighted: (list, weights) => near.pickWeighted(list, weights) },
     './occupancy.ts': { laneClear: () => true },
     './fleet.ts': { drawModel: () => {} },
     './bodies.ts': { vehicleAt: () => false },
@@ -261,6 +275,43 @@ test('long roads are available near their ends and spawn only in the local secti
   assert.equal(spawnVehicle(car, 0, 350, false), true);
   assert.ok(edge.sz + car.s <= 350);
   assert.ok(car.s >= car.half + 5);
+});
+
+test('cyclists are placed on the streets around, never on an avenue', () => {
+  const { ts: context, refreshNear, spawnVehicle } = populationContext();
+  const avenue = Object.assign(straightEdge(100, 400), { axis: 'ave', lanes: [0, 3.5], occ: [[], []] });
+  const street = Object.assign(straightEdge(100, 400), { axis: 'st' });
+  Object.assign(context, { edges: [avenue], nodes: [], nearX: Infinity, nearZ: Infinity, carDensity: 20 });
+  refreshNear();
+  const bike = { half: 0.9, bike: true };
+  assert.equal(spawnVehicle(bike, 0, 350, false), false, 'nothing but an avenue around');
+  const car = { half: 2.25 };
+  assert.equal(spawnVehicle(car, 0, 350, false), true, 'a car goes on it');
+  context.edges.push(street);
+  context.nearX = Infinity;
+  refreshNear();
+  assert.equal(context.nearBikeWeights[0], 0, 'the avenue weighs nothing for a cyclist');
+  for (let i = 0; i < 5; i++) {
+    assert.equal(spawnVehicle(bike, 0, 350, false), true);
+    assert.equal(bike.edge, street);
+  }
+});
+
+test('a cyclist turns off an avenue where it can, and onto one only where the street leads nowhere else', () => {
+  const globals = { Math: Object.assign(Object.create(Math), { random: () => 0.5 }) };
+  const routing = trafficModule('routing', {
+    '../traffic-demand.ts': { AVENUE: 2, ROUTE_PULL: [1, 2.5, 6], roadClass: (e) => (e.axis === 'ave' ? 2 : 0) }
+  }, globals);
+  const avenue = { axis: 'ave', lanes: [0] }, street = { axis: 'st', lanes: [0] };
+  // on an avenue whose lane runs on along it: it changes lanes to turn off into the street
+  const along = { axis: 'ave', len: 100, moves: [{ turn: 'S', to: avenue, out: [0] }, { turn: 'L', to: street, out: [-1] }] };
+  const bike = { bike: true, edge: along, lane: 0, s: 50, path: null };
+  assert.equal(routing.chooseMove({}, bike, true).to, street);
+  // a car keeps to the avenue
+  assert.equal(routing.chooseMove({}, { ...bike, bike: false }, true).to, avenue);
+  // a street ending on an avenue (a T): onto it, there being no other way
+  const tee = { axis: 'st', len: 100, moves: [{ turn: 'R', to: avenue, out: [0] }, { turn: 'L', to: avenue, out: [0] }] };
+  assert.equal(routing.chooseMove({}, { ...bike, edge: tee }, true).to, avenue);
 });
 
 test('combis and buses spawn on the roads of routes their fleet serves, joining the route there', () => {
@@ -396,6 +447,58 @@ test('a vehicle bumped or caught in a blast on a bridge reports and sparks over 
   assert.deepEqual(sparks, [DECK]);
 });
 
+// The road network over a made-up road graph (no grid, no blocks), the obstacles given
+function networkOf(roadGraph, obstacles = []) {
+  const { buildRoadNetwork } = loadModule(readFileSync(join(__dirname, '../js/world/road-network.ts'), 'utf8'), {
+    imports: {
+      './city-config.ts': {
+        ALL_AVENUES: [], ALL_STREETS: [], BLOCKS: [], blockAt: () => null,
+        ISLAND_BOUNDS: { minX: -5000, maxX: 5000, minZ: -5000, maxZ: 5000 },
+        getIslandBoundsAtZ: () => ({ westX: -1e5, eastX: 1e5 })
+      },
+      './city-geodata.js': { GEO: { roadGraph: { signals: [], names: ['Libramiento'], ...roadGraph } } }
+    }
+  });
+  const log = console.info;
+  console.info = () => {};
+  try { return buildRoadNetwork([], obstacles); } finally { console.info = log; }
+}
+const paintAt = (net, x, z) => net.paintEdges.filter((e) => {
+  const t = (x - e.x0) * e.dx + (z - e.z0) * e.dz;
+  return t >= 0 && t <= e.span && Math.abs((x - e.x0) * e.dz - (z - e.z0) * e.dx) < e.half;
+});
+
+test('a long gentle curve keeps to its road: its chords never cut across to an obstacle off it', () => {
+  // a one-way road 7 m wide along a 1 km radius arc, 500 m long, a vertex every 25 m (each bend under 2°): laid as
+  // one chord its middle would run 31 m inside the curve, where a lamp post stands
+  const nodes = [], inner = [];
+  for (let k = 0; k <= 20; k++) {
+    const a = (k / 20 - 0.5) * 0.5;
+    const x = 1000 * Math.sin(a), z = 1000 - 1000 * Math.cos(a);
+    if (k === 0 || k === 20) nodes.push(x, z); else inner.push(x, z);
+  }
+  const post = { minX: -0.2, maxX: 0.2, minZ: 31, maxZ: 31.4 };
+  const net = networkOf({ nodes, links: [[0, 1, 0, 7, 2, 1, inner, 0, 0]] }, [post]);
+  // painted (and laned) all along the arc, its middle included (between its vertices: at a station two edges meet)
+  for (const k of [2.5, 9.5, 10.5, 17.5]) {
+    const a = (k / 20 - 0.5) * 0.5;
+    const on = paintAt(net, 1000 * Math.sin(a), 1000 - 1000 * Math.cos(a));
+    assert.equal(on.length, 1, `on the road at ${k}`);
+    assert.equal(on[0].lanes.length, 2);
+  }
+});
+
+test('a junction standing off a link\'s end gets an approach, and the rest of the link keeps to its road', () => {
+  // a one-way road east from (0, 0); a 10 m link north to (0, -10) makes one junction of both, half way between
+  const net = networkOf({ nodes: [0, 0, 300, 0, 0, -10], links: [[0, 1, 0, 7, 2, 1, [], 0, 0], [0, 2, 0, 7, 2, 0, [], 0, 0]] });
+  const along = net.paintEdges.filter((e) => Math.abs(e.dz) < 0.5).sort((p, q) => p.x0 - q.x0);
+  assert.ok(along.length >= 2, 'the approach and the road beyond it');
+  // the approach from the junction (0, -5) to its station on the road, then on along the road's own line
+  assert.ok(Math.abs(along[0].z0 + 5) < 1e-6 && Math.abs(along[0].x0) < 1e-6);
+  assert.ok(Math.abs(along[1].z0) < 1e-6 && Math.abs(along[1].dz) < 1e-9, 'on the road, straight east');
+  assert.ok(along[1].x0 >= 15 - 1e-6);
+});
+
 // A driver on a long straight road (lane 1.8 m right of the centreline, curb 4.55 m), driven by the real IDM, lane
 // keeping, dodging and curb stops (pickups real or stubbed), with the player as the traffic sees it. Its pose is set by
 // hand (heading +z, the right to -x) as locate() would.
@@ -419,11 +522,11 @@ function roadHarness({ pickups, lanes = [1.8], lane = 0, half = 4.55 } = {}) {
     speed: 12, acc: 0, gap: Infinity, leaderSpeed: 0, move: { to: edge, out: lanes.map(() => 0), turn: 'S' }, conn: null, cs: 0,
     trail: null, commit: null, claimed: false, yielding: false, wait: 0, laneTimer: 1e9, dl: 0, dlv: 0, x: -lanes[lane], z: 50,
     yaw: 0, wrecked: false, fleet: null, isTaxi: false, isPolice: false, pAhead: Infinity, pRight: 0, pSpeed: 0,
-    pSide: 0, pHalfW: 0.86, pHalfL: 2.18, pParked: false, pSeen: 0, react: 0.5, swerve: 0, stop: null, pullOver: 0,
-    nextStop: 0, fare: 0
+    pSide: 0, pHalfW: 0.86, pHalfL: 2.18, pParked: false, pSeen: 0, react: 0.5, distracted: 0, sirenNear: false, swerve: 0,
+    stop: null, pullOver: 0, nextStop: 0, fare: 0
   };
   const ts = {
-    clock: 0, caution: 1, headway: 1, roadGrip: 1, parked: [], peds: [], pedRoutes: { along: () => [] },
+    clock: 0, caution: 1, headway: 1, roadGrip: 1, parked: [], sirens: [], peds: [], pedRoutes: { along: () => [] },
     player: { active: false, x: 0, z: 0, vx: 0, vz: 0, halfW: 0.86, halfL: 2.18 }
   };
   const step = (dt = 1 / 60) => {
@@ -473,6 +576,33 @@ test('a driver swerves to the right for the player coming head on in its lane, a
   for (let i = 0; i < 180; i++) oncoming.step();
   assert.ok(Math.abs(oncoming.v.dl) < 0.05, 'kept to its lane');
   assert.ok(oncoming.v.speed > 11, 'and its speed');
+});
+
+test('a driver pulls over and crawls for a siren coming up behind it, and drives on once it has gone by', () => {
+  // (the curb's own pickups.ts: what lets go of the pull over each frame)
+  const { ts, v, step } = roadHarness({ pickups: true });
+  Object.assign(v, { tx: 0, tz: 1 });
+  // a fire truck 20 m behind, going its way (heading +z); one going the other way changes nothing
+  const siren = { x: v.x, z: v.z - 20, heading: Math.PI };
+  ts.sirens = [siren];
+  for (let i = 0; i < 60; i++) step();
+  assert.equal(v.sirenNear, false, 'not for one going the other way');
+  siren.heading = 0;
+  for (let i = 0; i < 60 * 4; i++) {
+    siren.z = v.z - 20;
+    step();
+  }
+  assert.ok(v.sirenNear);
+  assert.ok(v.dl > 1, `over to the curb (${v.dl.toFixed(2)} m)`);
+  assert.ok(v.dl < 4.55 - 1.8 - 0.86 + 0.01, 'not over it');
+  assert.ok(v.speed < 3.5, `crawling (${v.speed.toFixed(2)} m/s)`);
+  // gone by (and on ahead): back in its lane and on its way
+  for (let i = 0; i < 60 * 6; i++) {
+    siren.z = v.z + 30;
+    step();
+  }
+  assert.equal(v.sirenNear, false);
+  assert.ok(v.speed > 8 && v.dl < 0.3, `on its way (${v.speed.toFixed(2)} m/s, ${v.dl.toFixed(2)} m)`);
 });
 
 test('a combi pulls in for someone hailing it, waits while they get on, and drives on', () => {
@@ -568,4 +698,37 @@ test('a combi pulls out again when whoever hailed it is knocked down', () => {
   step();
   assert.equal(v.stop, null, 'gave up on them');
   assert.equal(p.ride, null);
+});
+
+// A one-way ring round a 400 m square (corner nodes 0-3), its south side (0 -> 1) bending at (200, -30)
+const ring = (extra = {}) => ({
+  nodes: [0, 0, 400, 0, 400, 400, 0, 400],
+  links: [[0, 1, 0, 7, 2, 1, [200, -30], 0, 0], [1, 2, 0, 7, 2, 1, [], 0, 0], [2, 3, 0, 7, 2, 1, [], 0, 0], [3, 0, 0, 7, 2, 1, [], 0, 0]],
+  ...extra
+});
+
+test('a signal with no junction near it stops the traffic at its own street\'s bend, painted as a crossing', () => {
+  const net = networkOf(ring({ signals: [200, -30] }));
+  const stop = net.nodes.find((n) => n.signal);
+  assert.ok(stop, 'a signalised stop');
+  assert.ok(stop.midblock && !stop.shape);
+  assert.ok(Math.hypot(stop.x - 200, stop.z + 30) < 1);
+  // its edges stop short of it, in the paint too (its stop bar and crosswalk)
+  const into = net.paintEdges.find((e) => Math.hypot(e.to.x - 200, e.to.z + 30) < 1);
+  assert.ok(into && !into.to.shape);
+  assert.ok(into.len < into.span - 2, 'stopping short of the crossing');
+  // a signal off the street (12 m out from the bend, past the roadway's edge) stops nobody
+  assert.ok(!networkOf(ring({ signals: [200, -44] })).nodes.some((n) => n.signal));
+});
+
+test('a street looping back to its own junction keeps its lanes, out to a station half way round and back', () => {
+  // nodes 0 and 1 are 10 m apart (one junction once joined); a 300 m one-way loop from 1 round to 0, a road on from 0
+  const loop = [];
+  for (let k = 1; k < 12; k++) {
+    const a = Math.PI * 2 * (k / 12);
+    loop.push(5 + 60 * Math.sin(a), 60 - 60 * Math.cos(a));
+  }
+  const net = networkOf({ nodes: [0, 0, 10, 0, 300, 0], links: [[0, 1, 0, 7, 2, 0, [], 0, 0], [1, 0, 0, 7, 1, 1, loop, 0, 0], [0, 2, 0, 7, 2, 0, [], 0, 0]] });
+  // the loop's far side, 120 m round from its junction, still has its lanes and paint
+  assert.ok(paintAt(net, 5, 120).length > 0);
 });

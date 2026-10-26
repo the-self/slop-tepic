@@ -1,6 +1,7 @@
 // js/player/controllers/ground.ts
 // The ground under the player: the terrain, the town's floor, a bridge's deck, an interior's floor, the curbs and the
-// parks' raised walks and lawns a walker stands on, the tilt under a vehicle, and the hills too steep to walk up
+// parks' raised walks and lawns a walker stands on (and the driveways' ramps over the curbs), the tilt under a vehicle,
+// and the hills too steep to walk up
 import { ISLAND_BOUNDS, blockAt } from '../../world/city-config.ts';
 import { isRaisedPark, parkFloorAt } from '../../world/park-floor.ts';
 import type { PlayerMode, PlayerEntity, PlayerRoom, GroundQuery } from './types.ts';
@@ -31,14 +32,18 @@ export function getGroundHeight(ctl: ThirdPersonControllerManager, x: number, z:
   // the ground (ground.ts): the town's floor, the hills over it & the river channels cut into it (under a bridge
   // for a body coming from `fromY` down in the channel); everyone stands on it, a walker on the curbs over the
   // town's floor (unless a hill rises above them, or it is down in a channel). With `fromY`, a road bridge's deck
-  // the body is on or reaches up a ramp, never one overhead (ground.ts deckLift; Infinity: the topmost)
+  // the body is on or reaches up a ramp, never one overhead (ground.ts deckLift; Infinity: the topmost), and on foot a
+  // footbridge's walkway or stairs too (walkDeckLift: no vehicle climbs those)
   const ground = ctl.terrainAt ? ctl.terrainAt(x, z, fromY) : 0;
-  const deck = ctl.deckAt && fromY !== undefined ? ctl.deckAt(x, z, fromY - ground) : 0;
+  const deckAt = mode === 'person' ? ctl.walkDeckAt ?? ctl.deckAt : ctl.deckAt;
+  const deck = deckAt && fromY !== undefined ? deckAt(x, z, fromY - ground) : 0;
   if (deck > 0) return ground + deck;
   if (mode === 'person') {
     const town = ctl.floorHeight(x, z);
     if (ground < town - 0.01) return ground;
-    return town + Math.max(curbLift(ctl, x, z), ground - town);
+    // (up a driveway's ramp where the curb drops: car-parks.ts)
+    const ramp = ctl.rampAt ? ctl.rampAt(x, z) : -1;
+    return town + Math.max(ramp >= 0 ? ramp : curbLift(ctl, x, z), ground - town);
   }
   return ground;
 }
@@ -66,13 +71,16 @@ export function groundTilt(ctl: ThirdPersonControllerManager, x: number, z: numb
 // where everyone stands, the town's floor alone (townHeight), and the land without the channels (landHeight) for the
 // slopes the player can't climb (a channel's banks are climbed out of, whatever their pitch). The vehicles left
 // standing are set on it (they were built at y = 0)
-// `deck(x, z, over)`: the lift of a bridge's deck at (x, z) a body `over` m over the ground reaches (ground.ts deckLift)
+// `deck(x, z, over)`: the lift of a bridge's deck at (x, z) a body `over` m over the ground reaches (ground.ts deckLift);
+// `walkDeck`, the same on foot (walkDeckLift: the footbridges too)
 export function setTerrain(ctl: ThirdPersonControllerManager, ground: GroundQuery | null, floor: ((x: number, z: number) => number) | null = null,
-  land: ((x: number, z: number) => number) | null = null, deck: ((x: number, z: number, over: number) => number) | null = null): void {
+  land: ((x: number, z: number) => number) | null = null, deck: ((x: number, z: number, over: number) => number) | null = null,
+  walkDeck: ((x: number, z: number, over: number) => number) | null = null): void {
   ctl.terrainAt = typeof ground === 'function' ? ground : null;
   ctl.floorAt = typeof floor === 'function' ? floor : null;
   ctl.landAt = typeof land === 'function' ? land : null;
   ctl.deckAt = typeof deck === 'function' ? deck : null;
+  ctl.walkDeckAt = typeof walkDeck === 'function' ? walkDeck : null;
   for (const mode of ['person', 'car', 'cyclist', 'moto'] as const) {
     const e = ctl.entities[mode];
     e.position.y = ctl.getGroundHeight(e.position.x, e.position.z, mode);

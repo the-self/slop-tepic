@@ -19,7 +19,7 @@ import { drapeMeshes, streamMeshes, cutOnCells } from './drape.ts';
 import { cutDeckHoles } from './river-channels.ts';
 import { openness } from './lot-greenery.ts';
 import { cyclewayRuns, CYCLEWAY_HALF } from './medians.ts';
-import { insidePoly, insideRing } from './rings.ts';
+import { insidePoly, insideRing, polyCover } from './rings.ts';
 import { PARK_WALK_Y as PARK_Y, PARK_BED_Y as BED_Y, isRaisedPark, offsetPolygonInward, parkBed } from './park-floor.ts';
 import type { Bounds, CityBlock, PointXZ } from './city-config.ts';
 import type { CyclewayPoint } from './medians.ts';
@@ -437,6 +437,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   // 7. THE PARKS: every park block's curb island paved like a park walk, a granite-coped lawn inset from it under
   //    scattered trees, lampposts on the perimeter; the open country around the city as meadow
   // (the walks at PARK_Y, the lawn at BED_Y: park-floor.ts, which the walker stands on)
+  const PARK_COVER_BAND = 1.5; // m: the depth of the boxes an irregular park's footprint is made of (rings.ts polyCover)
   const prand = (x: number, z: number, k = 0) => {
     const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453;
     return s - Math.floor(s);
@@ -461,7 +462,10 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     setPavingStyle(top.geometry, 0);
     group.add(top);
     pavedRects.push({ minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ });
-    addFootprint((b.minX + b.maxX) * 0.5, (b.minZ + b.maxZ) * 0.5, b.maxX - b.minX, b.maxZ - b.minZ);
+    // (an irregular park by its outline: the bounds of a strip down a boulevard's median, Insurgentes', take in both
+    // roadways, and the traffic would lose the lanes beside it)
+    if (b.rect) addFootprint((b.minX + b.maxX) * 0.5, (b.minZ + b.maxZ) * 0.5, b.maxX - b.minX, b.maxZ - b.minZ);
+    else footprints.push(...polyCover(b.poly, PARK_COVER_BAND));
     const bed = parkBed(b);
     if (!bed) continue;
     group.add(createExtrudedPolygonMesh(bed, 0.2, BED_Y - 0.21, graniteMat, true, false));

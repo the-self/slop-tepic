@@ -87,6 +87,10 @@ class ThirdPersonControllerManager {
   floorAt?: ((x: number, z: number) => number) | null;
   landAt?: ((x: number, z: number) => number) | null;
   deckAt?: ((x: number, z: number, over: number) => number) | null;
+  /** deckAt for the player on foot: the footbridges' walkways & stairs too */
+  walkDeckAt?: ((x: number, z: number, over: number) => number) | null;
+  /** A driveway's ramp over the curb at (x, z) (m over the town's floor, -1 none: world/car-parks.ts rampAt) */
+  rampAt?: ((x: number, z: number) => number) | null;
   _physicsFocus?: { x: number; y: number; z: number };
   _bodyBounds?: { x: number; z: number };
   _wall?: { type: 'building' };
@@ -97,8 +101,11 @@ class ThirdPersonControllerManager {
   rain: number; // the rain falling, 0..1 (main.ts: washing the blood off the car)
   carPhysics?: CarPhysics | null;
   ragdolls?: Ragdolls | null; // (sim/ragdolls.ts, main.ts)
-  // (main.ts: the driver or rider thrown out, impact in m/s (0: stepped off), at (x, z), off which vehicle)
-  onEject?: (impact: number, x: number, z: number, kind: VehicleMode) => void;
+  // (main.ts: the driver or rider thrown out, impact in m/s (0: stepped off), at (x, z), off which vehicle; `bail`: they
+  // jumped out at that speed, boarding.ts leaveVehicle)
+  onEject?: (impact: number, x: number, z: number, kind: VehicleMode, bail?: boolean) => void;
+  // (main.ts: the car's tank run dry)
+  onFuelOut?: () => void;
 
   constructor(scene: THREE.Scene, colliders: PlayerCollider[] = []) {
     this.scene = scene;
@@ -202,6 +209,11 @@ class ThirdPersonControllerManager {
     return Collisions.isSolidAt(this, x, z, height, ground, minSize);
   }
   nearColliders(x: number, z: number, r: number): PlayerCollider[] { return Collisions.nearColliders(this, x, z, r); }
+  // More walls (a gas station's pump islands, sim/gas-stations.ts): the cells nearColliders looks them up in, built again
+  addColliders(list: PlayerCollider[]): void {
+    this.colliders.push(...list);
+    this._colliderCells = null;
+  }
   keepInBounds(pos: { x: number; z: number }): boolean { return Collisions.keepInBounds(this, pos); }
   resolveHorizontalCollision(pos: THREE.Vector3, radius: number, carEntity?: CarEntity | null, entity?: PlayerEntity | null): void {
     Collisions.resolveHorizontalCollision(this, pos, radius, carEntity, entity);
@@ -219,8 +231,13 @@ class ThirdPersonControllerManager {
     return Ground.groundTilt(this, x, z, heading, along, across, out, y);
   }
   setTerrain(ground: GroundQuery | null, floor?: ((x: number, z: number) => number) | null,
-    land?: ((x: number, z: number) => number) | null, deck?: ((x: number, z: number, over: number) => number) | null): void {
-    Ground.setTerrain(this, ground, floor, land, deck);
+    land?: ((x: number, z: number) => number) | null, deck?: ((x: number, z: number, over: number) => number) | null,
+    walkDeck?: ((x: number, z: number, over: number) => number) | null): void {
+    Ground.setTerrain(this, ground, floor, land, deck, walkDeck);
+  }
+  // The driveways where the curb drops in a ramp (world/car-parks.ts): walked & driven up instead of stepped onto
+  setCurbRamps(rampAt: ((x: number, z: number) => number) | null): void {
+    this.rampAt = rampAt;
   }
   keepOffHills(entity: PlayerEntity, prevX: number, prevZ: number): void {
     Ground.keepOffHills(this, entity, prevX, prevZ);
@@ -249,6 +266,7 @@ class ThirdPersonControllerManager {
     return Boarding.enterVehicle(this, mode, taken);
   }
   exitVehicle(): boolean { return Boarding.exitVehicle(this); }
+  leaveVehicle(): boolean { return Boarding.leaveVehicle(this); }
   parkedVehicles(): ParkedVehicle[] { return Boarding.parkedVehicles(this); }
 
   // On foot, and thrown as a ragdoll (controllers/person.ts)
@@ -301,6 +319,8 @@ class ThirdPersonControllerManager {
   recordVelocity(c: CarEntity): void { CarCrashes.recordVelocity(c); }
   impactCar(c: CarEntity, dvx: number, dvz: number): number { return CarCrashes.impactCar(this, c, dvx, dvz); }
   deformCar(c: CarEntity): void { CarCrashes.deformCar(c); }
+  popTyre(i: number): boolean { return CarCrashes.popTyre(this, i); }
+  popTyresOn(cx: number, cz: number, heading: number, halfLen: number, halfW: number): number { return CarCrashes.popTyresOn(this, cx, cz, heading, halfLen, halfW); }
 
   // The smoke puffs (controllers/smoke.ts)
   createSmoke(): void { Smoke.createSmoke(this); }
@@ -319,7 +339,7 @@ class ThirdPersonControllerManager {
   createMotoEntity(): MotoEntity { return BikeModels.createMotoEntity(this); }
 
   // The bicycle and the moto in Jolt (controllers/two-wheelers.ts)
-  ejectRider(m: CyclistEntity | MotoEntity, impact: number): void { TwoWheelers.ejectRider(this, m, impact); }
+  ejectRider(m: CyclistEntity | MotoEntity, impact: number, bail = false): void { TwoWheelers.ejectRider(this, m, impact, bail); }
   stepOff(m: CyclistEntity | MotoEntity): void { TwoWheelers.stepOff(this, m); }
   driveTwoWheeler(m: CyclistEntity | MotoEntity, dt: number, riding: boolean): void {
     TwoWheelers.driveTwoWheeler(this, m, dt, riding);

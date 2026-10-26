@@ -70,7 +70,9 @@ function crash(ts: TrafficState, v: Vehicle): CarCrash | null {
     }
   });
   body.input = car.crash.input;
+  const flats = car.flats; // (its burst tyres stay burst: it drives on from where it comes to rest)
   retireVehicle(car);
+  car.flats = flats;
   car.blink = 0;
   ts.crashed.push(car);
   return car.crash;

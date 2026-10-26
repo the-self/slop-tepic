@@ -50,6 +50,7 @@ const MAP = {
   waterLabel: '#8cc1ee',
   highway: '#b27a35',
   airfield: '#5d6470', // the airport's runway, taxiways & apron
+  parking: '#2b323b', // the car parks: paved ground on the blocks, darker than the streets
   search: '#5fd0ff',
   halo: 'rgba(8, 11, 15, 0.9)'
 };
@@ -61,7 +62,10 @@ const BLIP_STYLES: Partial<Record<string, readonly [colour: string, radius: numb
   narcos: ['#c9a24a', 3.2], truck: ['#c9a24a', 4.4], soldier: ['#8fb35a', 3], army: ['#8fb35a', 4.4], heli: ['#4d8dff', 5.2],
   money: ['#6fe39a', 2.6], health: ['#ff6b6b', 3], armor: ['#7fb0ff', 3], pistol: ['#ffd24a', 2.6], smg: ['#ffa53a', 2.6],
   rifle: ['#d6e04a', 2.8], bazooka: ['#ff7a2a', 3.4],
-  fire: ['#ff5a1f', 5] // (a fire burning, sim/fires.ts)
+  fire: ['#ff5a1f', 5], // (a fire burning, sim/fires.ts)
+  firetruck: ['#ff3b30', 4.4], ambulance: ['#ffffff', 4.2],
+  spikes: ['#ffd24a', 3.6], // (a police spike strip across the road, crime/spikes.ts)
+  fuel: ['#2fbf71', 2.6] // (a gas station, sim/gas-stations.ts) // (the bomberos & the Cruz Roja on their way, sim/emergency.ts)
 };
 const MAP_BASE = '#101511';
 
@@ -205,6 +209,7 @@ interface MapLayers {
   taxiways: TiledLayer;
   blocks: TiledLayer;
   parkBlocks: TiledLayer;
+  parking: TiledLayer;
   mainRoads: TiledLayer;
   highways: Path2D;
 }
@@ -225,6 +230,7 @@ function mapLayers(): MapLayers {
     taxiways: new TiledLayer(1000),
     blocks: new TiledLayer(),
     parkBlocks: new TiledLayer(),
+    parking: new TiledLayer(),
     mainRoads: new TiledLayer(1000),
     highways: new Path2D()
   };
@@ -256,6 +262,7 @@ function mapLayers(): MapLayers {
   for (const [, , pts] of airport.runways) L.runways.line(pts);
   for (const [, , pts] of airport.taxiways) L.taxiways.line(pts);
   for (const b of BLOCKS) (b.park > 0.6 && !b.median ? L.parkBlocks : L.blocks).ring(b.poly);
+  for (const [, , , ring] of GEO.parking) L.parking.ring(ring);
 
   // Street network at low zoom (the wide streets, once the gaps between blocks are under a pixel) and the highways
   for (const r of ROADS) {
@@ -892,6 +899,8 @@ class CityMapSystem {
     }
     ctx.fillStyle = MAP.park;
     L.parkBlocks.each(v, (p) => { ctx.fill(p); });
+    ctx.fillStyle = MAP.parking;
+    L.parking.each(v, (p) => { ctx.fill(p); });
     if (s >= 0.1) {
       ctx.strokeStyle = MAP.parkEdge;
       ctx.lineWidth = px(1);

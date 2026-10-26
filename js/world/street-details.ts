@@ -157,7 +157,7 @@ function createTrafficSignalLensMaterial(isAvenueHead: boolean, clock: THREE.Uni
   return mat;
 }
 
-// keepClear: lots no tree is planted in ({ contains(x, z) }: the halls of the stores you walk into)
+// keepClear: lots no tree is planted in ({ contains(x, z) }: the halls of the stores you walk into, the car parks)
 function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x: number, z: number): boolean }[] = []) {
   const group = new THREE.Group();
   group.name = 'StreetDetails';
@@ -1032,10 +1032,11 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
 
   // Procedural trees (js/world/trees.ts): species skeletons with leaf-spray cards, one instanced mesh per species, variant &
   // level of detail, each tree's level following the camera
-  const treeField = createTreeField(scene, keepClear.length ? treePositions.filter((t) => !keepClear.some((r) => r.contains(t.x, t.z))) : treePositions);
+  const planted = keepClear.length ? treePositions.filter((t) => !keepClear.some((r) => r.contains(t.x, t.z))) : treePositions;
+  const treeField = createTreeField(scene, planted);
   group.add(treeField.group);
   // ...and their trunks stop the player, like the CFE poles (main.ts adds both to the player's colliders)
-  for (const c of treeTrunkColliders(treePositions)) cfeColliders.push(c);
+  for (const c of treeTrunkColliders(planted)) cfeColliders.push(c);
 
   // =========================================================================
   // 8. CLUSTERED STREETLIGHTS & STREET FURNITURE LIGHT POOLS

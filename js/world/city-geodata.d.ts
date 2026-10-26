@@ -63,6 +63,10 @@ export interface RoadGraph {
 /** A railway: [flat points, lifts (dm over the ground per point, or 0), bridge 1 | 0, main line 1 | siding / yard 0]. */
 export type Rail = [pts: FlatPoints, lifts: number[] | 0, bridge: Flag, main: Flag];
 
+/** A footbridge over the roads: [flat points from one stair's foot to the other's, lifts (dm over the ground per point:
+ *  the stairs up, the deck between their tops), walkway width (dm)]. */
+export type Footbridge = [pts: FlatPoints, lifts: number[], width: number];
+
 /** An axis-aligned lot rect [x0, x1, z0, z1] (m; in a frame's local u / v for frontage frames). */
 export type LotRect = [x0: number, x1: number, z0: number, z1: number];
 
@@ -93,6 +97,8 @@ export type WaterwayKind = 'river' | 'stream' | 'canal' | 'drain' | 'ditch';
 /** A river, arroyo, canal or drain, drawn downstream: [kind, half-width of the gap left between the blocks (m, 0
  *  none), name ('' none), flags (1 intermittent, 2 underground: a culvert or tunnel), flat points]. */
 export type Waterway = [kind: WaterwayKind, halfWidth: number, name: string, flags: number, pts: FlatPoints];
+/** A river's whole course where it runs on beyond the detailed box: [name, flat points downstream]. */
+export type FarRiver = [name: string, pts: FlatPoints];
 
 /** A notable OSM building footprint, by name. */
 export interface Landmark {
@@ -218,6 +224,18 @@ export interface Airport {
 /** A building drawn as it is: [house index, storeys (0: as guessed), paint (0xrrggbb, -1: the palette's)]. */
 export type BuildingOverride = [house: number, storeys: number, paint: number];
 
+/** A car park's surface: 0 asphalt, 1 poured concrete, 2 setts (adoquín, empedrado), 3 earth or gravel. */
+export type ParkingSurface = 0 | 1 | 2 | 3;
+
+/** Where a car park opens onto the street: [x, z on the curb (m), the way in, square to the curb (mrad, atan2 of z
+ *  over x), width (m), path from the curb to the lot (flat: OSM's service road, or straight in)]. */
+export type ParkingEntrance = [x: number, z: number, angle: number, width: number, path: FlatPoints];
+
+/** A surface car park (OSM amenity=parking), cut to the property lines: [name ('' none), surface, the direction its
+ *  rows of stalls run (mrad: along (cos θ, -sin θ): its mapped aisles', else its long side), outline (flat ring),
+ *  its entrances]. */
+export type ParkingLot = [name: string, surface: ParkingSurface, theta: number, ring: FlatPoints, entrances: ParkingEntrance[]];
+
 export interface CityGeodata {
   version: number;
   frame: GeoFrame;
@@ -235,9 +253,11 @@ export interface CityGeodata {
   roads: Road[];
   roadGraph: RoadGraph;
   rails: Rail[];
+  footbridges: Footbridge[];
   blocks: Block[];
   parks: Park[];
   waterways: Waterway[];
+  farRivers: FarRiver[];
   centralPark: null;
   piers: never[];
   bridges: Record<string, never>;
@@ -246,6 +266,8 @@ export interface CityGeodata {
   points: Record<string, never>;
   places: Place[];
   pois: Poi[];
+  /** The gas stations (Overture Maps' places): where each stands (m) and its name. */
+  fuel: [x: number, z: number, name: string][];
   teleports: Record<string, Teleport>;
   /** Integers per house in `houses` (8). */
   houseStride: number;
@@ -262,6 +284,7 @@ export interface CityGeodata {
   transit: Transit;
   airport: Airport;
   overrides: BuildingOverride[];
+  parking: ParkingLot[];
 }
 
 export declare const GEO: CityGeodata;

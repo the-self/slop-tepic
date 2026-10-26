@@ -17,9 +17,10 @@ import { drive } from './driving.ts';
 import { groundPitch, knock, locate, pose } from './motion.ts';
 import { collideWithPlayer, knockOn } from './collisions.ts';
 import { crash, crashedStep, crashes, smokeFrom } from './crashes.ts';
+import { mishaps } from './mishaps.ts';
 import { spawnCollisionSparks, updateSparks } from './sparks.ts';
 import { flagAttribute, flagRange, renderBus, renderCar, updateTrafficLights } from './render.ts';
-import { knockPed, playerHits, renderPed, tumblePed } from './peds.ts';
+import { knockPed, playerHitsPed, renderPed, tumblePed } from './peds.ts';
 import { gatherBodies } from './bodies.ts';
 import { contactRider, renderBike, renderWreck } from './two-wheelers.ts';
 import { bailWalk, renderBailed } from './carjacking.ts';
@@ -155,6 +156,7 @@ function update(ts: TrafficState, dt: number, elapsed: number, focusPos: { x: nu
     } else if (v.bus) renderBus(ts, v);
     else renderCar(ts, v);
   }
+  mishaps(ts, dt);
   ts.riderCrowd.end();
   for (const kit of ts.kits) {
     kit.frame.count = kit.wheels.count = kit.drawn;
@@ -262,7 +264,7 @@ function update(ts: TrafficState, dt: number, elapsed: number, focusPos: { x: nu
     else if (p.ride) {
       if (!rideStep(ts, p, dt)) continue; // (got on)
     } else walk(ts, p, dt);
-    const hit = playerHits(ts, p.x, p.z, 0.3);
+    const hit = playerHitsPed(ts, p);
     if (hit) {
       knockPed(ts, p, hit);
       tumblePed(ts, p, 0);
