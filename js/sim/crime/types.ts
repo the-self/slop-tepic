@@ -20,7 +20,8 @@ type AgentKind = 'cop' | 'gang' | 'thief';
 // approach (a thief closing in), flee (with the money), idle (a gang on its corner), chase, leave
 type AgentState = 'approach' | 'flee' | 'idle' | 'chase' | 'leave';
 // A patrol car's side: the police, the cartel's black trucks, or the army's olive ones (four stars on)
-type Faction = 'police' | 'narco' | 'army';
+// (the bomberos' trucks & the Cruz Roja's ambulances share the patrol cars' driving: sim/emergency.ts sends them)
+type Faction = 'police' | 'narco' | 'army' | 'fire' | 'ambulance';
 type CruiserState = 'chase' | 'leave';
 // What lies about to be picked up: money, health, armour, or a gun
 type PickupKind = 'money' | 'health' | 'armor' | StreetGun | 'bazooka';
@@ -130,7 +131,7 @@ interface Agent extends XZ {
   foe: Agent | null;
   foeT: number;
 }
-// A patrol car, a cartel truck or an army truck (m, rad, m/s; police: on the law's side, faction says which): its meshes, its chase (path: the intersections of its route, pathI
+// A patrol car, a cartel truck or an army truck, or a fire truck or ambulance (m, rad, m/s; police: on the law's side, faction says which): its meshes, its chase (path: the intersections of its route, pathI
 // the next; replan s to a new one; goal where the player was then), being stuck (checked every 2 s against check;
 // reverseT s backing out), wreck: s left burning; the hw, hl copies of its half sizes for boxOverlap
 interface Cruiser extends XZ {
@@ -176,6 +177,8 @@ interface Cruiser extends XZ {
   roll: number;
   lift: number; // m a blast threw it up
   vy: number;
+  /** its siren wailing (the audio's; unset: as its faction has it): a fire truck or ambulance going back has it off */
+  siren?: boolean;
   position: THREE.Vector3;
 }
 // A rocket in flight: where (m), its heading (dx, dz) and climb (dh along, dy up per m), t s since it was fired

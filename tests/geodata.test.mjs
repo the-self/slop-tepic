@@ -28,6 +28,9 @@ test('Tepic geodata builds with default paths in a checkout containing spaces an
     const { GEO } = await import(pathToFileURL(path.join(dir, 'js/world/city-geodata.js')).href);
     assert.ok(GEO.roadGraph.links.length > 0);
     assert.ok(GEO.blocks.length > 0);
+    // the footbridges over the roads (stairs down from a deck 6.1 m up) and the rivers on beyond the box
+    assert.ok(GEO.footbridges.some(([, lifts]) => lifts[0] === 0 && Math.max(...lifts) === 61));
+    assert.ok(GEO.farRivers.some(([name]) => /Mololoa/.test(name)));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

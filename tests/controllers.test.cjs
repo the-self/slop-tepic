@@ -66,6 +66,7 @@ function keyboardHarness(nyc = {}) {
     'js/world/city-config.ts': config,
     'js/render/tsl-materials.ts': {},
     'js/actors/actor-models.ts': {},
+    'js/actors/vehicles/car-files.ts': { loadCarFiles() {}, onCarFile() {}, carFile() {} },
     'js/sim/pedestrians.ts': {},
     'js/actors/vehicle-lights.ts': {},
     'js/player/drivetrain.ts': drivetrain,
@@ -73,7 +74,9 @@ function keyboardHarness(nyc = {}) {
     'js/models/cars/index.ts': carRegistry,
     'js/models/motos/index.ts': realModule('../js/models/motos/index.ts'),
     'js/player/car-blood.ts': realModule('../js/player/car-blood.ts'),
-    'js/player/car-physics.ts': realModule('../js/player/car-physics.ts'),
+    'js/player/car-physics.ts': loadModule(readFileSync(join(__dirname, '../js/player/car-physics.ts'), 'utf8'), {
+      imports: { './car-physics/aids.ts': realModule('../js/player/car-physics/aids.ts') }
+    }),
     'js/sim/ragdolls.ts': realModule('../js/sim/ragdolls.ts')
   }, { window, document });
   // Exercise the production event handlers without constructing the scene's 3D models.

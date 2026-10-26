@@ -119,7 +119,7 @@ function accelerate(ts: TrafficState, v: DrivenVehicle, dt: number): void {
       const o = c && !v.claimed && mergingAhead(ts, v, f, j);
       if (o) worst = Math.min(worst, Math.max(-v.driver.b, brake(ts, v, o.s - o.v.half - vs - v.half, o.v.speed)));
       let vt = c ? bendSpeed(ts, v, c) : Infinity;
-      const cautious = e.to.signal ? v.isPolice && phaseOf(ts, e) !== 'green' : e.axisIndex !== 0;
+      const cautious = e.to.signal ? (v.isPolice && phaseOf(ts, e) !== 'green') || e.axisIndex > 1 : e.axisIndex !== 0;
       if (cautious) vt = Math.min(vt, 5);
       cap = Math.sqrt(vt * vt + 5 * Math.max(0, d));
     }
@@ -154,8 +154,11 @@ function accelerate(ts: TrafficState, v: DrivenVehicle, dt: number): void {
     }
   }
   worst = Math.min(worst, curbBrake(ts, v));
+  if (v.sirenNear) cap = Math.min(cap, 3); // (pulled over for a siren: crawling)
   const acc = Math.min(freeAcc(ts, v) + worst, (cap - v.speed) * 2);
   v.acc = clamp(acc, -9 * ts.roadGrip, v.driver.a);
+  // a driver looking at their phone (mishaps.ts) drives on as on a free road
+  if (v.distracted > 0) v.acc = Math.max(v.acc, Math.min(freeAcc(ts, v), v.driver.a));
 }
 
 // Steering out of the way of the player coming straight at it (on the wrong side of the road, or across it), once
@@ -186,6 +189,23 @@ function dodge(v: DrivenVehicle): void {
   v.swerve = goRight ? toRight : toLeft;
 }
 
+// A siren close behind (a fire truck or ambulance on its way, sim/emergency.ts) going v's way: v pulls over to the
+// right (to the curb from the curb lane, else over in its lane) and crawls till it has gone by (accelerate)
+function giveWay(ts: TrafficState, v: DrivenVehicle): void {
+  v.sirenNear = false;
+  if (v.conn || v.wrecked) return;
+  for (const s of ts.sirens) {
+    const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
+    const dx = v.x - s.x, dz = v.z - s.z;
+    const along = dx * fx + dz * fz;
+    if (along < 0 || along > 45 || Math.abs(dx * fz - dz * fx) > 6 || v.tx * fx + v.tz * fz < 0.5) continue;
+    v.sirenNear = true;
+    const e = v.edge;
+    v.pullOver = v.lane === e.lanes.length - 1 ? clamp(e.half - e.lanes[v.lane] - v.halfWidth - 0.35, 0, 2.4) : 0.7;
+    return;
+  }
+}
+
 function drive(ts: TrafficState, v: DrivenVehicle, dt: number): void {
   v.laneTimer -= dt;
   if (v.laneTimer <= 0) {
@@ -194,12 +214,14 @@ function drive(ts: TrafficState, v: DrivenVehicle, dt: number): void {
   }
   dodge(v);
   curbside(ts, v, dt);
+  if (ts.sirens.length) giveWay(ts, v);
+  else v.sirenNear = false;
   accelerate(ts, v, dt);
   const speed = v.speed;
   v.speed = Math.max(0, v.speed + v.acc * dt);
   let ds = v.speed * dt;
-  if (ds > v.gap - 0.3) {
-    // never into the vehicle ahead
+  if (ds > v.gap - 0.3 && !(v.distracted > 0)) {
+    // never into the vehicle ahead (unless not looking: mishaps.ts)
     ds = Math.max(0, v.gap - 0.3);
     v.speed = Math.min(v.speed, v.leaderSpeed);
   }

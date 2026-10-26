@@ -13,6 +13,7 @@
 // js/player/controllers/ (input, collisions, ground, placement, boarding, the car's model, looks, drive & crashes, the
 // smoke, the two-wheelers, their models, the helicopter, the walker, and the frame that runs them in order).
 import * as THREE from 'three/webgpu';
+import { loadCarFiles, onCarFile } from '../actors/vehicles/car-files.ts';
 import * as Input from './controllers/input.ts';
 import * as Collisions from './controllers/collisions.ts';
 import * as Ground from './controllers/ground.ts';
@@ -86,19 +87,23 @@ class ThirdPersonControllerManager {
   floorAt?: ((x: number, z: number) => number) | null;
   landAt?: ((x: number, z: number) => number) | null;
   deckAt?: ((x: number, z: number, over: number) => number) | null;
+  /** deckAt for the player on foot: the footbridges' walkways & stairs too */
+  walkDeckAt?: ((x: number, z: number, over: number) => number) | null;
   /** A driveway's ramp over the curb at (x, z) (m over the town's floor, -1 none: world/car-parks.ts rampAt) */
   rampAt?: ((x: number, z: number) => number) | null;
   _physicsFocus?: { x: number; y: number; z: number };
   _bodyBounds?: { x: number; z: number };
   _wall?: { type: 'building' };
   _bloodMats?: Map<string, THREE.Material>; // the car's material for each look (setCarLook), keyed body_paint
+  _modelMats?: Map<string, THREE.Material>; // a car model's 3D model's materials (showCarFile), keyed id & id_wheel
   _twoWheelers?: (CyclistEntity | MotoEntity)[];
   _bodied?: (CarEntity | CyclistEntity | MotoEntity)[];
   rain: number; // the rain falling, 0..1 (main.ts: washing the blood off the car)
   carPhysics?: CarPhysics | null;
   ragdolls?: Ragdolls | null; // (sim/ragdolls.ts, main.ts)
-  // (main.ts: the driver or rider thrown out, impact in m/s (0: stepped off), at (x, z), off which vehicle)
-  onEject?: (impact: number, x: number, z: number, kind: VehicleMode) => void;
+  // (main.ts: the driver or rider thrown out, impact in m/s (0: stepped off), at (x, z), off which vehicle; `bail`: they
+  // jumped out at that speed, boarding.ts leaveVehicle)
+  onEject?: (impact: number, x: number, z: number, kind: VehicleMode, bail?: boolean) => void;
 
   constructor(scene: THREE.Scene, colliders: PlayerCollider[] = []) {
     this.scene = scene;
@@ -166,6 +171,9 @@ class ThirdPersonControllerManager {
     });
 
     this.setCarLook(); // (the taxi, at its model's size)
+    // (a car model's 3D model loading after the car took its look: swapped in)
+    loadCarFiles();
+    onCarFile((id) => { CarLooks.refreshCarFile(this, id); });
     this.createSmoke();
     this.syncOccupants();
     this.bindKeyboard();
@@ -216,8 +224,9 @@ class ThirdPersonControllerManager {
     return Ground.groundTilt(this, x, z, heading, along, across, out, y);
   }
   setTerrain(ground: GroundQuery | null, floor?: ((x: number, z: number) => number) | null,
-    land?: ((x: number, z: number) => number) | null, deck?: ((x: number, z: number, over: number) => number) | null): void {
-    Ground.setTerrain(this, ground, floor, land, deck);
+    land?: ((x: number, z: number) => number) | null, deck?: ((x: number, z: number, over: number) => number) | null,
+    walkDeck?: ((x: number, z: number, over: number) => number) | null): void {
+    Ground.setTerrain(this, ground, floor, land, deck, walkDeck);
   }
   // The driveways where the curb drops in a ramp (world/car-parks.ts): walked & driven up instead of stepped onto
   setCurbRamps(rampAt: ((x: number, z: number) => number) | null): void {
@@ -250,6 +259,7 @@ class ThirdPersonControllerManager {
     return Boarding.enterVehicle(this, mode, taken);
   }
   exitVehicle(): boolean { return Boarding.exitVehicle(this); }
+  leaveVehicle(): boolean { return Boarding.leaveVehicle(this); }
   parkedVehicles(): ParkedVehicle[] { return Boarding.parkedVehicles(this); }
 
   // On foot, and thrown as a ragdoll (controllers/person.ts)
@@ -320,7 +330,7 @@ class ThirdPersonControllerManager {
   createMotoEntity(): MotoEntity { return BikeModels.createMotoEntity(this); }
 
   // The bicycle and the moto in Jolt (controllers/two-wheelers.ts)
-  ejectRider(m: CyclistEntity | MotoEntity, impact: number): void { TwoWheelers.ejectRider(this, m, impact); }
+  ejectRider(m: CyclistEntity | MotoEntity, impact: number, bail = false): void { TwoWheelers.ejectRider(this, m, impact, bail); }
   stepOff(m: CyclistEntity | MotoEntity): void { TwoWheelers.stepOff(this, m); }
   driveTwoWheeler(m: CyclistEntity | MotoEntity, dt: number, riding: boolean): void {
     TwoWheelers.driveTwoWheeler(this, m, dt, riding);

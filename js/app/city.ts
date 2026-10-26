@@ -14,6 +14,7 @@ import { createTrafficSystem, createHighwayTraffic } from '../sim/traffic.ts';
 import { buildRoadPaint } from '../world/road-paint.ts';
 import { buildPavements } from '../world/pavements.ts';
 import { buildBridges } from '../world/bridges.ts';
+import { buildFootbridges } from '../world/footbridges.ts';
 import { buildAirport } from '../world/airport.ts';
 import { buildLandmarkModels } from '../world/landmark-models.ts';
 import { buildStores } from '../world/store-interiors.ts';
@@ -105,6 +106,8 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   const bridges = buildBridges(scene);
   // (one by one: spread into push(), tens of thousands of them overflow the call stack)
   for (const c of bridges.colliders) colliders.push(c);
+  // The puentes peatonales over the main roads: their railings, stairs & columns stop the player and the vehicles
+  for (const c of buildFootbridges(scene).colliders) colliders.push(c);
   // The CFE's concrete poles stop the player (not the traffic: they stand on the sidewalks' outer edge)
   for (const c of streetDetails.colliders) colliders.push(c);
   mark('bridges');

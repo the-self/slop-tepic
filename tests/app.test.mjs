@@ -19,7 +19,7 @@ function world({ mode = 'person', own = null, taken = null, tills = [], inside =
     activeMode: mode,
     entities: { person: { position: at(0, 0), ragdoll: null }, helicopter: { position: { x: 0, y: 10, z: 0 } } },
     ownVehicleNear: () => own,
-    exitVehicle: () => { calls.push(['exit']); return true; },
+    leaveVehicle: () => { calls.push(['exit']); return true; },
     leaveCarBehind: () => calls.push(['leaveCarBehind']),
     enterVehicle: (...args) => calls.push(['enter', ...args]),
     takeLeftCar: (left) => calls.push(['takeLeftCar', left]),

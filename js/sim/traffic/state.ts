@@ -16,10 +16,10 @@ import type { Transit } from '../transit.ts';
 import { GEO } from '../../world/city-geodata.js';
 import type { Ragdolls } from '../ragdolls.ts';
 import type { CarPhysics } from '../../player/car-physics.ts';
-import { MASS, NUM_CARS, NUM_PEDS } from './constants.ts';
+import { MASS, MISHAP_FIRST, NUM_CARS, NUM_PEDS } from './constants.ts';
 import type {
   Car, Bus, Bike, Moto, Vehicle, VehicleKind, Ped, PedTrack, Spark, TwoWheelKit, TrafficNode, TrafficEdge, TrafficNetwork,
-  LaneEntry, TrafficPlayer, ParkedVehicle, CrashedCar, TrafficCollision, MayhemListener, KnockListener, SmokeEmitter,
+  LaneEntry, TrafficPlayer, ParkedVehicle, SirenSource, CrashedCar, TrafficCollision, MayhemListener, KnockListener, SmokeEmitter,
   SolidQuery, HillQuery, SurfaceQuery, TrafficRayHit, BodyBox, RoadSpot
 } from './types.ts';
 import { createCars, createBuses, createBikes, createMotos } from './fleet.ts';
@@ -125,6 +125,8 @@ interface TrafficState extends VehicleMeshes {
   /** what stands in the road that isn't the traffic's (main.ts: the player's vehicles left there, the patrol cars),
    *  and the cars thrown about in a crash (crashedStep): all of it steered round, as `parked` */
   parkedOutside: ParkedVehicle[];
+  /** the fire trucks & ambulances on their way (hooks.ts setSirens): the traffic pulls over for them */
+  sirens: readonly SirenSource[];
   crashedObstacles: ParkedVehicle[];
   parked: ParkedVehicle[];
   /** the weather on the street (hooks.ts setRoadWater): the tyres' grip, how fast drivers go and how far back they
@@ -163,6 +165,8 @@ interface TrafficState extends VehicleMeshes {
   hour: number;
   weighedHour: number;
   nearCarWeights: number[];
+  /** ...the same, the avenues left out: where cyclists are placed (spawning.ts) */
+  nearBikeWeights: number[];
   nearPedWeights: number[];
   /** how many cars and people the hour has around the focus */
   carTarget: number;
@@ -172,6 +176,9 @@ interface TrafficState extends VehicleMeshes {
   warnedNowhere: boolean;
   /** the cars in Jolt (crashes.ts) */
   crashed: CrashedCar[];
+  /** the next crash of the traffic's own (mishaps.ts): clock s it is looked for at, the driver not looking and the car
+   *  it is about to run into */
+  mishap: { next: number; v: Car | null; o: Car | null };
 
   // ---- the people (sidewalks.ts, walking.ts) ----
   /** where spawnPed places someone: a track's fields, copied onto them */
@@ -306,7 +313,14 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
 
   scene.add(group);
 
-  const pedRoutes = createPedestrianRoutes<TrafficNode, TrafficEdge, CityBlock>(network, blockAt);
+  // (and over the footbridges, from the intersections near their feet)
+  const pedRoutes = createPedestrianRoutes<TrafficNode, TrafficEdge, CityBlock>(network, blockAt, {
+    nodes: network.nodes,
+    bridges: GEO.footbridges.map(([flat, lifts]) => ({
+      pts: Array.from({ length: flat.length / 2 }, (_, i) => ({ x: flat[i * 2], z: flat[i * 2 + 1] })),
+      lifts: lifts.map((v) => v / 10)
+    }))
+  });
   // How many of each kind of vehicle there are (population.ts allowance)
   const fleetSize: Record<VehicleKind, number> = { car: 0, bike: 0, moto: 0, bus: 0 };
   for (const v of vehicles) fleetSize[kindOf(v)]++;
@@ -363,6 +377,7 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
       mode: 'car', heading: 0, speed: 0, knocks: false, jolt: false
     },
     parkedOutside: [],
+    sirens: [],
     crashedObstacles: [],
     parked: [],
     roadGrip: 1,
@@ -389,11 +404,13 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     hour: 14,
     weighedHour: NaN,
     nearCarWeights: [],
+    nearBikeWeights: [],
     nearPedWeights: [],
     carTarget: NUM_CARS,
     pedTarget: NUM_PEDS,
     warnedNowhere: false,
     crashed: [],
+    mishap: { next: MISHAP_FIRST, v: null, o: null },
     track: { ax: 0, az: 0, ux: 0, uz: 1, len: 1, node: null, side: 0, line: 0, route: null },
     curbNodes: [],
     walkedNodes: [],

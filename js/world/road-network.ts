@@ -3,7 +3,8 @@ import {
   ALL_STREETS,
   ISLAND_BOUNDS,
   getIslandBoundsAtZ,
-  BLOCKS
+  BLOCKS,
+  blockAt
 } from './city-config.ts';
 import type { CityBlock, GridStreet } from './city-config.ts';
 import { GEO } from './city-geodata.js';
@@ -51,6 +52,9 @@ export interface RoadNode {
   general?: boolean;
   /** A bend of a centreline street: no corner to stop at */
   shape?: boolean;
+  /** A stop along a street for a signal with no junction at it: a bend made a stop (a pedestrian crossing with lights,
+   *  or a junction with a street the traffic doesn't drive, see 8.) */
+  midblock?: boolean;
   /** On a bridge or ramp: its lift over the ground (m) */
   lift?: number;
   /** Grid and centreline roads meet here */
@@ -256,6 +260,8 @@ interface LinkPoint {
   x: number;
   z: number;
   lift?: number;
+  /** A station whatever the bends: a junction's approach ends here (4b) */
+  station?: boolean;
 }
 
 /** A centreline street link not on the grid (4b) */
@@ -285,6 +291,8 @@ interface StreetRun extends RunLanes {
   profile: LinkPoint[] | null;
   name: string;
   divided?: boolean;
+  /** From or to a junction that stands off the link's own end (see 4b): its lanes aren't tested for obstacles */
+  approach?: boolean;
 }
 
 /** An edge's end at a node, while its arms are being worked out */
@@ -307,6 +315,7 @@ const CELL = 32;
 const Z_MIN = Math.floor(ISLAND_BOUNDS.minZ) - 20; // the detailed island, ~129th St to the Battery
 const Z_MAX = Math.ceil(ISLAND_BOUNDS.maxZ) + 20;
 const LANE_CLEAR = 1.2; // half width each lane keeps free of obstacles
+const CHORD_STRAY = 0.5; // m a centreline street's edge (a chord between stations) may stray from the street it follows
 const CROSSWALK = 2.5; // depth between an intersection box and its stop lines
 const SHORE_MARGIN = 6;
 
@@ -388,8 +397,12 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     }
     return false;
   }
+  // (a curb where an island's rectangles and its own outline agree: the rectangles standing in for an irregular island
+  // reach past its curb along a diagonal street, the outline, laid out on the builder's raster, wanders a little past
+  // it here and there; a lane is on the curb where both say so)
+  const curbAt = (x: number, z: number) => query(x - 0.3, x + 0.3, z - 0.3, z + 0.3, (r) => r.curb) && !!blockAt(x, z);
   const blockedOnStreet = (x: number, z: number, clear: number) => !onLand(x - clear, x + clear, z - clear, z + clear) ||
-    query(x - 0.3, x + 0.3, z - 0.3, z + 0.3, (r) => r.curb) ||
+    curbAt(x, z) ||
     nearMedian(x, z, clear) ||
     query(x - clear, x + clear, z - clear, z + clear, (r) => !r.curb && (r.maxX - r.minX < 50 || r.maxZ - r.minZ < 50) && !medianBox(r));
 
@@ -702,11 +715,30 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
       return { half, axis, fwd: each, back: each };
     }
     const DEG = Math.PI / 180;
+    // A station s m along the link's own line `line` (from its own first point, not the junction standing off it), put
+    // into its points `pts` (the junctions at either end, the line's inner points and the stations so far) in order:
+    // before the line's next point, after any station already put before it
+    const insertAt = (pts: LinkPoint[], line: LinkPoint[], s: number) => {
+      let walked = 0;
+      for (let k = 0; k + 1 < line.length; k++) {
+        const a = line[k], b = line[k + 1];
+        const L = Math.hypot(b.x - a.x, b.z - a.z);
+        if (walked + L >= s && L > 0) {
+          const f = (s - walked) / L;
+          const at = k + 2 < line.length ? pts.indexOf(b) : pts.length - 1; // (the line's last point is the junction's)
+          pts.splice(at, 0, { x: a.x + (b.x - a.x) * f, z: a.z + (b.z - a.z) * f, lift: (a.lift ?? 0) + ((b.lift ?? 0) - (a.lift ?? 0)) * f, station: true });
+          return;
+        }
+        walked += L;
+      }
+    };
     const farther = (a: number, b: number) => (Math.abs(b) > Math.abs(a) ? b : a); // (the lift farther from grade)
     for (const l of links) {
       const A = junction(find(l.a));
       const B = junction(find(l.b));
-      if (A === B) continue;
+      // (a street looping back to its own junction, a circuit round a block of a fraccionamiento: out and back from a
+      // station half way round it; a short one, the junction's own connector, goes)
+      if (A === B && l.len < 40) continue;
       // a junction on a bridge or ramp stands as high as the highest of the links' ends meeting there (down in an
       // underpass's cut, as low as the lowest)
       A.lift = farther(A.lift || 0, l.pts[0].lift || 0);
@@ -714,13 +746,44 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
       const pts: LinkPoint[] = [{ x: A.x, z: A.z, lift: l.pts[0].lift || 0 }, ...l.pts.slice(1, -1), { x: B.x, z: B.z, lift: l.pts[l.pts.length - 1].lift || 0 }];
       // a raised (or sunk) link's lift along each run: the link's points from one station to the next
       const raised = pts.some((p) => (p.lift ?? 0) !== 0);
-      // stations along it: the ends and every bend over 12° at least 15 m from the last station and from the far end
-      // (on a bridge or down an underpass every bend over 3° at least 8 m on: the traffic drives straight from station
-      // to station, and the chord of a curving deck runs off it, into the air)
+      // A junction made of several a few metres apart stands off its links' own ends (in a divided road's median, 10 m
+      // and more from either roadway): the chord from it would lean across the roadway all the way to the next
+      // station. Each such end gets a station of its own on the link, a junction's approach from there in, and the
+      // rest of the link keeps to its road
+      const ownA = l.pts[0], ownB = l.pts[l.pts.length - 1];
+      const offA = Math.hypot(A.x - ownA.x, A.z - ownA.z), offB = Math.hypot(B.x - ownB.x, B.z - ownB.z);
+      let approachA = false, approachB = false;
+      if (!raised) {
+        const reach = (off: number) => Math.max(15, 2 * off);
+        const sA = offA > CHORD_STRAY ? reach(offA) : 0, sB = offB > CHORD_STRAY ? reach(offB) : 0;
+        if (sA + sB + 15 < l.len) {
+          if (sA) insertAt(pts, l.pts, sA);
+          if (sB) insertAt(pts, l.pts, l.len - sB);
+          approachA = sA > 0;
+          approachB = sB > 0;
+        }
+      }
+      if (A === B) insertAt(pts, l.pts, l.len / 2); // (the loop's half-way station)
+      // stations along it: the ends, the approaches' ends above, and every bend over 12° (or point where the road
+      // strays CHORD_STRAY off the chord) at least 15 m from the last station and from the far end (on a bridge or down
+      // an underpass every bend over 3° at least 8 m on: the traffic drives straight from station to station, and the
+      // chord of a curving deck runs off it, into the air). A lane any obstacle stands in is dropped for its whole
+      // run, so a chord that wanders off its road loses lanes, paint and all, for hundreds of metres
       const [minTurn, minRun] = raised ? [3 * DEG, 8] : [12 * DEG, 15];
       const stations = [A];
       let last = pts[0];
+      let lastK = 0;
       let rest = l.len;
+      // How far the road strays from a chord from the last station on to p2, at the points between: a long, gentle
+      // curve (each bend under minTurn) laid as one chord would leave its lanes metres off the road mid-way, on the
+      // curbs (the Libramiento's 700 m sweeps)
+      const strays = (k: number) => {
+        const p2 = pts[k + 1];
+        const ux = p2.x - last.x, uz = p2.z - last.z;
+        const L = Math.hypot(ux, uz) || 1;
+        for (let m = lastK + 1; m <= k; m++) if (Math.abs((pts[m].x - last.x) * uz - (pts[m].z - last.z) * ux) / L > CHORD_STRAY) return true;
+        return false;
+      };
       for (let k = 1; k < pts.length - 1; k++) {
         const p1 = pts[k];
         const p2 = pts[k + 1];
@@ -728,11 +791,12 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
         rest -= Math.hypot(p1.x - pts[k - 1].x, p1.z - pts[k - 1].z);
         let turn = Math.abs(Math.atan2(p2.z - p1.z, p2.x - p1.x) - Math.atan2(p1.z - last.z, p1.x - last.x));
         if (turn > Math.PI) turn = 2 * Math.PI - turn;
-        if (turn < minTurn || d0 < minRun || rest < minRun) continue;
+        if (!p1.station && ((turn < minTurn && !strays(k)) || d0 < minRun || rest < minRun)) continue;
         const s: RoadNode = { x: p1.x, z: p1.z, hx: 0, hz: 0, signal: false, in: [], out: [], general: true, shape: true, lift: p1.lift || 0, arms: [], id: -1, sideCount: 0, groupCount: 0 };
         nodes.push(s);
         stations.push(s);
         last = p1;
+        lastK = k;
       }
       stations.push(B);
       const lanes = lanesOf(l);
@@ -747,7 +811,8 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
             if (m > at && pts[m].x === stations[k + 1].x && pts[m].z === stations[k + 1].z) break;
           }
         }
-        runs.push({ from: stations[k], to: stations[k + 1], ...lanes, profile, name: l.name || '' });
+        const approach = (k === 0 && approachA) || (k === stations.length - 2 && approachB);
+        runs.push({ from: stations[k], to: stations[k + 1], ...lanes, profile, name: l.name || '', approach });
       }
     }
     console.info(`[roads] centreline streets: ${links.length} links not on the grid, ${runs.length} straight runs`);
@@ -807,14 +872,15 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     }
     return true;
   };
-  function addEdgeGeneral(from: RoadNode, to: RoadNode, axis: RoadAxis, lanes: number[], half: number, divided: boolean | undefined, profile: LinkPoint[] | null = null, name = '') {
+  function addEdgeGeneral(from: RoadNode, to: RoadNode, axis: RoadAxis, lanes: number[], half: number, divided: boolean | undefined, profile: LinkPoint[] | null = null, name = '', approach = false) {
     const x0 = from.x;
     const z0 = from.z;
     const span = Math.hypot(to.x - x0, to.z - z0);
     if (span < 8) return;
     const dx = (to.x - x0) / span;
     const dz = (to.z - z0) / span;
-    const open = lanes.filter((o) => laneOpen(x0, z0, dx, dz, span, o));
+    // (a junction's approach leans across its roadway, to the junction's middle: the intersection's own ground)
+    const open = approach ? lanes : lanes.filter((o) => laneOpen(x0, z0, dx, dz, span, o));
     if (!open.length) return;
     // on a bridge or ramp: [distance from `from` along the edge, lift (m over the ground)], ascending (see edgeLift)
     // (every point of a raised link's profile has its lift)
@@ -851,8 +917,8 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     if (r.half >= 7.25) r.axis = o.axis = 'ave'; // as wide as a major road (see lanesOf)
   }
   for (const r of genRuns) {
-    if (r.fwd.length) addEdgeGeneral(r.from, r.to, r.axis, r.fwd, r.half, r.divided, r.profile, r.name);
-    if (r.back.length) addEdgeGeneral(r.to, r.from, r.axis, r.back, r.half, r.divided, r.profile, r.name);
+    if (r.fwd.length) addEdgeGeneral(r.from, r.to, r.axis, r.fwd, r.half, r.divided, r.profile, r.name, r.approach);
+    if (r.back.length) addEdgeGeneral(r.to, r.from, r.axis, r.back, r.half, r.divided, r.profile, r.name, r.approach);
   }
   // Two edges from one node to the same next one (a service road whose ends were drawn onto its main road's junctions)
   // would drive through each other: keep the grid's, else the one with the most lanes
@@ -885,7 +951,8 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
         }
       }
     });
-    // metres of e along f whose lanes come within 3 m of f's (e's right is f's left)
+    // metres of e along f whose lanes overlap f's, their centres within 2 m (e's right is f's left; roadways side by
+    // side, their lanes a lane's width apart, are a divided road drawn as it is, and keep their lanes)
     const onTop = (e: RoadEdge, f: RoadEdge) => {
       let hits = 0;
       for (let t = 0; t <= e.span; t += 2) {
@@ -894,11 +961,25 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
         const u = px * f.dx + pz * f.dz;
         if (u < 0 || u > f.span) continue;
         const side = px * f.rx + pz * f.rz;
-        if (e.lanes.some((a) => f.lanes.some((b) => Math.abs(side - a - b) < 3))) hits += 2;
+        if (e.lanes.some((a) => f.lanes.some((b) => Math.abs(side - a - b) < 2))) hits += 2;
       }
       return hits;
     };
-    const partner = new Map<RoadEdge, number>(); // edge -> half width of the widest roadway running the other way on top of it
+    // how far f runs to e's right (m, < 0 to its left), on average where it runs alongside it
+    const beside = (e: RoadEdge, f: RoadEdge) => {
+      let sum = 0, n = 0;
+      for (let t = 0; t <= f.span; t += 2) {
+        const px = f.x0 + f.dx * t - e.x0;
+        const pz = f.z0 + f.dz * t - e.z0;
+        const u = px * e.dx + pz * e.dz;
+        if (u < 0 || u > e.span) continue;
+        sum += px * e.rx + pz * e.rz;
+        n++;
+      }
+      return n ? sum / n : 0;
+    };
+    // edge -> half width of the widest roadway running the other way on top of it, and how far to its right that runs
+    const partner = new Map<RoadEdge, { half: number; side: number }>();
     const tested = new Set<number>();
     for (const list of cells.values()) {
       for (let i = 0; i < list.length; i++) {
@@ -910,13 +991,20 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
           if (tested.has(key)) continue;
           tested.add(key);
           if (Math.max(onTop(e, f), onTop(f, e)) < 6) continue;
-          partner.set(e, Math.max(partner.get(e) || 0, f.half));
-          partner.set(f, Math.max(partner.get(f) || 0, e.half));
+          for (const [a, b] of [[e, f], [f, e]]) {
+            const known = partner.get(a);
+            if (!known || b.half > known.half) partner.set(a, { half: b.half, side: beside(a, b) });
+          }
         }
       }
     }
-    for (const [e, other] of partner) {
-      e.lanes = e.cand.map((o) => o - e.cand[0] + 1.8).filter((o) => laneOpen(e.x0, e.z0, e.dx, e.dz, e.span, o));
+    // Each keeps to the right of the line half way between them, as on a two-way street: from 1.8 m right of its own
+    // centreline where they run on top of each other, less where the other runs a little to its left already (a
+    // divided road drawn as two roadways side by side, overlapping: pushed out the whole 1.8 m, its lanes would run off
+    // its outer curb, onto the grass beyond, Paseo de la Loma's round the park)
+    for (const [e, { half: other, side }] of partner) {
+      const mid = Math.min(0, side / 2);
+      e.lanes = e.cand.map((o) => o - e.cand[0] + 1.8 + mid).filter((o) => laneOpen(e.x0, e.z0, e.dx, e.dz, e.span, o));
       e.half += other;
       if (e.half >= 7.25) e.axis = 'ave'; // as wide as a major road (see lanesOf)
       e.divided = true;
@@ -1102,10 +1190,14 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
   // Snapshot their geometry before routing moves stop lines, drops edges and renumbers the surviving junctions.
   // (with their lifts: the paint climbs the ramps and crosses the bridges with the traffic, road-paint.ts strip)
   const paintNodes = new Map(nodes.map((n, id): [RoadNode, PaintNode] => [n, { id, x: n.x, z: n.z, shape: n.shape }]));
-  const paintEdges = edges.map(({ from, to, axis, x0, z0, sx, sz, dx, dz, rx, rz, span, len, half, lanes, lift }): PaintEdge => {
+  const paintOf = new Map<RoadEdge, PaintEdge>(); // (to move a stop line in the paint as well, 9.)
+  const paintEdges = edges.map((e): PaintEdge => {
+    const { from, to, axis, x0, z0, sx, sz, dx, dz, rx, rz, span, len, half, lanes, lift } = e;
     const pFrom = paintNodes.get(from), pTo = paintNodes.get(to);
     if (!pFrom || !pTo) throw new Error('[roads] an edge off the node list'); // (every node is in it)
-    return { from: pFrom, to: pTo, axis, x0, z0, sx, sz, dx, dz, rx, rz, span, len, half, lanes, lift };
+    const paint = { from: pFrom, to: pTo, axis, x0, z0, sx, sz, dx, dz, rx, rz, span, len, half, lanes, lift };
+    paintOf.set(e, paint);
+    return paint;
   });
 
   // 6. Movements at each intersection (no U-turns) and the lane each lane leads to, along obstacle-free curves:
@@ -1417,18 +1509,37 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
   nodes.forEach((n, i) => (n.id = i));
 
   // 8. Signalized intersections: the real traffic signals (OpenStreetMap highway=traffic_signals) mark their junction:
-  // the nearest real junction within 22 m. Only junctions of two roads are signalised: the phases know an avenue and a street
+  // the nearest real junction within 26 m. The phases know an avenue and a street: the main road (group 0) runs on the
+  // avenue's, and at a junction of more than two roads (a bridge landing, side streets offset across an avenue) the
+  // others share the street's, the third and on giving way to the second (junctions.ts)
+  // A signal with no junction near it (a pedestrian crossing's lights, or a junction with a street the traffic doesn't
+  // drive, left a bend: its cross street dropped as a dead end) stops the traffic at the nearest bend within 15 m of its
+  // own street (an edge there passing within its width of the signal), made a stop (midblock), or at a node of two
+  // roads joining right there (within 4 m)
   const signalPts = GEO.roadGraph.signals;
-  const signalled = new Set<RoadNode>();
+  const signalled = new Map<RoadNode, number>(); // node -> how far its nearest signal is (m)
+  const midblock: RoadNode[] = [];
   for (let i = 0; i < signalPts.length; i += 2) {
     const sx = signalPts[i], sz = signalPts[i + 1];
-    let best: RoadNode | null = null, bd = 22;
+    let best: RoadNode | null = null, bd = 26, bend: RoadNode | null = null, bendD = 15;
     for (const n of nodes) {
-      if (n.shape || n.signal) continue;
+      if (n.signal) continue;
       const d = Math.hypot(n.x - sx, n.z - sz);
-      if (d < bd) { bd = d; best = n; }
+      if (n.shape) {
+        if (d < bendD && !n.lift && [...n.in, ...n.out].some((e) => {
+          const t = Math.max(0, Math.min(e.span, (sx - e.x0) * e.dx + (sz - e.z0) * e.dz));
+          return Math.hypot(e.x0 + e.dx * t - sx, e.z0 + e.dz * t - sz) < e.half + 1.5;
+        })) { bendD = d; bend = n; }
+      } else if (d < bd) { bd = d; best = n; }
     }
-    if (best) signalled.add(best);
+    if (!best && bend) {
+      bend.shape = false;
+      bend.midblock = true;
+      midblock.push(bend);
+      best = bend;
+      bd = 0;
+    }
+    if (best) signalled.set(best, Math.min(bd, signalled.get(best) ?? Infinity));
   }
 
   // 9. Sides & right of way at each node, for traffic.ts. Its arms are its sides (one crosswalk and approach each): a
@@ -1438,9 +1549,31 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
   //    arms 0, east-west 1), the widest road at a centreline junction.
   computeArms(edges);
   for (const n of nodes) sidesAndGroups(n);
+  // The bends made stops: their edges' stop lines placed again, short of their crossing, in the paint too (its stop
+  // bars and crosswalk); where that leaves an edge too short to keep (5.), the bend stays a bend, unsignalled
+  for (const n of midblock) {
+    const ends = [...n.in, ...n.out];
+    for (const e of ends) place(e);
+    if (ends.some((e) => e.len <= 4)) {
+      n.shape = true;
+      n.midblock = false;
+      signalled.delete(n);
+      for (const e of ends) place(e);
+      continue;
+    }
+    const node = paintNodes.get(n);
+    if (node) node.shape = false;
+    for (const e of ends) {
+      const paint = paintOf.get(e);
+      if (!paint) continue;
+      paint.sx = e.sx;
+      paint.sz = e.sz;
+      paint.len = e.len;
+    }
+  }
   let signalCount = 0;
-  for (const n of signalled) {
-    if (n.groupCount !== 2 || n.arms.length < 3) continue;
+  for (const [n, d] of signalled) {
+    if (n.arms.length < 3 && !n.midblock && d > 4) continue;
     n.signal = true;
     signalCount++;
   }

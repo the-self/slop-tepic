@@ -1,14 +1,15 @@
 // js/sim/traffic/near.ts
 // The roads and signals around the focus to place vehicles and pedestrians on, weighed by the hour (traffic-demand.ts)
-import { busyFactor, carDensity, peopleDensity, roadClass } from '../traffic-demand.ts';
+import { AVENUE, busyFactor, carDensity, peopleDensity, roadClass } from '../traffic-demand.ts';
 import { NEAR_RADIUS, NUM_CARS, NUM_PEDS, clamp } from './constants.ts';
 import type { TrafficEdge } from './types.ts';
 import type { TrafficState } from './state.ts';
 
 // The hour of the day (local, 0-24; main.ts setHour) sets how much traffic and how many people are out
 // (traffic-demand.ts). Each near edge is weighed by the metres of it within NEAR_RADIUS: a car is placed on one by
-// its lane-km × its class's density (the avenues, not the colonias' streets), a pedestrian by its sidewalk-km × its
-// crowd (cumulative, for pickWeighted); their totals are how many of each the hour has around the focus.
+// its lane-km × its class's density (the avenues, not the colonias' streets), a cyclist likewise but never on an
+// avenue, a pedestrian by its sidewalk-km × its crowd (cumulative, for pickWeighted); their totals are how many cars
+// and people the hour has around the focus.
 function setHour(ts: TrafficState, h: number): void {
   if (Number.isFinite(h)) ts.hour = ((h % 24) + 24) % 24;
 }
@@ -24,15 +25,20 @@ function inRange(ts: TrafficState, e: TrafficEdge, r: number): number {
 function weighNear(ts: TrafficState): void {
   ts.weighedHour = ts.hour;
   ts.nearCarWeights.length = 0;
+  ts.nearBikeWeights.length = 0;
   ts.nearPedWeights.length = 0;
   let cars = 0;
+  let bikes = 0;
   let people = 0;
   for (const e of ts.nearEdges) {
     const km = inRange(ts, e, NEAR_RADIUS) / 1000;
     const c = (e.roadClass ??= roadClass(e));
-    cars += km * e.lanes.length * carDensity(c, ts.hour) * busyFactor(e.name);
+    const here = km * e.lanes.length * carDensity(c, ts.hour) * busyFactor(e.name);
+    cars += here;
+    if (c !== AVENUE) bikes += here;
     people += km * peopleDensity(c, ts.hour);
     ts.nearCarWeights.push(cars);
+    ts.nearBikeWeights.push(bikes);
     ts.nearPedWeights.push(people);
   }
   ts.carTarget = Math.min(NUM_CARS, Math.round(cars));

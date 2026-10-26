@@ -2,7 +2,7 @@
 // What the rest of the game plugs into the traffic: its listeners (collisions, the player's mayhem, run-overs), the
 // vehicles standing in the road, the weather on it, the walls knocked bodies and walkers meet, the ragdolls
 import type { Ragdolls } from '../ragdolls.ts';
-import type { KnockListener, MayhemListener, ParkedVehicle, SolidQuery, TrafficCollision } from './types.ts';
+import type { KnockListener, MayhemListener, ParkedVehicle, SirenSource, SolidQuery, TrafficCollision } from './types.ts';
 import type { TrafficState } from './state.ts';
 import { hillAt } from './surface.ts';
 
@@ -31,6 +31,10 @@ function reportCollision(ts: TrafficState, a: unknown, b: unknown, x: number, y:
 // and the cars thrown about in a crash (crashedStep): all of it steered round, as `parked`
 function setParked(ts: TrafficState, list: ParkedVehicle[] | null): void {
   ts.parkedOutside = Array.isArray(list) ? list : [];
+}
+// The fire trucks & ambulances on their way, sirens wailing (sim/emergency.ts): the cars ahead of them pull over
+function setSirens(ts: TrafficState, list: readonly SirenSource[]): void {
+  ts.sirens = list;
 }
 // The weather on the street (main.ts, from weather.ts RoadWater): on a wet road drivers keep further back, go a
 // little slower and take the bends slower (the tyres' grip, wetGrip), and nobody brakes as hard; in the rain people
@@ -63,6 +67,6 @@ function setKnockListener(ts: TrafficState, fn: KnockListener | null): void {
 }
 
 export {
-  setCollisionListener, setMayhemListener, reportCollision, setParked, setRoadWater, setSolidQuery, setWallQuery,
+  setCollisionListener, setMayhemListener, reportCollision, setParked, setSirens, setRoadWater, setSolidQuery, setWallQuery,
   setRagdolls, setKnockListener
 };

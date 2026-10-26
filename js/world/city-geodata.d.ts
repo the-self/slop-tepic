@@ -63,6 +63,10 @@ export interface RoadGraph {
 /** A railway: [flat points, lifts (dm over the ground per point, or 0), bridge 1 | 0, main line 1 | siding / yard 0]. */
 export type Rail = [pts: FlatPoints, lifts: number[] | 0, bridge: Flag, main: Flag];
 
+/** A footbridge over the roads: [flat points from one stair's foot to the other's, lifts (dm over the ground per point:
+ *  the stairs up, the deck between their tops), walkway width (dm)]. */
+export type Footbridge = [pts: FlatPoints, lifts: number[], width: number];
+
 /** An axis-aligned lot rect [x0, x1, z0, z1] (m; in a frame's local u / v for frontage frames). */
 export type LotRect = [x0: number, x1: number, z0: number, z1: number];
 
@@ -93,6 +97,8 @@ export type WaterwayKind = 'river' | 'stream' | 'canal' | 'drain' | 'ditch';
 /** A river, arroyo, canal or drain, drawn downstream: [kind, half-width of the gap left between the blocks (m, 0
  *  none), name ('' none), flags (1 intermittent, 2 underground: a culvert or tunnel), flat points]. */
 export type Waterway = [kind: WaterwayKind, halfWidth: number, name: string, flags: number, pts: FlatPoints];
+/** A river's whole course where it runs on beyond the detailed box: [name, flat points downstream]. */
+export type FarRiver = [name: string, pts: FlatPoints];
 
 /** A notable OSM building footprint, by name. */
 export interface Landmark {
@@ -251,9 +257,11 @@ export interface CityGeodata {
   roads: Road[];
   roadGraph: RoadGraph;
   rails: Rail[];
+  footbridges: Footbridge[];
   blocks: Block[];
   parks: Park[];
   waterways: Waterway[];
+  farRivers: FarRiver[];
   centralPark: null;
   piers: never[];
   bridges: Record<string, never>;

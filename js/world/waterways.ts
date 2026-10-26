@@ -1,7 +1,7 @@
 // js/world/waterways.ts
-// The rivers & arroyos cut into the ground (city-geodata.js `waterways`, OpenStreetMap waterway=river | stream): the
-// Río Mololoa and the arroyos run in channels sunk into the gap the blocks leave them, with sloping stone banks, a
-// muddy bed and water in it. Where a street crosses one, the street stays (a bridge) and the channel runs on under it.
+// The rivers, arroyos & drains cut into the ground (city-geodata.js `waterways`, OpenStreetMap waterway=river | stream
+// | canal | drain | ditch): the Río Mololoa and the arroyos run in channels sunk into the gap the blocks leave them,
+// with sloping stone banks, a muddy bed and water in it; the canals, drenes and ditches in concrete-lined ones. Where a street crosses one, the street stays (a bridge) and the channel runs on under it.
 // This module is the channels' shape: the ground they carve (offset, for everyone standing or driving in one), the
 // holes they cut in the road deck (cutHoles) and their meshes' vertices (meshData, river-channels.ts draws them), all
 // heights over the town's floor under them (drape.ts lays them on it). No three.js here, so node --test imports it.
@@ -52,6 +52,8 @@ export interface ChannelMeshes {
   banks: ChannelMesh<Float32Array>;
   water: ChannelMesh<Float32Array>;
   bridges: ChannelMesh<Float32Array>;
+  /** The concrete-lined channels' banks (the canals, drains & ditches) */
+  lined: ChannelMesh<Float32Array>;
 }
 export interface Waterways {
   channels: Channel[];
@@ -68,11 +70,17 @@ type UV = [u: number, v: number];
 // A channel's cross-section by kind: its banks' tops `margin` m inside the gap between the blocks (so a curb jutting
 // a little into the gap never overhangs the channel), the bed `bed` of the top's width across, `depth` m under the
 // banks' tops, and `water` m of water over it (less in an intermittent arroyo). The Mololoa through Tepic runs a few
-// metres down between stone walls; the arroyos are ditches a metre or two deep.
-const CHANNELS: Record<'river' | 'stream', ChannelSpec> = {
+// metres down between stone walls; the arroyos are ditches a metre or two deep. The canals and the drenes (the storm
+// drains down the colonias' streets and fields) are concrete trapezoids, a trickle in them most of the year; the
+// ditches, field ditches under a metre deep.
+const CHANNELS: Record<WaterwayKind, ChannelSpec> = {
   river: { margin: 1.0, bed: 0.44, depth: 3.2, water: 0.7, dry: 0.45 },
-  stream: { margin: 0.6, bed: 0.38, depth: 1.4, water: 0.25, dry: 0.1 }
+  stream: { margin: 0.6, bed: 0.38, depth: 1.4, water: 0.25, dry: 0.1 },
+  canal: { margin: 0.5, bed: 0.5, depth: 2.0, water: 0.45, dry: 0.12 },
+  drain: { margin: 0.4, bed: 0.45, depth: 1.5, water: 0.15, dry: 0.04 },
+  ditch: { margin: 0.3, bed: 0.4, depth: 0.8, water: 0.08, dry: 0.02 }
 };
+const LINED = new Set<WaterwayKind>(['canal', 'drain', 'ditch']); // (concrete banks, not stone)
 const STEP = 2.5; // m between a channel's cross-sections along its course
 const BRIDGE_MARGIN = 1.0; // m of street past its edge a bridge spans before the channel opens again
 const HILL = 0.1; // m of hill over the town's floor where a channel goes under the hills' mesh (not cut, not drawn)
@@ -81,7 +89,6 @@ const UNDER = 1.2; // m under a bridge's deck a body must be to be under it (in 
 const LIP = 0.35; // m the banks' tops reach on under the deck, so no crack opens along the hole's edge
 const SLAB = 0.8; // m deep, a bridge's deck seen from the channel
 const CELL = 10; // m, the cells of the lookup of the channels' pieces
-const CHANNEL_OF: Partial<Record<WaterwayKind, ChannelSpec>> = CHANNELS; // (no channel for canals, drains & ditches)
 
 // A polyline [[x, z], ...] with its corners cut twice (Chaikin), keeping its ends: the OSM ways' sharp bends would
 // fold a 10 m wide channel's inner bank over on itself
@@ -156,16 +163,20 @@ function streetLookup(roads: StreetLine[]) {
 /**
  * The channels of the waterways `list` (GEO.waterways: [kind, half-width of the gap between the blocks, name, flags,
  * flat points downstream]) on the town's floor `floor(x, z)`, out of the hills `hills(x, z)` (their height over it),
- * bridged by the streets `roads` ([{ w, pts }]: full width, flat centreline points).
+ * bridged by the streets `roads` ([{ w, pts }]: full width, flat centreline points) and walked over on the footbridges
+ * `foot` (the same).
  */
 function createWaterways(list: Waterway[] | null | undefined,
-  { floor = () => 0, hills = () => 0, roads = [] }: { floor?: HeightFn; hills?: HeightFn; roads?: StreetLine[] } = {}): Waterways {
+  { floor = () => 0, hills = () => 0, roads = [], foot = [] }: { floor?: HeightFn; hills?: HeightFn; roads?: StreetLine[]; foot?: StreetLine[] } = {}): Waterways {
   const streets = streetLookup(roads);
+  // the low footbridges over the channels (city-geodata.js footbridges): the ground at grade under their walkway for
+  // whoever is on one, as under a street, but the channel open to the sky beside it (no deck drawn round them)
+  const footways = streetLookup(foot);
   const channels: Channel[] = [];
   for (const [kind, cut, name, flags, flat] of list ?? []) {
-    const spec = CHANNEL_OF[kind];
+    const spec = CHANNELS[kind];
     // (only the waterways the blocks leave a gap for, above ground)
-    if (!spec || !(cut > spec.margin) || flags & 2 || flat.length < 4) continue;
+    if (!(cut > spec.margin) || flags & 2 || flat.length < 4) continue;
     const half = cut - spec.margin, bedHalf = half * spec.bed;
     const line: Pt[] = [];
     for (let k = 0; k + 1 < flat.length; k += 2) line.push([flat[k], flat[k + 1]]);
@@ -241,7 +252,7 @@ function createWaterways(list: Waterway[] | null | undefined,
       const t = Math.max(0, Math.min(1, raw));
       const d = Math.hypot(x - a.x - dx * t, z - a.z - dz * t);
       if (d >= ch.half) continue;
-      if ((a.bridge || b.bridge) && !(fromY !== undefined && fromY < floor(x, z) - UNDER)) continue;
+      if ((a.bridge || b.bridge || footways.near(x, z, 0)) && !(fromY !== undefined && fromY < floor(x, z) - UNDER)) continue;
       const rel = a.rel + (b.rel - a.rel) * t;
       const k = d <= ch.bedHalf ? 1 : (ch.half - d) / (ch.half - ch.bedHalf);
       if (rel * k < best) best = rel * k;
@@ -272,6 +283,7 @@ function createWaterways(list: Waterway[] | null | undefined,
    */
   function meshData(): ChannelMeshes {
     const banks: ChannelMesh<number[]> = { position: [], uv: [], wet: [] };
+    const lined: ChannelMesh<number[]> = { position: [], uv: [], wet: [] };
     const water: ChannelMesh<number[]> = { position: [], uv: [] }, bridges: ChannelMesh<number[]> = { position: [], uv: [] };
     const tri = (m: ChannelMesh<number[]>, p: Vec3[], uv: UV[], extra?: number[]) => {
       for (let k = 0; k < 3; k++) {
@@ -287,6 +299,7 @@ function createWaterways(list: Waterway[] | null | undefined,
     };
     for (const ch of channels) {
       const { s, half, bedHalf } = ch;
+      const walls = LINED.has(ch.kind) ? lined : banks;
       // a cross-section's bank points, left to right: [x, y, z, wet, across]
       const section = (a: ChannelSection) => {
         const at = (off: number, y: number, w: number): [x: number, y: number, z: number, wet: number, across: number] =>
@@ -297,8 +310,8 @@ function createWaterways(list: Waterway[] | null | undefined,
         // the channel's square end: its cross-section, filled (seen from inside)
         const p = section(a).slice(1, 5).map((v): Vec3 => [v[0], v[1], v[2]]);
         const u = p.map((_v, k): UV => [a.along, k]);
-        if (facing > 0) quad(banks, p[0], p[1], p[2], p[3], u[0], u[1], u[2], u[3], [0, 1, 1, 0]);
-        else quad(banks, p[3], p[2], p[1], p[0], u[3], u[2], u[1], u[0], [0, 1, 1, 0]);
+        if (facing > 0) quad(walls, p[0], p[1], p[2], p[3], u[0], u[1], u[2], u[3], [0, 1, 1, 0]);
+        else quad(walls, p[3], p[2], p[1], p[0], u[3], u[2], u[1], u[0], [0, 1, 1, 0]);
       };
       for (let i = 0; i + 1 < s.length; i++) {
         if (!wet(ch, i)) continue;
@@ -306,7 +319,7 @@ function createWaterways(list: Waterway[] | null | undefined,
         const A = section(a), B = section(b);
         for (let k = 0; k + 1 < A.length; k++) {
           const p = (v: Vec3 | [number, number, number, number, number]): Vec3 => [v[0], v[1], v[2]];
-          quad(banks, p(A[k]), p(B[k]), p(B[k + 1]), p(A[k + 1]),
+          quad(walls, p(A[k]), p(B[k]), p(B[k + 1]), p(A[k + 1]),
             [a.along, A[k][4]], [b.along, B[k][4]], [b.along, B[k + 1][4]], [a.along, A[k + 1][4]],
             [A[k][3], B[k][3], B[k + 1][3], A[k + 1][3]]);
         }
@@ -349,7 +362,7 @@ function createWaterways(list: Waterway[] | null | undefined,
       if (m.wet) out.wet = Float32Array.from(m.wet);
       return out;
     };
-    return { banks: typed(banks), water: typed(water), bridges: typed(bridges) };
+    return { banks: typed(banks), water: typed(water), bridges: typed(bridges), lined: typed(lined) };
   }
 
   return { channels, offset, holes, meshData };

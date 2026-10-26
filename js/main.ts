@@ -18,7 +18,7 @@ import { Tachometer } from './ui/tachometer.ts';
 import { gearLabel } from './player/drivetrain.ts';
 import { setupSceneCulling, updateSceneCulling, freezeStaticMatrices, updateDynamicMatrices, releaseStaticArrays } from './render/scene-culling.ts';
 import { CityAudioSystem } from './audio/audio-system.ts';
-import { groundHeight, gradeHeight, townHeight, landHeight, deckLift, surfaceHeight } from './world/ground.ts';
+import { groundHeight, gradeHeight, townHeight, landHeight, deckLift, walkDeckLift, surfaceHeight } from './world/ground.ts';
 import { CrimeSystem } from './sim/crime.ts';
 import { CrimeHud } from './ui/crime-hud.ts';
 import { WeaponWheel } from './ui/weapon-wheel.ts';
@@ -26,6 +26,7 @@ import { WeaponIcons } from './ui/weapon-icons.ts';
 import { AimControl } from './player/aim.ts';
 import { createCarPhysics } from './player/car-physics.ts';
 import { createRagdolls } from './sim/ragdolls.ts';
+import type { RagdollHandle } from './sim/ragdolls.ts';
 import { BloodPools } from './sim/blood.ts';
 import { cityUniforms } from './render/tsl-materials.ts';
 import { grassDryness } from './world/lot-greenery.ts';
@@ -36,6 +37,7 @@ import { Floods } from './world/floods.ts';
 import { Nightlife } from './world/nightlife.ts';
 import { Interiors } from './world/interiors.ts';
 import { Fires } from './sim/fires.ts';
+import { EmergencyServices } from './sim/emergency.ts';
 import { Scheduler } from './core/scheduler.ts';
 import type { FrameStep } from './core/scheduler.ts';
 import { EventBus } from './core/events.ts';
@@ -59,7 +61,10 @@ interface GameEvents {
   /** a crash of the player, the traffic or a street prop (each system's collision report); `kind` what struck:
    *  'vehicle', 'prop', a building's... (player/stats.ts hardness) */
   collision: CollisionImpact & { kind: string };
+  /** someone thrown, shot or knocked down come to rest (sim/ragdolls.ts onSettle): blood under them, an ambulance */
+  settle: RagdollHandle;
 }
+const HARD_CRASH = 9; // m/s (~32 km/h) a crash is struck at for an ambulance to be called
 
 const isWeatherSample = (name: string | null): name is WeatherSampleName => name !== null && name in WEATHER_SAMPLES;
 
@@ -110,7 +115,7 @@ async function initApp(): Promise<void> {
   // 4. The player (on foot, car, bicycle, moto, helicopter), its cameras and its input
   const controllerManager = new ThirdPersonControllerManager(scene, colliders);
   // The ground (world/ground.ts): the town's own slopes and the hills over them (the flat city with ?slopes=0)
-  controllerManager.setTerrain(groundHeight, townHeight, landHeight, deckLift); // (and the bridges' decks over it)
+  controllerManager.setTerrain(groundHeight, townHeight, landHeight, deckLift, walkDeckLift); // (and the bridges' decks over it; on foot the footbridges' too)
   controllerManager.setCurbRamps(carParks.rampAt); // (the car parks' driveways, up over the curb)
   trafficSystem.setHillQuery(gradeHeight); // (the roads' lifts are over the ground at grade: down an underpass, < 0)
   trafficSystem.setSurfaceQuery(surfaceHeight);
@@ -156,12 +161,15 @@ async function initApp(): Promise<void> {
   // ...and the traffic's cars thrown about in a crash near the player (sim/traffic.ts crash)
   trafficSystem.setPhysics(physics);
   const bloodPools = new BloodPools(scene, (x, z, fromY) => controllerManager.getGroundHeight(x, z, 'person', fromY));
-  ragdolls.onSettle = (h) => {
+  // What the game's systems tell each other (core/events.ts): crashes, someone come to rest
+  const events = new EventBus<GameEvents>();
+  ragdolls.onSettle = (h) => { events.emit('settle', h); };
+  events.on('settle', (h) => {
     if (!(h.bleed > 0.05)) return;
     bloodPools.add(h.px, h.pz, h.py + 0.3, 0.9 + h.bleed * 1.7);
-    // ...and smeared along the ground from where they were struck to where they lie
+    // ...and smeared along the ground from where they came down onto it (not through the air) to where they lie
     bloodPools.trail(h.x0, h.z0, h.px, h.pz, h.py + 0.3, h.bleed);
-  };
+  });
   loading.mark('physics');
   // Sprinting runs out of breath (player/stats.ts)
   const stamina = new Stamina();
@@ -222,17 +230,32 @@ async function initApp(): Promise<void> {
   const nightlife = new Nightlife({ scene, venues, houses: GEO.houses, stride: GEO.houseStride || 8, controllers: controllerManager, audio: audioSystem });
   // In through their doors (F): the restaurants', bars' and antros' rooms, the Tapanko's tapanco and all
   const rooms = new Interiors({ scene, venues, controllers: controllerManager, cameras: cameraSystem, crime: crimeSystem });
+  // The bomberos' trucks & the Cruz Roja's ambulances, sent from their real stations (sim/emergency.ts): in the patrol
+  // cars' pool, so before the audio takes that for its sirens
+  const emergency = new EmergencyServices({ scene, crime: crimeSystem, ground: (x, z) => controllerManager.getGroundHeight(x, z, 'person') });
+  trafficSystem.setSirens(emergency.sirens); // (the cars ahead of them pull over)
   // Burning wrecks, house fires, the dry season's quemas, and the bomberos who come for them (sim/fires.ts)
-  const fires = new Fires({ scene, crime: crimeSystem, controllers: controllerManager, houses: GEO.houses, stride: GEO.houseStride || 8 });
+  const fires = new Fires({ scene, crime: crimeSystem, services: emergency, controllers: controllerManager, houses: GEO.houses, stride: GEO.houseStride || 8 });
   crimeSystem.onExplosion = (x, y, z, radius) => { fires.onExplosion(x, y, z, radius); };
+  // Someone killed or badly hurt (shot dead, thrown hard) come to rest: an ambulance for them. Not for the player
+  // (killed on foot or thrown out of a vehicle), who comes round at the hospital or gets up
+  events.on('settle', (h) => {
+    if (h.bleed >= 0.45 && h !== crimeSystem.playerFall && h !== controllerManager.entities.person.ragdoll) emergency.callAmbulance(h.px, h.pz, h);
+  });
   audioSystem.sources.pursuers = [...crimeSystem.cruisers, crimeSystem.heli]; // (the patrol cars & trucks, the helicopter)
   crimeSystem.ragdolls = ragdolls;
   // Thrown out through the windscreen (controllers.ts ejectDriver), or off the moto (ejectRider; stepping off it as it
   // falls over, offMoto, impact 0): on foot now, bleeding; out of the car hurt by how hard it hit (off the moto, the
   // crash itself already hurt, crashDamage)
-  controllerManager.onEject = (impact, x, z, kind) => {
+  controllerManager.onEject = (impact, x, z, kind, bail = false) => {
     syncMode();
     const v = controllerManager.entities[kind];
+    // jumped out at speed (boarding.ts leaveVehicle): grazed, not thrown through glass; past ~50 km/h it bleeds
+    if (bail) {
+      if (impact > 14) crimeSystem.fx.splatter(x, v.position.y + 1, z, impact * 0.5, Math.sin(v.heading), Math.cos(v.heading));
+      crimeSystem.hurt(Math.min(60, Math.max(0, impact - 6) * 2.5), x, z);
+      return;
+    }
     if (impact > 0) crimeSystem.fx.splatter(x, v.position.y + 1, z, impact, Math.sin(v.heading), Math.cos(v.heading));
     if (kind === 'car') crimeSystem.hurt(Math.min(95, 25 + (impact - 19) * 4), x, z);
   };
@@ -249,11 +272,12 @@ async function initApp(): Promise<void> {
 
   // Crashes hurt as well as sound: each system reports its crashes to the bus, which the audio and the player's
   // health listen to
-  const events = new EventBus<GameEvents>();
   for (const system of [controllerManager, trafficSystem, streetDetails.breaker]) {
     system.setCollisionListener((impact) => { events.emit('collision', impact); });
   }
   events.on('collision', (impact) => { audioSystem.onCollision(impact); });
+  // a hard crash (~32 km/h and up: the player's, or two of the traffic's): an ambulance (sim/emergency.ts)
+  events.on('collision', (impact) => { if (impact.speed >= HARD_CRASH) emergency.callAmbulance(impact.x, impact.z); });
   let lastCrash = -Infinity;
   events.on('collision', (impact) => {
     // the car, bicycle, moto or helicopter the player is in, hitting something hard enough (crashDamage)
@@ -535,7 +559,8 @@ async function initApp(): Promise<void> {
   loading.mark('compile');
 
   // The frame loop. Each system steps once a frame, in this order: input & the player first (what everything else
-  // follows), then the cameras, the world's clock & the traffic, the crime and the city's life, the HUD, the city's
+  // follows), then the cameras, the world's clock & the traffic, the crime, the city's life and the emergency services
+  // (the fires there call the bomberos), the HUD, the city's
   // level of detail round the camera, the weather, the network, the map & the audio, and the streamed tiles.
   const weather = new WeatherEffects({
     lighting: lightingSystem, roadWater, rain, floods, controllers: controllerManager, cameras: cameraSystem,
@@ -605,6 +630,8 @@ async function initApp(): Promise<void> {
       audioSystem.setAmbience(ambience);
       crimeSystem.shakeCamera(cameraSystem.camera);
     })
+    // the bomberos & ambulances on their way, at work, going back (sim/emergency.ts)
+    .run('emergency', ({ dt }) => { emergency.update(dt, cameraSystem.camera); })
     .run('hud', ({ dt, now }) => {
       stamina.update(dt, crimeSystem.state === 'play' ? controllerManager.sprintingMode() : null);
       crimeHud.update(crimeSystem, dt, stamina);
@@ -639,7 +666,7 @@ async function initApp(): Promise<void> {
   if (debug) {
     // Debugging handle for the console, only with ?debug in the URL
     Object.assign(window, { __slop: {
-      scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, controllerManager, trafficSystem,
+      scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, emergency, controllerManager, trafficSystem,
       cameraSystem, streetDetails, cityGrid: city.cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl,
       weaponWheel, weaponIcons, scheduler, boarding, multiplayer: () => multiplayer
     } });

@@ -62,7 +62,8 @@ const BLIP_STYLES: Partial<Record<string, readonly [colour: string, radius: numb
   narcos: ['#c9a24a', 3.2], truck: ['#c9a24a', 4.4], soldier: ['#8fb35a', 3], army: ['#8fb35a', 4.4], heli: ['#4d8dff', 5.2],
   money: ['#6fe39a', 2.6], health: ['#ff6b6b', 3], armor: ['#7fb0ff', 3], pistol: ['#ffd24a', 2.6], smg: ['#ffa53a', 2.6],
   rifle: ['#d6e04a', 2.8], bazooka: ['#ff7a2a', 3.4],
-  fire: ['#ff5a1f', 5] // (a fire burning, sim/fires.ts)
+  fire: ['#ff5a1f', 5], // (a fire burning, sim/fires.ts)
+  firetruck: ['#ff3b30', 4.4], ambulance: ['#ffffff', 4.2] // (the bomberos & the Cruz Roja on their way, sim/emergency.ts)
 };
 const MAP_BASE = '#101511';
 

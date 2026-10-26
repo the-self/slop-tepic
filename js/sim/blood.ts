@@ -75,7 +75,7 @@ class BloodPools {
   }
 
   /**
-   * A body's smear from (x0, z0), where it was struck, to (x1, z1), where it lies, on the ground under `fromY`: a few
+   * A body's smear from (x0, z0), where it came down, to (x1, z1), where it lies, on the ground under `fromY`: a few
    * long pieces along the way, broader the worse it bleeds (`bleed` 0..1); none for one that hardly moved
    */
   trail(x0: number, z0: number, x1: number, z1: number, fromY: number, bleed: number): void {

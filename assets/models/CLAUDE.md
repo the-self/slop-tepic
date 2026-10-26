@@ -121,24 +121,91 @@ Use `--keep-width` for props that stand alone.
 ## Cars and people
 
 - **Cars are in.** The ten best sellers (Versa, Aveo, March, NP300, Vento, Gol, Kicks, Onix, Yaris, Rio) are
-  Meshy models in `assets/models/cars/`. They were drawn white from prompts (`tools/models/jobs/cars/`, 18
-  credits each), then prepared with `prepare.mjs --length <its real length> --yaw 90 --wheel <tyre radius> --ratio 1 --texture 1024`.
-  Meshy's front view has every car's nose at -x, and the game's cars face +z.
+  Meshy models in `assets/models/cars/`. Nine were drawn white from one prompt each (`tools/models/jobs/cars/`, 18
+  credits, Meshy T2.5 smart topology, ~8k triangles). The Versa is the pilot of the better way: four views drawn in a
+  key colour, magenta, and one multi-image-to-3d with Meshy 7.1 at its best (Ultra geometry, 4K texture, PBR: 71
+  credits, its job says how; the standard 2K one was visibly lumpier, and its rims plainer). Each was prepared with
+  `prepare.mjs --length <its real length> --yaw 90 --wheel <tyre radius>` (the nine: `--ratio 1 --texture 1024`; the
+  Versa: `--ratio 0.6 --texture 2048`, ~67k triangles, 4.3 MB). Meshy's front view has every car's nose at -x, and the game's cars face +z.
   - **Data**: a car model's `glb` field (`js/models/cars/`) names its file.
-  - **Traffic**: `sim/traffic/meshes.ts` loads those files in the background (`render.ts` draws them). Near the camera (`CAR_PROXY_DISTANCE`) such
-    a car is drawn with its own instanced mesh, at scale 1, with its wheels in it. Beyond that distance it is
-    its body shape's ~250-triangle stand-in, as before.
+  - **Loading**: `actors/vehicles/car-files.ts` loads every file once, in the background, for the traffic and the
+    player's car alike: a car taken from the traffic is the model it was. Until a file loads (or if it fails) the
+    body shape draws it.
+  - **Traffic**: near the camera (`CAR_PROXY_DISTANCE`, 90 m) such a car is its own instanced mesh at scale 1
+    (`sim/traffic/meshes.ts`, `render.ts`); beyond, its body shape's ~250-triangle stand-in.
+  - **Levels of detail**: a heavy car (20k triangles or more) carries two lighter levels in its file,
+    `tools/models/add-lods.mjs` (`lod1`, ~30%; `lod2`, ~10%, its corners joined by place so the colour seams don't
+    stop the simplifier, each triangle one colour; and their wheels). The traffic draws the file's own to 25 m, `lod1`
+    to 50 m and `lod2` to 90 m (`MODEL_LOD_DISTANCES`; GTA V's cars change at 15, 30, 60 & 120 m); the player's car
+    is always the full one. Run it again after preparing a car again: it replaces the levels. Up close the levels look
+    rough, as they should.
+  - **Wheels**: `prepare.mjs` copies the front wheel on the +x side out as a mesh of its own, `wheel`, its axle on the
+    origin. Then it presses all four into a flat dark wall just inside the tyres, the wheel well, so the body stays
+    closed. Where the wheels go is in the body mesh's extras: `{ wheels: { x, z: [front, rear], radius } }`. The
+    game draws that wheel at the four corners, mirrored on the -x side, and turns and steers it.
   - **Paint mask**: `prepare.mjs` bakes one into each car's metallic-roughness texture (R: the mask, G: the
-    roughness). The mask is the texture's white areas, minus the wheels, grown 3 px over edges and seams.
-    `createModelCarMaterial` (`actors/vehicles/car-material.ts`) paints the instance's colour through it, following the
-    texture's brightness, and lights the red lamps at the back with the brake.
-  - **Two mistakes not to repeat**: a plain "paint where it's white" threshold left pale stripes along every
-    edge and seam, and it painted the silver rims too. The wheels are found where the tyres touch the ground;
-    `--wheel` must be the real tyre radius, from the tyre size, or the disc also takes the fender's paint.
-  - **Not done yet**: these cars don't crumple and their wheels don't turn. The prompts asked for no badges,
-    but Nano Banana still drew some on the grilles.
-  - **Adding one**: a job, the preparation, the `glb` field. Check that the nose faces +z (`.claude/cars.html`
-    shows the prepared cars side by side) and that the paint takes.
+    roughness). `createModelCarMaterial` (`actors/vehicles/car-material.ts`) paints the instance's colour through it,
+    following the texture's brightness, and lights the red lamps at the back with the brake.
+    - A car drawn in **magenta** is masked by its hue. Meshy's atlas is hundreds of small islands packed edge to
+      edge, and each island's rim takes in its neighbours' colours. Repainted, that showed as white and black lines
+      all over the paint, worse with distance (the mipmaps). So the car is unwrapped again with xatlas
+      (`xatlasjs`), into charts with gutters, and its texture is baked into the new atlas. A triangle that is a third
+      or more magenta is paint all over; one with a little magenta has its pale texels painted too (the seams Meshy
+      left pale). The glass and the black trim get a low roughness for the sky's reflections, and what is bright grey
+      and not paint (the rims, the lamps' chrome) metal, in the mask's B.
+    - Its painted sheet metal is smoothed (Taubin, 5 rounds, `smoothPaint`): Meshy's surfaces are lumpy, and the
+      clear coat (`createModelCarMaterial`) mirrors every lump. More rounds round off the body's character lines.
+    - The colour is read from Meshy's 4K texture and baked at `--texture`: Meshy's own normal and metal-roughness
+      maps are dropped (their atlas is the one replaced).
+    - A car drawn **white** is masked by its white areas, grown 3 px over edges and seams. That still leaves pale
+      lines: remake such a car in magenta.
+  - **Tried and dropped**: a Blender pass (sorting faces into paint, glass, trim, chrome and lamps from the texture,
+    Laplacian smoothing, decimation, normals by angle) came out worse: faceted panels, a zigzag edge along the
+    windscreen, stray specks. The parts' borders are only as good as Meshy's texture.
+  - **Mistakes not to repeat**: a plain "paint where it's white" threshold left pale stripes along every edge and
+    seam, and it painted the silver rims too. `--wheel` must be the real tyre radius, from the tyre size, or the
+    wells take the fenders. Judge a car in the game, under its sky light: a viewer without an environment map makes
+    every car look flat and dull.
+  - **Not done yet**: the files' cars don't crumple, and the player's shows no blood. The nine white ones still
+    have pale lines in the paint.
+  - **Adding one**: a job, the preparation, the `glb` field. Check that the nose faces +z, that the wheels sit in
+    their arches and that the paint takes (a page that draws one prepared car in six colours, with its wheels where
+    its extras say, is quick to write: GLTFLoader plus an `onBeforeCompile` doing the material's mix).
+- **Cars made by hand beat the AI ones.** A free model from Sketchfab, made by a person, comes in parts with a
+  material each (body, glass, tyres, rims, chrome, lamps) and clean lines. Four are in: the private Tsuru
+  (`nissan-tsuru-particular`), the Onix, the NP300 (a Navara 2021) and the Virtus (`volkswagen-virtus`, the Vento's
+  successor). `tools/models/prepare-made.mjs` makes such a model the same kind of file as the Meshy ones: each part's
+  material a cell of a small palette texture (its colour, roughness, metal and paint mask; a textured part its
+  texture's mean colour), the paint exactly the body's faces, the glass opaque and dark, the normals smoothed under
+  40°, the front +x wheel apart. Each car's command, source and author are in `tools/models/jobs/cars/<id>.made.json`,
+  and its parts' roles in `<id>.roles.json`.
+  - **Writing a car's roles**: run it with `--report` first, each part's box in metres. The interior goes (`drop`):
+    the glass is opaque. Lamp lenses over their reflectors go too. A second shell under the paint (the Onix's) is a
+    `backing`, pushed 4 mm in, or it fights the paint.
+  - **Wheels** are found by shape: the parts named as wheels, or else what touches the ground (with `--wheel`, the
+    tyres' radius), set four axles; whatever else lies inside a wheel's cylinder is wheel too, the tyre beyond 68% of
+    the radius, the rim within. Only what lies on its wheel's side counts, named or not: a model's tyre material
+    may hold a spare wheel, or an axle across the car (the NP300's made its wheel 1.8 m wide, stuck out both sides).
+    A tyre whose outer face stands out of the fender over its axle is drawn that much further in (the NP300's, 7 cm).
+  - **Double-sided models** are often wound any which way, and the game draws one side: a material with a third of
+    its faces turned in has them turned out (away from the car's middle). Holes in the paint mean this.
+  - **Interior by place**: when a model's material names don't say what is interior (the Virtus's are scrambled:
+    "seatbelt_holder_part" covers the whole car), `--cabin` drops what lies inside the glass's box instead. Dropping
+    by name took its front bumper's grille and plate with it.
+  - **Lamps**: lenses drawn in the windows' material show black (the glass is opaque): `--lenses` drops the glass at
+    the car's ends below its windows. A material shared by head and tail lamps is `lamps`: white in front, red behind
+    (red lights with the brake).
+  - **Plates**: `--plates yFront,yRear` adds a Nayarit plate (30.5 × 15.2 cm, its number from the file's name) on
+    each bumper at those heights, in front of whatever the rays meet across its width. Find the heights with
+    `--probe x,y,z`; drop the model's own plates.
+  - **Heavy models**: `--faces` simplifies before anything else (so the normals fit the simplified faces), `--error`
+    lets it go further. The nose is the head lamps' end; `--flip` when the lamps aren't named.
+  - **Rejected, and why**: two Merc_TV models (Aveo, March) had no wheels, only one tyre at the origin; a Polo sedan
+    had none either; a Gol came from the uploader of a re-uploaded paid Tsuru.
+  - **Licences**: only CC BY (or CC0); credit it in `README.md` and `assets/models/README.md`. Not "NonCommercial",
+    not Sketchfab's "Free Standard" (no redistribution in a public repository), and not re-uploads of paid models
+    (a Hum3D plate on a "free" car gives one away).
+  - **Downloading** needs a Sketchfab login (the user's, in their browser): the API's download is 401 without one.
 - **People**: pedestrians are one instanced, GPU-skinned crowd on a 15-bone skeleton (`sim/pedestrians.ts`), with
   outfits from a per-person seed. A Meshy person in A-pose has to be skinned to those bones: two bones and a
   weight per vertex, from the bind pose. Each model is one fixed look, and the morphs (build, female

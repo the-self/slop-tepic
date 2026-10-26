@@ -4,9 +4,9 @@
 import * as THREE from 'three/webgpu';
 import { createDamage } from '../vehicle-damage.ts';
 import { createStains } from '../car-blood.ts';
-import { LEFT_CARS } from './constants.ts';
+import { LEFT_CARS, BAIL_SPEED } from './constants.ts';
 import { collisionBody, buildingContact } from './collisions.ts';
-import type { PlayerMode, VehicleMode, LeftCar, ParkedVehicle, TakenVehicle } from './types.ts';
+import type { PlayerMode, VehicleMode, LeftCar, ParkedVehicle, TakenVehicle, CarEntity } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
 
 export function setMode(ctl: ThirdPersonControllerManager, mode: PlayerMode): void {
@@ -77,6 +77,8 @@ export function leaveCarBehind(ctl: ThirdPersonControllerManager): void {
   if (ctl._bloodMats?.get(`${c.look.bodyType}_${c.look.paint}`) === c.bodyMesh.material) {
     ctl._bloodMats.delete(`${c.look.bodyType}_${c.look.paint}`);
   }
+  // (and its model's material, whose paint & brake lamps are uniforms: the next car of its model gets another)
+  if (c.look.model && c.modelBody?.visible && ctl._modelMats?.get(c.look.model) === c.modelBody.material) ctl._modelMats.delete(c.look.model);
   ctl.leftCars.push({
     mesh, x, y, z, heading: c.heading, halfW: c.halfW, halfL: c.halfL, look: { ...c.look }, damage: c.damage,
     dented: c.dented, kit: c.kit, stains: c.stains, material: c.bodyMesh.material,
@@ -142,6 +144,37 @@ export function enterVehicle(ctl: ThirdPersonControllerManager, mode: PlayerMode
   }
   ctl.setMode(mode);
   return true;
+}
+
+// Getting out (F), GTA-style: at a walk the pedestrian steps out (exitVehicle); going faster than BAIL_SPEED the
+// driver throws themself out of the door and tumbles along the road at about the speed it was going (a ragdoll, up
+// again once they have lain still), the car rolling on empty; a moto's or bicycle's rider is thrown off it
+export function leaveVehicle(ctl: ThirdPersonControllerManager): boolean {
+  const mode = ctl.activeMode;
+  if (mode === 'car' || mode === 'moto' || mode === 'cyclist') {
+    const v = ctl.entities[mode];
+    const speed = Math.abs(v.speed);
+    if (speed > BAIL_SPEED && ctl.ragdolls && !ctl.entities.person.ragdoll) {
+      if (v.type === 'car') bailOut(ctl, v, speed);
+      else ctl.ejectRider(v, speed, true);
+      return true;
+    }
+  }
+  return ctl.exitVehicle();
+}
+
+// Out of the driver's door (left) at `speed` m/s: thrown off sideways as the car goes on at its own speed
+function bailOut(ctl: ThirdPersonControllerManager, c: CarEntity, speed: number): void {
+  const h = c.heading;
+  const lx = Math.cos(h), lz = -Math.sin(h); // left (heading 0 faces +z, left is +x)
+  const side = (c.halfW || 0.86) + 0.45;
+  const x = c.position.x + lx * side, z = c.position.z + lz * side;
+  const vx = Math.sin(h) * c.speed + c.vx, vz = Math.cos(h) * c.speed + c.vz;
+  // (a little slower than the car, pushed off its side, rolling over as they land)
+  ctl.throwPlayer(x, z, h, c.position.y + 0.15, false,
+    { vx: vx * 0.85 + lx * 2.2, vy: 1.2, vz: vz * 0.85 + lz * 2.2, spin: 2 + speed * 0.25, bleed: speed > 15 ? 0.25 : 0 });
+  if (c.carState) c.carState.value.x = 0; // (no brake lights: nobody's foot on the pedal)
+  ctl.onEject?.(speed, x, z, 'car', true);
 }
 
 // Get out: the pedestrian steps out on the driver's side (left), the vehicle stays where it stopped. A helicopter

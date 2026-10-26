@@ -1,14 +1,26 @@
 {
-  "prompt": "Product render of a 2021 Nissan Versa compact sedan (third generation, V-motion grille, boomerang lamps), plain glossy white paint, dark tinted windows, black plastic trim, its stock wheels, no logos, no badges, no emblems, no license plates, no text, three-quarter front view from slightly above, the whole car centered, isolated on a plain white background, soft even studio light, no reflections of surroundings",
+  "note": "Four views drawn in the key colour (magenta, for prepare.mjs's paint mask), then one multi-image-to-3d. Run through the meshy MCP server: text-to-image (the first view), image-to-image with that task as the reference (the other three), multi-image-to-3d on the four files in this order. 36 credits of images + 35 for the model (Ultra geometry, 4K texture, PBR).",
+  "imageModel": "nano-banana-pro",
   "imageOptions": {
     "aspect_ratio": "4:3",
     "remove_background": true
   },
+  "prompt": "Highly detailed studio product photo of a 2024 Nissan Versa sedan, the current generation sold in Mexico, with its real proportions. Solid flat magenta paint (pure #FF00FF) on every painted body panel: doors, fenders, hood, roof, trunk lid, both bumpers and the mirror caps. Dark tinted windows, gloss black grille and black plastic trim, clear headlamps, red tail lamps, silver alloy wheels with black tyres, panel gaps, door handles and window seals all visible and crisp. No logos, no badges, no emblems, no license plates, no text, no people. Three-quarter front view from the front-left, slightly above eye level, the whole car in frame and centered. Plain pure white background, soft even studio light, no reflections of surroundings, no shadows on the paint.",
+  "views": [
+    "The exact same car (same Nissan Versa, same magenta paint, same wheels, windows and trim, no badges, no plates) seen in a pure side profile view of its left side, nose pointing to the right of the image, camera at mid-door height, orthographic-like, the whole car in frame and centered, plain pure white background, soft even studio light.",
+    "The exact same car (same Nissan Versa, same magenta paint, same wheels, windows and trim, no badges, no plates, no text) seen in a three-quarter rear view from the rear-left, slightly above eye level, showing the trunk lid, the full red tail lamps, the rear bumper and the left side, the whole car in frame and centered, plain pure white background, soft even studio light.",
+    "The exact same car (same Nissan Versa, same magenta paint, same wheels, windows and trim, no badges, no plates, no text) seen straight from behind, a pure rear view at trunk height, showing the trunk lid, both red tail lamps, the rear window and the rear bumper, symmetric, the whole car in frame and centered, plain pure white background, soft even studio light."
+  ],
   "model": {
-    "model_type": "smart-topology",
-    "ai_model": "meshy-t2.5",
-    "target_polycount": 8000,
+    "ai_model": "meshy-7.1",
     "should_texture": true,
-    "texture_resolution": "2k"
-  }
+    "texture_resolution": "4k",
+    "geometry_resolution": "2k",
+    "enable_pbr": true,
+    "should_remesh": true,
+    "target_polycount": 100000,
+    "image_enhancement": false,
+    "remove_lighting": true
+  },
+  "prepare": "--length 4.5 --yaw 90 --wheel 0.311 --ratio 0.6 --texture 2048"
 }

@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { GEO } from './city-geodata.js';
-import type { GeoFrame } from './city-geodata.js';
+import { geoToWorld } from './geo.ts';
+import type { ProjectionFrame } from './geo.ts';
 import { landHeight } from './ground.ts';
 import type { Collider } from './buildings.ts';
 
@@ -35,9 +36,6 @@ export interface LandmarkModel {
   lift?: number;
 }
 
-/** What the projection reads of GEO.frame: its origin (°) and the street grid's turn (° clockwise from true north) */
-type ProjectionFrame = Pick<GeoFrame, 'lat0' | 'lon0' | 'bearingDeg'>;
-
 /** Where a model stands: its centre (m), its yaw (rad) and front (fx, fz), its footprint's half-sizes (m) */
 export interface ModelFrame {
   x: number;
@@ -58,18 +56,6 @@ const LANDMARK_MODELS: LandmarkModel[] = [
   // { name: 'Presidencia Municipal', file: 'assets/models/presidencia-municipal.glb', lat: 21.51195, lon: -104.89305,
   //   heading: 90, size: [38, 26], height: 12 },
 ];
-
-// The builder's projection (tools/build-tepic-geodata.mjs): metres east & north of the plaza on the WGS84 ellipsoid,
-// turned to the street grid
-const A = 6378137.0, E2 = 6.69437999014e-3;
-function geoToWorld(lat: number, lon: number, frame: ProjectionFrame = GEO.frame): [number, number] {
-  const phi = (frame.lat0 * Math.PI) / 180, s = Math.sin(phi);
-  const kx = (Math.PI / 180) * (A / Math.sqrt(1 - E2 * s * s)) * Math.cos(phi);
-  const ky = (Math.PI / 180) * ((A * (1 - E2)) / Math.pow(1 - E2 * s * s, 1.5));
-  const e = (lon - frame.lon0) * kx, n = (lat - frame.lat0) * ky;
-  const th = ((frame.bearingDeg || 0) * Math.PI) / 180, c = Math.cos(th), sn = Math.sin(th);
-  return [e * c - n * sn, -(e * sn + n * c)];
-}
 
 // Where a model stands: its centre, its turn (the world's yaw for its +z) and its footprint's half-sizes
 function modelFrame(m: LandmarkModel, frame: ProjectionFrame = GEO.frame): ModelFrame {

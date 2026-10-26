@@ -163,8 +163,11 @@ export interface AudioPursuer {
   /** s left burning, once wrecked (0: not a wreck) */
   wreck?: number;
   police?: boolean;
-  /** a patrol car's side (crime.ts): only the police's have sirens, not the cartel's nor the army's trucks */
+  /** a patrol car's side (crime.ts): only the police's have sirens (and the fire trucks & ambulances), not the cartel's
+   *  nor the army's trucks */
   faction?: string;
+  /** its siren on or off, whatever its faction (a fire truck or ambulance going back: off) */
+  siren?: boolean;
   /** 'helicopter': the police helicopter, its rotor heard from afar */
   type?: string;
   x: number;
@@ -504,7 +507,8 @@ class CityAudioSources {
         this.motor(c, 'helicopter', c.x, c.y + 2.66, c.z, c.speed, 0.7, c.heading, false, false, seedAt(3000 + i), false, 0.6, 450);
         continue;
       }
-      const siren = c.faction ? c.faction === 'police' : Boolean(c.police);
+      // (the bomberos' trucks & the ambulances too)
+      const siren = c.siren ?? (c.faction ? c.faction === 'police' || c.faction === 'fire' || c.faction === 'ambulance' : Boolean(c.police));
       this.motor(c, siren ? 'sedan' : 'suv', c.x, c.y + 0.7, c.z, Math.abs(c.speed), unit(Math.abs(c.speed) / 20), c.heading, siren, false, seedAt(3000 + i), false);
     }
     this.streetVehicles(this.cars, elapsed, 100);

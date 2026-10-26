@@ -103,3 +103,26 @@ test('Tepic: the Río Mololoa runs through town in a channel the ground everyone
   assert.ok(groundHeight(p.x, p.z) < townHeight(p.x, p.z) - CHANNELS.river.depth + 0.01);
   close(landHeight(p.x, p.z), townHeight(p.x, p.z), 1e-3);
 });
+
+test('an open drain gets a concrete-lined channel, shallower than the river, its walls apart from the stone banks', () => {
+  const w = createWaterways([['drain', 2.2, '', 0, [0, 0, 100, 0]], ['stream', 2.5, '', 0, [0, 40, 100, 40]]]);
+  assert.equal(w.channels.length, 2);
+  const drain = w.channels.find((c) => c.kind === 'drain');
+  close(drain.half, 2.2 - CHANNELS.drain.margin);
+  close(w.offset(50, 0), -CHANNELS.drain.depth);
+  assert.ok(CHANNELS.drain.depth < CHANNELS.river.depth);
+  // its walls in the lined mesh, the arroyo's in the stone banks
+  const { banks, lined } = w.meshData();
+  assert.ok(lined.position.length > 0);
+  for (let k = 2; k < lined.position.length; k += 3) assert.ok(Math.abs(lined.position[k]) < 3, 'the drain\'s walls only');
+  for (let k = 2; k < banks.position.length; k += 3) assert.ok(banks.position[k] > 30, 'the arroyo\'s banks only');
+});
+
+test('a low footbridge over a channel keeps whoever walks on it at grade, and the channel open beside it', () => {
+  const foot = [{ w: 2.4, pts: [50, -10, 50, 10] }];
+  const w = createWaterways([['stream', 2.5, '', 0, [0, 0, 100, 0]]], { foot });
+  assert.equal(w.offset(50, 0), 0, 'on the footbridge');
+  assert.ok(w.offset(55, 0) < 0, 'beside it, the channel');
+  assert.ok(w.offset(50, 0, -5) < 0, 'and under it for a body down in the channel');
+  assert.ok(w.holes().length > 0, 'its hole in the deck still open (no street over it)');
+});
