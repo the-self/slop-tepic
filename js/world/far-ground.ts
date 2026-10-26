@@ -10,7 +10,7 @@ import type { Rect } from './lattice.ts';
 // The city's ground as seen from afar, the way GTA draws its LOD: beyond the streamed tiles (streaming.ts), where the
 // road deck, the sidewalks, the lots and the parks are not laid, the floor under the buildings is painted with them
 // instead, from one texture of the detailed box: the asphalt between the blocks, the blocks' lots (green where they lie
-// open, earth & patios where they are built up: lot-greenery.ts openness), the parks, the open country, the rivers and
+// open, earth & patios where they are built up: lot-greenery.ts openness), the car parks, the parks, the open country, the rivers and
 // the airport. terrain.ts puts it on the hills' floor under the tiles (on the slopes), city-grid.ts's valley floor in
 // the flat city. Its colours are the near layers' own, averaged (tsl-materials.ts), so a tile coming in changes the
 // detail, not the colour.
@@ -101,6 +101,13 @@ function paintFarGround({ open = null, box, size = SIZE }: { open?: Map<CityBloc
   ctx.strokeStyle = COLORS.sidewalk;
   ctx.lineWidth = 1 / k;
   for (const path of byColor.values()) ctx.stroke(path);
+  // the car parks' asphalt (or their concrete, stones or earth, a sidewalk's grey at this scale)
+  ctx.fillStyle = COLORS.asphalt;
+  const lots = new Path2D(), pavedLots = new Path2D();
+  for (const [, surface, , r] of GEO.parking) flatRing(r, surface ? pavedLots : lots);
+  ctx.fill(lots);
+  ctx.fillStyle = COLORS.sidewalk;
+  ctx.fill(pavedLots);
   // the parks & woods of OpenStreetMap over the open country, the water
   const parks = new Path2D(), woods = new Path2D(), water = new Path2D();
   for (const p of GEO.parks) {
