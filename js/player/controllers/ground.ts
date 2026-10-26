@@ -1,6 +1,6 @@
 // js/player/controllers/ground.ts
 // The ground under the player: the terrain, the town's floor, a bridge's deck, an interior's floor, the curbs a
-// walker stands on, the tilt under a vehicle, and the hills too steep to walk up
+// walker stands on (and the driveways' ramps over them), the tilt under a vehicle, and the hills too steep to walk up
 import { ISLAND_BOUNDS, blockAt } from '../../world/city-config.ts';
 import type { PlayerMode, PlayerEntity, PlayerRoom, GroundQuery } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
@@ -29,7 +29,10 @@ export function getGroundHeight(ctl: ThirdPersonControllerManager, x: number, z:
   if (mode === 'person') {
     const town = ctl.floorHeight(x, z);
     if (ground < town - 0.01) return ground;
-    return town + Math.max(ctl.isPointOnSidewalk(x, z) ? ISLAND_BOUNDS.sidewalkHeight : 0.0, ground - town);
+    // (up a driveway's ramp where the curb drops: car-parks.ts)
+    const ramp = ctl.rampAt ? ctl.rampAt(x, z) : -1;
+    const curb = ramp >= 0 ? ramp : ctl.isPointOnSidewalk(x, z) ? ISLAND_BOUNDS.sidewalkHeight : 0.0;
+    return town + Math.max(curb, ground - town);
   }
   return ground;
 }

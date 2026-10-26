@@ -86,6 +86,8 @@ class ThirdPersonControllerManager {
   floorAt?: ((x: number, z: number) => number) | null;
   landAt?: ((x: number, z: number) => number) | null;
   deckAt?: ((x: number, z: number, over: number) => number) | null;
+  /** A driveway's ramp over the curb at (x, z) (m over the town's floor, -1 none: world/car-parks.ts rampAt) */
+  rampAt?: ((x: number, z: number) => number) | null;
   _physicsFocus?: { x: number; y: number; z: number };
   _bodyBounds?: { x: number; z: number };
   _wall?: { type: 'building' };
@@ -216,6 +218,10 @@ class ThirdPersonControllerManager {
   setTerrain(ground: GroundQuery | null, floor?: ((x: number, z: number) => number) | null,
     land?: ((x: number, z: number) => number) | null, deck?: ((x: number, z: number, over: number) => number) | null): void {
     Ground.setTerrain(this, ground, floor, land, deck);
+  }
+  // The driveways where the curb drops in a ramp (world/car-parks.ts): walked & driven up instead of stepped onto
+  setCurbRamps(rampAt: ((x: number, z: number) => number) | null): void {
+    this.rampAt = rampAt;
   }
   keepOffHills(entity: PlayerEntity, prevX: number, prevZ: number): void {
     Ground.keepOffHills(this, entity, prevX, prevZ);

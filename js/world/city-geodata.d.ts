@@ -221,9 +221,14 @@ export type BuildingOverride = [house: number, storeys: number, paint: number];
 /** A car park's surface: 0 asphalt, 1 poured concrete, 2 setts (adoquín, empedrado), 3 earth or gravel. */
 export type ParkingSurface = 0 | 1 | 2 | 3;
 
+/** Where a car park opens onto the street: [x, z on the curb (m), the way in, square to the curb (mrad, atan2 of z
+ *  over x), width (m), path from the curb to the lot (flat: OSM's service road, or straight in)]. */
+export type ParkingEntrance = [x: number, z: number, angle: number, width: number, path: FlatPoints];
+
 /** A surface car park (OSM amenity=parking), cut to the property lines: [name ('' none), surface, the direction its
- *  rows of stalls run (mrad: along (cos θ, -sin θ), its long side), outline (flat ring)]. */
-export type ParkingLot = [name: string, surface: ParkingSurface, theta: number, ring: FlatPoints];
+ *  rows of stalls run (mrad: along (cos θ, -sin θ): its mapped aisles', else its long side), outline (flat ring),
+ *  its entrances]. */
+export type ParkingLot = [name: string, surface: ParkingSurface, theta: number, ring: FlatPoints, entrances: ParkingEntrance[]];
 
 export interface CityGeodata {
   version: number;

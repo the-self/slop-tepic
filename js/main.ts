@@ -111,6 +111,7 @@ async function initApp(): Promise<void> {
   const controllerManager = new ThirdPersonControllerManager(scene, colliders);
   // The ground (world/ground.ts): the town's own slopes and the hills over them (the flat city with ?slopes=0)
   controllerManager.setTerrain(groundHeight, townHeight, landHeight, deckLift); // (and the bridges' decks over it)
+  controllerManager.setCurbRamps(carParks.rampAt); // (the car parks' driveways, up over the curb)
   trafficSystem.setHillQuery(gradeHeight); // (the roads' lifts are over the ground at grade: down an underpass, < 0)
   trafficSystem.setSurfaceQuery(surfaceHeight);
   // People, bicycles & hydrants knocked flying bounce off the buildings' walls (sim/mayhem.ts)

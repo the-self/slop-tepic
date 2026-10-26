@@ -1,6 +1,7 @@
 // js/world/car-parks.ts
 // Draws Tepic's surface car parks (parking.ts lays them out): the lot's asphalt (or concrete, adoquín or earth, as
-// OpenStreetMap says) a hair over the block's ground, the white lines between the stalls, laid on the town's slopes like
+// OpenStreetMap says) a hair over the block's ground, its entrances (the curb dropped in a ramp, a paved way to the
+// lot, rampAt for what the player stands on), the white lines between the stalls, laid on the town's slopes like
 // the road paint, and the cars standing in some of the stalls. The cars are the traffic's own body shapes stretched to
 // real models (models/cars, by their rarity), drawn only round the camera: the full model near it, the ~250-triangle
 // stand-in further out, nothing past CAR_RADIUS. Each one stops the player like a wall (a collider of the city's).
@@ -24,6 +25,14 @@ import type { TileStreamer } from './streaming.ts';
 const SW_TOP = 0.22;
 const PARK_Y = 0.26;
 const PAINT = 0.012;
+// The driveways: at an entrance the curb drops in a ramp from the gutter, RAMP_OUT m out on the roadway, up to the lot's
+// level RAMP_IN m in past the curb's edge (over the curb's 0.18 m and the sidewalk's 0.22 m all the way), then a paved
+// way runs along the entrance's path to the lot
+const RAMP_OUT = 1.0;
+const RAMP_IN = 0.3;
+const RAMP_FOOT = 0.015; // m over the roadway at its foot
+const DRIVE = 0.004; // m the driveway lies over the lot (where they meet)
+const RAMP_CELL = 50; // m: the cells the ramps are found by
 const LINE_W = 0.12; // m: the stall lines
 const WHITE = new THREE.Color(0xe6e2d6);
 const YELLOW = new THREE.Color(0xe8ad22);
@@ -93,6 +102,40 @@ function paintLine(layer: FlatLayer, ax: number, az: number, bx: number, bz: num
   layer.index.push(i, i + 1, i + 2, i, i + 2, i + 3);
 }
 
+/** A driveway's ramp: its curb point (m), in (nx, nz) and along the curb (tx, tz), half width, and its top (m) */
+interface Ramp {
+  x: number;
+  z: number;
+  nx: number;
+  nz: number;
+  half: number;
+  top: number;
+}
+
+// The ramp's height (m over the town's floor) at s m in from the curb's edge (< 0: out over the roadway)
+const rampHeight = (r: Ramp, s: number) => RAMP_FOOT + (r.top - RAMP_FOOT) * Math.min(1, (s + RAMP_OUT) / (RAMP_OUT + RAMP_IN));
+
+// A ramp's top & its two sides as triangles, each wound to face out (up for the top, sideways for the sides)
+function rampTriangles(out: number[], r: Ramp): void {
+  const tx = -r.nz * r.half, tz = r.nx * r.half;
+  const at = (s: number, side: number, y: number): [number, number, number] => [r.x + r.nx * s + tx * side, y, r.z + r.nz * s + tz * side];
+  const tri = (a: [number, number, number], b: [number, number, number], c: [number, number, number], ox: number, oy: number, oz: number) => {
+    // (the normal by the winding a, b, c; the other way round if it faces in)
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    const n = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+    out.push(...a, ...(n[0] * ox + n[1] * oy + n[2] * oz >= 0 ? [...b, ...c] : [...c, ...b]));
+  };
+  const lo = -RAMP_OUT, hi = RAMP_IN;
+  const a0 = at(lo, -1, RAMP_FOOT), a1 = at(lo, 1, RAMP_FOOT), b0 = at(hi, -1, r.top), b1 = at(hi, 1, r.top);
+  tri(a0, a1, b1, 0, 1, 0);
+  tri(a0, b1, b0, 0, 1, 0);
+  for (const side of [-1, 1]) {
+    const f = at(lo, side, RAMP_FOOT), t = at(hi, side, r.top), g = at(lo, side, 0), h = at(hi, side, 0);
+    tri(f, t, h, tx * side, 0, tz * side);
+    tri(f, h, g, tx * side, 0, tz * side);
+  }
+}
+
 /** A parked car as drawn: where it stands (m, on the ground), its turn and tilt (rad), its body shape stretched to its
  *  model's size, its paint, and its half width & length (m) */
 interface PlacedCar {
@@ -156,11 +199,35 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   const paint = new FlatLayer();
   const PAVE = [0, 3, 1, 2]; // (createPavementMaterial's kinds: 3 concreto, 1 adoquín, 2 tierra)
   const placed: PlacedCar[] = [];
+  const ramps: Ramp[] = [];
+  const rampTris: number[] = [];
   let stallCount = 0;
   for (const lot of lots) {
     const y = lotHeight(lot);
     if (lot.surface === 0) fillLot(asphalt, lot, y);
     else fillLot(paved, lot, y, { pave: [PAVE[lot.surface]] });
+    // its entrances: the ramp at the curb, then the way paved along its path, a little into the lot
+    for (const e of lot.entrances) {
+      const ramp: Ramp = { x: e.x, z: e.z, nx: e.nx, nz: e.nz, half: e.width / 2, top: y + DRIVE };
+      ramps.push(ramp);
+      rampTriangles(rampTris, ramp);
+      const path = [{ x: e.x + e.nx * RAMP_IN, z: e.z + e.nz * RAMP_IN }, ...e.path.slice(1)];
+      for (let i = 0; i + 1 < path.length; i++) {
+        const a = path[i], b = path[i + 1];
+        const len = Math.hypot(b.x - a.x, b.z - a.z);
+        if (len < 0.05) continue;
+        const fx = (b.x - a.x) / len, fz = (b.z - a.z) / len;
+        // (each piece runs on half the width past its ends, so the bends close; the last one on into the lot)
+        const ext = i + 2 === path.length ? 1 : ramp.half;
+        const x0 = a.x - (i ? fx * ramp.half : 0), z0 = a.z - (i ? fz * ramp.half : 0), x1 = b.x + fx * ext, z1 = b.z + fz * ext;
+        const sx = -fz * ramp.half, sz = fx * ramp.half;
+        const v = asphalt.vertex(x0 - sx, ramp.top, z0 - sz);
+        asphalt.vertex(x0 + sx, ramp.top, z0 + sz);
+        asphalt.vertex(x1 + sx, ramp.top, z1 + sz);
+        asphalt.vertex(x1 - sx, ramp.top, z1 - sz);
+        asphalt.index.push(v, v + 1, v + 2, v, v + 2, v + 3); // (counter-clockwise seen from above, as pavements.ts)
+      }
+    }
     const stalls = layStalls(lot, walls.wallDistance);
     stallCount += stalls.length;
     // lines on the asphalt & the concrete, mostly white, yellow on a few lots (nobody paints on stones or earth)
@@ -185,8 +252,9 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   const group = new THREE.Group();
   group.name = 'CarParks';
   scene.add(group);
+  const asphaltMat = createRoadSurfaceMaterial();
   const layers: [FlatLayer, THREE.Material, string, number][] = [
-    [asphalt, createRoadSurfaceMaterial(), 'CarParkAsphalt', 0],
+    [asphalt, asphaltMat, 'CarParkAsphalt', 0],
     [paved, createPavementMaterial(), 'CarParkPaving', 0],
     [paint, createRoadPaintMaterial(), 'CarParkPaint', -1]
   ];
@@ -202,6 +270,44 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     mesh.receiveShadow = true;
     mesh.renderOrder = renderOrder;
     group.add(mesh);
+  }
+
+  // The driveways' ramps (their sides lit as walls: their own normals)
+  if (rampTris.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(rampTris, 3));
+    g.computeVertexNormals();
+    if (streamer) streamer.addLayer(g, asphaltMat, { name: 'CarParkRamps' });
+    else {
+      const mesh = new THREE.Mesh(drapeGeometry(g), asphaltMat);
+      mesh.name = 'CarParkRamps';
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+  }
+  // ...and what the player stands on there: up the ramp, not a curb's step (the ramps by RAMP_CELL cell)
+  const rampCells = new Map<number, Ramp[]>();
+  for (const r of ramps) {
+    const reach = RAMP_OUT + r.half;
+    for (let ix = Math.floor((r.x - reach) / RAMP_CELL); ix <= Math.floor((r.x + reach) / RAMP_CELL); ix++) {
+      for (let iz = Math.floor((r.z - reach) / RAMP_CELL); iz <= Math.floor((r.z + reach) / RAMP_CELL); iz++) {
+        const k = ix * 4096 + iz;
+        let list = rampCells.get(k);
+        if (!list) rampCells.set(k, (list = []));
+        list.push(r);
+      }
+    }
+  }
+  /** The height of a driveway's ramp at (x, z) (m over the town's floor), -1 off them */
+  function rampAt(x: number, z: number): number {
+    const list = rampCells.get(Math.floor(x / RAMP_CELL) * 4096 + Math.floor(z / RAMP_CELL));
+    if (!list) return -1;
+    for (const r of list) {
+      const dx = x - r.x, dz = z - r.z;
+      const s = dx * r.nx + dz * r.nz, t = dz * r.nx - dx * r.nz;
+      if (s >= -RAMP_OUT && s <= RAMP_IN && Math.abs(t) <= r.half) return rampHeight(r, s);
+    }
+    return -1;
   }
 
   // The parked cars stop the player like the walls (their turned boxes, a little short of the roof)
@@ -288,12 +394,13 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     }
   }
 
-  console.info(`[car parks] ${lots.length} lots, ${stallCount} stalls, ${placed.length} cars parked`);
+  console.info(`[car parks] ${lots.length} lots, ${ramps.length} entrances, ${stallCount} stalls, ${placed.length} cars parked`);
   return {
     lots,
     colliders,
     /** Whether (x, z) lies in a car park */
     contains: (px: number, pz: number) => lots.some((l) => inCarPark(l, px, pz)),
+    rampAt,
     update
   };
 }

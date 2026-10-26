@@ -16,6 +16,17 @@ const STALL_D = 5.2;
 const AISLE = 6.6; // two-way, cars backing out of the stalls on either side
 const EDGE = 0.4; // m clear of the lot's outline (its fence, its curb)
 
+/** Where a lot opens onto the street: the curb's point (m), the way in square to the curb (unit), the driveway's width
+ *  (m) and its path from the curb to the lot (the first point the curb's) */
+export interface CarParkEntrance {
+  x: number;
+  z: number;
+  nx: number;
+  nz: number;
+  width: number;
+  path: PointXZ[];
+}
+
 /** A car park, from its geodata record */
 export interface CarPark {
   name: string;
@@ -32,6 +43,7 @@ export interface CarPark {
   maxZ: number;
   /** Its area (m²) */
   area: number;
+  entrances: CarParkEntrance[];
 }
 
 /** A stall: its centre (m), the way a car parked in it faces (heading: atan2 of the nose's x over its z, the
@@ -62,7 +74,7 @@ export interface ParkedCar {
 /** What a stall needs to know of the buildings: the distance (m) to the nearest wall, 0 inside one (lot-greenery.ts) */
 export type WallDistance = (x: number, z: number, reach: number) => number;
 
-function carParkOf([name, surface, theta, ring]: ParkingLot): CarPark {
+function carParkOf([name, surface, theta, ring, doors]: ParkingLot): CarPark {
   const pts: PointXZ[] = [];
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, a2 = 0;
   for (let i = 0; i + 1 < ring.length; i += 2) {
@@ -73,7 +85,11 @@ function carParkOf([name, surface, theta, ring]: ParkingLot): CarPark {
   for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) a2 += pts[j].x * pts[i].z - pts[i].x * pts[j].z;
   const th = theta / 1000;
   const cs = Math.cos(th), sn = Math.sin(th);
-  return { name, surface, ux: cs, uz: -sn, vx: sn, vz: cs, pts, minX, maxX, minZ, maxZ, area: Math.abs(a2) / 2 };
+  const entrances = doors.map(([x, z, angle, width, path]): CarParkEntrance => ({
+    x, z, nx: Math.cos(angle / 1000), nz: Math.sin(angle / 1000), width,
+    path: Array.from({ length: path.length / 2 }, (_, i) => ({ x: path[2 * i], z: path[2 * i + 1] }))
+  }));
+  return { name, surface, ux: cs, uz: -sn, vx: sn, vz: cs, pts, minX, maxX, minZ, maxZ, area: Math.abs(a2) / 2, entrances };
 }
 
 /** The car parks of the geodata */
@@ -86,11 +102,35 @@ function inCarPark(lot: CarPark, x: number, z: number): boolean {
   return x >= lot.minX && x <= lot.maxX && z >= lot.minZ && z <= lot.maxZ && insidePoly(lot.pts, x, z);
 }
 
+// Distance (m) from (x, z) to the segment a-b
+function segmentDistance(x: number, z: number, ax: number, az: number, bx: number, bz: number): number {
+  const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz;
+  const t = L2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2)) : 0;
+  return Math.hypot(x - ax - dx * t, z - az - dz * t);
+}
+
+/** Whether a stall centred at (x, z) would stand in an entrance's way: on its driveway, or across its mouth (the
+ *  driveway carried on MOUTH m into the lot, to the aisle) */
+const MOUTH = 9;
+function inMouth(lot: CarPark, x: number, z: number): boolean {
+  for (const e of lot.entrances) {
+    const clear = e.width / 2 + STALL_W / 2 + 0.3;
+    const p = e.path;
+    for (let i = 0; i + 1 < p.length; i++) if (segmentDistance(x, z, p[i].x, p[i].z, p[i + 1].x, p[i + 1].z) < clear) return true;
+    const end = p.at(-1), before = p.at(-2);
+    if (!end || !before) continue;
+    const L = Math.hypot(end.x - before.x, end.z - before.z) || 1;
+    const fx = (end.x - before.x) / L, fz = (end.z - before.z) / L;
+    if (segmentDistance(x, z, end.x, end.z, end.x + fx * MOUTH, end.z + fz * MOUTH) < clear) return true;
+  }
+  return false;
+}
+
 /**
  * The stalls of a lot: rows along u, across v in the pattern row | aisle | row, row | aisle | row... from the lot's edge
  * (each pair of rows back to back), centred in the lot both ways. A stall is kept when its corners lie in the lot (EDGE
- * m in), its aisle too (a car can drive out of it), and no wall stands in it (`wallAt`, the buildings standing on the
- * lot: the store mapped inside its car park)
+ * m in), its aisle too (a car can drive out of it), it leaves the entrances' way clear (inMouth), and no wall stands
+ * in it (`wallAt`, the buildings standing on the lot: the store mapped inside its car park)
  */
 function layStalls(lot: CarPark, wallAt: WallDistance | null = null): Stall[] {
   const { ux, uz, vx, vz } = lot;
@@ -127,7 +167,7 @@ function layStalls(lot: CarPark, wallAt: WallDistance | null = null): Stall[] {
       const a = uStart + i * STALL_W, b = a + STALL_W, cu = (a + b) / 2;
       const corners = [at(a + 0.15, rv + 0.15), at(b - 0.15, rv + 0.15), at(b - 0.15, rv + STALL_D - 0.15), at(a + 0.15, rv + STALL_D - 0.15)];
       const c = at(cu, cv);
-      let ok = corners.every(inside) && inside(at(cu, aisleV)) && inside(at(cu, aisleV + (face > 0 ? 2 : -2)));
+      let ok = corners.every(inside) && inside(at(cu, aisleV)) && inside(at(cu, aisleV + (face > 0 ? 2 : -2))) && !inMouth(lot, c.x, c.z);
       if (ok && wallAt) ok = wallAt(c.x, c.z, 3) > 1.4 && corners.every((p) => wallAt(p.x, p.z, 1) > 0.2);
       // the car's nose towards the aisle (driven in forwards, as most people do)
       const fx = vx * face, fz = vz * face;
@@ -165,4 +205,4 @@ function parkCars(stalls: readonly Stall[], { fill = 0.5 }: { fill?: number } = 
   return cars;
 }
 
-export { STALL_W, STALL_D, AISLE, carParks, inCarPark, layStalls, parkCars };
+export { STALL_W, STALL_D, AISLE, carParks, inCarPark, inMouth, layStalls, parkCars };
