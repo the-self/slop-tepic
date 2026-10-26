@@ -143,7 +143,7 @@ function panic(ts: TrafficState, x: number, z: number, radius: number): void {
     }
     if (p.conversation) endConversation(ts, p.conversation);
     const heading = p.bail ? p.bail.heading : Math.atan2(p.ux * p.dir, p.uz * p.dir);
-    Object.assign(p, { node: null, waiting: false, v: 0, pause: 0 });
+    Object.assign(p, { node: null, waiting: false, v: 0, pause: 0, ride: null }); // (no camión for them now, pickups.ts)
     p.bail = {
       time: BAIL_STUN * Math.random(), heading, flee: true, runFor: 6 + Math.random() * 5, goal: null, nextSearch: 0,
       best: Infinity, since: 0, fromX: x, fromZ: z

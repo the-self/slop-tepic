@@ -9,6 +9,7 @@ import { bendSpeed, brake, follow, freeAcc, playerGap, stopAt } from './idm.ts';
 import { nearestLane } from './routing.ts';
 import { holdsOn, mergingAhead, pedsOut } from './right-of-way.ts';
 import { enter, leave, mayEnter, signalAhead } from './junctions.ts';
+import { curbBrake, curbside } from './pickups.ts';
 
 // Overtake into an adjacent lane when it is clearly quicker (MOBIL), or work towards a lane the planned turn
 // can be made from; either only if neither v nor its new follower has to brake hard for it. Not while still
@@ -20,6 +21,9 @@ function changeLanes(ts: TrafficState, v: DrivenVehicle): void {
   if (v.move.out[v.lane] < 0) {
     const t = v.lane + Math.sign(nearestLane(v.move, v.lane) - v.lane);
     if (laneSafe(ts, v, t, -4)) target = t;
+  } else if (v.stop) {
+    // (a camión, combi or taxi pulling in to the curb ahead: over to the curb lane, pickups.ts)
+    if (v.lane < e.lanes.length - 1 && laneSafe(ts, v, v.lane + 1, -3)) target = v.lane + 1;
   } else if (v.speed > 2) {
     let best = laneAcc(ts, v, v.lane) + 0.6;
     for (let t = v.lane - 1; t <= v.lane + 1; t += 2) {
@@ -82,7 +86,7 @@ function laneAcc(ts: TrafficState, v: OnEdge, t: number): number {
 
 // IDM acceleration for vehicles ahead in the lane (and, through the intersection, in the lane it leads to),
 // the stop line while v may not go, a red beyond, the player, and slowing down for turns and give-way lines
-function accelerate(ts: TrafficState, v: DrivenVehicle): void {
+function accelerate(ts: TrafficState, v: DrivenVehicle, dt: number): void {
   if (v.wrecked) {
     v.acc = -7; // (its engine dead: it rolls to a stop and stays there)
     v.gap = Infinity;
@@ -134,16 +138,52 @@ function accelerate(ts: TrafficState, v: DrivenVehicle): void {
     }
     cap = bendSpeed(ts, v, v.conn);
   }
+  // the player in its way: a driver takes a moment to see them come into it, and only then brakes (and keeps an eye
+  // on them for a while after). Only something left standing stops it dead short of it, as a vehicle ahead does:
+  // the player cutting in too close gets hit, as by anyone (collisions.ts)
   const pg = playerGap(v, 0);
-  if (pg < LOOKAHEAD) {
-    worst = Math.min(worst, brake(ts, v, pg, v.pSpeed));
-    if (pg < v.gap) {
+  // (swerving round them, out of its path now, it still has them in mind)
+  v.pSeen = pg < LOOKAHEAD || v.swerve !== 0 ? Math.min(3, v.pSeen + dt) : Math.max(0, v.pSeen - 0.5 * dt);
+  if (pg < LOOKAHEAD && (v.pParked || v.pSeen >= v.react)) {
+    // (swerving round them it brakes no harder than the tyres leave grip to steer with as well)
+    const b = brake(ts, v, Math.max(pg, 0), v.pSpeed);
+    worst = Math.min(worst, v.swerve !== 0 ? Math.max(b, -5 * ts.roadGrip) : b);
+    if (v.pParked && pg < v.gap) {
       v.gap = pg;
-      v.leaderSpeed = v.pSpeed;
+      v.leaderSpeed = 0;
     }
   }
+  worst = Math.min(worst, curbBrake(ts, v));
   const acc = Math.min(freeAcc(ts, v) + worst, (cap - v.speed) * 2);
   v.acc = clamp(acc, -9 * ts.roadGrip, v.driver.a);
+}
+
+// Steering out of the way of the player coming straight at it (on the wrong side of the road, or across it), once
+// its driver has seen them and they are under 3.5 s off: to the right, towards the curb, unless the player is on that
+// side or only the left leaves room to clear them, and no further than the road leaves room (it brakes all the same,
+// accelerate). Not through an intersection, where the road's width isn't its lane's: there it only brakes
+function dodge(v: DrivenVehicle): void {
+  v.swerve = 0;
+  if (v.conn || v.pParked || v.wrecked || v.pSeen < v.react || v.pSpeed > -3 || v.pAhead > LOOKAHEAD) return;
+  // (held till they are past, alongside as well)
+  const gap = v.pAhead - v.half - v.pHalfL;
+  if (v.pAhead < -(v.half + v.pHalfL) || gap > 3.5 * (v.speed - v.pSpeed)) return;
+  // where the player is from v's lane centre, not from v (which is moving off it): what v must get clear of
+  const across = v.pRight + v.dl;
+  const clear = v.halfWidth + v.pHalfW + 0.6;
+  if (Math.abs(across) > clear) return; // (in the lane beside, as oncoming traffic is: no need)
+  const e = v.edge;
+  // (up against the curb, or into the oncoming lanes)
+  const right = Math.min(2.4, e.half - e.lanes[v.lane] - v.halfWidth - 0.05);
+  const left = Math.min(2.4, e.half + e.lanes[v.lane] - v.halfWidth - 0.05);
+  // as far as each side needs, or has room for, and whether that gets them past without touching
+  const toRight = Math.min(across + clear, Math.max(right, 0));
+  const toLeft = Math.max(across - clear, -Math.max(left, 0));
+  const apartRight = toRight - across, apartLeft = across - toLeft;
+  const touch = v.halfWidth + v.pHalfW + 0.1;
+  const clearsRight = apartRight > touch, clearsLeft = apartLeft > touch;
+  const goRight = clearsRight ? across < 0.5 || !clearsLeft : !clearsLeft && apartRight >= apartLeft;
+  v.swerve = goRight ? toRight : toLeft;
 }
 
 function drive(ts: TrafficState, v: DrivenVehicle, dt: number): void {
@@ -152,7 +192,9 @@ function drive(ts: TrafficState, v: DrivenVehicle, dt: number): void {
     v.laneTimer = 0.4 + Math.random() * 0.3;
     changeLanes(ts, v);
   }
-  accelerate(ts, v);
+  dodge(v);
+  curbside(ts, v, dt);
+  accelerate(ts, v, dt);
   const speed = v.speed;
   v.speed = Math.max(0, v.speed + v.acc * dt);
   let ds = v.speed * dt;
@@ -170,13 +212,17 @@ function drive(ts: TrafficState, v: DrivenVehicle, dt: number): void {
     v.cs += ds;
     if (v.cs >= v.conn.len) leave(ts, v);
   }
-  // ease sideways onto the lane centre (after lane changes and knocks), steering the front bumper towards it so the
-  // nose doesn't swing on into the next lane, and no faster than the wheels can steer it, though even stopped half
-  // way into a lane change a driver edges over
-  const maxLat = Math.min(1.7, 0.3 + (v.bus ? 0.1 : 0.22) * v.speed);
-  const rate = Math.min(1.8, Math.max(v.speed, 1.5) / (v.axle + v.half));
-  const target = clamp(-rate * v.dl, -maxLat, maxLat);
-  v.dlv += clamp(target - v.dlv, -2.5 * dt, 2.5 * dt);
+  // ease sideways onto the lane centre (after lane changes and knocks), or off it to dodge or to pull in to the curb,
+  // steering the front bumper towards it so the nose doesn't swing on into the next lane, and no faster than the
+  // wheels can steer it, though even stopped half way into a lane change a driver edges over. A swerve is a yank of
+  // the wheel: quicker, though only as quick as it is rolling (a car standing still can't dodge)
+  const dodging = v.swerve !== 0;
+  const aim = dodging ? v.swerve : v.pullOver;
+  const maxLat = dodging ? Math.min(3.2, (v.bus ? 0.15 : 0.3) * v.speed) : Math.min(1.7, 0.3 + (v.bus ? 0.1 : 0.22) * v.speed);
+  const rate = Math.min(dodging ? 3 : 1.8, Math.max(v.speed, 1.5) / (v.axle + v.half));
+  const target = clamp(rate * (aim - v.dl), -maxLat, maxLat);
+  const steer = (dodging ? 6 : 2.5) * dt;
+  v.dlv += clamp(target - v.dlv, -steer, steer);
   v.dl += v.dlv * dt;
 }
 

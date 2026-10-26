@@ -24,7 +24,10 @@ function createVehicle<B extends boolean>(bus: B, half: number, halfWidth: numbe
     // end of the next, how many moves since it last found its way along it, and the route's sign row (-1 none yet)
     fleet: null, path: null, pathS: 0, nextPathS: 0, lost: 0, sign: -1,
     pitch: 0, roll: 0, pitchVel: 0, rollVel: 0, vx: 0, vz: 0, yawOffset: 0, yawVel: 0,
-    pAhead: Infinity, pRight: 0, pSpeed: 0, pHalfW: 0.86, pHalfL: 2.18, wheelSpin: Math.random() * Math.PI * 2,
+    pAhead: Infinity, pRight: 0, pSpeed: 0, pSide: 0, pHalfW: 0.86, pHalfL: 2.18, pParked: false, wheelSpin: Math.random() * Math.PI * 2,
+    // (an attentive driver's reaction: 0.35-0.75 s from seeing the player in its way to braking or steering)
+    pSeen: 0, react: 0.35 + Math.random() * 0.4, swerve: 0,
+    stop: null, pullOver: 0, nextStop: 0, fare: 0,
     // crash damage (vehicle-damage.ts createDamage, made on its first hit), and stopped for good once its engine is dead
     damage: null, wrecked: false, smokeCarry: 0,
     // a car thrown about in a crash, a body in Jolt (crash)

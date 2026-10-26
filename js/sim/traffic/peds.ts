@@ -56,6 +56,8 @@ function createPeds() {
       restTime: 0,
       socialTime: 0,
       conversation: null,
+      wish: hash(i, 8),
+      ride: null,
       rig: new PersonRig({
         seed: i * 1.6180339 + 0.13,
         female,
@@ -76,8 +78,9 @@ const SIDEWALK_Y = 0.22;
 const CROSSWALK_Y = 0.012;
 function pedGround(ts: TrafficState, p: Ped, x: number, z: number): number {
   const hill = hillAt(ts, x, z);
-  if (p.bail) {
-    // off its tracks (an ejected driver): in the road, or up on the curb island it walks onto
+  if (p.bail || p.ride) {
+    // off its tracks (an ejected driver, someone stepping on or off a camión): in the road, or up on the curb island
+    // it walks onto
     const b = blockAt(x, z);
     return (b && !(b.park > 0.6 && !b.median) ? SIDEWALK_Y : 0) + hill;
   }
@@ -91,7 +94,8 @@ function pedGround(ts: TrafficState, p: Ped, x: number, z: number): number {
 function renderPed(ts: TrafficState, p: Ped, dt: number) {
   const draw = !ts.hasView || visible(ts, p.x, p.z, 7);
   const partner = p.conversation && (p.conversation.a === p ? p.conversation.b : p.conversation.a);
-  const heading = partner ? Math.atan2(partner.x - p.x, partner.z - p.z) : Math.atan2(p.ux * p.dir, p.uz * p.dir);
+  const heading = partner ? Math.atan2(partner.x - p.x, partner.z - p.z)
+    : p.ride ? Math.atan2(p.ride.x - p.x, p.ride.z - p.z) : Math.atan2(p.ux * p.dir, p.uz * p.dir);
   p.rig.update(dt, p.x, p.z, heading, ts.pedGround, p, 0, draw);
   if (!draw) return;
   ts.pedCrowd.add(p.rig, Math.hypot(p.x - ts.focusX, p.z - ts.focusZ));
@@ -120,6 +124,7 @@ function throwPed(ts: TrafficState, p: Ped, vx: number, vz: number, nx: number, 
   p.waiting = false;
   p.v = 0;
   p.bail = null;
+  p.ride = null; // (a camión waiting for them pulls out, pickups.ts)
 }
 
 function knockPed(ts: TrafficState, p: Ped, hit: BoxContact): void {
