@@ -2,7 +2,7 @@
   "version": 0.6,
   "generator": "Overpass API 0.7.62.11 87bfad18",
   "osm3s": {
-    "timestamp_osm_base": "2026-10-24T18:13:42Z",
+    "timestamp_osm_base": "2026-10-26T01:47:15Z",
     "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
   },
   "elements": [
@@ -2174,6 +2174,16 @@
 },
 {
   "type": "node",
+  "id": 3825126964,
+  "lat": 21.3818497,
+  "lon": -104.8893418,
+  "tags": {
+    "name": "Aquiles Serdan",
+    "place": "village"
+  }
+},
+{
+  "type": "node",
   "id": 3825126968,
   "lat": 21.4013069,
   "lon": -104.8942343,
@@ -3165,6 +3175,16 @@
 },
 {
   "type": "node",
+  "id": 5379245168,
+  "lat": 21.3850219,
+  "lon": -104.8752690,
+  "tags": {
+    "crossing": "zebra",
+    "highway": "crossing"
+  }
+},
+{
+  "type": "node",
   "id": 5512203948,
   "lat": 21.4644124,
   "lon": -104.8012715,
@@ -3305,6 +3325,16 @@
 },
 {
   "type": "node",
+  "id": 5528652908,
+  "lat": 21.4946671,
+  "lon": -104.7899833,
+  "tags": {
+    "name": "3 de Julio",
+    "place": "village"
+  }
+},
+{
+  "type": "node",
   "id": 5570269886,
   "lat": 21.4718801,
   "lon": -104.8521873,
@@ -3356,6 +3386,28 @@
     "denomination": "catholic",
     "name": "Iglesia Santa Cecilia",
     "religion": "christian"
+  }
+},
+{
+  "type": "node",
+  "id": 5689453258,
+  "lat": 21.4161460,
+  "lon": -104.7756457,
+  "tags": {
+    "name": "El Refugio",
+    "place": "village"
+  }
+},
+{
+  "type": "node",
+  "id": 5691873321,
+  "lat": 21.3928388,
+  "lon": -104.7911142,
+  "tags": {
+    "name": "Trigomil",
+    "place": "village",
+    "population": "643",
+    "source": "http://www.microrregiones.gob.mx/catloc/contenido.aspx?refnac=180080022"
   }
 },
 {
@@ -3576,6 +3628,16 @@
   "tags": {
     "name": "Centro Histórico",
     "place": "neighbourhood"
+  }
+},
+{
+  "type": "node",
+  "id": 5778222545,
+  "lat": 21.5786036,
+  "lon": -104.7858085,
+  "tags": {
+    "name": "San Fernando",
+    "place": "village"
   }
 },
 {
@@ -3988,6 +4050,19 @@
   "tags": {
     "name": "Biosfera Residencial",
     "place": "neighbourhood"
+  }
+},
+{
+  "type": "node",
+  "id": 8363138723,
+  "lat": 21.4771829,
+  "lon": -104.7848081,
+  "tags": {
+    "description": "Paraje y capilla con una figura en honor a la \"Santa Muerte\", que por su ubicación puede utilizarse como mirador. Las vías de acceso al sitio son privadas. Fue inagurado el día 2 de Noviembre del 2020, día de los Muertos con un evento especial.",
+    "historic": "memorial",
+    "memorial": "statue",
+    "name": "Mirador de la Santa Merte",
+    "start_date": "2010-11-02"
   }
 },
 {
@@ -8629,6 +8704,16 @@
 },
 {
   "type": "node",
+  "id": 13328517843,
+  "lat": 21.3821692,
+  "lon": -104.9342501,
+  "tags": {
+    "name": "El Carrizal",
+    "place": "village"
+  }
+},
+{
+  "type": "node",
   "id": 13352438511,
   "lat": 21.5021069,
   "lon": -104.8213532,
@@ -9081,6 +9166,16 @@
   "tags": {
     "name": "Fraccionamiento Los Álamos",
     "place": "neighbourhood"
+  }
+},
+{
+  "type": "node",
+  "id": 13511355173,
+  "lat": 21.4955851,
+  "lon": -104.7879717,
+  "tags": {
+    "name": "Nuevo Amanecer",
+    "place": "village"
   }
 },
 {
@@ -11866,6 +11961,18 @@
 },
 {
   "type": "way",
+  "id": 381408896,
+  "center": {
+    "lat": 21.3819426,
+    "lon": -104.8866241
+  },
+  "tags": {
+    "leisure": "stadium",
+    "name": "Lienzo Charro Toril"
+  }
+},
+{
+  "type": "way",
   "id": 381893207,
   "center": {
     "lat": 21.5013815,
@@ -12340,6 +12447,18 @@
 },
 {
   "type": "way",
+  "id": 1454788047,
+  "center": {
+    "lat": 21.3919069,
+    "lon": -104.7914817
+  },
+  "tags": {
+    "leisure": "stadium",
+    "name": "Toril de Trigomil"
+  }
+},
+{
+  "type": "way",
   "id": 1457659435,
   "center": {
     "lat": 21.4449647,
@@ -12389,6 +12508,23 @@
     "leisure": "stadium",
     "name": "Lienzo Charro El Dorado",
     "sport": "equestrian"
+  }
+},
+{
+  "type": "way",
+  "id": 1481652991,
+  "center": {
+    "lat": 21.4294840,
+    "lon": -104.7858024
+  },
+  "tags": {
+    "name": "Casa Naiyari",
+    "payment:cash": "yes",
+    "payment:credit_cards": "yes",
+    "payment:debit_cards": "yes",
+    "payment:laser": "yes",
+    "tourism": "hotel",
+    "website": "https://casanaiyari.mx/"
   }
 },
 {

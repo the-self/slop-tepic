@@ -45,3 +45,33 @@ test("the airport's runway, taxiways, apron and gates are in the map, and no blo
   }
   assert.ok(GEO.teleports.aeropuerto, 'a teleport to the terminal');
 });
+
+test('the terminal is reached from the centro by the highway: MEX 15, the Autopista Tepic - Compostela and its Ramal Aeropuerto', async () => {
+  const { GEO } = await import('../js/world/city-geodata.js');
+  const { nodes, links, names } = GEO.roadGraph;
+  const n = nodes.length / 2;
+  const near = (x, z) => {
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < n; i++) {
+      const d = Math.hypot(nodes[2 * i] - x, nodes[2 * i + 1] - z);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  };
+  // the nodes reached from the plaza over the links of the highway and of the town's streets
+  const named = (re) => links.filter((l) => re.test(names[l[2]]));
+  const autopista = named(/^Autopista Tepic - Compostela$/), ramal = named(/^Ramal Aeropuerto Autopista/);
+  assert.ok(autopista.length > 0 && ramal.length > 0, 'the autopista and its ramal are in the road graph');
+  const adj = Array.from({ length: n }, () => []);
+  for (const [a, b] of links) { adj[a].push(b); adj[b].push(a); }
+  const seen = new Uint8Array(n), stack = [near(0, 0)];
+  seen[stack[0]] = 1;
+  while (stack.length) for (const m of adj[stack.pop()]) if (!seen[m]) { seen[m] = 1; stack.push(m); }
+  assert.ok(autopista.every(([a, b]) => seen[a] && seen[b]), 'the autopista is joined to the town');
+  assert.ok(ramal.every(([a, b]) => seen[a] && seen[b]), 'the ramal is joined to the town');
+  const t = GEO.teleports.aeropuerto;
+  assert.ok(seen[near(t.x, t.z)], 'the terminal is joined to the town');
+  // the ramal ends at the terminal's roads, west of the autopista
+  const ends = ramal.flatMap(([a, b]) => [a, b]).map((i) => nodes[2 * i]);
+  assert.ok(Math.min(...ends) < 10300 && Math.max(...ends) > 11400, 'the ramal runs from the terminal to the autopista');
+});
