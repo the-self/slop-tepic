@@ -176,3 +176,68 @@ export function createRiverWaterMaterial() {
   })();
   return mat;
 }
+
+/**
+ * The banks & bed of the lakes and presas (js/world/lakes.ts, drawn by river-channels.ts): Tepic's red-brown earth
+ * under a fringe of grass at the shore's top, going to dark wet mud & a line of algae at the water's edge, and silt
+ * under it. The `wet` attribute runs 0 at the shore's top to 1 at the water's edge and under it. The grass browns
+ * with the dry season (cityUniforms.uDryness), the bank's upper half sun-baked & cracked then.
+ */
+export function createLakeShoreMaterial() {
+  const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.94, metalness: 0.0 });
+  const wet = attribute('wet', 'float');
+  mat.colorNode = Fn(() => {
+    const p = positionWorld.xz;
+    const px = length(fwidth(p));
+    const fine = smoothstep(0.9, 0.12, px);
+    const grain = noise2D(p.mul(2.7)).sub(0.5).mul(fine).add(0.5);
+    const patch = noise2D(p.mul(0.11).add(5.3));
+    const grass = mix(mix(color(0x3f5a26), color(0x51692d), grain), mix(color(0x9c8a52), color(0xb39f66), grain), cityUniforms.uDryness);
+    const earth = mix(color(0x7a5a40), color(0x93714f), grain);
+    const mud = mix(color(0x3e3226), color(0x4b3c2c), grain);
+    const algae = color(0x3c4a26);
+    const silt = mix(color(0x4b4434), color(0x5a5140), patch);
+    // grass down the bank's first metres where the season and the patch allow, then earth, mud at the water
+    const grassy = smoothstep(0.35, 0.05, wet.add(patch.sub(0.5).mul(0.25))).mul(mix(float(1.0), float(0.55), cityUniforms.uDryness));
+    let c = mix(earth, grass, grassy);
+    c = mix(c, mud, smoothstep(0.55, 0.95, wet));
+    c = mix(c, algae, smoothstep(0.92, 0.99, wet).mul(smoothstep(0.999, 0.99, wet)).mul(0.7));
+    return mix(c, silt, step(0.999, wet));
+  })();
+  mat.roughnessNode = mix(float(0.94), float(0.55), smoothstep(0.7, 1.0, wet));
+  mat.normalNode = Fn(() => {
+    const camDist = length(positionWorld.sub(cameraPosition));
+    const detail = smoothstep(60.0, 6.0, camDist);
+    return bumpNormal(noise2D(positionWorld.xz.mul(4.5)).sub(0.5).mul(0.02).mul(detail));
+  })();
+  return mat;
+}
+
+/**
+ * The still water of the lakes, presas & ponds (js/world/lakes.ts; laid on the hillside by terrain.ts): green-brown
+ * and murky, a little clearer & bluer away from the shore, the wind's ripples drifting across it, mirroring the banks
+ * & sky at grazing angles through the water's Fresnel (on metalness, as the river's, so SSR reflects it). uv are metres
+ * east & south (the ripples' frame).
+ */
+export function createLakeWaterMaterial() {
+  const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.05, metalness: 0.0 });
+  const cDeep = color(0x1f3326);
+  const cSilty = color(0x4a4a30);
+  const viewDir = normalize(cameraPosition.sub(positionWorld));
+  const fresnel = pow(float(1.0).sub(clamp(viewDir.y, 0.0, 1.0)), 5.0).mul(0.98).add(0.02);
+  mat.colorNode = Fn(() => {
+    const p = uv();
+    const patch = noise2D(p.mul(0.03).add(vec2(time.mul(0.01), 0.0)));
+    return mix(cDeep, cSilty, patch.mul(0.45).add(0.1));
+  })();
+  mat.metalnessNode = clamp(fresnel.mul(1.6), 0.0, 0.85);
+  mat.normalNode = Fn(() => {
+    const camDist = length(positionWorld.sub(cameraPosition));
+    const detail = smoothstep(260.0, 15.0, camDist);
+    const p = uv();
+    const ripples = noise2D(p.mul(0.7).add(vec2(time.mul(0.35), time.mul(0.12)))).mul(0.045)
+      .add(noise2D(p.mul(2.3).sub(vec2(time.mul(0.6), time.mul(-0.2)))).mul(0.02));
+    return bumpNormal(ripples.mul(detail));
+  })();
+  return mat;
+}

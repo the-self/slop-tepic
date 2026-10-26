@@ -727,10 +727,45 @@ for (const e of landOSM.elements) {
   }
 }
 log(`airport ${airport.name || '(none)'}: ${airport.runways.length} runway, ${airport.taxiways.length} taxiways, ${airport.aprons.length} aprons, ${airport.helipads.length} helipads`);
-for (const s of drivePieces) clearCapsule(land, W, H, X0, Z0, RES, s);
-for (const s of cutters) clearCapsule(land, W, H, X0, Z0, RES, s);
-// (the aprons too: the cells whose centres lie inside their rings)
-for (const ring of airportRings) {
+// The lakes, presas, ponds & reservoirs (OSM natural=water but for the rivers' own areas & the fountains, landuse=
+// reservoir | basin): La Presa, Lago de Mora, Presa El Salto, the ponds of the colonias, the Humedal Colosio. Inside
+// the box the blocks leave each a gap (its outline and LAKE_GAP m round it, as the rivers' channels), the ground is
+// levelled under it (5D) and js/world/lakes.ts sinks a basin into it with the water in it; beyond the box, or up on
+// the hills, the water is laid on the hillside (js/world/terrain.ts). [kind, name, flags (1 intermittent, 2 beyond
+// the box: no gap, no basin; 4 up the hills: the ground not levelled), outline LAKE_SHORE m out from OSM's]
+const LAKE_GAP = 1.5, LAKE_SHORE = 1.0;
+const LAKE_MIN = 150; // m²: a smaller pond is a garden's
+const lakeKind = (water, name, area) => {
+  if (/^(lake|lagoon|oxbow)$/.test(water)) return 'lake';
+  if (/^rese/.test(water)) return 'reservoir'; // (one is tagged 'rese{')
+  if (water === 'wetland') return 'wetland';
+  if (water === 'pond' || water === 'basin') return 'pond';
+  return /\bpresa\b/i.test(name) ? 'reservoir' : area > 15000 ? 'lake' : 'pond';
+};
+const lakes = []; // { kind, name, flags, ring (OSM's), shore (LAKE_SHORE m out) }
+const lakeDropped = { small: 0, open: 0 };
+for (const e of landOSM.elements) {
+  const t = e.tags || {};
+  const water = t.natural === 'water' ? t.water || '' : /^(reservoir|basin)$/.test(t.landuse || '') ? t.landuse : null;
+  if (water === null || /^(river|stream|canal|ditch|drain|fountain|moat|wastewater)$/.test(water)) continue;
+  const rings = elemRings(e);
+  if (!rings.length) { lakeDropped.open++; continue; }
+  for (const raw of rings) {
+    const area = Math.abs(ringArea(raw));
+    if (area < LAKE_MIN) { lakeDropped.small++; continue; }
+    const ring = rdpRing(raw, 0.5);
+    const kind = lakeKind(water, t.name || '', area);
+    const flags = (t.intermittent === 'yes' || t.seasonal === 'yes' ? 1 : 0) | (ring.every(([x, z]) => inBox(x, z)) ? 0 : 2);
+    lakes.push({ kind, name: t.name || '', flags, ring, shore: insetRing(ring, -LAKE_SHORE) });
+  }
+}
+{
+  const kinds = {};
+  for (const l of lakes) kinds[l.kind] = (kinds[l.kind] || 0) + 1;
+  log(`lakes: ${lakes.length} (${Object.entries(kinds).map(([k, n]) => `${n} ${k}`).join(', ')}), ${lakes.filter((l) => !(l.flags & 2)).length} in the box; dropped ${lakeDropped.small} under ${LAKE_MIN} m², ${lakeDropped.open} not closed`);
+}
+// the cells inside a ring (their centres), in turn
+function ringRows(ring, fn) {
   const bb = bbox(ring);
   for (let j = Math.max(0, Math.floor((bb.z0 - Z0) / RES)); j <= Math.min(H - 1, Math.ceil((bb.z1 - Z0) / RES)); j++) {
     const z = Z0 + (j + 0.5) * RES;
@@ -741,9 +776,57 @@ for (const ring of airportRings) {
     }
     xs.sort((p, q) => p - q);
     for (let n = 0; n + 1 < xs.length; n += 2) {
-      for (let i = Math.max(0, Math.ceil((xs[n] - X0) / RES - 0.5)); i <= Math.min(W - 1, Math.floor((xs[n + 1] - X0) / RES - 0.5)); i++) land[j * W + i] = 0;
+      for (let i = Math.max(0, Math.ceil((xs[n] - X0) / RES - 0.5)); i <= Math.min(W - 1, Math.floor((xs[n + 1] - X0) / RES - 0.5)); i++) fn(j * W + i);
     }
   }
+}
+for (const s of drivePieces) clearCapsule(land, W, H, X0, Z0, RES, s);
+for (const s of cutters) clearCapsule(land, W, H, X0, Z0, RES, s);
+// (the aprons too: the cells whose centres lie inside their rings)
+for (const ring of airportRings) ringRows(ring, (k) => { land[k] = 0; });
+// (and the lakes in the box, with their gap; marked, as no roadway: 5D's town is its streets & houses)
+const lakeCell = new Uint8Array(W * H);
+for (const l of lakes) {
+  if (l.flags & 2) continue;
+  ringRows(insetRing(l.ring, -LAKE_GAP), (k) => { if (land[k]) { land[k] = 0; lakeCell[k] = 1; } });
+}
+// A lake enclosed by one block would be cut open by extractBlocks with a 1 m slot straight north, which the block's
+// simplified outline folds over (its fill then spans the lake): each such lake is opened instead along the shortest
+// straight way to a roadway, LAKE_OPENING m wide (a lane down to the water)
+const LAKE_OPENING = 5;
+{
+  let opened = 0;
+  const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  for (const l of lakes) {
+    if (l.flags & 2) continue;
+    const bb = bbox(insetRing(l.ring, -LAKE_GAP));
+    const i0 = Math.max(1, Math.floor((bb.x0 - X0) / RES) - 1), i1 = Math.min(W - 2, Math.ceil((bb.x1 - X0) / RES) + 1);
+    const j0 = Math.max(1, Math.floor((bb.z0 - Z0) / RES) - 1), j1 = Math.min(H - 2, Math.ceil((bb.z1 - Z0) / RES) + 1);
+    let touches = false;
+    let best = null;
+    for (let j = j0; j <= j1 && !touches; j++) for (let i = i0; i <= i1; i++) {
+      const k = j * W + i;
+      if (!lakeCell[k]) continue;
+      // (already open to a roadway beside it: nothing to cut)
+      for (const n of [k - 1, k + 1, k - W, k + W, k - W - 1, k - W + 1, k + W - 1, k + W + 1]) if (!land[n] && !lakeCell[n]) touches = true;
+      if (touches) break;
+      for (const [di, dj] of DIRS) {
+        if (!land[k + dj * W + di]) continue; // (the way out starts on land)
+        let n = 1;
+        for (let a = i + di, b = j + dj; a > 0 && b > 0 && a < W - 1 && b < H - 1 && land[b * W + a]; a += di, b += dj) n++;
+        if (!best || n < best.n) best = { i, j, di, dj, n };
+      }
+    }
+    if (touches || !best || best.n > 400) continue;
+    const { i, j, di, dj, n } = best;
+    const half = Math.floor(LAKE_OPENING / RES / 2);
+    for (let s = 0; s <= n; s++) for (let w = -half; w <= half; w++) {
+      const a = i + di * s + dj * w, b = j + dj * s + di * w;
+      if (a > 0 && b > 0 && a < W - 1 && b < H - 1) land[b * W + a] = 0;
+    }
+    opened++;
+  }
+  log(`lakes: ${opened} enclosed by a block opened onto the street`);
 }
 log(`${drivePieces.length} roadway pieces and ${cutters.length} other cuts stamped on a ${W} x ${H} raster`);
 // Urban or open country: the share of each island under built-up land use (OSM landuse=residential & co., schools,
@@ -765,6 +848,31 @@ function classify(comps, labels) {
   }
   for (const e of bldOSM.elements) for (const ring of elemRings(e)) tally(urban, ring);
   const out = new Set();
+  // The islets in the lakes (the Humedal Colosio's: OSM's shore runs out round them and back): an island whose edge
+  // is mostly lake is open ground, never a block of houses or a paved plaza
+  const shoreEdge = new Map(), roadEdge = new Map();
+  const comp = new Map(comps.map((c) => [c.id, c]));
+  for (const l of lakes) {
+    if (l.flags & 2) continue;
+    const bb = bbox(l.ring);
+    const i0 = Math.max(1, Math.floor((bb.x0 - X0) / RES) - 8), i1 = Math.min(W - 2, Math.ceil((bb.x1 - X0) / RES) + 8);
+    const j0 = Math.max(1, Math.floor((bb.z0 - Z0) / RES) - 8), j1 = Math.min(H - 2, Math.ceil((bb.z1 - Z0) / RES) + 8);
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const k = j * W + i, L = labels[k];
+      if (L <= 0) continue;
+      // (only an island the window holds whole: its edge all counted)
+      const c = comp.get(L);
+      if (!c || c.i0 < i0 || c.i1 > i1 || c.j0 < j0 || c.j1 > j1) continue;
+      for (const n of [k - 1, k + 1, k - W, k + W]) {
+        if (labels[n] > 0) continue;
+        const m = lakeCell[n] ? shoreEdge : roadEdge;
+        m.set(L, (m.get(L) || 0) + 1);
+      }
+    }
+  }
+  let islets = 0;
+  for (const [L, n] of shoreEdge) if (n > 2 * (roadEdge.get(L) || 0)) { out.add(L); islets++; }
+  if (islets) log(`lakes: ${islets} islets left open`);
   for (const c of comps) {
     const ha = (c.n * RES * RES) / 10000;
     if (ha < 1.5) continue;
@@ -1881,7 +1989,7 @@ const { ground = null, ...terrainGrid } = (() => {
       }
     }
   }
-  const roadAt = (x, z) => { const k = cellAt(x, z); return k >= 0 && lab[k] === 0; }; // (off the raster: no road)
+  const roadAt = (x, z) => { const k = cellAt(x, z); return k >= 0 && lab[k] === 0 && !lakeCell[k]; }; // (off the raster, or a lake: no road)
   let missing = 0;
   for (let j = 0; j < TH; j++) {
     for (let i = 0; i < TW; i++) {
@@ -1987,6 +2095,27 @@ const { ground = null, ...terrainGrid } = (() => {
     out[k] = Math.round(Math.min(3200, h) * 10);
     if (h > peak) peak = h;
   }
+  // The lakes in the box (4) lie on the valley floor: the low rises under them (up to LAKE_HILL m) taken off, as under
+  // the streets (every corner of a cell they reach into); a pond higher up a hill stays on it (flags 4: its water laid
+  // on the hillside, js/world/terrain.ts)
+  const LAKE_HILL = 30;
+  let lakesUp = 0;
+  for (const l of lakes) {
+    if (l.flags & 2) continue;
+    const corners = new Set();
+    const mark = (x, z) => {
+      const i = Math.floor((x - TX0) / CELL), j = Math.floor((z - TZ0) / CELL);
+      if (i < 0 || j < 0 || i >= TW - 1 || j >= TH - 1) return;
+      for (const k of [j * TW + i, j * TW + i + 1, (j + 1) * TW + i, (j + 1) * TW + i + 1]) corners.add(k);
+    };
+    const bb = bbox(l.shore);
+    for (let z = bb.z0; z <= bb.z1; z += CELL / 4) for (let x = bb.x0; x <= bb.x1; x += CELL / 4) if (inRing(l.shore, x, z)) mark(x, z);
+    for (const [x, z] of l.shore) mark(x, z);
+    let top = 0;
+    for (const k of corners) top = Math.max(top, out[k] / 10);
+    if (top >= LAKE_HILL) { l.flags |= 4; lakesUp++; continue; }
+    for (const k of corners) out[k] = 0;
+  }
   // The ground under the town (js/world/ground.js): the city's own elevation on a 37.5 m grid (about the elevation
   // tiles' own ~38 m pixels), its lone spikes taken off and lightly blurred: SRTM measures roofs & treetops, and what's
   // wanted is a street's grade, not each house, but a wide blur flattened the town's short steep streets into long
@@ -2033,6 +2162,34 @@ const { ground = null, ...terrainGrid } = (() => {
     const edge = Math.min(i, j, GW - 1 - i, GH - 1 - j) * GCELL;
     GF[k] = f + (floorMean - f) * Math.max(smooth(300, GMARGIN, GD[k]), 1 - smooth(0, GEDGE, edge));
   }
+  // The ground under each lake in the box levelled to its water: the nodes inside its shore at the height of the
+  // lower quarter of the ground round it (water lies flat; the blurred elevation tilts with the slopes around it)
+  const gBilinear = (x, z) => {
+    const fx = Math.min(GW - 1.001, Math.max(0, (x - GX0) / GCELL)), fz = Math.min(GH - 1.001, Math.max(0, (z - GZ0) / GCELL));
+    const i = Math.floor(fx), j = Math.floor(fz), tx = fx - i, tz = fz - j, k = j * GW + i;
+    return (GF[k] * (1 - tx) + GF[k + 1] * tx) * (1 - tz) + (GF[k + GW] * (1 - tx) + GF[k + GW + 1] * tx) * tz;
+  };
+  let lakeNodes = 0;
+  for (const l of lakes) {
+    if (l.flags & 6) continue;
+    const rim = [];
+    for (let a = 0; a < l.shore.length; a++) {
+      const [x0, z0] = l.shore[a], [x1, z1] = l.shore[(a + 1) % l.shore.length];
+      const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 5));
+      for (let s = 0; s < n; s++) rim.push(gBilinear(x0 + ((x1 - x0) * s) / n, z0 + ((z1 - z0) * s) / n));
+    }
+    rim.sort((p, q) => p - q);
+    const level = rim[Math.floor(0.25 * (rim.length - 1))];
+    const bb = bbox(l.shore);
+    for (let j = Math.max(0, Math.ceil((bb.z0 - GZ0) / GCELL)); j <= Math.min(GH - 1, Math.floor((bb.z1 - GZ0) / GCELL)); j++) {
+      for (let i = Math.max(0, Math.ceil((bb.x0 - GX0) / GCELL)); i <= Math.min(GW - 1, Math.floor((bb.x1 - GX0) / GCELL)); i++) {
+        if (!inRing(l.shore, GX0 + i * GCELL, GZ0 + j * GCELL)) continue;
+        GF[j * GW + i] = level;
+        lakeNodes++;
+      }
+    }
+  }
+  log(`lakes: ${lakesUp} up the hills, the hills taken off under the rest, ${lakeNodes} nodes of the town's ground levelled under them`);
   // the datum is the lowest node under the town's streets & houses (a node of a cell with a built-up corner in BOX),
   // so no point of the town is under it
   const town = (i, j) => {
@@ -2410,7 +2567,10 @@ const GEO = {
   // Surface car parks (4), inside the property lines: [name ('' none), surface (0 asphalt, 1 concrete, 2 setts, 3 earth
   // or gravel), the stall rows' direction θ (mrad: along (cos θ, -sin θ)), outline (flat ring), entrances ([x, z on
   // the curb (m), the way in square to it (mrad, atan2 of z over x), width (m), path from the curb to the lot (flat)])]
-  parking: parkingLots.map((p) => [p.name, p.surface, Math.round(p.th * 1000), flat(p.poly), p.entrances])
+  parking: parkingLots.map((p) => [p.name, p.surface, Math.round(p.th * 1000), flat(p.poly), p.entrances]),
+  // Lakes, presas, ponds & reservoirs (4): [kind (lake, pond, reservoir, wetland), name, flags (1 intermittent, 2
+  // beyond the box, 4 up the hills: laid on the hillside, no basin), outline (flat ring, its shore)]
+  lakes: lakes.map((l) => [l.kind, l.name, l.flags, flat(l.shore)])
 };
 
 const json = JSON.stringify(GEO);

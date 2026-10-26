@@ -31,7 +31,9 @@ import {
   createLotGroundMaterial,
   createFloodWaterMaterial,
   createRiverBankMaterial,
-  createRiverWaterMaterial
+  createRiverWaterMaterial,
+  createLakeShoreMaterial,
+  createLakeWaterMaterial
 } from './materials/ground.ts';
 import { createCarPaintMaterial, createContactShadowMaterial, createCarFlareMaterial } from './materials/vehicles.ts';
 import { createSmokeMaterial, createBloodPoolMaterial } from './materials/effects.ts';
@@ -86,6 +88,8 @@ export {
   createFloodWaterMaterial,
   createRiverBankMaterial,
   createRiverWaterMaterial,
+  createLakeShoreMaterial,
+  createLakeWaterMaterial,
   createContactShadowMaterial,
   createSmokeMaterial,
   createBloodPoolMaterial,

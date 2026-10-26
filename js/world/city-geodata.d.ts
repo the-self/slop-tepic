@@ -100,6 +100,12 @@ export type Waterway = [kind: WaterwayKind, halfWidth: number, name: string, fla
 /** A river's whole course where it runs on beyond the detailed box: [name, flat points downstream]. */
 export type FarRiver = [name: string, pts: FlatPoints];
 
+/** The kinds of lake kept (OSM water=lake | pond | reservoir | wetland | basin, or none). */
+export type LakeKind = 'lake' | 'pond' | 'reservoir' | 'wetland';
+/** A lake, presa, pond or reservoir: [kind, name ('' none), flags (1 intermittent, 2 beyond the detailed box, 4 up the
+ *  hills: both laid on the hillside, no basin), outline (flat ring at its shore, a metre out from OSM's)]. */
+export type Lake = [kind: LakeKind, name: string, flags: number, ring: FlatPoints];
+
 /** A notable OSM building footprint, by name. */
 export interface Landmark {
   /** Bounding box centre and size (m). */
@@ -283,6 +289,7 @@ export interface CityGeodata {
   airport: Airport;
   overrides: BuildingOverride[];
   parking: ParkingLot[];
+  lakes: Lake[];
 }
 
 export declare const GEO: CityGeodata;

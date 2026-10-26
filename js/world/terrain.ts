@@ -1,10 +1,11 @@
 import * as THREE from 'three/webgpu';
 import { float, color, mix, smoothstep, positionWorld, normalWorld, vec2, sin, fract, dot, floor, attribute, texture, uniform } from 'three/tsl';
 import { GEO } from './city-geodata.js';
-import { cityUniforms, createRiverWaterMaterial } from '../render/tsl-materials.ts';
+import { cityUniforms, createRiverWaterMaterial, createLakeWaterMaterial } from '../render/tsl-materials.ts';
+import { triangulate, fillRing } from './lakes.ts';
 import { farGroundColor } from './far-ground.ts';
 import { ISLAND_BOUNDS } from './city-config.ts';
-import { SINK, SLOPES, hillHeights, terrainHeight, hillGround, townHeight } from './ground.ts';
+import { SINK, SLOPES, hillHeights, terrainHeight, hillGround, townHeight, lakes } from './ground.ts';
 import type { Node } from 'three/webgpu';
 import type { FarGround } from './far-ground.ts';
 import type { TileMask } from './streaming.ts';
@@ -150,6 +151,7 @@ function buildTerrain(scene: THREE.Object3D, { mask = null, far = null }: { mask
 
   buildHillPaths(group);
   buildFarRivers(group);
+  buildHillsideLakes(group);
 
   // the cross on the summit of Cerro de la Cruz (lit at night)
   if (T.cross) {
@@ -385,6 +387,44 @@ function buildFarRivers(group: THREE.Group) {
   mat.polygonOffsetUnits = -2;
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'FarRivers';
+  mesh.receiveShadow = true;
+  group.add(mesh);
+}
+
+// The lakes laid on the hillside (lakes.ts `hillside`: the bordos & tanks up the cerros, the presas beyond the box: El
+// Fresno, Presa Nueva): their water on the hills' mesh, cut in HILL_LAKE_STEP m cells to follow it, seen from the
+// edge of town and from the air (no basin is sunk out there)
+const HILL_LAKE_STEP = 8;
+function buildHillsideLakes(group: THREE.Group) {
+  if (!T || !lakes?.hillside.length) return;
+  const tx1 = T.x0 + (T.w - 1) * T.cell, tz1 = T.z0 + (T.h - 1) * T.cell;
+  const onGrid = (x: number, z: number) => x > T.x0 && x < tx1 && z > T.z0 && z < tz1;
+  const LIFT = 0.15;
+  const position: number[] = [], uvs: number[] = [];
+  for (const [, , , ring] of lakes.hillside) {
+    const tris = fillRing(triangulate(ring), HILL_LAKE_STEP);
+    for (let k = 0; k + 5 < tris.length; k += 6) {
+      if (!onGrid(tris[k], tris[k + 1]) || !onGrid(tris[k + 2], tris[k + 3]) || !onGrid(tris[k + 4], tris[k + 5])) continue;
+      for (let c = 0; c < 6; c += 2) {
+        const x = tris[k + c], z = tris[k + c + 1];
+        position.push(x, meshHeight(x, z, terrainHeight(x, z)) + LIFT, z);
+        uvs.push(x, z);
+      }
+    }
+  }
+  if (!position.length) return;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  const mat = createLakeWaterMaterial();
+  // (over the hillside it lies on without fighting it)
+  mat.polygonOffset = true;
+  mat.polygonOffsetFactor = -1;
+  mat.polygonOffsetUnits = -2;
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = 'HillsideLakes';
   mesh.receiveShadow = true;
   group.add(mesh);
 }

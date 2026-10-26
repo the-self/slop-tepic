@@ -244,6 +244,24 @@ function offsetPolygonInward(pts: PointXZ[], d: number): PointXZ[] | null {
   return a2 * area > 0 && Math.abs(a2) < Math.abs(area) ? out : null;
 }
 
+// Whether two edges of a ring that don't share a corner cross (a C-shaped park round a lake, inset by more than its
+// arms are wide, folds over itself: its fill would span the lake)
+function crossesItself(pts: PointXZ[]): boolean {
+  const n = pts.length;
+  const side = (a: PointXZ, b: PointXZ, c: PointXZ) => (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x);
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % n];
+    for (let j = i + 2; j < n; j++) {
+      if (i === 0 && j === n - 1) continue;
+      const c = pts[j], d = pts[(j + 1) % n];
+      if (Math.max(a.x, b.x) < Math.min(c.x, d.x) || Math.max(c.x, d.x) < Math.min(a.x, b.x)) continue;
+      if (Math.max(a.z, b.z) < Math.min(c.z, d.z) || Math.max(c.z, d.z) < Math.min(a.z, b.z)) continue;
+      if (side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Tags every vertex of a mesh using the shared park paving material with its paving style (uv.x, see
  * createParkPavingMaterial: 0 hex asphalt pavers, 1 light granite plaza pavers, 2 bluestone slabs).
@@ -501,7 +519,12 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     // roadways, and the traffic would lose the lanes beside it)
     if (b.rect) addFootprint((b.minX + b.maxX) * 0.5, (b.minZ + b.maxZ) * 0.5, b.maxX - b.minX, b.maxZ - b.minZ);
     else footprints.push(...polyCover(b.poly, PARK_COVER_BAND));
-    const bed = offsetPolygonInward(b.poly, Math.min(5, Math.min(b.maxX - b.minX, b.maxZ - b.minZ) * 0.2));
+    // (narrower where a wide one would fold over itself: a park round a lake)
+    let bed: PointXZ[] | null = null;
+    for (let d = Math.min(5, Math.min(b.maxX - b.minX, b.maxZ - b.minZ) * 0.2); !bed && d >= 0.75; d /= 2) {
+      const inset = offsetPolygonInward(b.poly, d);
+      if (inset && !crossesItself(inset)) bed = inset;
+    }
     if (!bed) continue;
     group.add(createExtrudedPolygonMesh(bed, 0.2, BED_Y - 0.21, graniteMat, true, false));
     // the lawn inside the copings (the New York code merged its park lawns elsewhere, so Tepic's parks showed the bare
