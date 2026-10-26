@@ -158,6 +158,36 @@ interface Ped {
   /** s to the next look for a wall ahead, and how long they've stood blocked */
   wallT?: number;
   blocked?: number;
+  /** 0..1, drawn on each spawn: which camiones, combis and taxis they would hail (pickups.ts) */
+  wish: number;
+  /** getting on or off one at the curb, or null */
+  ride: Ride | null;
+}
+
+/** Someone getting on or off a camión, combi or taxi at the curb (pickups.ts): the vehicle, and whether they are
+ *  waiting for it to stop, stepping to its door, or stepping off it onto the sidewalk; (x, z) where they head (m) */
+interface Ride {
+  /** (taken off the streets, retired or carjacked, while they wait for it: no edge) */
+  v: Vehicle;
+  phase: 'wait' | 'board' | 'off';
+  x: number;
+  z: number;
+}
+
+/** A camión, combi or taxi pulling in to the curb (pickups.ts): on which edge and where along it it stops (its centre,
+ *  m), its door (m ahead of its centre), who is getting on (null once aboard, or none), how many are still to get
+ *  off, whether it has stopped, s since, s it stands at least, s into it the next one gets off */
+interface CurbStop {
+  edge: TrafficEdge;
+  s: number;
+  door: number;
+  ped: Ped | null;
+  boarded: boolean;
+  off: number;
+  stopped: boolean;
+  t: number;
+  dwell: number;
+  next: number;
 }
 
 /** A bicycle or motorcycle and its rider down: the rider's ragdoll, the bike's pose (m over the surface `gy` under
@@ -248,11 +278,27 @@ interface VehicleBase {
   vz: number;
   yawOffset: number;
   yawVel: number;
+  /** the player (or what it left standing) relative to it: m ahead and to the right, its speed v's way and to the
+   *  right (m/s; negative ahead: coming at v), its half width & length (m), and whether it is something left standing */
   pAhead: number;
   pRight: number;
   pSpeed: number;
+  pSide: number;
   pHalfW: number;
   pHalfL: number;
+  pParked: boolean;
+  /** s the player has been in its way (to 3, wearing off once out of it), and the driver's reaction time (s): it
+   *  brakes and swerves for the player only once it has seen them that long */
+  pSeen: number;
+  react: number;
+  /** m off the lane centre (right +) it is steering to, out of the way of the player coming at it */
+  swerve: number;
+  /** a camión, combi or taxi (pickups.ts): the curb it is pulling in to, or null; m to the right it pulls over to;
+   *  clock s it next looks along the curb; a taxi's fare: clock s its passenger gets out (0: free) */
+  stop: CurbStop | null;
+  pullOver: number;
+  nextStop: number;
+  fare: number;
   wheelSpin: number;
   damage: CarDamage | null;
   wrecked: boolean;
@@ -534,7 +580,7 @@ interface LookKit {
 
 export type {
   DriverModel, LaneEntry, TrafficNode, TrafficMove, TrafficEdge, TrafficNetwork, PedTrack, Conversation,
-  SidewalkPoint, Bail, Ped, BikeWreck, TwoWheelKit, VehicleBase, Car, Bus, Bike, Moto, TwoWheeler, Vehicle,
+  SidewalkPoint, Bail, Ped, Ride, CurbStop, BikeWreck, TwoWheelKit, VehicleBase, Car, Bus, Bike, Moto, TwoWheeler, Vehicle,
   Hijackable, VehicleKind, DrivenVehicle, OnEdge, CrashBody, CarCrash, CrashedCar, Spark, TrafficPlayer,
   TrafficPlayerEntity, ParkedVehicle, BumpBody, TrafficCollision, MayhemListener, KnockListener, SmokeEmitter,
   SolidQuery, HillQuery, SurfaceQuery, TrafficRayHit, RayAccept, BodyBox, RoadSpot, RouteLook, TakenVehicle,

@@ -13,6 +13,7 @@
 // js/player/controllers/ (input, collisions, ground, placement, boarding, the car's model, looks, drive & crashes, the
 // smoke, the two-wheelers, their models, the helicopter, the walker, and the frame that runs them in order).
 import * as THREE from 'three/webgpu';
+import { loadCarFiles, onCarFile } from '../actors/vehicles/car-files.ts';
 import * as Input from './controllers/input.ts';
 import * as Collisions from './controllers/collisions.ts';
 import * as Ground from './controllers/ground.ts';
@@ -92,6 +93,7 @@ class ThirdPersonControllerManager {
   _bodyBounds?: { x: number; z: number };
   _wall?: { type: 'building' };
   _bloodMats?: Map<string, THREE.Material>; // the car's material for each look (setCarLook), keyed body_paint
+  _modelMats?: Map<string, THREE.Material>; // a car model's 3D model's materials (showCarFile), keyed id & id_wheel
   _twoWheelers?: (CyclistEntity | MotoEntity)[];
   _bodied?: (CarEntity | CyclistEntity | MotoEntity)[];
   rain: number; // the rain falling, 0..1 (main.ts: washing the blood off the car)
@@ -166,6 +168,9 @@ class ThirdPersonControllerManager {
     });
 
     this.setCarLook(); // (the taxi, at its model's size)
+    // (a car model's 3D model loading after the car took its look: swapped in)
+    loadCarFiles();
+    onCarFile((id) => { CarLooks.refreshCarFile(this, id); });
     this.createSmoke();
     this.syncOccupants();
     this.bindKeyboard();

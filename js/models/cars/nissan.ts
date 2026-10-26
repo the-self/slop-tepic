@@ -10,6 +10,12 @@ export const CARS: CarModel[] = [
     gears: 5, top: 170, accel: 11.5, rarity: 0
   },
   {
+    // ...and the Tsurus that aren't taxis, still all over Tepic: drawn from a model made by hand (CC BY, README.md)
+    id: 'nissan-tsuru-particular', glb: 'assets/models/cars/nissan-tsuru.glb', name: 'Nissan Tsuru', body: 'sedan', class: 'economy',
+    size: [4.32, 1.69, 1.38], mass: 1100, drive: 'fwd', power: [78, 5200], torque: [136, 4000], redline: 6500,
+    gears: 5, top: 170, accel: 11.5, rarity: 16, paints: [0xf2f2ee, 0xf2f2ee, 0xc8cdd2, 0x8c1c1f, 0x1f3a6b, 0x2a2d31, 0x6f7377]
+  },
+  {
     id: 'nissan-versa', glb: 'assets/models/cars/nissan-versa.glb', name: 'Nissan Versa', body: 'sedan', class: 'economy',
     size: [4.50, 1.74, 1.47], mass: 1150, drive: 'fwd', power: [87, 6300], torque: [154, 4000], redline: 6500,
     gears: 5, top: 180, accel: 11.0, rarity: 30

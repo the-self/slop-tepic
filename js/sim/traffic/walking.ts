@@ -170,7 +170,7 @@ function meet(ts: TrafficState, dt: number): void {
   ts.nextMeeting = ts.clock + 1;
   ts.meetingCells.clear();
   for (const p of ts.peds) {
-    if (!p.placed || p.fallen || p.node || !p.route?.edge || p.conversation || ts.clock < p.socialTime || p.t < 6 || p.t > p.len - 6) continue;
+    if (!p.placed || p.fallen || p.ride || p.node || !p.route?.edge || p.conversation || ts.clock < p.socialTime || p.t < 6 || p.t > p.len - 6) continue;
     const ix = Math.floor(p.x / 2), iz = Math.floor(p.z / 2);
     let partner = null;
     for (let dx = -1; dx <= 1 && !partner; dx++) {

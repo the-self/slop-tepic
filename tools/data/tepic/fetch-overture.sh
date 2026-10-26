@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p overture
-BBOX=-104.985,21.390,-104.785,21.580
+BBOX=-104.985,21.370,-104.750,21.580
 overturemaps download --bbox=$BBOX -f geojsonseq -t building -o overture/buildings.geojsonl
 overturemaps download --bbox=$BBOX -f geojsonseq -t place -o overture/places.geojsonl
 wc -l overture/*.geojsonl

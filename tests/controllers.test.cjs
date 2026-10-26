@@ -66,6 +66,7 @@ function keyboardHarness(nyc = {}) {
     'js/world/city-config.ts': config,
     'js/render/tsl-materials.ts': {},
     'js/actors/actor-models.ts': {},
+    'js/actors/vehicles/car-files.ts': { loadCarFiles() {}, onCarFile() {}, carFile() {} },
     'js/sim/pedestrians.ts': {},
     'js/actors/vehicle-lights.ts': {},
     'js/player/drivetrain.ts': drivetrain,

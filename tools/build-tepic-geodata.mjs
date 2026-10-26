@@ -89,8 +89,10 @@ const nodeKey = (g) => `${g.lat.toFixed(7)},${g.lon.toFixed(7)}`;
 // The detailed city: a box around the centro (metres in the grid frame). Everything the game builds lives in here.
 // From Lo de Lamedo & Las Brisas (west) to San Cayetano & Vistas de la Cantera (east), from El Tajo (north) to the south
 // of Xalisco: the whole metropolitan area of Tepic & Xalisco, and the airport (Pantanal, its terminal & access roads
-// at x ~9400-10100, its runway along grid z 6000-9100)
-const BOX = { x0: -5800, x1: 10400, z0: -4800, z1: 10100 };
+// at x ~9400-10100, its runway along grid z 6000-9100). East of it the box takes in the highway that leads there: the
+// Autopista Tepic - Compostela (MEX 200D, x ~11700-12900) from its junction with the Libramiento Norte (MEX 15D,
+// x ~12750, z ~3950) down to the Ramal Aeropuerto (x ~10100-11700, z ~7100-8850) that runs west to the terminal
+const BOX = { x0: -5800, x1: 13500, z0: -4800, z1: 10100 };
 log(`detail box corners: ${[[BOX.x0, BOX.z0], [BOX.x1, BOX.z0], [BOX.x1, BOX.z1], [BOX.x0, BOX.z1]].map(([x, z]) => toLonLat(x, z).map((v) => v.toFixed(4)).reverse().join(',')).join('  ')}`);
 const inBox = (x, z) => x >= BOX.x0 && x <= BOX.x1 && z >= BOX.z0 && z <= BOX.z1;
 const boxRing = [[BOX.x0, BOX.z0], [BOX.x0, BOX.z1], [BOX.x1, BOX.z1], [BOX.x1, BOX.z0]]; // negative shoelace area (x, z)

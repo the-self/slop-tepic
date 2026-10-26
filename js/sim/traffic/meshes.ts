@@ -2,13 +2,15 @@
 // The instanced meshes the cars and camiones are drawn with: a body per shape and level of detail, wheels, route signs,
 // police light bars, contact shadows
 import * as THREE from 'three/webgpu';
-import { BODY_SHARE, CAR_MODELS } from '../../models/cars/index.ts';
+import { BODY_SHARE } from '../../models/cars/index.ts';
 import {
   BODY_SPECS, buildBusSignGeometry, buildBusWheelGeo, buildCarGeometry, buildCarProxyGeometry,
   buildCombiSignGeometry, buildLightbarGeometry, buildLoftedBusBodyGeometry, buildSteerableWheelGeo,
   busLiveryTexture, createBusWheelMaterial, createLightbarMaterial, createLoftedBusMaterial, createLoftedCarMaterial,
-  createModelCarMaterial, createRouteSignMaterial, routeSignTexture
+  createModelCarMaterial, createModelWheelMaterial, createRouteSignMaterial, routeSignTexture
 } from '../../actors/actor-models.ts';
+import { loadCarFiles, onCarFile } from '../../actors/vehicles/car-files.ts';
+import type { CarFileWheels } from '../../actors/vehicles/car-files.ts';
 import type { createContactShadowMaterial } from '../../render/tsl-materials.ts';
 import type { Transit } from '../transit.ts';
 import { LIVERIES, NUM_BUSES, NUM_CARS } from './constants.ts';
@@ -71,43 +73,40 @@ function createVehicleMeshes(group: THREE.Group, transit: Transit, policeCount: 
     combiSignInst
   );
 
-  // The car models made as 3D models (models/cars `glb`, ~8k triangles each): once its file has loaded, a model's near
-  // level is an instanced mesh of its own, its wheels part of it (renderCar); beyond CAR_PROXY_DISTANCE it stays its
-  // body shape's stand-in. Loaded in the background (not preloaded): until then, and if a file fails, the body shape
-  // draws it.
-  const modelBodies = new Map<string, THREE.InstancedMesh>(); // model id -> its instanced mesh
-  const withModel = CAR_MODELS.filter((m) => m.glb);
-  if (withModel.length) {
-    const loading = import('three/addons/loaders/GLTFLoader.js');
-    void loading.then(({ GLTFLoader }) => {
-      const loader = new GLTFLoader();
-      for (const model of withModel) {
-        const file = model.glb;
-        if (!file) continue;
-        loader.load(file, (gltf) => {
-          const found: THREE.Mesh<THREE.BufferGeometry, THREE.Material>[] = [];
-          gltf.scene.traverse((o) => {
-            if (isSingleMesh(o)) found.push(o);
-          });
-          const src = found.at(0);
-          if (!src || !(src.material instanceof THREE.MeshStandardMaterial) || !src.material.map) return;
-          src.updateWorldMatrix(true, false);
-          const geo = src.geometry.clone().applyMatrix4(src.matrixWorld);
-          geo.setAttribute('paintColor', new THREE.InstancedBufferAttribute(new Float32Array(NUM_CARS * 3), 3));
-          geo.setAttribute('carState', new THREE.InstancedBufferAttribute(new Float32Array(NUM_CARS * 4), 4));
-          const mesh = new THREE.InstancedMesh(geo, createModelCarMaterial(src.material.map, src.material.roughnessMap), NUM_CARS);
-          mesh.count = 0;
-          mesh.frustumCulled = false;
-          mesh.castShadow = mesh.receiveShadow = true;
-          group.add(mesh);
-          bodyMeshes.push(mesh);
-          modelBodies.set(model.id, mesh);
-        }, undefined, (err) => {
-          console.warn(`[traffic] ${model.name}: could not load ${file}`, err);
-        });
-      }
+  // The car models made as 3D models (models/cars `glb`, actors/vehicles/car-files.ts): once its file has loaded, a
+  // model's near level is an instanced mesh of its own, at its real size, its wheels the cars' instanced ones placed
+  // where its file says (renderCar); beyond CAR_PROXY_DISTANCE it stays its body shape's stand-in. Until then, and if
+  // a file fails, the body shape draws it.
+  const modelBodies = new Map<string, ModelBody>(); // model id -> its instanced mesh & wheels
+  loadCarFiles();
+  onCarFile((id, file) => {
+    // each level (the file's own, then its lighter ones for further off): its body with the per-instance paint & lamp
+    // state the material reads, and its wheels (two per car on each side: render.ts placeModelWheels), all in the one
+    // material pair
+    const mat = createModelCarMaterial(file.map, file.paintMap);
+    const wheelMat = file.wheels ? createModelWheelMaterial(file.map, file.paintMap) : null;
+    const instanced = (g: THREE.BufferGeometry, m: THREE.Material, count: number) => {
+      const inst = new THREE.InstancedMesh(g, m, count);
+      inst.count = 0;
+      inst.frustumCulled = false;
+      inst.castShadow = inst.receiveShadow = true;
+      group.add(inst);
+      bodyMeshes.push(inst); // (counted and flagged each frame as the bodies are)
+      return inst;
+    };
+    const levels = [{ geometry: file.geometry, wheel: file.wheel }, ...file.lods].map(({ geometry, wheel }) => {
+      const geo = geometry.clone();
+      geo.setAttribute('paintColor', new THREE.InstancedBufferAttribute(new Float32Array(NUM_CARS * 3), 3));
+      geo.setAttribute('carState', new THREE.InstancedBufferAttribute(new Float32Array(NUM_CARS * 4), 4));
+      const mesh = instanced(geo, mat, NUM_CARS);
+      if (!wheelMat || !wheel) return { mesh, left: null, right: null };
+      return { mesh, left: instanced(wheel.left, wheelMat, NUM_CARS * 2), right: instanced(wheel.right, wheelMat, NUM_CARS * 2) };
     });
-  }
+    // (where its wheels stand, in the order a crashed body's are: crashes.ts, left (-x) & right, front then back)
+    const w = file.wheels;
+    const spots = w ? [{ x: -w.x, z: w.front }, { x: w.x, z: w.front }, { x: -w.x, z: w.rear }, { x: w.x, z: w.rear }] : null;
+    modelBodies.set(id, { wheels: file.wheels, levels, spots });
+  });
 
   // =========================================================================
   // 2. LOFTED CAMIONES ON TEPIC'S ROUTES (16 BUSES)
@@ -144,13 +143,23 @@ function createVehicleMeshes(group: THREE.Group, transit: Transit, policeCount: 
   };
 }
 
-// A mesh with one material
-function isSingleMesh(o: THREE.Object3D): o is THREE.Mesh<THREE.BufferGeometry, THREE.Material> {
-  return o instanceof THREE.Mesh && !Array.isArray(o.material);
+/** A car model's own instanced meshes near the camera: per level of detail (nearest first) its body and its wheels
+ * on the -x & +x sides (none: drawn on it, a file from before they were taken out), and where the wheels go */
+interface ModelBody {
+  wheels: CarFileWheels | null;
+  levels: ModelLevel[];
+  spots: { x: number; z: number }[] | null; // its wheels' places for a crashed body (m), as crashes.ts orders them
+}
+
+/** One level of a ModelBody */
+interface ModelLevel {
+  mesh: THREE.InstancedMesh;
+  left: THREE.InstancedMesh | null;
+  right: THREE.InstancedMesh | null;
 }
 
 /** The instanced meshes of the cars and camiones (createVehicleMeshes), part of the traffic's state */
 type VehicleMeshes = ReturnType<typeof createVehicleMeshes>;
 
-export type { VehicleMeshes };
+export type { ModelBody, ModelLevel, VehicleMeshes };
 export { createVehicleMeshes };

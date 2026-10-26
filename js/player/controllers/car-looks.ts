@@ -1,10 +1,13 @@
 // js/player/controllers/car-looks.ts
 // The car's looks: the model it is taken as (its body stretched to its size, its paint, livery, engine), a camión's
 // or combi's parts from the traffic, repairs, and the blood on its nose
-import type * as THREE from 'three/webgpu';
+import * as THREE from 'three/webgpu';
 import {
-  BODY_SPECS, BUS_SPEC, bodyDims, buildCarGeometry, buildSteerableWheelGeo, createLoftedCarMaterial
+  BODY_SPECS, BUS_SPEC, bodyDims, buildCarGeometry, buildSteerableWheelGeo, createLoftedCarMaterial, createModelCarMaterial,
+  createModelWheelMaterial
 } from '../../actors/actor-models.ts';
+import { carFile } from '../../actors/vehicles/car-files.ts';
+import type { CarFile } from '../../actors/vehicles/car-files.ts';
 import { placeVehicleHeadlight } from '../../actors/vehicle-lights.ts';
 import { buildSpec, createDriveState } from '../drivetrain.ts';
 import { BUS_MODEL } from '../../models/cars/index.ts';
@@ -82,6 +85,7 @@ export function setCarLook(ctl: ThirdPersonControllerManager, bodyType = 'taxi',
     c.kit = kit;
     c.label = kit.label;
   }
+  showCarFile(ctl, c, model.id, spec.name === 'taxi' || police || kit ? undefined : carFile(model.id), paint);
   c.zFront = spec.zFront * sz;
   c.bodyHeight = model.size[2];
   c.spec = buildSpec(model);
@@ -89,10 +93,63 @@ export function setCarLook(ctl: ThirdPersonControllerManager, bodyType = 'taxi',
   ctl.repairCar(c);
 }
 
+// The car as its model's 3D model (actors/vehicles/car-files.ts), the one the traffic draws, when its file has
+// loaded and has its wheels apart: its body in the chassis (undoing the body shape's stretch), its own wheels where
+// its file puts them, its paint & brake lamps from its own material's uniforms. No dents or blood show on it yet.
+// Without a file (or for a taxi, a patrol car, a combi), the body shape as before.
+export function showCarFile(ctl: ThirdPersonControllerManager, c: CarEntity, id: string, file: CarFile | undefined, paint: number): void {
+  const w = file?.wheels, wheel = file?.wheel;
+  if (!file || !w || !wheel) {
+    if (c.modelBody) c.modelBody.visible = false;
+    c.bodyMesh.visible = true;
+    for (const plate of c.plates) plate.visible = true;
+    return;
+  }
+  // (one material per model, its paint a uniform: any paint, one shader; leaveCarBehind lets a car left behind keep it)
+  const mats = (ctl._modelMats ??= new Map<string, THREE.Material>());
+  const bodyMat = mats.get(id) ?? createModelCarMaterial(file.map, file.paintMap, paint);
+  mats.set(id, bodyMat);
+  (bodyMat.userData.paint as { value: THREE.Color } | undefined)?.value.setHex(paint); // (createModelCarMaterial's uniform)
+  const wheelMat = mats.get(`${id}_wheel`) ?? createModelWheelMaterial(file.map, file.paintMap);
+  mats.set(`${id}_wheel`, wheelMat);
+  if (!c.modelBody) {
+    c.modelBody = new THREE.Mesh();
+    c.modelBody.castShadow = c.modelBody.receiveShadow = true;
+    c.chassisPivot.add(c.modelBody);
+  }
+  const body = c.modelBody;
+  body.geometry = file.geometry;
+  body.material = bodyMat;
+  const s = c.scale ?? { x: 1, y: 1, z: 1 };
+  body.scale.set(1 / s.x, 1 / s.y, 1 / s.z);
+  body.visible = true;
+  c.bodyMesh.visible = false;
+  for (const plate of c.plates) plate.visible = false;
+  for (const wh of c.wheels) {
+    wh.tire.geometry = wh.side < 0 ? wheel.left : wheel.right;
+    wh.tire.material = wheelMat;
+    wh.tire.scale.setScalar(1);
+    wh.steerPivot.position.set(wh.side * w.x, w.radius, wh.isFront ? w.front : w.rear);
+    wh.restY = w.radius;
+  }
+  const state = bodyMat.userData.carState as CarStateUniform | undefined; // (createModelCarMaterial's uniform)
+  c.carState = state ?? null;
+  c.blood = null;
+}
+
+// A car model's file loaded after the car took its look: its body and wheels swapped in, the car otherwise as it is
+// (not setCarLook again, which repairs it and resets its gearbox)
+export function refreshCarFile(ctl: ThirdPersonControllerManager, id: string): void {
+  const c = ctl.entities.car, look = c.look;
+  if (look.model !== id || c.kit || look.bodyType === 'taxi' || look.police) return;
+  showCarFile(ctl, c, id, carFile(id), look.paint);
+}
+
 // ...or the camión itself: the traffic's bus body, route sign & wheels instead of the car's, its size, its lamps,
 // the bus's engine & gearbox (BUS_MODEL), and the chase camera further back and up
 export function setBusLook(ctl: ThirdPersonControllerManager, c: CarEntity, kit: LookKit, route: CarRoute | null): void {
   c.bodyMesh.visible = false;
+  if (c.modelBody) c.modelBody.visible = false;
   for (const decal of c.taxiDecals) decal.visible = false;
   for (const plate of c.plates) plate.visible = false;
   for (const wheel of c.carWheels) wheel.steerPivot.visible = false;

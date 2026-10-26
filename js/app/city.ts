@@ -91,11 +91,12 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   // The overpasses, their ramps & the railway; their walls, parapets & piers stop the player (not the traffic's
   // footprints: the lanes on and under them stay open)
   const bridges = buildBridges(scene);
-  colliders.push(...bridges.colliders);
+  // (one by one: spread into push(), tens of thousands of them overflow the call stack)
+  for (const c of bridges.colliders) colliders.push(c);
   // The puentes peatonales over the main roads: their railings, stairs & columns stop the player and the vehicles
-  colliders.push(...buildFootbridges(scene).colliders);
+  for (const c of buildFootbridges(scene).colliders) colliders.push(c);
   // The CFE's concrete poles stop the player (not the traffic: they stand on the sidewalks' outer edge)
-  colliders.push(...streetDetails.colliders);
+  for (const c of streetDetails.colliders) colliders.push(c);
   mark('bridges');
   return { streamer, cityGrid, farGround, rivers, cityBlocks, stores, streetDetails, traffic, highwayTraffic, bridges, colliders };
 }
