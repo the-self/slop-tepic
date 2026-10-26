@@ -132,6 +132,7 @@ export interface CarStepInput {
   hold?: boolean;
   grip?: number;
   spinning?: boolean;
+  assist?: boolean; // the stability control on (a car someone drives; never one thrown about in a crash)
 }
 /**
  * A wheel after the step: on the ground, its spin (rad), its steering (rad, + to its left), how far along its spring
@@ -277,6 +278,14 @@ const WHEELIE_FROM = 0.3; // rad of the moto's nose up where its rider starts to
 const WHEELIE_TO = 0.6; // ...and where none is left (no looping it over backwards)
 const WHEELIE_LEAD = 0.4; // s ahead the rider sees it coming
 const WHEELIE_FAST = 16; // m/s (~60 km/h) from which the rider brings it down
+// The car's driver aids (a game's, as GTA's: the player steers with keys, all or nothing):
+const PEAK_SLIP = 0.07; // rad (~4°) the front tyres may slip at most: Jolt's lateral curve peaks at 3°, a little over
+// it the front gives first (it runs wide), never the rear (it spins)
+const ESC_FROM = 4; // m/s from which the stability control holds the car to the turn its wheels steer...
+const ESC_MARGIN = 0.08; // ...beyond this (rad/s) and 15% more than that turn...
+const ESC_GAIN = 8; // ...taking the excess off at this rate (1/s)...
+const ESC_MOST = 0.5; // ...with a torque of at most this share of what the tyres' grip makes over the wheelbase
+const FRONT_BRAKES = 0.65; // the share of the braking on the front wheels (a road car's bias, 60-70%)
 
 /**
  * Pure: where the wheels attach and how far they hang, from their resting centres (local x, y = radius, z). A wheel's
@@ -319,6 +328,33 @@ const SUSPENSION: Partial<Record<string, [springHz: number, roll: number]>> & { 
 function headingOf(fx: number, fy: number, fz: number, ux: number, uz: number): number {
   if (Math.hypot(fx, fz) > 0.25) return Math.atan2(fx, fz);
   return fy < 0 ? Math.atan2(ux, uz) : Math.atan2(-ux, -uz);
+}
+
+/**
+ * Pure: the most a car's front wheels turn (rad) at `speed` (m/s): the turn its tyres hold at that speed on a
+ * `wheelbase` (m) with `grip` (the tyres' friction on this road, 1 dry) plus the slip angle their grip peaks at, no
+ * more than its full `lock` (rad). A key held at 100 km/h turns them ~6°, not the 12° that spun the car
+ */
+function steerLimit(lock: number, wheelbase: number, grip: number, speed: number): number {
+  const vv = speed * speed;
+  if (vv < 1) return lock;
+  return Math.min(lock, Math.atan(wheelbase * grip * 9.81 / vv) + PEAK_SLIP);
+}
+
+/**
+ * Pure: how much faster (rad/s, + to its left) a car turning at `rate` (rad/s about its up, + to its left) turns than
+ * its driver asks, the stability control's to take off: the turn its front wheels steer (`steer` rad, + left) at
+ * `forward` m/s on a `wheelbase` (m), no more than its tyres' `grip` holds. 0 while it turns no faster than that, or
+ * less (running wide is the tyres' to fix, not a push that would swing its tail out); slow, 0
+ */
+function overTurn(rate: number, steer: number, forward: number, wheelbase: number, grip: number): number {
+  const speed = Math.abs(forward);
+  if (speed < ESC_FROM) return 0;
+  const most = grip * 9.81 / speed;
+  const asked = Math.max(-most, Math.min(most, forward * Math.tan(steer) / wheelbase));
+  const margin = Math.abs(asked) * 0.15 + ESC_MARGIN;
+  const hi = Math.max(asked, 0) + margin, lo = Math.min(asked, 0) - margin;
+  return rate > hi ? rate - hi : rate < lo ? rate - lo : 0;
 }
 
 /**
@@ -893,6 +929,28 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
     }
   }
 
+  // A driven car's stability control (overTurn): turning faster than its front wheels steer it, as its tail steps out
+  // under power, lifting off or braking in a turn, a torque about its up takes the excess off (a real one brakes a
+  // wheel; a game's turns the body, as GTA's)
+  function stabilise(v: PhysicsVehicle, out: VehicleOut, h: number): void {
+    if (out.uy < 0.5) return; // (on its side or roof: nothing to hold)
+    let steer = 0, fronts = 0;
+    v.wheels.forEach((w, i) => {
+      if (!v.layout[i].front) return;
+      steer += w.GetSteerAngle();
+      fronts++;
+    });
+    const rate = out.wx * out.ux + out.wy * out.uy + out.wz * out.uz;
+    const excess = overTurn(rate, fronts ? steer / fronts : 0, out.forward, v.wheelbase, v.state.grip);
+    if (!excess) return;
+    const { mass, halfL, halfW } = v.def;
+    const inertia = mass * (halfL * halfL + halfW * halfW) / 3; // (about its up: a box its size)
+    const most = ESC_MOST * v.state.grip * mass * 9.81 * v.wheelbase;
+    // (no more of the excess than one sub-step takes off)
+    const torque = -Math.sign(excess) * Math.min(most, ESC_GAIN * inertia * Math.abs(excess), inertia * Math.abs(excess) / h);
+    bodies.AddTorque(v.body.GetID(), vec(out.ux * torque, out.uy * torque, out.uz * torque), Jolt.EActivation_Activate);
+  }
+
   // Vehicle `v`'s force for this sub-step (h s), split over the tyres on the ground that take it (the driven ones
   // under power), at their contact patches along it, each no more than its grip under the weight it carried in the
   // last sub-step; or, all of them off the ground, the air's drag against its motion
@@ -918,16 +976,23 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
         if (rear + front > 0) force *= Math.min(1, (rear / (rear + front)) / STOPPIE);
       }
     }
+    if (v.kind === 'car' && input.assist && touching >= 2 && !v.state.handbrake) stabilise(v, out, h);
     if (takers && force) {
-      // (a car's evenly; a moto's braking by the weight on each wheel, mostly the front's: an even share would lock
+      // (a car's drive evenly over its driven wheels, its braking FRONT_BRAKES on the front ones, the weight going
+      // there as it slows; a moto's braking by the weight on each wheel, mostly the front's: an even share would lock
       // its light rear wheel and swing it round)
       const byLoad = v.kind === 'two-wheeler' && !drive;
-      let total = 0;
+      const biased = v.kind === 'car' && !drive;
+      let total = 0, fronts = 0;
       if (byLoad) v.wheels.forEach((w) => { if (w.HasContact()) total += Math.max(0, w.GetSuspensionLambda()); });
+      if (biased) v.wheels.forEach((w, i) => { if (w.HasContact() && v.layout[i].front) fronts++; });
+      const rears = takers - fronts;
       v.wheels.forEach((w, i) => {
         if (!w.HasContact() || (drive && !v.driven[i])) return;
         const load = Math.max(0, w.GetSuspensionLambda()) / h; // N pressing it on the ground
-        const share = byLoad ? force * (total > 0 ? Math.max(0, w.GetSuspensionLambda()) / total : 1 / takers) : force / takers;
+        const share = byLoad ? force * (total > 0 ? Math.max(0, w.GetSuspensionLambda()) / total : 1 / takers)
+          : biased && fronts && rears ? force * (v.layout[i].front ? FRONT_BRAKES / fronts : (1 - FRONT_BRAKES) / rears)
+          : force / takers;
         const f = Math.sign(share) * Math.min(Math.abs(share), v.state.grip * load * 1.1);
         const p = w.GetContactPosition(), nrm = w.GetContactNormal();
         // its heading laid on the ground's plane
@@ -1032,4 +1097,4 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
   };
 }
 
-export { createCarPhysics, wheelLayout, headingOf, isDrive, wheelieThrottle, leanAndPitch, suspensionOf };
+export { createCarPhysics, wheelLayout, headingOf, isDrive, wheelieThrottle, leanAndPitch, suspensionOf, steerLimit, overTurn };
