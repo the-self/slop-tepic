@@ -77,6 +77,8 @@ export function leaveCarBehind(ctl: ThirdPersonControllerManager): void {
   if (ctl._bloodMats?.get(`${c.look.bodyType}_${c.look.paint}`) === c.bodyMesh.material) {
     ctl._bloodMats.delete(`${c.look.bodyType}_${c.look.paint}`);
   }
+  // (and its model's material, whose paint & brake lamps are uniforms: the next car of its model gets another)
+  if (c.look.model && c.modelBody?.visible && ctl._modelMats?.get(c.look.model) === c.modelBody.material) ctl._modelMats.delete(c.look.model);
   ctl.leftCars.push({
     mesh, x, y, z, heading: c.heading, halfW: c.halfW, halfL: c.halfL, look: { ...c.look }, damage: c.damage,
     dented: c.dented, kit: c.kit, stains: c.stains, material: c.bodyMesh.material,
