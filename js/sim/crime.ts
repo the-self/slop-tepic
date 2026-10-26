@@ -29,6 +29,9 @@ import {
   spawnCruiser, takeOverPatrol, removeCruiser, damageCruiser, updateCruiser, pursue, blockerAhead, deployOfficers, moveCruiser, collideCruisers
 } from './crime/cruisers.ts';
 import { dispatch } from './crime/dispatch.ts';
+
+// A patrol car's (or truck's) blip on the radar (ui/city-map.ts BLIP_STYLES)
+const BLIP_OF: Readonly<Record<Faction, string>> = { police: 'cruiser', army: 'army', narco: 'truck', fire: 'firetruck', ambulance: 'ambulance' };
 import { buildPickups, drop, updatePickups, collect } from './crime/pickups.ts';
 
 // js/sim/crime.ts
@@ -125,6 +128,7 @@ class CrimeSystem {
   // the road graph (buildRoadGraph): its intersections, each one's links [node, m], and the nodes in 80 m cells
   nodes: XZ[] = [];
   links: [number, number][][] = [];
+  ways: [number, number][][] = []; // (the same, only the ways the lanes run)
   nodeCells = new Map<string, number[]>();
 
   // the frame's (update): the camera, the player's entity & mode, where it is (m) and how fast it goes (m/s)
@@ -229,8 +233,8 @@ class CrimeSystem {
     return nearestNode(this, x, z);
   }
 
-  route(x0: number, z0: number, x1: number, z1: number): XZ[] | null {
-    return route(this, x0, z0, x1, z1);
+  route(x0: number, z0: number, x1: number, z1: number, limit?: number, oneWay?: boolean): XZ[] | null {
+    return route(this, x0, z0, x1, z1, limit, oneWay);
   }
 
   // =========================================================================
@@ -572,7 +576,7 @@ class CrimeSystem {
   blips(out: Blips = (this._blips ??= [])): Blips {
     out.length = 0;
     for (const a of this.agents) if (!a.dead) out.push(a.kind === 'gang' ? ['rojos', 'verdes', 'narcos'][a.gang] : a.army ? 'soldier' : a.kind, a.x, a.z);
-    for (const cr of this.cruisers) if (cr.active && !cr.wreck) out.push(cr.faction === 'police' ? 'cruiser' : cr.faction === 'army' ? 'army' : 'truck', cr.x, cr.z);
+    for (const cr of this.cruisers) if (cr.active && !cr.wreck) out.push(BLIP_OF[cr.faction], cr.x, cr.z);
     if (this.heli.active && this.heli.state !== 'down') out.push('heli', this.heli.x, this.heli.z);
     for (const p of this.pickups) out.push(p.kind, p.x, p.z);
     return out;

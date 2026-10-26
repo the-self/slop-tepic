@@ -126,6 +126,7 @@ interface RagdollHandle {
   settled: boolean;
   bleed: number;
   down?: boolean; // (traffic.ts: it has been told it lies on the ground)
+  awaiting?: boolean; // (sim/emergency.ts: an ambulance is on its way: they lie there till the paramédicos take them)
 }
 interface Ragdolls {
   onSettle: ((h: RagdollHandle) => void) | null;

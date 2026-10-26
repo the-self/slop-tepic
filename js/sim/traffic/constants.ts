@@ -28,6 +28,10 @@ const MAX_CRASHED = 10;
 const CRASH_LOOKAHEAD = 0.06; // s ahead a crash is seen coming (the car is a body before it lands)
 const CRASH_STILL = 1.8; // s a crashed car lies still before it drives on or is left
 const CRASH_BRAKE = 6; // m/s² its driver brakes at (none left in it: it rolls)
+// Now and then a driver near the player looks at their phone and runs into the car ahead (mishaps.ts): the first
+// after MISHAP_FIRST s, then one every MISHAP_EVERY s (each looked for till a car is placed for it)
+const MISHAP_FIRST = 150;
+const MISHAP_EVERY: [number, number] = [180, 360];
 
 // Intelligent Driver Model: max acceleration, comfortable braking, time headway, standstill gap; and the sideways
 // acceleration drivers accept in bends, which sets how fast they take each turn or lane shift
@@ -73,7 +77,7 @@ const ridden = (v: Vehicle): v is TwoWheeler => v.kit !== undefined;
 
 export {
   NUM_CARS, NUM_BUSES, NUM_PEDS, NUM_BIKES, NUM_MOTOS, KNOCK_SPEED, MASS, MASS_OF_BODY, massOf, DOWN_TIME,
-  CRASH_RANGE, CRASH_SPEED, MAX_CRASHED, CRASH_LOOKAHEAD, CRASH_STILL, CRASH_BRAKE, CAR_DRIVER, BUS_DRIVER,
+  CRASH_RANGE, CRASH_SPEED, MAX_CRASHED, CRASH_LOOKAHEAD, CRASH_STILL, CRASH_BRAKE, MISHAP_FIRST, MISHAP_EVERY, CAR_DRIVER, BUS_DRIVER,
   BIKE_DRIVER, MOTO_DRIVER, LOOKAHEAD, VEHICLE_RADIUS, PED_RADIUS, NEAR_RADIUS, VEHICLE_SPAWN_DISTANCE,
   ROUTE_HEADWAY, PED_SPAWN_DISTANCE, LIVERIES, liveryOf, clamp, VEHICLE_KINDS, onRoad, onEdge, ridden
 };

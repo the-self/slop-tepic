@@ -100,7 +100,8 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
   const dx = crime.px - a.x, dz = crime.pz - a.z;
   const dist = Math.hypot(dx, dz);
   a.t += dt;
-  if (dist > DESPAWN || (a.dead && a.fallen && a.fallen.rest > DEAD_TIME)) {
+  // (a body an ambulance is coming for lies there till the paramédicos take it, sim/emergency.ts)
+  if (dist > DESPAWN || (a.dead && a.fallen && a.fallen.rest > DEAD_TIME && !a.fallen.awaiting)) {
     crime.removeAgent(a);
     return;
   }

@@ -1,8 +1,7 @@
 import * as THREE from 'three/webgpu';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { Bystanders, BYSTANDER_STYLES } from './bystanders.ts';
 import { getLocationLabel } from '../world/city-config.ts';
 import type { GunfireFX } from './gunfire-fx.ts';
+import type { EmergencyCall } from './emergency.ts';
 import type { AmbientSource } from '../audio/audio-ambience.ts';
 import type { ThirdPersonControllerManager } from '../player/controllers.ts';
 
@@ -10,8 +9,8 @@ import type { ThirdPersonControllerManager } from '../player/controllers.ts';
 // Fires: a car burning after a blast, a house on fire now and then somewhere near, and in the dry season (March to
 // May, the grass straw-yellow) the quemas on the hills round the valley sending up their smoke. Flames & smoke in the
 // gunfire effects' particle pools (gunfire-fx.ts), a flickering light, heat that hurts whoever stands in it. The
-// bomberos come for the cars & houses: their red truck drives in along the streets (crime.ts route, the patrol cars'
-// road graph), parks, and three firefighters in their turnout gear hose the fire down.
+// bomberos come for the cars & houses: two to four trucks from their station drive across the city (emergency.ts),
+// park, and their crews in turnout gear hose the fire down; a house burns on till they get there.
 
 type FireKind = 'car' | 'house' | 'grass';
 interface XZ {
@@ -20,7 +19,7 @@ interface XZ {
 }
 // A fire: where (m; y the ground, roof the height it burns up to), `size` m across, heat 0..1 (taking hold, dying
 // down), life & t (s it burns for, has burnt), called: s after which the bomberos are called (Infinity: never, or
-// called), spread: m a grass fire has crept out
+// called), spread: m a grass fire has crept out, call: the bomberos' (emergency.ts)
 interface Fire extends XZ {
   kind: FireKind;
   y: number;
@@ -31,33 +30,26 @@ interface Fire extends XZ {
   called: number;
   roof: number;
   spread: number;
-  truck?: FireTruck;
+  call?: EmergencyCall;
   sound?: AmbientSource;
 }
-// The bomberos' truck: along its path (i the leg), parked by its fire, t s since it parked
-interface FireTruck extends XZ {
-  root: THREE.Group;
-  active: boolean;
-  path: XZ[];
-  i: number;
-  heading: number;
-  parked: boolean;
-  fire: Fire | null;
-  t: number;
-}
-// What fires uses of the CrimeSystem (sim/crime.ts): its effects, the player, toasts & hurt, the road graph
+// What fires uses of the CrimeSystem (sim/crime.ts): its effects, the player, toasts & hurt
 interface FireCrime {
   fx: GunfireFX;
   player?: { position: XZ } | null;
   toast(text: string): void;
   hurt(amount: number, fromX?: number, fromZ?: number): void;
-  route(x0: number, z0: number, x1: number, z1: number): XZ[] | null;
+}
+// What fires uses of the emergency services (sim/emergency.ts): the bomberos called
+interface FireServices {
+  callFire(x: number, z: number, size: number, want: number): EmergencyCall;
 }
 // What fires uses of player/controllers.ts: the ground and the walls
 type FireControllers = Pick<ThirdPersonControllerManager, 'getGroundHeight' | 'isSolidAt'>;
 interface FiresOptions {
   scene: THREE.Object3D;
   crime: FireCrime;
+  services: FireServices;
   controllers: FireControllers;
   houses?: ArrayLike<number>; // city-geodata.js: stride numbers a house (x, z in dm, ..., floors at 5, flags at 6)
   stride?: number;
@@ -67,13 +59,15 @@ const MAX_FIRES = 6;
 const MAX_LIGHTS = 3;
 const HOUSE_EVERY: [number, number] = [420, 840]; // s between house fires near the player
 const GRASS_EVERY: [number, number] = [150, 300]; // s between the dry season's quemas
-const TRUCK_SPEED = 13; // m/s
-const TRUCK_DELAY: [number, number] = [18, 32]; // s the bomberos take to arrive
+const CALL_DELAY: [number, number] = [6, 14]; // s before someone has called the bomberos
+const HOSE = 0.018; // heat 1/s each truck's hoses beat a fire back by
+const MAX_BURN = 900; // s a house burns at most, waiting for the bomberos
 
 const rnd = (a: number, b: number): number => a + Math.random() * (b - a);
 
 class Fires {
   crime: FireCrime;
+  services: FireServices;
   fx: GunfireFX;
   controllers: FireControllers;
   houses: ArrayLike<number>;
@@ -82,18 +76,16 @@ class Fires {
   timers: { house: number; grass: number }; // s to the next
   dryness: number;
   lights: THREE.PointLight[];
-  people: Bystanders;
   time: number;
-  barMat = new THREE.MeshBasicNodeMaterial({ color: 0xff2020 }); // the truck's light bar
-  truck: FireTruck;
 
   /**
-   * @param {object} o - scene; crime (sim/crime.ts: its effects, the player's health, toasts, the road graph);
-   *   controllers (the ground, the walls: player/controllers.ts); houses & stride (city-geodata.js, for house fires);
-   *   audio (CityAudioSystem, optional)
+   * @param {object} o - scene; crime (sim/crime.ts: its effects, the player's health, toasts); services (the bomberos:
+   *   sim/emergency.ts); controllers (the ground, the walls: player/controllers.ts); houses & stride (city-geodata.js,
+   *   for house fires)
    */
-  constructor({ scene, crime, controllers, houses = [], stride = 8 }: FiresOptions) {
+  constructor({ scene, crime, services, controllers, houses = [], stride = 8 }: FiresOptions) {
     this.crime = crime;
+    this.services = services;
     this.fx = crime.fx;
     this.controllers = controllers;
     this.houses = houses;
@@ -108,35 +100,7 @@ class Fires {
       scene.add(l);
       return l;
     });
-    this.truck = this.buildTruck(scene);
-    this.people = new Bystanders(scene, 9, (x, z) => controllers.getGroundHeight(x, z, 'person'));
     this.time = 0;
-  }
-
-  // The bomberos' truck: a red cab & body, its ladder on top, the hose reel, a light bar
-  buildTruck(scene: THREE.Object3D): FireTruck {
-    const box = (w: number, h: number, d: number, x: number, y: number, z: number) => new THREE.BoxGeometry(w, h, d).translate(x, y + h / 2, z).toNonIndexed();
-    const red = new THREE.MeshStandardNodeMaterial({ color: 0xb3121b, roughness: 0.35, metalness: 0.3 });
-    const chrome = new THREE.MeshStandardNodeMaterial({ color: 0xc9cccf, roughness: 0.25, metalness: 0.9 });
-    const dark = new THREE.MeshStandardNodeMaterial({ color: 0x151515, roughness: 0.7 });
-    const root = new THREE.Group();
-    root.name = 'FireTruck';
-    const add = (geos: THREE.BufferGeometry[], mat: THREE.Material) => {
-      const m = new THREE.Mesh(mergeGeometries(geos), mat);
-      m.castShadow = true;
-      root.add(m);
-    };
-    add([box(2.5, 2.2, 2.4, 0, 0.6, 3.1), box(2.5, 2.1, 6.0, 0, 0.6, -1.2)], red);
-    add([box(0.5, 0.2, 7.2, -0.5, 2.7, -0.8), box(0.5, 0.2, 7.2, 0.5, 2.7, -0.8), box(2.52, 0.12, 8.4, 0, 0.55, 0.3)], chrome);
-    add([box(2.3, 0.9, 0.05, 0, 1.7, 4.31)], new THREE.MeshStandardNodeMaterial({ color: 0x1c2a33, roughness: 0.1, metalness: 0.4 })); // windscreen
-    const wheels: THREE.BufferGeometry[] = [];
-    for (const z of [3.0, -0.8, -2.6]) for (const x of [-1.15, 1.15]) wheels.push(new THREE.CylinderGeometry(0.52, 0.52, 0.4, 14).rotateZ(Math.PI / 2).translate(x, 0.52, z).toNonIndexed());
-    add(wheels, dark);
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.18, 0.35).translate(0, 2.92, 3.4), this.barMat);
-    root.add(bar);
-    root.position.y = -1000; // (out of sight until called: its pipelines compile with the rest)
-    scene.add(root);
-    return { root, active: false, path: [], i: 0, x: 0, z: 0, heading: 0, parked: false, fire: null, t: 0 };
   }
 
   // A fire starts: 'car' (a wreck), 'house', 'grass'; `size` m across
@@ -145,7 +109,7 @@ class Fires {
     if (this.fires.some((f) => Math.hypot(f.x - x, f.z - z) < f.size)) return null; // (already burning)
     const fire: Fire = {
       kind, x, z, y: this.controllers.getGroundHeight(x, z, 'car'), size, heat: 0, life: kind === 'car' ? rnd(70, 110) : kind === 'house' ? rnd(200, 300) : rnd(160, 260),
-      t: 0, called: kind === 'grass' ? Infinity : rnd(...TRUCK_DELAY), roof: 0, spread: 0
+      t: 0, called: kind === 'grass' ? Infinity : rnd(...CALL_DELAY), roof: 0, spread: 0
     };
     this.fires.push(fire);
     return fire;
@@ -179,24 +143,14 @@ class Fires {
     return null;
   }
 
-  // The bomberos set out: their truck comes in along the streets from ~300 m off and parks by the fire
-  callTruck(fire: Fire): void {
-    const t = this.truck;
-    if (t.active) return;
-    const a = Math.random() * Math.PI * 2;
-    const path = this.crime.route(fire.x + Math.cos(a) * 300, fire.z + Math.sin(a) * 300, fire.x, fire.z);
-    if (!path || path.length < 2) return;
-    // (the road graph ends at the junction nearest the fire: the last stretch is straight to it, stopping short)
-    const end = path[path.length - 1];
-    const ex = end.x - fire.x, ez = end.z - fire.z, ed = Math.hypot(ex, ez) || 1;
-    if (ed > fire.size + 8) path.push({ x: fire.x + (ex / ed) * (fire.size + 7), z: fire.z + (ez / ed) * (fire.size + 7) });
-    Object.assign(t, { active: true, path, i: 0, x: path[0].x, z: path[0].z, parked: false, fire, t: 0 });
-    fire.truck = t;
+  // The bomberos called: two trucks for a burning car, three or four for a house
+  callBomberos(fire: Fire): void {
+    fire.call = this.services.callFire(fire.x, fire.z, fire.size, fire.kind === 'house' ? 3 + Math.round(Math.random()) : 2);
   }
 
   /**
-   * The frame: fires start, burn, spread their heat & smoke, die down (faster under the hoses); the truck drives,
-   * parks & its crew sprays. `dryness` 0..1 (lot-greenery.ts grassDryness: the quemas only in the dry season)
+   * The frame: fires start, burn, spread their heat & smoke, die down (faster under the bomberos' hoses, emergency.ts).
+   * `dryness` 0..1 (lot-greenery.ts grassDryness: the quemas only in the dry season)
    */
   update(dt: number, dryness: number, camera: { position: XZ }): void {
     this.time += dt;
@@ -231,18 +185,20 @@ class Fires {
     for (let k = this.fires.length - 1; k >= 0; k--) {
       const f = this.fires[k];
       f.t += dt;
-      // it takes hold, burns, dies down; the hoses beat it back
-      const hosed = f.truck?.parked && f.truck.t > 6 ? 1 : 0;
+      // it takes hold, burns, dies down; the hoses beat it back. A house burns on while the bomberos are on their way
+      const call = f.call;
+      if (f.kind === 'house' && call?.units.length && !call.working && f.t > f.life - 20 && f.t < MAX_BURN) f.life += dt;
       const target = f.t < f.life ? 1 : 0;
-      f.heat += ((target - f.heat) * dt) / (target ? 12 : 25) - hosed * dt * 0.035;
+      f.heat += ((target - f.heat) * dt) / (target ? 12 : 25) - (call ? call.working : 0) * dt * HOSE;
+      if (call) call.reach = f.size * 0.5 + f.spread;
       if (f.kind === 'grass') f.spread = Math.min(f.size * 2.2, f.spread + dt * 0.12);
       if (f.heat <= 0 && f.t > 5) {
         this.fires.splice(k, 1);
-        if (f.truck) f.truck.fire = null;
+        if (f.call) f.call.open = false;
         continue;
       }
-      if (f.t > f.called && !f.truck && Math.hypot(f.x - p.x, f.z - p.z) < 700) {
-        this.callTruck(f);
+      if (f.t > f.called && !f.call && Math.hypot(f.x - p.x, f.z - p.z) < 700) {
+        this.callBomberos(f);
         f.called = Infinity;
       }
       const d = Math.hypot(f.x - camera.position.x, f.z - camera.position.z);
@@ -275,60 +231,6 @@ class Fires {
     }
     // (an unlit light is hidden: the clustered lighting takes 256 lights at most)
     for (let i = lit; i < MAX_LIGHTS; i++) this.lights[i].visible = false;
-    this.updateTruck(dt);
-  }
-
-  // The truck along its path, parked by the fire with its crew hosing it, gone once the fire is out and the player away
-  updateTruck(dt: number): void {
-    const t = this.truck;
-    const ppl = this.people;
-    ppl.begin();
-    if (t.active) {
-      if (!t.parked) {
-        const goal = t.path[Math.min(t.i + 1, t.path.length - 1)];
-        const dx = goal.x - t.x, dz = goal.z - t.z, d = Math.hypot(dx, dz);
-        const step = TRUCK_SPEED * dt;
-        const fire = t.fire;
-        // it stops short of the fire, at the kerb
-        if (!fire || Math.hypot(fire.x - t.x, fire.z - t.z) < fire.size + 9 || t.i >= t.path.length - 1) t.parked = true;
-        else if (d <= step) t.i++;
-        else {
-          t.x += (dx / d) * step;
-          t.z += (dz / d) * step;
-          t.heading = Math.atan2(dx, dz);
-        }
-      } else t.t += dt;
-      const g = this.controllers.getGroundHeight(t.x, t.z, 'car');
-      t.root.position.set(t.x, g, t.z);
-      t.root.rotation.y = t.heading;
-      // the light bar flashing red & white
-      this.barMat.color.setHex(Math.sin(this.time * 14) > 0 ? 0xff1a1a : 0xfff4f4);
-      // the crew: three bomberos between the truck and the fire, facing it, the hoses' water arcing onto it
-      const f = t.fire;
-      if (t.parked && f) {
-        const ax = f.x - t.x, az = f.z - t.z, ad = Math.hypot(ax, az) || 1;
-        const ux = ax / ad, uz = az / ad;
-        for (let k = 0; k < 3; k++) {
-          const along = Math.min(ad - f.size * 0.5 - 2, 3 + k * 1.2), side = (k - 1) * 2.2;
-          const x = t.x + ux * along - uz * side, z = t.z + uz * along + ux * side;
-          ppl.place(k, x, z, Math.atan2(f.x - x, f.z - z), 20, k * 31, BYSTANDER_STYLES.bombero);
-          if (t.t > 4 && Math.random() < dt * 30) {
-            const v = 11 + Math.random() * 2;
-            const tx = f.x - x + (Math.random() - 0.5) * f.size * 0.6, tz = f.z - z + (Math.random() - 0.5) * f.size * 0.6;
-            const td = Math.hypot(tx, tz) || 1;
-            this.fx.puff.spawn(x + (tx / td) * 0.6, g + 1.3, z + (tz / td) * 0.6, (tx / td) * v * 0.8, 5 + Math.random(), (tz / td) * v * 0.8,
-              1.1, 0.12, 0.35, 0.86, 0.92, 1.0, 9.8, 0.1);
-          }
-        }
-      }
-      // done: the fire out, the truck sits a while, then leaves (once nobody's watching)
-      const p = this.crime.player ? this.crime.player.position : t.root.position;
-      if (!f && t.parked && (t.t > 60 || Math.hypot(p.x - t.x, p.z - t.z) > 180)) {
-        t.active = false;
-        t.root.position.y = -1000;
-      }
-    }
-    ppl.end(dt);
   }
 
   // The fires on the minimap
@@ -350,5 +252,5 @@ class Fires {
   }
 }
 
-export type { FireKind, Fire, FireTruck, FireCrime, FireControllers, FiresOptions };
+export type { FireKind, Fire, FireCrime, FireServices, FireControllers, FiresOptions };
 export { Fires };

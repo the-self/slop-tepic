@@ -36,6 +36,7 @@ import { Floods } from './world/floods.ts';
 import { Nightlife } from './world/nightlife.ts';
 import { Interiors } from './world/interiors.ts';
 import { Fires } from './sim/fires.ts';
+import { EmergencyServices } from './sim/emergency.ts';
 import { Scheduler } from './core/scheduler.ts';
 import type { FrameStep } from './core/scheduler.ts';
 import { EventBus } from './core/events.ts';
@@ -60,6 +61,7 @@ interface GameEvents {
    *  'vehicle', 'prop', a building's... (player/stats.ts hardness) */
   collision: CollisionImpact & { kind: string };
 }
+const HARD_CRASH = 9; // m/s (~32 km/h) a crash is struck at for an ambulance to be called
 
 const isWeatherSample = (name: string | null): name is WeatherSampleName => name !== null && name in WEATHER_SAMPLES;
 
@@ -221,9 +223,20 @@ async function initApp(): Promise<void> {
   const nightlife = new Nightlife({ scene, venues, houses: GEO.houses, stride: GEO.houseStride || 8, controllers: controllerManager, audio: audioSystem });
   // In through their doors (F): the restaurants', bars' and antros' rooms, the Tapanko's tapanco and all
   const rooms = new Interiors({ scene, venues, controllers: controllerManager, cameras: cameraSystem, crime: crimeSystem });
+  // The bomberos' trucks & the Cruz Roja's ambulances, sent from their real stations (sim/emergency.ts): in the patrol
+  // cars' pool, so before the audio takes that for its sirens
+  const emergency = new EmergencyServices({ scene, crime: crimeSystem, ground: (x, z) => controllerManager.getGroundHeight(x, z, 'person') });
+  trafficSystem.setSirens(emergency.sirens); // (the cars ahead of them pull over)
   // Burning wrecks, house fires, the dry season's quemas, and the bomberos who come for them (sim/fires.ts)
-  const fires = new Fires({ scene, crime: crimeSystem, controllers: controllerManager, houses: GEO.houses, stride: GEO.houseStride || 8 });
+  const fires = new Fires({ scene, crime: crimeSystem, services: emergency, controllers: controllerManager, houses: GEO.houses, stride: GEO.houseStride || 8 });
   crimeSystem.onExplosion = (x, y, z, radius) => { fires.onExplosion(x, y, z, radius); };
+  // Someone killed or badly hurt (shot dead, thrown hard) come to rest: an ambulance for them (not for the player, who
+  // comes round at the hospital), besides the blood under them
+  const bleedOut = ragdolls.onSettle;
+  ragdolls.onSettle = (h) => {
+    bleedOut(h);
+    if (h.bleed >= 0.45 && h !== crimeSystem.playerFall) emergency.callAmbulance(h.px, h.pz, h);
+  };
   audioSystem.sources.pursuers = [...crimeSystem.cruisers, crimeSystem.heli]; // (the patrol cars & trucks, the helicopter)
   crimeSystem.ragdolls = ragdolls;
   // Thrown out through the windscreen (controllers.ts ejectDriver), or off the moto (ejectRider; stepping off it as it
@@ -253,6 +266,8 @@ async function initApp(): Promise<void> {
     system.setCollisionListener((impact) => { events.emit('collision', impact); });
   }
   events.on('collision', (impact) => { audioSystem.onCollision(impact); });
+  // a hard crash (~32 km/h and up: the player's, or two of the traffic's): an ambulance (sim/emergency.ts)
+  events.on('collision', (impact) => { if (impact.speed >= HARD_CRASH) emergency.callAmbulance(impact.x, impact.z); });
   let lastCrash = -Infinity;
   events.on('collision', (impact) => {
     // the car, bicycle, moto or helicopter the player is in, hitting something hard enough (crashDamage)
@@ -595,6 +610,7 @@ async function initApp(): Promise<void> {
       nightlife.update(dt, lightingSystem.hourOfDay, weekday, cameraSystem.camera);
       rooms.update(dt, lightingSystem.hourOfDay);
       if (!rooms.active) fires.update(dt, cityUniforms.uDryness.value, cameraSystem.camera);
+      emergency.update(dt, cameraSystem.camera);
       // the sounds that stay put (audio/audio-ambience.ts): the planchas, the antros' & parties' music, the fires
       ambience.length = 0;
       streetFood.sounds(ambience);
@@ -637,7 +653,7 @@ async function initApp(): Promise<void> {
   if (debug) {
     // Debugging handle for the console, only with ?debug in the URL
     Object.assign(window, { __slop: {
-      scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, controllerManager, trafficSystem,
+      scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, emergency, controllerManager, trafficSystem,
       cameraSystem, streetDetails, cityGrid: city.cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl,
       weaponWheel, weaponIcons, scheduler, boarding, multiplayer: () => multiplayer
     } });

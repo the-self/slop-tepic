@@ -11,6 +11,9 @@ import { WEAPON_MODELS, buildWeaponGeometry, createWeaponMaterial } from '../../
 import { createContactShadowMaterial } from '../../render/tsl-materials.ts';
 import { MAX_AGENTS, MAX_CRUISERS, MAX_TRUCKS, MAX_ARMY, PARKED_Y, GRIP_REACH, CRUISER, CRUISER_HP, HELI_HP, NPC_GUN, zero } from './constants.ts';
 import type { Faction, Helicopter } from './types.ts';
+
+// (the fire trucks & ambulances are sim/emergency.ts's own models)
+type CrimeFaction = Exclude<Faction, 'fire' | 'ambulance'>;
 import type { CrimeSystem } from '../crime.ts';
 
 export function buildGuns(crime: CrimeSystem): void {
@@ -55,7 +58,7 @@ export function buildCruisers(crime: CrimeSystem): void {
   const truckSpec = Object.hasOwn(BODY_SPECS, 'suv') ? BODY_SPECS.suv : spec; // (a Record: TS takes any key to be there)
   const truckBody = buildCarGeometry(truckSpec, true);
   const body = buildCarGeometry(spec, true);
-  const looks: Record<Faction, { body: THREE.BufferGeometry; paint: THREE.Material; name: string }> = {
+  const looks: Record<CrimeFaction, { body: THREE.BufferGeometry; paint: THREE.Material; name: string }> = {
     police: { body, paint: mat, name: 'PoliceCruiser' },
     narco: { body: truckBody, paint: createLoftedCarMaterial(truckSpec, 0x0c0d0f), name: 'CartelTruck' },
     army: { body: truckBody, paint: createLoftedCarMaterial(truckSpec, 0x4a5130), name: 'ArmyTruck' }
@@ -68,7 +71,7 @@ export function buildCruisers(crime: CrimeSystem): void {
   const parkedWreck = new THREE.Mesh(body, crime.burnt);
   parkedWreck.position.y = PARKED_Y;
   crime.scene.add(parkedWreck);
-  const fleet: [Faction, number][] = [['police', MAX_CRUISERS], ['narco', MAX_TRUCKS], ['army', MAX_ARMY]];
+  const fleet: [CrimeFaction, number][] = [['police', MAX_CRUISERS], ['narco', MAX_TRUCKS], ['army', MAX_ARMY]];
   for (const [faction, n] of fleet) {
     const look = looks[faction];
     for (let i = 0; i < n; i++) {

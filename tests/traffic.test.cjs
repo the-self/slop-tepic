@@ -522,11 +522,11 @@ function roadHarness({ pickups, lanes = [1.8], lane = 0, half = 4.55 } = {}) {
     speed: 12, acc: 0, gap: Infinity, leaderSpeed: 0, move: { to: edge, out: lanes.map(() => 0), turn: 'S' }, conn: null, cs: 0,
     trail: null, commit: null, claimed: false, yielding: false, wait: 0, laneTimer: 1e9, dl: 0, dlv: 0, x: -lanes[lane], z: 50,
     yaw: 0, wrecked: false, fleet: null, isTaxi: false, isPolice: false, pAhead: Infinity, pRight: 0, pSpeed: 0,
-    pSide: 0, pHalfW: 0.86, pHalfL: 2.18, pParked: false, pSeen: 0, react: 0.5, swerve: 0, stop: null, pullOver: 0,
-    nextStop: 0, fare: 0
+    pSide: 0, pHalfW: 0.86, pHalfL: 2.18, pParked: false, pSeen: 0, react: 0.5, distracted: 0, sirenNear: false, swerve: 0,
+    stop: null, pullOver: 0, nextStop: 0, fare: 0
   };
   const ts = {
-    clock: 0, caution: 1, headway: 1, roadGrip: 1, parked: [], peds: [], pedRoutes: { along: () => [] },
+    clock: 0, caution: 1, headway: 1, roadGrip: 1, parked: [], sirens: [], peds: [], pedRoutes: { along: () => [] },
     player: { active: false, x: 0, z: 0, vx: 0, vz: 0, halfW: 0.86, halfL: 2.18 }
   };
   const step = (dt = 1 / 60) => {
@@ -576,6 +576,33 @@ test('a driver swerves to the right for the player coming head on in its lane, a
   for (let i = 0; i < 180; i++) oncoming.step();
   assert.ok(Math.abs(oncoming.v.dl) < 0.05, 'kept to its lane');
   assert.ok(oncoming.v.speed > 11, 'and its speed');
+});
+
+test('a driver pulls over and crawls for a siren coming up behind it, and drives on once it has gone by', () => {
+  // (the curb's own pickups.ts: what lets go of the pull over each frame)
+  const { ts, v, step } = roadHarness({ pickups: true });
+  Object.assign(v, { tx: 0, tz: 1 });
+  // a fire truck 20 m behind, going its way (heading +z); one going the other way changes nothing
+  const siren = { x: v.x, z: v.z - 20, heading: Math.PI };
+  ts.sirens = [siren];
+  for (let i = 0; i < 60; i++) step();
+  assert.equal(v.sirenNear, false, 'not for one going the other way');
+  siren.heading = 0;
+  for (let i = 0; i < 60 * 4; i++) {
+    siren.z = v.z - 20;
+    step();
+  }
+  assert.ok(v.sirenNear);
+  assert.ok(v.dl > 1, `over to the curb (${v.dl.toFixed(2)} m)`);
+  assert.ok(v.dl < 4.55 - 1.8 - 0.86 + 0.01, 'not over it');
+  assert.ok(v.speed < 3.5, `crawling (${v.speed.toFixed(2)} m/s)`);
+  // gone by (and on ahead): back in its lane and on its way
+  for (let i = 0; i < 60 * 6; i++) {
+    siren.z = v.z + 30;
+    step();
+  }
+  assert.equal(v.sirenNear, false);
+  assert.ok(v.speed > 8 && v.dl < 0.3, `on its way (${v.speed.toFixed(2)} m/s, ${v.dl.toFixed(2)} m)`);
 });
 
 test('a combi pulls in for someone hailing it, waits while they get on, and drives on', () => {

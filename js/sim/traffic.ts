@@ -24,12 +24,12 @@ import type { CarPhysics } from '../player/car-physics.ts';
 import { createTrafficState } from './traffic/state.ts';
 import type {
   Vehicle, Car, Bus, TwoWheeler, Bike, Moto, Hijackable, VehicleBase, VehicleKind, DrivenVehicle, Ped, Bail, Conversation, BikeWreck,
-  TrafficNode, TrafficEdge, TrafficMove, TrafficNetwork, LaneEntry, DriverModel, TrafficPlayerEntity, ParkedVehicle, BumpBody,
+  TrafficNode, TrafficEdge, TrafficMove, TrafficNetwork, LaneEntry, DriverModel, TrafficPlayerEntity, ParkedVehicle, SirenSource, BumpBody,
   CrashBody, CarCrash, CrashedCar,
   TrafficCollision, MayhemListener, KnockListener, SmokeEmitter, TrafficRayHit, RayAccept, BodyBox, RoadSpot, TakenVehicle,
   VehicleLook, RouteLook, LookKit, LookWheel, SolidQuery, HillQuery, SurfaceQuery
 } from './traffic/types.ts';
-import { setCollisionListener, setMayhemListener, setKnockListener, setRagdolls, setSolidQuery, setWallQuery, setParked, setRoadWater } from './traffic/hooks.ts';
+import { setCollisionListener, setMayhemListener, setKnockListener, setRagdolls, setSolidQuery, setWallQuery, setParked, setSirens, setRoadWater } from './traffic/hooks.ts';
 import { setHillQuery, setSurfaceQuery } from './traffic/surface.ts';
 import { setHour } from './traffic/near.ts';
 import { setPhysics, setSmokeEmitter } from './traffic/crashes.ts';
@@ -72,6 +72,7 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     setHillQuery: (fn: HillQuery | null): void => { setHillQuery(ts, fn); },
     setSurfaceQuery: (fn: SurfaceQuery | null): void => { setSurfaceQuery(ts, fn); },
     setParked: (list: ParkedVehicle[] | null): void => { setParked(ts, list); },
+    setSirens: (list: readonly SirenSource[]): void => { setSirens(ts, list); },
     setRoadWater: (wet: number, rain: number, grip?: number): void => { setRoadWater(ts, wet, rain, grip); },
     vehicleAt: (x: number, z: number, r?: number): boolean => vehicleAt(ts, x, z, r),
     vehicleBoxAt: (x: number, z: number, r?: number): BodyBox | null => vehicleBoxAt(ts, x, z, r),
@@ -98,7 +99,7 @@ type HighwayTraffic = ReturnType<typeof createHighwayTraffic>;
 
 export type {
   TrafficSystem, HighwayTraffic, Vehicle, Car, Bus, TwoWheeler, Bike, Moto, Hijackable, VehicleBase, VehicleKind, DrivenVehicle, Ped, Bail, Conversation, BikeWreck,
-  TrafficNode, TrafficEdge, TrafficMove, TrafficNetwork, LaneEntry, DriverModel, TrafficPlayerEntity, ParkedVehicle, BumpBody,
+  TrafficNode, TrafficEdge, TrafficMove, TrafficNetwork, LaneEntry, DriverModel, TrafficPlayerEntity, ParkedVehicle, SirenSource, BumpBody,
   CrashBody, CarCrash, CrashedCar,
   TrafficCollision, MayhemListener, KnockListener, SmokeEmitter, TrafficRayHit, RayAccept, BodyBox, RoadSpot, TakenVehicle,
   VehicleLook, RouteLook, LookKit, LookWheel, HighwayLaneSpec, HighwayLane, HighwayCar, HighwayKind

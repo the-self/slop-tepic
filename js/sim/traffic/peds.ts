@@ -137,7 +137,7 @@ function knockPed(ts: TrafficState, p: Ped, hit: BoxContact): void {
 }
 
 // A knocked-over pedestrian flies, lands and lies still (its ragdoll), then gets up out of sight (respawned like any
-// other)
+// other); one an ambulance is coming for lies there till the paramédicos take them (sim/emergency.ts)
 function tumblePed(ts: TrafficState, p: Ped, _dt: number): void {
   const f = p.fallen;
   if (!f) return;
@@ -145,7 +145,7 @@ function tumblePed(ts: TrafficState, p: Ped, _dt: number): void {
     f.down = true;
     if (ts.mayhemListener) ts.mayhemListener('down', f.px, f.py - 0.15, f.pz, 0, MASS.person);
   }
-  if (f.rest > DOWN_TIME) {
+  if (f.rest > DOWN_TIME && !f.awaiting) {
     ts.ragdolls?.release(f);
     p.fallen = null;
     p.placed = false;
