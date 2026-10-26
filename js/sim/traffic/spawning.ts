@@ -43,14 +43,18 @@ function joinRoute(v: Vehicle, on: PathAlong): void {
 }
 
 // Put v in a free lane around the focus. Normal replenishment protects the near view; teleports can fill it. Buses
-// & combis go on the roads of their routes (where the map has any).
+// & combis go on the roads of their routes (where the map has any); cyclists on the streets, never among the
+// avenues' traffic (near.ts weighs the avenues out for them; routing.ts keeps them off them too).
 function spawnVehicle(ts: TrafficState, v: Vehicle, rMin: number, rMax: number, protectView: boolean): boolean {
   if (!v.bus && !v.bike && !v.moto) drawModel(v); // (a car comes back as another model, a motorcyclist on another moto)
   else if (v.moto) v.model = pickMoto();
   const onRoutes = !!v.fleet && ts.transit.paths.length > 0;
   const pool = onRoutes ? ts.nearTransitEdges : ts.nearEdges;
+  const weights = v.bike ? ts.nearBikeWeights : ts.nearCarWeights;
+  // (nothing but avenues around: no cyclist, rather than twelve tries at them)
+  if (v.bike && !onRoutes && !(weights[weights.length - 1] > 0)) return false;
   for (let attempt = 0; attempt < 12; attempt++) {
-    const e = onRoutes ? pool[Math.floor(Math.random() * pool.length)] : pickWeighted(pool, ts.nearCarWeights);
+    const e = onRoutes ? pool[Math.floor(Math.random() * pool.length)] : pickWeighted(pool, weights);
     if (!e || (v.bus && !onRoutes && e.axis !== 'ave') || e.len < 2 * v.half + 10) continue;
     if (onRoutes && !e.transit?.length) continue;
     const lane = v.bike ? e.lanes.length - 1 : Math.floor(Math.random() * e.lanes.length);

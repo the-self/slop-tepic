@@ -181,6 +181,8 @@ export function carMoved(ctl: ThirdPersonControllerManager, dt: number, driving:
     // head on (what it hit faces its nose) and hard: out through the windscreen
     if (driving && hit.speed > EJECT_SPEED && hit.nx * sn + hit.nz * cs < -0.7) ctl.ejectDriver(c, c.before, hit.speed);
   }
+  // a kerb taken fast, a landing: its springs struck their stops (car-physics.ts strike), a jolt but no crash
+  if (o.bump > 0.3) c.cameraKick = Math.max(c.cameraKick || 0, Math.min(0.6, o.bump / 5));
 
   // the wheels: on their springs, steered, rolling
   o.wheels.forEach((w, i) => {
