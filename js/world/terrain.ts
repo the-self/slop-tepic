@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { float, color, mix, smoothstep, positionWorld, normalWorld, vec2, sin, fract, dot, floor, attribute, texture, uniform } from 'three/tsl';
 import { GEO } from './city-geodata.js';
-import { cityUniforms } from '../render/tsl-materials.ts';
+import { cityUniforms, createRiverWaterMaterial } from '../render/tsl-materials.ts';
 import { farGroundColor } from './far-ground.ts';
 import { ISLAND_BOUNDS } from './city-config.ts';
 import { SINK, SLOPES, hillHeights, terrainHeight, hillGround, townHeight } from './ground.ts';
@@ -149,6 +149,7 @@ function buildTerrain(scene: THREE.Object3D, { mask = null, far = null }: { mask
   }
 
   buildHillPaths(group);
+  buildFarRivers(group);
 
   // the cross on the summit of Cerro de la Cruz (lit at night)
   if (T.cross) {
@@ -332,6 +333,60 @@ function buildHillPaths(group: THREE.Group) {
     poles.castShadow = true;
     group.add(poles, globes);
   }
+}
+
+// The rivers where they run on beyond the detailed box (city-geodata.js farRivers: the Mololoa down the valley, the Río
+// Puente de Enmedio, the Arroyo Grande): water laid on the hills' mesh, FAR_RIVER_HALF m either side of the course,
+// seen from the edge of town and from the air (no channel is cut out there: nobody walks those banks)
+const FAR_RIVER_HALF = 6;
+function buildFarRivers(group: THREE.Group) {
+  if (!T) return;
+  const { box } = GEO.frame;
+  const tx1 = T.x0 + (T.w - 1) * T.cell, tz1 = T.z0 + (T.h - 1) * T.cell;
+  const out = (x: number, z: number) => x < box.x0 || x > box.x1 || z < box.z0 || z > box.z1;
+  const onGrid = (x: number, z: number) => x > T.x0 && x < tx1 && z > T.z0 && z < tz1;
+  const STEP = 4;
+  const LIFT = 0.12;
+  const position: number[] = [], uvs: number[] = [];
+  for (const [, flat] of GEO.farRivers) {
+    // samples every STEP m with the direction there, and the metres along
+    const samples: [x: number, z: number, dx: number, dz: number, s: number][] = [];
+    let along = 0;
+    for (let i = 0; i + 3 < flat.length; i += 2) {
+      const ax = flat[i], az = flat[i + 1], bx = flat[i + 2], bz = flat[i + 3];
+      const L = Math.hypot(bx - ax, bz - az);
+      if (L < 0.01) continue;
+      const n = Math.max(1, Math.ceil(L / STEP));
+      for (let k = 0; k < n; k++) samples.push([ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n, (bx - ax) / L, (bz - az) / L, along + (L * k) / n]);
+      along += L;
+    }
+    for (let k = 0; k + 1 < samples.length; k++) {
+      const a = samples[k], b = samples[k + 1];
+      // (beyond the box only: inside it the river runs in its channel, waterways.ts)
+      if (!(out(a[0], a[1]) && out(b[0], b[1])) || !onGrid(a[0], a[1]) || !onGrid(b[0], b[1])) continue;
+      const corner = (p: typeof a, side: number): number[] => {
+        const x = p[0] - p[3] * side * FAR_RIVER_HALF, z = p[1] + p[2] * side * FAR_RIVER_HALF;
+        return [x, meshHeight(x, z, terrainHeight(x, z)) + LIFT, z];
+      };
+      const a0 = corner(a, -1), a1 = corner(a, 1), b0 = corner(b, -1), b1 = corner(b, 1);
+      position.push(...a0, ...a1, ...b0, ...a1, ...b1, ...b0); // counter-clockwise from above
+      uvs.push(a[4], -1, a[4], 1, b[4], -1, a[4], 1, b[4], 1, b[4], -1); // (metres along the flow, across it)
+    }
+  }
+  if (!position.length) return;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.computeVertexNormals();
+  const mat = createRiverWaterMaterial();
+  // (over the hillside it lies on without fighting it)
+  mat.polygonOffset = true;
+  mat.polygonOffsetFactor = -1;
+  mat.polygonOffsetUnits = -2;
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = 'FarRivers';
+  mesh.receiveShadow = true;
+  group.add(mesh);
 }
 
 export { buildTerrain, terrainHeight, hillGround };

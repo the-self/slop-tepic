@@ -131,6 +131,9 @@ interface Ped {
   ux: number;
   uz: number;
   len: number;
+  /** the track's lift over the ground at its start and end (m): up a footbridge (pedestrian-routes.ts) */
+  la: number;
+  lb: number;
   t: number;
   dir: number;
   node: TrafficNode | null;

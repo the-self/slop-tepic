@@ -308,7 +308,14 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
 
   scene.add(group);
 
-  const pedRoutes = createPedestrianRoutes<TrafficNode, TrafficEdge, CityBlock>(network, blockAt);
+  // (and over the footbridges, from the intersections near their feet)
+  const pedRoutes = createPedestrianRoutes<TrafficNode, TrafficEdge, CityBlock>(network, blockAt, {
+    nodes: network.nodes,
+    bridges: GEO.footbridges.map(([flat, lifts]) => ({
+      pts: Array.from({ length: flat.length / 2 }, (_, i) => ({ x: flat[i * 2], z: flat[i * 2 + 1] })),
+      lifts: lifts.map((v) => v / 10)
+    }))
+  });
   // How many of each kind of vehicle there are (population.ts allowance)
   const fleetSize: Record<VehicleKind, number> = { car: 0, bike: 0, moto: 0, bus: 0 };
   for (const v of vehicles) fleetSize[kindOf(v)]++;

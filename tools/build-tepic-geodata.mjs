@@ -513,6 +513,7 @@ const FOOT_CURB = 1.0; // m: the deck reaches this far past the roadway's edge b
 const FOOT_WAY = /^(footway|path|pedestrian|cycleway|steps)$/;
 const footDecks = []; // { deck: points along the way between the stairs' tops, out: [unit heading away from the deck at
 // its start, at its end], half: half its width (m) }
+const footOthers = []; // { line, half }: the bridge ways over no road (over the arroyos & drains, see 6C)
 {
   // the bridge ways, joined end to end into whole bridges where OSM splits one (at a median, at a lamp)
   const pieces = ways.filter((w) => FOOT_WAY.test(w.tags.highway) && w.tags.bridge && w.tags.bridge !== 'no' && (num(w.tags.layer) ?? 1) > 0)
@@ -578,6 +579,7 @@ const footDecks = []; // { deck: points along the way between the stairs' tops, 
         s1 = Math.max(s1, s + reach);
         main ||= !o.spec || /^(motorway|trunk|primary|secondary|tertiary)/.test(o.spec.hw);
       }
+      if (!(s1 > s0)) footOthers.push({ line, half });
       if (!main || !(s1 > s0)) continue;
       // the deck from s0 to s1 along the way (the way's own hooks onto the paths beside it left out), and which way
       // it heads at either end: its first and last 3 m
@@ -629,20 +631,71 @@ const bldOSM = load('osm_tepic_buildings.json');
 // ground (js/world/waterways.js): [kind, half-width of the gap left between the blocks (m, 0: none), name, flags
 // (1 intermittent, 2 underground: a culvert or tunnel), flat points]
 const WATERWAY = /^(river|stream|canal|drain|ditch)$/;
+const LINED_HALF = { canal: 3.5, drain: 2.2, ditch: 1.4 }; // m: the gap the blocks leave a concrete-lined channel, either side
 const waterways = [];
+// A canal's, drain's or ditch's stretch running along a street, within its width and the channel's of the roadway's
+// edge: a roadside drain under the sidewalk or the street's own gutter as OpenStreetMap draws it, not a channel through
+// the blocks beside it (its gap would take the sidewalk and the houses' fronts)
+const DRIVE_CELL = 50;
+const driveCells = new Map();
+for (const r of drivePieces) {
+  for (let ix = Math.floor((Math.min(r.x0, r.x1) - r.r) / DRIVE_CELL); ix <= Math.floor((Math.max(r.x0, r.x1) + r.r) / DRIVE_CELL); ix++) {
+    for (let iz = Math.floor((Math.min(r.z0, r.z1) - r.r) / DRIVE_CELL); iz <= Math.floor((Math.max(r.z0, r.z1) + r.r) / DRIVE_CELL); iz++) {
+      const k = ix * 100003 + iz;
+      if (!driveCells.has(k)) driveCells.set(k, []);
+      driveCells.get(k).push(r);
+    }
+  }
+}
+const alongStreet = (a, b, half) => {
+  const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  for (const r of driveCells.get(Math.floor(mx / DRIVE_CELL) * 100003 + Math.floor(mz / DRIVE_CELL)) || []) {
+    const ux = r.x1 - r.x0, uz = r.z1 - r.z0, M = Math.hypot(ux, uz) || 1;
+    if (Math.abs(((b[0] - a[0]) * ux + (b[1] - a[1]) * uz) / (L * M)) < 0.85) continue; // (across it: a culvert's)
+    const t = Math.max(0, Math.min(1, ((mx - r.x0) * ux + (mz - r.z0) * uz) / (M * M)));
+    if (Math.hypot(r.x0 + ux * t - mx, r.z0 + uz * t - mz) < r.r + half + 1) return true;
+  }
+  return false;
+};
 for (const e of landOSM.elements) {
   if (e.type !== 'way' || !e.geometry || !e.tags) continue;
   const t = e.tags;
-  const r = t.railway === 'rail' ? 5 : t.waterway === 'river' ? 6 : t.waterway === 'stream' ? 2.5 : 0;
+  const underground = !!t.tunnel || t.location === 'underground';
+  // (the canals, drenes & ditches open to the sky: OSM's width where it gives one, else as the kind usually runs)
+  const lined = !underground && LINED_HALF[t.waterway] ? Math.min(8, Math.max(LINED_HALF[t.waterway], (num(t.width) ?? 0) / 2 + 0.6)) : 0;
+  const r = t.railway === 'rail' ? 5 : t.waterway === 'river' ? 6 : t.waterway === 'stream' ? 2.5 : lined;
   const pts = e.geometry.map((g) => toWorld(g.lon, g.lat));
+  const flags = (t.intermittent === 'yes' || t.seasonal === 'yes' ? 1 : 0) | (underground ? 2 : 0);
+  if (lined) {
+    // in runs open (a gap and a channel) and along a street (neither)
+    for (const piece of clipChain(pts)) {
+      let run = [piece[0]], side = null;
+      const flush = () => { if (run.length > 1) waterways.push([t.waterway, side ? 0 : r, t.name || '', flags, flat(rdp(run, 0.5))]); };
+      for (let i = 0; i + 1 < piece.length; i++) {
+        const along = alongStreet(piece[i], piece[i + 1], r);
+        if (side !== null && along !== side) { flush(); run = [piece[i]]; }
+        side = along;
+        run.push(piece[i + 1]);
+        if (!along) cutters.push({ x0: piece[i][0], z0: piece[i][1], x1: piece[i + 1][0], z1: piece[i + 1][1], r });
+      }
+      flush();
+    }
+    continue;
+  }
   if (WATERWAY.test(t.waterway || '')) {
-    const flags = (t.intermittent === 'yes' || t.seasonal === 'yes' ? 1 : 0) | (t.tunnel || t.location === 'underground' ? 2 : 0);
     for (const piece of clipChain(pts)) waterways.push([t.waterway, r, t.name || '', flags, flat(rdp(piece, 0.5))]);
   }
   if (!r) continue;
   for (let i = 0; i + 1 < pts.length; i++) cutters.push({ x0: pts[i][0], z0: pts[i][1], x1: pts[i + 1][0], z1: pts[i + 1][1], r });
 }
-log(`${waterways.length} waterways (${waterways.filter((w) => w[0] === 'river').length} river pieces)`);
+// The rivers' whole courses (the Mololoa on down the valley, the Río Puente de Enmedio, the Arroyo Grande), for the
+// stretches beyond the detailed box: water laid on the hills' terrain (js/world/terrain.ts buildFarRivers)
+const farRivers = landOSM.elements.filter((e) => e.type === 'way' && e.geometry && e.tags?.waterway === 'river' && !e.tags.tunnel)
+  .map((e) => [e.tags.name || '', e.geometry.map((g) => toWorld(g.lon, g.lat))])
+  .filter(([, pts]) => pts.some(([x, z]) => !inBox(x, z)))
+  .map(([name, pts]) => [name, flat(rdp(pts, 1.5))]);
+log(`${waterways.length} waterways (${waterways.filter((w) => w[0] === 'river').length} river pieces, ${waterways.filter((w) => LINED_HALF[w[0]] && w[1] > 0).length} open canals, drains & ditches)`);
 // The airport (Aeropuerto Internacional de Tepic – Riviera Nayarit, MMEP; OSM aeroway=*): the runways & taxiways as
 // centrelines with their widths (runway 02/20 is 45 m wide, its taxiways ~18 m), the aprons & helipads as rings. They
 // are cut out of the blocks like roads, and js/world/airport.js lays their pavement & markings over the asphalt.
@@ -1853,7 +1906,110 @@ const transit = { groups: [], routes: [] };
 }
 
 // =====================================================================================================================
-// 6C. WHAT'S KNOWN OF PARTICULAR BUILDINGS (js/world/building-overrides.js): each entry finds the building it points
+// 6C. THE FOOTBRIDGES' STAIRS (3C): a straight flight down from either end of each deck, in line with it where that
+//     is clear of the buildings (5B) and the roadways, else turned along the road from a landing, to whichever side is
+//     clearer (a roadway counts for ten buildings: a flight can't stand in the street, but OpenStreetMap's stairs stand
+//     where Overture may have drawn a shop). The buildings a flight still stands on go. And the low footbridges: the
+//     bridge ways over no road that cross an open channel (5B's waterways), a walkway just over it
+//     (Before 6D: it takes houses out of the list, whose indices 6D keeps)
+// =====================================================================================================================
+const FOOT_LOW = 0.3; // m: a footbridge's walkway over an arroyo or a drain, over the ground either side
+const footbridges = [];
+{
+  const top = FOOT_CLEARANCE + FOOT_DECK;
+  const run = top / STAIR;
+  let turned = 0, blocked = 0;
+  const gone = new Set(); // houses (index) a flight stands on
+  for (const f of footDecks) {
+    // the buildings and roadway pieces within reach of the bridge
+    const xs = f.deck.map((p) => p[0]), zs = f.deck.map((p) => p[1]);
+    const R = run + 15;
+    const x0 = Math.min(...xs) - R, x1 = Math.max(...xs) + R, z0 = Math.min(...zs) - R, z1 = Math.max(...zs) + R;
+    const near = []; // house indices
+    for (let k = 0; k + HS <= houses.length; k += HS) {
+      const cx = houses[k] / 10, cz = houses[k + 1] / 10;
+      if (cx > x0 && cx < x1 && cz > z0 && cz < z1) near.push(k / HS);
+    }
+    const roads = drivePieces.filter((r) => Math.max(r.x0, r.x1) > x0 && Math.min(r.x0, r.x1) < x1 && Math.max(r.z0, r.z1) > z0 && Math.min(r.z0, r.z1) < z1);
+    const inRoad = (x, z) => roads.some((r) => {
+      const ux = r.x1 - r.x0, uz = r.z1 - r.z0;
+      const t = Math.max(0, Math.min(1, ((x - r.x0) * ux + (z - r.z0) * uz) / (ux * ux + uz * uz || 1)));
+      return Math.hypot(r.x0 + ux * t - x, r.z0 + uz * t - z) < r.r;
+    });
+    // the house (index) at (x, z), or -1
+    const houseIn = (x, z) => {
+      for (const n of near) {
+        const k = n * HS;
+        const cx = houses[k] / 10, cz = houses[k + 1] / 10, hx = houses[k + 2] / 20, hz = houses[k + 3] / 20;
+        const th = houses[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th);
+        const dx = x - cx, dz = z - cz;
+        if (Math.abs(cs * dx - sn * dz) < hx && Math.abs(sn * dx + cs * dz) < hz) return n;
+      }
+      return -1;
+    };
+    // a flight from `from` down along `dir`: its sides and middle every metre (from 2 m down: its top stands by the
+    // roadway it spans), and what each stands in
+    const footprint = (from, dir, fn) => {
+      for (let s = 2; s <= run; s += 1) {
+        for (const o of [-f.half, 0, f.half]) fn(from[0] + dir[0] * s - dir[1] * o, from[1] + dir[1] * s + dir[0] * o);
+      }
+    };
+    const cost = (from, dir) => {
+      let n = 0;
+      footprint(from, dir, (x, z) => { n += inRoad(x, z) ? 10 : houseIn(x, z) >= 0 ? 1 : 0; });
+      return n;
+    };
+    const flight = (end0, out) => {
+      // in line; or from a landing just past the deck's end, along the road either way. Where all three come down in
+      // a street (a lateral beside the road the bridge spans), the deck carries on over it first, up to 25 m
+      let best = null, bestN = Infinity;
+      for (const more of [0, 5, 10, 15, 20, 25]) {
+        const end = [end0[0] + out[0] * more, end0[1] + out[1] * more];
+        const landing = [end[0] + out[0] * (f.half + 0.3), end[1] + out[1] * (f.half + 0.3)];
+        const ways = [{ from: end, dir: out, land: null }, { from: landing, dir: [-out[1], out[0]], land: landing }, { from: landing, dir: [out[1], -out[0]], land: landing }];
+        for (const w of ways) {
+          const n = cost(w.from, w.dir) + (w.land ? 2 : 0) + more * 0.4; // (in line, unless that runs into more)
+          if (n < bestN) { bestN = n; best = { ...w, deckTo: more ? end : null }; }
+        }
+        if (bestN < 10) break;
+      }
+      if (best.land) turned++;
+      if (bestN >= 10) blocked++;
+      footprint(best.from, best.dir, (x, z) => { const n = houseIn(x, z); if (n >= 0) gone.add(n); });
+      if (best.land) {
+        for (const o of [-f.half, 0, f.half]) for (const s of [-f.half, 0, f.half]) {
+          const n = houseIn(best.land[0] + out[0] * s - out[1] * o, best.land[1] + out[1] * s + out[0] * o);
+          if (n >= 0) gone.add(n);
+        }
+      }
+      const foot = [best.from[0] + best.dir[0] * run, best.from[1] + best.dir[1] * run];
+      return [...(best.deckTo ? [best.deckTo] : []), ...(best.land ? [best.land, foot] : [foot])];
+    };
+    const [start, end] = [flight(f.deck[0], f.out[0]), flight(f.deck[f.deck.length - 1], f.out[1])];
+    const pts = [...start.reverse(), ...f.deck, ...end];
+    footbridges.push([flat(pts), pts.map((_, i) => (i === 0 || i === pts.length - 1 ? 0 : Math.round(top * 10))), Math.round(f.half * 20)]);
+  }
+  // (from the last down, so the indices still to go stay put)
+  for (const n of [...gone].sort((a, b) => b - a)) houses.splice(n * HS, HS);
+  log(`footbridge stairs: ${footbridges.length * 2} flights, ${turned} turned along the road, ${blocked} still into a roadway; ${gone.size} buildings under them taken out`);
+
+  // The low footbridges: over an open channel (the waterways the blocks leave a gap for, above ground)
+  const open = waterways.filter((w) => w[1] > 0 && !(w[3] & 2)).map((w) => { const p = []; for (let k = 0; k + 1 < w[4].length; k += 2) p.push([w[4][k], w[4][k + 1]]); return p; });
+  let low = 0;
+  for (const { line, half } of footOthers) {
+    const over = open.some((w) => {
+      for (let i = 0; i + 1 < line.length; i++) for (let j = 0; j + 1 < w.length; j++) if (segCross(line[i], line[i + 1], w[j], w[j + 1])) return true;
+      return false;
+    });
+    if (!over) continue;
+    footbridges.push([flat(line), line.map(() => Math.round(FOOT_LOW * 10)), Math.round(half * 20)]);
+    low++;
+  }
+  log(`low footbridges: ${low} over the arroyos, rivers & drains`);
+}
+
+// =====================================================================================================================
+// 6D. WHAT'S KNOWN OF PARTICULAR BUILDINGS (js/world/building-overrides.js): each entry finds the building it points
 // at; its storeys go into the house, its paint into GEO.overrides [house index, storeys (0: as guessed), paint
 // (0xrrggbb, -1: the palette's)], which also tells buildings.js to draw it whole
 // =====================================================================================================================
@@ -1868,73 +2024,6 @@ for (const o of BUILDING_OVERRIDES) {
   overrides.push([n, storeys, paint]);
 }
 if (BUILDING_OVERRIDES.length) log(`overrides: ${overrides.length} of ${BUILDING_OVERRIDES.length} pinned to a building`);
-
-// =====================================================================================================================
-// 6D. THE FOOTBRIDGES' STAIRS (3C): a straight flight down from either end of each deck, in line with it where that
-//     is clear of the buildings (5B) and the roadways, else turned along the road from a landing, to whichever side is
-//     clearer
-// =====================================================================================================================
-const footbridges = [];
-{
-  const top = FOOT_CLEARANCE + FOOT_DECK;
-  const run = top / STAIR;
-  let turned = 0, blocked = 0;
-  for (const f of footDecks) {
-    // the buildings and roadway pieces within reach of the bridge
-    const xs = f.deck.map((p) => p[0]), zs = f.deck.map((p) => p[1]);
-    const R = run + 15;
-    const x0 = Math.min(...xs) - R, x1 = Math.max(...xs) + R, z0 = Math.min(...zs) - R, z1 = Math.max(...zs) + R;
-    const near = [];
-    for (let k = 0; k + HS <= houses.length; k += HS) {
-      const cx = houses[k] / 10, cz = houses[k + 1] / 10;
-      if (cx > x0 && cx < x1 && cz > z0 && cz < z1) near.push(...houses.slice(k, k + HS));
-    }
-    const roads = drivePieces.filter((r) => Math.max(r.x0, r.x1) > x0 && Math.min(r.x0, r.x1) < x1 && Math.max(r.z0, r.z1) > z0 && Math.min(r.z0, r.z1) < z1);
-    const inRoad = (x, z) => roads.some((r) => {
-      const ux = r.x1 - r.x0, uz = r.z1 - r.z0;
-      const t = Math.max(0, Math.min(1, ((x - r.x0) * ux + (z - r.z0) * uz) / (ux * ux + uz * uz || 1)));
-      return Math.hypot(r.x0 + ux * t - x, r.z0 + uz * t - z) < r.r;
-    });
-    const inHouse = (x, z) => {
-      for (let k = 0; k + HS <= near.length; k += HS) {
-        const cx = near[k] / 10, cz = near[k + 1] / 10, hx = near[k + 2] / 20, hz = near[k + 3] / 20;
-        const th = near[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th);
-        const dx = x - cx, dz = z - cz;
-        if (Math.abs(cs * dx - sn * dz) < hx && Math.abs(sn * dx + cs * dz) < hz) return true;
-      }
-      return false;
-    };
-    // how much of a flight from `from` down along `dir` is in a building or a roadway: its sides and middle every metre
-    const blockedBy = (from, dir) => {
-      let n = 0;
-      for (let s = 0; s <= run; s += 1) {
-        for (const o of [-f.half, 0, f.half]) {
-          const x = from[0] + dir[0] * s - dir[1] * o, z = from[1] + dir[1] * s + dir[0] * o;
-          if (inHouse(x, z) || inRoad(x, z)) n++;
-        }
-      }
-      return n;
-    };
-    const flight = (end, out) => {
-      // in line; or from a landing just past the deck's end, along the road either way
-      const landing = [end[0] + out[0] * (f.half + 0.3), end[1] + out[1] * (f.half + 0.3)];
-      const ways = [{ from: end, dir: out, land: null }, { from: landing, dir: [-out[1], out[0]], land: landing }, { from: landing, dir: [out[1], -out[0]], land: landing }];
-      let best = ways[0], bestN = Infinity;
-      for (const w of ways) {
-        const n = blockedBy(w.from, w.dir) + (w.land ? 2 : 0); // (in line, unless that runs into more)
-        if (n < bestN) { bestN = n; best = w; }
-      }
-      if (best.land) turned++;
-      if (bestN > 2) blocked++;
-      const foot = [best.from[0] + best.dir[0] * run, best.from[1] + best.dir[1] * run];
-      return best.land ? [best.land, foot] : [foot];
-    };
-    const [start, end] = [flight(f.deck[0], f.out[0]), flight(f.deck[f.deck.length - 1], f.out[1])];
-    const pts = [...start.reverse(), ...f.deck, ...end];
-    footbridges.push([flat(pts), pts.map((_, i) => (i === 0 || i === pts.length - 1 ? 0 : Math.round(top * 10))), Math.round(f.half * 20)]);
-  }
-  log(`footbridge stairs: ${footbridges.length * 2} flights, ${turned} turned along the road, ${blocked} still into a building or a roadway`);
-}
 
 // =====================================================================================================================
 // 7. ASSEMBLE
@@ -1964,8 +2053,8 @@ const GEO = {
   roadGraph: { nodes: gnodes.flatMap(([x, z]) => [q(x), q(z)]), links, names, signals },
   // The railway: [flat points, lifts (dm, or 0), bridge (1: a bridge way), main line (1) or siding / yard (0)]
   rails,
-  // The footbridges over the roads (3C): [flat points from one stair's foot to the other's, lifts (dm over the ground
-  // at each; the deck between the stairs' tops), width (dm)]
+  // The footbridges (3C, 6C): [flat points from one stair's foot to the other's, lifts (dm over the ground at each; the
+  // deck between the stairs' tops; a low one over an arroyo FOOT_LOW all along), width (dm)]
   footbridges,
   // [outline, lot rects, park share, park name, rectangular, frontage frames | 0, open country (no buildings) 1 | 0]
   blocks: blocks.map((b) => [flat(b.poly), b.rects.map((r) => r.map(q)), b.park || 0, b.parkName || '', b.rect ? 1 : 0,
@@ -1974,6 +2063,8 @@ const GEO = {
   // [kind (river, stream, canal, drain, ditch), half-width of the gap between the blocks (m), name, flags (1
   // intermittent, 2 underground), flat points downstream]
   waterways,
+  // The rivers' whole courses where they run on beyond the box: [name, flat points downstream]
+  farRivers,
   centralPark: null,
   piers: [],
   bridges: {},
@@ -2004,7 +2095,7 @@ const GEO = {
   // The airport (4): runways & taxiways [ref, width (m), flat centreline], aprons & helipads (flat rings), gates (the
   // boarding bridges [x, z at the terminal, x, z at the aircraft])
   airport,
-  // Buildings drawn as they are (6C): [house index, storeys (0: as guessed), paint (0xrrggbb, -1: the palette's)]
+  // Buildings drawn as they are (6D): [house index, storeys (0: as guessed), paint (0xrrggbb, -1: the palette's)]
   overrides
 };
 

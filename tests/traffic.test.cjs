@@ -452,7 +452,7 @@ function networkOf(roadGraph, obstacles = []) {
   const { buildRoadNetwork } = loadModule(readFileSync(join(__dirname, '../js/world/road-network.ts'), 'utf8'), {
     imports: {
       './city-config.ts': {
-        ALL_AVENUES: [], ALL_STREETS: [], BLOCKS: [],
+        ALL_AVENUES: [], ALL_STREETS: [], BLOCKS: [], blockAt: () => null,
         ISLAND_BOUNDS: { minX: -5000, maxX: 5000, minZ: -5000, maxZ: 5000 },
         getIslandBoundsAtZ: () => ({ westX: -1e5, eastX: 1e5 })
       },
@@ -671,4 +671,37 @@ test('a combi pulls out again when whoever hailed it is knocked down', () => {
   step();
   assert.equal(v.stop, null, 'gave up on them');
   assert.equal(p.ride, null);
+});
+
+// A one-way ring round a 400 m square (corner nodes 0-3), its south side (0 -> 1) bending at (200, -30)
+const ring = (extra = {}) => ({
+  nodes: [0, 0, 400, 0, 400, 400, 0, 400],
+  links: [[0, 1, 0, 7, 2, 1, [200, -30], 0, 0], [1, 2, 0, 7, 2, 1, [], 0, 0], [2, 3, 0, 7, 2, 1, [], 0, 0], [3, 0, 0, 7, 2, 1, [], 0, 0]],
+  ...extra
+});
+
+test('a signal with no junction near it stops the traffic at its own street\'s bend, painted as a crossing', () => {
+  const net = networkOf(ring({ signals: [200, -30] }));
+  const stop = net.nodes.find((n) => n.signal);
+  assert.ok(stop, 'a signalised stop');
+  assert.ok(stop.midblock && !stop.shape);
+  assert.ok(Math.hypot(stop.x - 200, stop.z + 30) < 1);
+  // its edges stop short of it, in the paint too (its stop bar and crosswalk)
+  const into = net.paintEdges.find((e) => Math.hypot(e.to.x - 200, e.to.z + 30) < 1);
+  assert.ok(into && !into.to.shape);
+  assert.ok(into.len < into.span - 2, 'stopping short of the crossing');
+  // a signal off the street (12 m out from the bend, past the roadway's edge) stops nobody
+  assert.ok(!networkOf(ring({ signals: [200, -44] })).nodes.some((n) => n.signal));
+});
+
+test('a street looping back to its own junction keeps its lanes, out to a station half way round and back', () => {
+  // nodes 0 and 1 are 10 m apart (one junction once joined); a 300 m one-way loop from 1 round to 0, a road on from 0
+  const loop = [];
+  for (let k = 1; k < 12; k++) {
+    const a = Math.PI * 2 * (k / 12);
+    loop.push(5 + 60 * Math.sin(a), 60 - 60 * Math.cos(a));
+  }
+  const net = networkOf({ nodes: [0, 0, 10, 0, 300, 0], links: [[0, 1, 0, 7, 2, 0, [], 0, 0], [1, 0, 0, 7, 1, 1, loop, 0, 0], [0, 2, 0, 7, 2, 0, [], 0, 0]] });
+  // the loop's far side, 120 m round from its junction, still has its lanes and paint
+  assert.ok(paintAt(net, 5, 120).length > 0);
 });

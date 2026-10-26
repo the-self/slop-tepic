@@ -97,6 +97,8 @@ export type WaterwayKind = 'river' | 'stream' | 'canal' | 'drain' | 'ditch';
 /** A river, arroyo, canal or drain, drawn downstream: [kind, half-width of the gap left between the blocks (m, 0
  *  none), name ('' none), flags (1 intermittent, 2 underground: a culvert or tunnel), flat points]. */
 export type Waterway = [kind: WaterwayKind, halfWidth: number, name: string, flags: number, pts: FlatPoints];
+/** A river's whole course where it runs on beyond the detailed box: [name, flat points downstream]. */
+export type FarRiver = [name: string, pts: FlatPoints];
 
 /** A notable OSM building footprint, by name. */
 export interface Landmark {
@@ -243,6 +245,7 @@ export interface CityGeodata {
   blocks: Block[];
   parks: Park[];
   waterways: Waterway[];
+  farRivers: FarRiver[];
   centralPark: null;
   piers: never[];
   bridges: Record<string, never>;
