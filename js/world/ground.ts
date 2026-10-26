@@ -13,7 +13,7 @@ import { GEO } from './city-geodata.js';
 import { createWaterways } from './waterways.ts';
 import { createUnderpasses } from './underpasses.ts';
 import { decodeHeights, gridSampler, clipToLattice } from './lattice.ts';
-import type { Ground, HeightGrid, Road, RoadGraph, Waterway } from './city-geodata.js';
+import type { Footbridge, Ground, HeightGrid, Road, RoadGraph, Waterway } from './city-geodata.js';
 import type { HeightFn, Lattice } from './lattice.ts';
 
 /** What createGround reads of the city data (GEO, or a test's grids). */
@@ -138,7 +138,7 @@ const liftAt: GroundHeightFn = SLOPES ? groundHeight : () => 0;
 
 /**
  * The decks of the bridges & their ramps (geodata roadGraph links' `lifts`: m over the ground at each vertex, piecewise
- * linear between them), as segments in 32 m cells: { ax, az, bx, bz, la, lb, half }
+ * linear between them), as segments { ax, az, bx, bz, la, lb, half } (in 32 m cells, deckIndex)
  */
 function createDecks(geo: { roadGraph?: RoadGraph | null }): Decks {
   const RG = geo.roadGraph;
@@ -172,10 +172,29 @@ function createDecks(geo: { roadGraph?: RoadGraph | null }): Decks {
       }
     }
   }
-  const CELL = 32;
-  const cells = new Map<number, DeckSegment[]>();
   // (a junction's disc as a segment of no length: every point within its radius)
   for (const j of junctions) segments.push({ ax: j.x, az: j.z, bx: j.x, bz: j.z, la: j.lift, lb: j.lift, half: j.r });
+  return { segments, junctions, deckLift: deckIndex(segments) };
+}
+
+/**
+ * The footbridges' walkways & stairs (geodata footbridges: their lifts as the roads'), for those on foot only: a car
+ * doesn't climb their stairs
+ */
+function createFootDecks(geo: { footbridges?: Footbridge[] | null }): Decks {
+  const segments: DeckSegment[] = [];
+  for (const [flat, lifts, width] of geo.footbridges ?? []) {
+    for (let i = 0; i + 3 < flat.length; i += 2) {
+      segments.push({ ax: flat[i], az: flat[i + 1], bx: flat[i + 2], bz: flat[i + 3], la: lifts[i / 2] / 10, lb: lifts[i / 2 + 1] / 10, half: width / 20 });
+    }
+  }
+  return { segments, junctions: [], deckLift: deckIndex(segments) };
+}
+
+// The segments in 32 m cells, and the lift a body reaches at (x, z) on them (Decks.deckLift)
+function deckIndex(segments: readonly DeckSegment[]): Decks['deckLift'] {
+  const CELL = 32;
+  const cells = new Map<number, DeckSegment[]>();
   for (const sg of segments) {
     const r = sg.half;
     for (let ix = Math.floor((Math.min(sg.ax, sg.bx) - r) / CELL); ix <= Math.floor((Math.max(sg.ax, sg.bx) + r) / CELL); ix++) {
@@ -220,11 +239,15 @@ function createDecks(geo: { roadGraph?: RoadGraph | null }): Decks {
     // span reaches: on a ramp it would hold the next vertex's lift half a deck's width early, a step at every vertex
     return best || past;
   };
-  return { segments, junctions, deckLift };
+  return deckLift;
 }
 
 const decks = createDecks(GEO);
 const { deckLift } = decks;
+const footDecks = createFootDecks(GEO);
+/** deckLift for someone on foot: the roads' decks and the footbridges' */
+const walkDeckLift = (x: number, z: number, over = Infinity, step = 1.2) =>
+  Math.max(deckLift(x, z, over, step), footDecks.deckLift(x, z, over, step));
 /**
  * The surface under a body at (x, z) whose feet (or wheels) are at height y: the ground, or a bridge's deck it is on or
  * reaches up a ramp; with y left out the ground alone
@@ -237,5 +260,5 @@ const surfaceHeight = (x: number, z: number, y?: number): number => {
 export {
   SINK, SLOPES, LATTICE, createGround, clipToLattice, liftAt, townGrid,
   hillHeights, terrainHeight, hillGround, townHeight, landHeight, waterways, underpasses, deckHoles, gradeHeight, groundHeight, groundSlope,
-  createDecks, decks, deckLift, surfaceHeight
+  createDecks, createFootDecks, decks, footDecks, deckLift, walkDeckLift, surfaceHeight
 };

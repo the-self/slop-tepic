@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { insidePoly, insideRing } from '../js/world/rings.ts';
+import { insidePoly, insideRing, polyCover } from '../js/world/rings.ts';
 
 // The plain even-odd loop the city's builders used before
 function plain(pts, x, z) {
@@ -49,4 +49,25 @@ test('an outline that grows after its first test is indexed again', () => {
   // (pushed out to take in (2000, 0): a long spike from the vertex nearest it)
   pts.splice(1, 0, { x: 2100, z: -10 }, { x: 2100, z: 10 });
   assert.equal(insidePoly(pts, 2000, 0), plain(pts, 2000, 0));
+});
+
+test('a diagonal strip is covered inside its outline, not by its bounding box', () => {
+  // a median 10 m wide running 100 m at 45°, between two roadways: its bounding box is 77 m square
+  const s = Math.SQRT1_2;
+  const pts = [{ x: -5 * s, z: 5 * s }, { x: 5 * s, z: -5 * s }, { x: 100 * s + 5 * s, z: 100 * s - 5 * s }, { x: 100 * s - 5 * s, z: 100 * s + 5 * s }];
+  const boxes = polyCover(pts, 1.5);
+  let area = 0;
+  for (const b of boxes) {
+    area += (b.maxX - b.minX) * (b.maxZ - b.minZ);
+    // every box inside the strip: its corners (a hair in from them) within it
+    const e = 1e-3;
+    for (const [x, z] of [[b.minX + e, b.minZ + e], [b.maxX - e, b.minZ + e], [b.minX + e, b.maxZ - e], [b.maxX - e, b.maxZ - e]]) {
+      assert.ok(plain(pts, x, z), `corner (${x.toFixed(2)}, ${z.toFixed(2)}) inside`);
+    }
+  }
+  // most of the strip's 1000 m², and nowhere near its bounding box's 5,900
+  assert.ok(area > 700 && area <= 1000, `covered ${area.toFixed(0)} m²`);
+  // a point on the roadway beside it (12 m off its centreline) is in no box
+  const [px, pz] = [50 * s + 12 * s, 50 * s - 12 * s];
+  assert.equal(boxes.some((b) => px >= b.minX && px <= b.maxX && pz >= b.minZ && pz <= b.maxZ), false);
 });

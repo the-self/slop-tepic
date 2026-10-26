@@ -115,7 +115,7 @@ function accelerate(ts: TrafficState, v: DrivenVehicle): void {
       const o = c && !v.claimed && mergingAhead(ts, v, f, j);
       if (o) worst = Math.min(worst, Math.max(-v.driver.b, brake(ts, v, o.s - o.v.half - vs - v.half, o.v.speed)));
       let vt = c ? bendSpeed(ts, v, c) : Infinity;
-      const cautious = e.to.signal ? v.isPolice && phaseOf(ts, e) !== 'green' : e.axisIndex !== 0;
+      const cautious = e.to.signal ? (v.isPolice && phaseOf(ts, e) !== 'green') || e.axisIndex > 1 : e.axisIndex !== 0;
       if (cautious) vt = Math.min(vt, 5);
       cap = Math.sqrt(vt * vt + 5 * Math.max(0, d));
     }

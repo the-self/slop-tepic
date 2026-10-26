@@ -506,4 +506,5 @@ function buildBridges(scene: THREE.Scene): { group: THREE.Group; colliders: Coll
   return { group, colliders };
 }
 
-export { buildBridges, createUnderQuery, miters };
+export { buildBridges, createUnderQuery, miters, soup, addBox };
+export type { P2, P3, Soup };

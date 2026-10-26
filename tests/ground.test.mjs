@@ -180,3 +180,23 @@ test("a ramp's deck rises smoothly through its vertices, and its run past an end
   // the outside of the bend at x = 120 is past the end of both pieces meeting there: the deck holds it
   assert.equal(deckLift(123, 3, 8.4), 8.4);
 });
+
+test('a footbridge carries a walker up its stairs, over its deck and down, and holds nobody under it', async () => {
+  const { createFootDecks } = await import('../js/world/ground.ts');
+  // stairs up 6.1 m over 9.8 m from x = 0, a deck 20 m long, stairs down to x = 39.6; 2.4 m wide
+  const geo = { footbridges: [[[0, 0, 9.8, 0, 29.8, 0, 39.6, 0], [0, 61, 61, 0], 24]] };
+  const { deckLift } = createFootDecks(geo);
+  let over = 0;
+  let highest = 0;
+  for (let x = 0; x <= 39.6; x += 0.25) {
+    over = deckLift(x, 0.5, over);
+    highest = Math.max(highest, over);
+  }
+  assert.ok(Math.abs(highest - 6.1) < 1e-9, 'over the deck');
+  assert.ok(over < 0.1, 'down at the far foot'); // (the last step, 0.1 m short of it)
+  // under the deck, on the road it spans: nothing holds a body up there; on it, the deck does
+  assert.equal(deckLift(20, 0, 0), 0);
+  assert.ok(Math.abs(deckLift(20, 0, 6.1) - 6.1) < 1e-9);
+  // beside it, nothing
+  assert.equal(deckLift(20, 3, 6.1), 0);
+});

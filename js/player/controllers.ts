@@ -86,6 +86,8 @@ class ThirdPersonControllerManager {
   floorAt?: ((x: number, z: number) => number) | null;
   landAt?: ((x: number, z: number) => number) | null;
   deckAt?: ((x: number, z: number, over: number) => number) | null;
+  /** deckAt for the player on foot: the footbridges' walkways & stairs too */
+  walkDeckAt?: ((x: number, z: number, over: number) => number) | null;
   _physicsFocus?: { x: number; y: number; z: number };
   _bodyBounds?: { x: number; z: number };
   _wall?: { type: 'building' };
@@ -214,8 +216,9 @@ class ThirdPersonControllerManager {
     return Ground.groundTilt(this, x, z, heading, along, across, out, y);
   }
   setTerrain(ground: GroundQuery | null, floor?: ((x: number, z: number) => number) | null,
-    land?: ((x: number, z: number) => number) | null, deck?: ((x: number, z: number, over: number) => number) | null): void {
-    Ground.setTerrain(this, ground, floor, land, deck);
+    land?: ((x: number, z: number) => number) | null, deck?: ((x: number, z: number, over: number) => number) | null,
+    walkDeck?: ((x: number, z: number, over: number) => number) | null): void {
+    Ground.setTerrain(this, ground, floor, land, deck, walkDeck);
   }
   keepOffHills(entity: PlayerEntity, prevX: number, prevZ: number): void {
     Ground.keepOffHills(this, entity, prevX, prevZ);

@@ -141,6 +141,18 @@ test('police still wait for crossing traffic, pedestrians and a blocked exit', (
   assert.equal(mayEnter(car, 18), true);
 });
 
+test('at a signal of more than two roads, the third gives way to the second on their shared green', () => {
+  const { car, state, mayEnter } = intersectionHarness();
+  state.phase = 'green';
+  state.conflict = true;
+  car.edge.axisIndex = 1;
+  assert.equal(mayEnter(car, 18), true);
+  car.edge.axisIndex = 2;
+  assert.equal(mayEnter(car, 18), false);
+  state.conflict = false;
+  assert.equal(mayEnter(car, 18), true);
+});
+
 test('police running a red yield to fast cross traffic regardless of how long they waited', () => {
   const car = { edge: { axisIndex: 0 }, wait: 20 };
   const lead = { s: 85, v: { speed: 10 } };
@@ -394,4 +406,56 @@ test('a vehicle bumped or caught in a blast on a bridge reports and sparks over 
   });
   blast({ peds: [], vehicles: [vehicle(DECK)] }, 3, 0, 10, 20);
   assert.deepEqual(sparks, [DECK]);
+});
+
+// The road network over a made-up road graph (no grid, no blocks), the obstacles given
+function networkOf(roadGraph, obstacles = []) {
+  const { buildRoadNetwork } = loadModule(readFileSync(join(__dirname, '../js/world/road-network.ts'), 'utf8'), {
+    imports: {
+      './city-config.ts': {
+        ALL_AVENUES: [], ALL_STREETS: [], BLOCKS: [],
+        ISLAND_BOUNDS: { minX: -5000, maxX: 5000, minZ: -5000, maxZ: 5000 },
+        getIslandBoundsAtZ: () => ({ westX: -1e5, eastX: 1e5 })
+      },
+      './city-geodata.js': { GEO: { roadGraph: { signals: [], names: ['Libramiento'], ...roadGraph } } }
+    }
+  });
+  const log = console.info;
+  console.info = () => {};
+  try { return buildRoadNetwork([], obstacles); } finally { console.info = log; }
+}
+const paintAt = (net, x, z) => net.paintEdges.filter((e) => {
+  const t = (x - e.x0) * e.dx + (z - e.z0) * e.dz;
+  return t >= 0 && t <= e.span && Math.abs((x - e.x0) * e.dz - (z - e.z0) * e.dx) < e.half;
+});
+
+test('a long gentle curve keeps to its road: its chords never cut across to an obstacle off it', () => {
+  // a one-way road 7 m wide along a 1 km radius arc, 500 m long, a vertex every 25 m (each bend under 2°): laid as
+  // one chord its middle would run 31 m inside the curve, where a lamp post stands
+  const nodes = [], inner = [];
+  for (let k = 0; k <= 20; k++) {
+    const a = (k / 20 - 0.5) * 0.5;
+    const x = 1000 * Math.sin(a), z = 1000 - 1000 * Math.cos(a);
+    if (k === 0 || k === 20) nodes.push(x, z); else inner.push(x, z);
+  }
+  const post = { minX: -0.2, maxX: 0.2, minZ: 31, maxZ: 31.4 };
+  const net = networkOf({ nodes, links: [[0, 1, 0, 7, 2, 1, inner, 0, 0]] }, [post]);
+  // painted (and laned) all along the arc, its middle included (between its vertices: at a station two edges meet)
+  for (const k of [2.5, 9.5, 10.5, 17.5]) {
+    const a = (k / 20 - 0.5) * 0.5;
+    const on = paintAt(net, 1000 * Math.sin(a), 1000 - 1000 * Math.cos(a));
+    assert.equal(on.length, 1, `on the road at ${k}`);
+    assert.equal(on[0].lanes.length, 2);
+  }
+});
+
+test('a junction standing off a link\'s end gets an approach, and the rest of the link keeps to its road', () => {
+  // a one-way road east from (0, 0); a 10 m link north to (0, -10) makes one junction of both, half way between
+  const net = networkOf({ nodes: [0, 0, 300, 0, 0, -10], links: [[0, 1, 0, 7, 2, 1, [], 0, 0], [0, 2, 0, 7, 2, 0, [], 0, 0]] });
+  const along = net.paintEdges.filter((e) => Math.abs(e.dz) < 0.5).sort((p, q) => p.x0 - q.x0);
+  assert.ok(along.length >= 2, 'the approach and the road beyond it');
+  // the approach from the junction (0, -5) to its station on the road, then on along the road's own line
+  assert.ok(Math.abs(along[0].z0 + 5) < 1e-6 && Math.abs(along[0].x0) < 1e-6);
+  assert.ok(Math.abs(along[1].z0) < 1e-6 && Math.abs(along[1].dz) < 1e-9, 'on the road, straight east');
+  assert.ok(along[1].x0 >= 15 - 1e-6);
 });

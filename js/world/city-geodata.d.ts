@@ -63,6 +63,10 @@ export interface RoadGraph {
 /** A railway: [flat points, lifts (dm over the ground per point, or 0), bridge 1 | 0, main line 1 | siding / yard 0]. */
 export type Rail = [pts: FlatPoints, lifts: number[] | 0, bridge: Flag, main: Flag];
 
+/** A footbridge over the roads: [flat points from one stair's foot to the other's, lifts (dm over the ground per point:
+ *  the stairs up, the deck between their tops), walkway width (dm)]. */
+export type Footbridge = [pts: FlatPoints, lifts: number[], width: number];
+
 /** An axis-aligned lot rect [x0, x1, z0, z1] (m; in a frame's local u / v for frontage frames). */
 export type LotRect = [x0: number, x1: number, z0: number, z1: number];
 
@@ -235,6 +239,7 @@ export interface CityGeodata {
   roads: Road[];
   roadGraph: RoadGraph;
   rails: Rail[];
+  footbridges: Footbridge[];
   blocks: Block[];
   parks: Park[];
   waterways: Waterway[];
