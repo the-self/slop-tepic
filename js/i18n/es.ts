@@ -255,6 +255,7 @@ export const es: Messages = {
   'toast.police': 'La policía te persigue',
   'toast.army': 'Vienen el ejército y un helicóptero',
   'toast.firefighters': 'Los bomberos van en camino',
+  'toast.revived': 'Los paramédicos reanimaron a la persona herida',
   'toast.getMoneyBack': '¡Recupera tu dinero!',
   'toast.busted': '¡Te agarraron!',
   'toast.thief': '¡Un ratero se llevó ${take}! Atrápalo',
@@ -285,6 +286,9 @@ export const es: Messages = {
   'mp.chat': 'Chat',
   'mp.chatPlaceholder': 'Escribe y pulsa Enter · Esc para cerrar',
   'mp.you': '{name} (tú)',
+  'mp.note.killed': '{a} mató a {b}',
+  'mp.note.died': '{a} murió',
+  'mp.note.sky': '{a} cambió el clima',
   'mp.askName': '¿Cómo te llamas? Los demás lo verán sobre tu cabeza.',
 
   // El clima (En vivo)

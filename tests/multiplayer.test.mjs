@@ -23,6 +23,7 @@ import {
   encodeChatLine,
   encodeShotSeen,
   encodeHurt,
+  encodeNote,
   decodeServer
 } from '../shared/protocol.ts';
 import { RoomManager } from '../server/rooms.ts';
@@ -150,6 +151,14 @@ test('chat lines go out raw and come back cleaned, capped, with the speaker; emp
   assert.equal(sanitizeChat(' \u200b\n '), '');
   assert.equal(Array.from(sanitizeChat('á'.repeat(500))).length, 140);
   assert.deepEqual(decodeServer(encodeChatLine(3, 'Lalo', 'vámonos')), { op: OP.CHAT_LINE, from: 3, name: 'Lalo', text: 'vámonos' });
+});
+
+test('the room\'s news travel as a kind and names, for each client to word in its language', () => {
+  assert.deepEqual(decodeServer(encodeNote('killed', 'Ana', 'Beto')), { op: OP.NOTE, kind: 'killed', a: 'Ana', b: 'Beto' });
+  assert.deepEqual(decodeServer(encodeNote('sky', 'Ñoño')), { op: OP.NOTE, kind: 'sky', a: 'Ñoño', b: '' });
+  const unknown = encodeNote('died', 'Ana');
+  unknown[1] = 200; // (a kind from a newer server: nothing to say)
+  assert.equal(decodeServer(unknown), null);
 });
 
 test('a shot round-trips at centimetre precision; one that reaches too far or names a strange weapon is dropped', () => {

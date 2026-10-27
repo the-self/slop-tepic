@@ -105,8 +105,9 @@ export function forgetLeftCar(ctl: ThirdPersonControllerManager, left: LeftCar, 
 export function takeLeftCar(ctl: ThirdPersonControllerManager, left: LeftCar): boolean {
   if (ctl.activeMode !== 'person') return false;
   const c = ctl.entities.car;
-  ctl.leaveCarBehind();
+  // (it out of the list first: were it the oldest of a full one, leaving this car would evict it, dents & all disposed)
   ctl.forgetLeftCar(left, false);
+  ctl.leaveCarBehind();
   const { look } = left;
   // (its material back for its look, its stains on it)
   if (left.material.userData.blood) ctl._bloodMats?.set(`${look.bodyType}_${look.paint}`, left.material);

@@ -37,9 +37,10 @@ export class GameMenu {
     });
     // (capture: before the game's own keys on window, so the menu takes Esc first and keeps the rest from driving)
     window.addEventListener('keydown', (e) => {
+      // (an Esc that closes the chat frees a locked pointer too: noted first, so that doesn't open the menu)
+      if (e.code === 'Escape') this.lastEscape = performance.now();
       if (isTypingInField(e) || (this.isOpen && this.hooks.onKey?.(e))) return;
       if (e.code === 'Escape') {
-        this.lastEscape = performance.now();
         if (e.repeat || (!this.isOpen && this.hooks.busy())) return;
         e.preventDefault();
         this.toggle(!this.isOpen);

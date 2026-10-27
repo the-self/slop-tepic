@@ -63,6 +63,8 @@ interface WorkerSlot {
   worker: Worker;
   /** tiles it is laying */
   busy: number;
+  /** it failed (its script didn't load, or it threw): its tiles are not asked of it again */
+  dead: boolean;
 }
 /** Where the tiles are laid round: position (m), smoothed velocity (m/s), the last frame's seconds, the radius (m). */
 interface Focus {
@@ -157,9 +159,9 @@ class TileStreamer {
     this.workers = [];
     for (let n = 0; n < workers; n++) {
       const worker = new Worker(new URL('./tile-worker.js', import.meta.url), { type: 'module' });
-      const slot: WorkerSlot = { worker, busy: 0 };
+      const slot: WorkerSlot = { worker, busy: 0, dead: false };
       worker.onmessage = ({ data }: MessageEvent<TileWorkerOut>) => { this.receive(slot, data); };
-      worker.onerror = (e) => { console.error('[streaming] tile worker', e.message || e); };
+      worker.onerror = (e) => { this.lost(slot, e.message || 'it failed to load'); };
       worker.postMessage({ type: 'init', lattice, cells: TILE_CELLS, ground, holes } satisfies TileInitMessage);
       this.workers.push(slot);
     }
@@ -280,7 +282,13 @@ class TileStreamer {
     }
     if (this.arrived.length) this.showArrived(this.rush ? RUSH_BUDGET : SHOW_BUDGET);
     // (the rush lasts until nothing near is still being laid)
-    if (this.rush && ![...this.tiles.values()].some((t) => t.d < RUSH_RADIUS && (t.state === 'loading' || t.state === 'arrived'))) this.rush = false;
+    if (this.rush && !this.layingNear(RUSH_RADIUS)) this.rush = false;
+  }
+
+  // Whether a tile within `radius` m is still being laid (a loop, not an array a frame: it runs while the rush lasts)
+  layingNear(radius: number): boolean {
+    for (const t of this.tiles.values()) if (t.d < radius && (t.state === 'loading' || t.state === 'arrived')) return true;
+    return false;
   }
 
   // Ask the workers for the wanted tiles not in hand, nearest first; drop the ones left behind
@@ -297,6 +305,10 @@ class TileStreamer {
         continue;
       }
       const slot = this.workers[key % this.workers.length]; // (the one holding its triangles)
+      if (slot.dead) {
+        this.tiles.set(key, { key, state: 'failed', group: null, parts: null, d, covered: false });
+        continue;
+      }
       if (slot.busy >= MAX_IN_FLIGHT) continue;
       slot.busy++;
       this.tiles.set(key, { key, state: 'loading', group: null, parts: null, d, covered: false });
@@ -304,9 +316,21 @@ class TileStreamer {
     }
   }
 
+  // A worker that failed: the tiles it was laying will never come (preload would wait for them for ever, the loading
+  // screen with it), so they fail, as do those it holds from here on
+  lost(slot: WorkerSlot, why: string): void {
+    console.error('[streaming] tile worker', why);
+    slot.dead = true;
+    slot.busy = 0;
+    const n = this.workers.indexOf(slot);
+    for (const tile of this.tiles.values()) {
+      if (tile.state === 'loading' && tile.key % this.workers.length === n) tile.state = 'failed';
+    }
+  }
+
   receive(slot: WorkerSlot, msg: TileWorkerOut): void {
-    // (a tile's: the only message the workers send)
-    slot.busy--;
+    // (a tile's: the only message the workers send; one from a worker given up for lost counts for nothing)
+    slot.busy = Math.max(0, slot.busy - 1);
     const tile = this.tiles.get(msg.key);
     if (tile?.state !== 'loading') return; // (dropped meanwhile)
     if (msg.error) {

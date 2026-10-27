@@ -24,6 +24,8 @@
 //   SHOT    u8 op, u16 from, i32 × 3 from, i32 × 3 to (cm), str weapon, u8 flags   to those who have the shooter in view
 //   HURT    u8 op, u16 from, u8 damage                                     to the player struck
 //   SKY_SET u8 op, u16 from (0: the room's, on joining), u8 time, u8 weather   to everyone in the room
+//   NOTE    u8 op, u8 kind, str a, str b                                   what happened in the room (NOTES), to everyone in it:
+//                                                                          the client words it in its player's language
 // str = u8 byte length + UTF-8 bytes
 //
 // Shots are the shooter's to judge (its client traces them against the others' poses and says whom they hit), as
@@ -31,7 +33,7 @@
 // The sky (the time of day and the weather) is the room's: whoever changes it changes it for everyone in the room,
 // and a newcomer gets the room's on joining.
 
-const PROTOCOL_VERSION = 4;
+const PROTOCOL_VERSION = 5;
 const SEND_HZ = 10; // client pose updates per second
 const TICK_HZ = 10; // server ticks per second (OSRS runs 600 ms ticks; driving needs 100 ms)
 // (new modes go at the end: older clients' indices hold). A passenger travels at its driver's pose, inside its car
@@ -40,6 +42,8 @@ const MODES = ['person', 'car', 'cyclist', 'helicopter', 'moto', 'passenger'] as
 // real conditions from Open-Meteo, the rest world/weather.ts's WEATHER_SAMPLES). New ones go at the end, as with MODES
 const SKY_TIMES = ['live', 'golden', 'midday', 'twilight', 'midnight'] as const;
 const SKY_WEATHERS = ['live', 'clear', 'cloudy', 'overcast', 'rain', 'storm', 'fog'] as const;
+// What a NOTE tells the room: a killed b, a died, a changed the sky. New ones go at the end
+const NOTES = ['killed', 'died', 'sky'] as const;
 const NAME_MAX = 24; // characters
 const CHAT_MAX = 140; // characters in a chat line
 const WEAPON_MAX = 16; // characters in a weapon's id
@@ -66,7 +70,8 @@ const OP = {
   CHAT_LINE: 104,
   SHOT_SEEN: 105,
   HURT: 106,
-  SKY_SET: 107
+  SKY_SET: 107,
+  NOTE: 108
 } as const;
 
 /** A player mode as it travels on the wire (its index in MODES) */
@@ -211,7 +216,16 @@ export interface SkySetMessage {
   time: SkyTime;
   weather: SkyWeather;
 }
-export type ServerMessage = WelcomeMessage | ErrorMessage | TickMessage | ChatLineMessage | ShotSeenMessage | HurtMessage | SkySetMessage;
+export type Note = (typeof NOTES)[number];
+/** What happened in the room, by whom (a) and to whom (b: only a kill's), for the client to word */
+export interface NoteMessage {
+  op: typeof OP.NOTE;
+  kind: Note;
+  a: string;
+  b: string;
+}
+export type ServerMessage = WelcomeMessage | ErrorMessage | TickMessage | ChatLineMessage | ShotSeenMessage | HurtMessage | SkySetMessage |
+  NoteMessage;
 
 /** What decodeClient / decodeServer read: a whole frame, as a byte view or its buffer */
 export type FrameData = Uint8Array | ArrayBuffer;
@@ -525,6 +539,16 @@ function encodeSkySet(from: number, sky: WireSky): Uint8Array<ArrayBuffer> {
   return w.done();
 }
 
+// What happened in the room (a NOTES kind), by player name a, to b ('' but for a kill)
+function encodeNote(kind: Note, a: string, b = ''): Uint8Array<ArrayBuffer> {
+  const w = new Writer(4 + NAME_MAX * 8);
+  w.u8(OP.NOTE);
+  w.u8(NOTES.indexOf(kind));
+  w.str(a);
+  w.str(b);
+  return w.done();
+}
+
 // Client side: one server frame → { op, ... } in metres / radians / m/s, or null when malformed
 function decodeServer(data: FrameData): ServerMessage | null {
   try {
@@ -541,6 +565,12 @@ function decodeServer(data: FrameData): ServerMessage | null {
     if (op === OP.HURT) return { op, from: r.u16(), damage: r.u8() };
     // (a newer server's sky this client doesn't know → 'live')
     if (op === OP.SKY_SET) return { op, from: r.u16(), time: SKY_TIMES.at(r.u8()) ?? 'live', weather: SKY_WEATHERS.at(r.u8()) ?? 'live' };
+    if (op === OP.NOTE) {
+      // (a newer server's kind this client doesn't know: nothing to say)
+      const kind = NOTES.at(r.u8());
+      const a = r.str(), b = r.str();
+      return kind ? { op, kind, a, b } : null;
+    }
     if (op !== OP.TICK) return null;
     const roomPlayers = r.u16();
     const gone: number[] = [];
@@ -567,6 +597,7 @@ export {
   MODES,
   SKY_TIMES,
   SKY_WEATHERS,
+  NOTES,
   NAME_MAX,
   CHAT_MAX,
   HIT_REACH,
@@ -592,5 +623,6 @@ export {
   encodeShotSeen,
   encodeHurt,
   encodeSkySet,
+  encodeNote,
   decodeServer
 };

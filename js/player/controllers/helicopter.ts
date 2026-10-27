@@ -157,6 +157,8 @@ export function updateHelicopter(ctl: ThirdPersonControllerManager, dt: number, 
   const floor = ctl.floorHeight(h.position.x, h.position.z);
   if (h.position.y < floor + 0.25) {
     ctl.reportCollision(h, groundCollider, 'ground', h.position.x, floor + 0.25, h.position.z, 0, 1, 0, -h.verticalSpeed);
+    // (landed: the descent stops there, or holding it down kept building speed and hurting it as it sat on the ground)
+    h.verticalSpeed = Math.max(0, h.verticalSpeed);
   }
   h.position.y = Math.max(floor + 0.25, Math.min(floor + 380, h.position.y));
   ctl.resolveHorizontalCollision(h.position, 4.5, null, h);

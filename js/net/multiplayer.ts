@@ -452,6 +452,11 @@ class Multiplayer {
       this.addChatLine(msg.from, msg.name, msg.text);
       return;
     }
+    if (msg.op === OP.NOTE) {
+      // (the server's news, worded here in the player's language)
+      this.addChatLine(0, '', t(`mp.note.${msg.kind}`, { a: msg.a, b: msg.b }));
+      return;
+    }
     if (msg.op === OP.SHOT_SEEN) {
       this.crime?.showShot(msg.shot);
       return;

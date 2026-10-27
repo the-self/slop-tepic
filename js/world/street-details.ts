@@ -1137,10 +1137,47 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
 
   const activeCobras: CobraLampSite[] = [];
   const activePoints: PointLampSite[] = [];
+  const byEffDist = (a: { _effDist: number }, b: { _effDist: number }) => a._effDist - b._effDist;
+  // The lamps in SITE_CELL m cells, for the few cells round the camera each night frame instead of every lamp in the
+  // city (tens of thousands: ~1 ms a frame on an M3). Built the first night frame, again if lamps were added since;
+  // the arcs' flash, which moves, is looked at on its own
+  const SITE_CELL = 64;
+  const siteKey = (ix: number, iz: number) => ix * 100003 + iz;
+  const cobraCells = new Map<number, CobraLampSite[]>(), pointCells = new Map<number, PointLampSite[]>();
+  let cellsOf = { cobras: -1, points: -1 }; // (the lists' lengths they were built from)
+  function fillCells<T extends { x: number; z: number }>(cells: Map<number, T[]>, sites: readonly T[], skip?: T) {
+    cells.clear();
+    for (const site of sites) {
+      if (site === skip) continue;
+      const k = siteKey(Math.floor(site.x / SITE_CELL), Math.floor(site.z / SITE_CELL));
+      let cell = cells.get(k);
+      if (!cell) cells.set(k, (cell = []));
+      cell.push(site);
+    }
+  }
+  // The lamps whose lenses are dark (darkOn): one knocked over takes its dark lens with it, wherever the camera is
+  const darkSites = new Set<CobraLampSite | PointLampSite>();
 
   function smoothFade(d: number, start: number, end: number) {
     const t = Math.min(1, Math.max(0, (end - d) / (end - start)));
     return t * t * (3 - 2 * t);
+  }
+
+  // Globe s among the lights the camera at (cx, cy, cz), looking along (fwdX, fwdZ), may light, as the count-th: the count after
+  function considerPoint(s: PointLampSite, cx: number, cy: number, cz: number, fwdX: number, fwdZ: number, count: number) {
+    if (s.broken || s.dark) return count;
+    const dx = s.x - cx;
+    const dy = s.g - cy;
+    const dz = s.z - cz;
+    const d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 > STREET_POINT_DIST_SQ) return count;
+    const d = Math.sqrt(d2);
+    const forwardDot = dx * fwdX + dz * fwdZ;
+    const effDist = d + Math.max(0, 6.0 - forwardDot) * 2.8;
+    if (effDist >= STREET_POINT_DIST) return count;
+    s._effDist = effDist;
+    activePoints[count] = s;
+    return count + 1;
   }
 
   let cornerSigns: { update(at: PointXZ): void } | null = null; // (built by addJunctionSignals once the road network is known)
@@ -1169,27 +1206,36 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
     const fwdX = -me[8];
     const fwdZ = -me[10];
 
+    if (cellsOf.cobras !== cobraLampSites.length || cellsOf.points !== streetPointSites.length) {
+      fillCells(cobraCells, cobraLampSites);
+      fillCells(pointCells, streetPointSites, flashSite);
+      cellsOf = { cobras: cobraLampSites.length, points: streetPointSites.length };
+    }
+    for (const s of darkSites) if (s.broken) darkOff(s); // (knocked over without power: its dark lens goes with it)
+    const ix0 = Math.floor((cx - STREETLIGHT_DIST) / SITE_CELL), ix1 = Math.floor((cx + STREETLIGHT_DIST) / SITE_CELL);
+    const iz0 = Math.floor((cz - STREETLIGHT_DIST) / SITE_CELL), iz1 = Math.floor((cz + STREETLIGHT_DIST) / SITE_CELL);
+
     let cobraCount = 0;
-    for (const s of cobraLampSites) {
-      if (s.broken) {
-        if (s.darkSlot !== undefined) darkOff(s); // (knocked over without power: its dark lens goes with it)
-        continue;
+    for (let ix = ix0; ix <= ix1; ix++) for (let iz = iz0; iz <= iz1; iz++) {
+      const cell = cobraCells.get(siteKey(ix, iz));
+      if (!cell) continue;
+      for (const s of cell) {
+        if (s.broken || s.dark) continue;
+        const dx = s.x - cx;
+        const dy = s.g - cy; // from the lamp's foot (the town's slopes put it well over y = 0)
+        const dz = s.z - cz;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 > STREETLIGHT_DIST_SQ) continue;
+        const d = Math.sqrt(d2);
+        const forwardDot = dx * fwdX + dz * fwdZ;
+        const effDist = d + Math.max(0, 6.0 - forwardDot) * 2.8;
+        if (effDist >= STREETLIGHT_DIST) continue;
+        s._effDist = effDist;
+        activeCobras[cobraCount++] = s;
       }
-      if (s.dark) continue;
-      const dx = s.x - cx;
-      const dy = s.g - cy; // from the lamp's foot (the town's slopes put it well over y = 0)
-      const dz = s.z - cz;
-      const d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 > STREETLIGHT_DIST_SQ) continue;
-      const d = Math.sqrt(d2);
-      const forwardDot = dx * fwdX + dz * fwdZ;
-      const effDist = d + Math.max(0, 6.0 - forwardDot) * 2.8;
-      if (effDist >= STREETLIGHT_DIST) continue;
-      s._effDist = effDist;
-      activeCobras[cobraCount++] = s;
     }
     activeCobras.length = cobraCount;
-    if (cobraCount > 1) activeCobras.sort((a, b) => a._effDist - b._effDist);
+    if (cobraCount > 1) activeCobras.sort(byEffDist);
 
     const cobraCutoff = cobraCount > STREETLIGHT_SPOT_POOL
       ? Math.min(STREETLIGHT_DIST, activeCobras[STREETLIGHT_SPOT_POOL]._effDist)
@@ -1209,27 +1255,15 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
       streetlightSpotPool[i].position.set(0, -1000, 0);
     }
 
+    // (STREET_POINT_DIST is within STREETLIGHT_DIST: the same cells)
     let ptCount = 0;
-    for (const s of streetPointSites) {
-      if (s.broken) {
-        if (s.darkSlot !== undefined) darkOff(s);
-        continue;
-      }
-      if (s.dark) continue;
-      const dx = s.x - cx;
-      const dy = s.g - cy;
-      const dz = s.z - cz;
-      const d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 > STREET_POINT_DIST_SQ) continue;
-      const d = Math.sqrt(d2);
-      const forwardDot = dx * fwdX + dz * fwdZ;
-      const effDist = d + Math.max(0, 6.0 - forwardDot) * 2.8;
-      if (effDist >= STREET_POINT_DIST) continue;
-      s._effDist = effDist;
-      activePoints[ptCount++] = s;
+    for (let ix = ix0; ix <= ix1; ix++) for (let iz = iz0; iz <= iz1; iz++) {
+      const cell = pointCells.get(siteKey(ix, iz));
+      if (cell) for (const s of cell) ptCount = considerPoint(s, cx, cy, cz, fwdX, fwdZ, ptCount);
     }
+    ptCount = considerPoint(flashSite, cx, cy, cz, fwdX, fwdZ, ptCount);
     activePoints.length = ptCount;
-    if (ptCount > 1) activePoints.sort((a, b) => a._effDist - b._effDist);
+    if (ptCount > 1) activePoints.sort(byEffDist);
 
     const ptCutoff = ptCount > STREET_POINT_POOL
       ? Math.min(STREET_POINT_DIST, activePoints[STREET_POINT_POOL]._effDist)
@@ -1295,6 +1329,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
     const slot = dark.free.pop() ?? (dark.mesh.count < dark.mesh.instanceMatrix.count ? dark.mesh.count++ : -1);
     if (slot < 0) return;
     hideInstance(lens.mesh, lens.index);
+    darkSites.add(s);
     dark.mesh.setMatrixAt(slot, lens.matrix);
     dark.mesh.instanceMatrix.needsUpdate = true;
     dark.mesh.computeBoundingSphere();
@@ -1307,6 +1342,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
     hideInstance(dark.mesh, slot);
     dark.free.push(slot);
     s.darkSlot = undefined;
+    darkSites.delete(s);
     if (!s.broken) showInstance(lens.mesh, lens.index, lens.matrix);
   }
   // The lamps in LAMP_GRID m cells (built the first time the power goes), and those along each outage's stretches

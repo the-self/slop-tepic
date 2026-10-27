@@ -513,7 +513,8 @@ async function initApp(): Promise<void> {
       localStorage.setItem('weather', weather);
     } catch { /* Storage may be disabled. */ }
   }
-  // ...and whose sky it is: this player's alone, or (once a multiplayer room has sent its own) the room's
+  // ...and whose sky it is: this player's alone, or (once a multiplayer room has sent its own, and while still in it:
+  // offline, a choice is this player's again, pickSky) the room's
   let skyShared = false;
   function showSkyNote() {
     if (skyNote) skyNote.textContent = t(skyShared ? 'menu.skyShared' : 'menu.skyLocal');
@@ -577,6 +578,10 @@ async function initApp(): Promise<void> {
   const menu = new GameMenu({
     onToggle: (open) => {
       keyConfig.cancel();
+      if (open) {
+        if (!multiplayer?.online) skyShared = false; // (the connection lost: the sky is this player's again)
+        showSkyNote();
+      }
       controllerManager.resetInput();
       touchControls.setEnabled(!open);
       gamepadControls.setEnabled(!open);
