@@ -20,22 +20,24 @@ function isPlainMesh(o: THREE.Object3D): o is THREE.Mesh {
   return 'isMesh' in o && o.isMesh === true && !('isInstancedMesh' in o) && !('isSkinnedMesh' in o);
 }
 
-/** One part of the template car: its instanced mesh, and where it sits in the car's own frame */
+/** One part of the template car: its instanced mesh, where it sits in the car's own frame, and the size it had (the
+ *  model's scale) */
 interface CarPart {
   mesh: THREE.InstancedMesh;
   local: THREE.Matrix4;
+  scale: number;
 }
 
 class RemoteCarFleet {
   private readonly scene: THREE.Object3D;
   private readonly template: THREE.Object3D;
-  private readonly capacity: number;
+  private capacity: number;
   private parts: CarPart[] = [];
-  private signature = '';
+  private readonly seen: THREE.Mesh[] = []; // (the template's meshes, as last looked at: reused)
   private sinceCheck = Infinity;
   private count = 0;
 
-  /** `template`: the local player's car (its mesh); `capacity`: the most remote cars drawn */
+  /** `template`: the local player's car (its mesh); `capacity`: the remote cars drawn at first (it grows with them) */
   constructor(scene: THREE.Object3D, template: THREE.Object3D, capacity: number) {
     this.scene = scene;
     this.template = template;
@@ -48,16 +50,18 @@ class RemoteCarFleet {
     this.sinceCheck += dt;
     if (this.sinceCheck < CHECK_EVERY) return;
     this.sinceCheck = 0;
-    const signature = this.lookOf();
-    if (signature !== this.signature) {
-      this.signature = signature;
-      this.rebuild();
-    }
+    if (this.lookChanged()) this.rebuild();
   }
 
   /** A remote car at (x, y, z) m, turned `heading` rad, lying on the ground at `pitch` & `roll` rad */
   add(x: number, y: number, z: number, heading: number, pitch: number, roll: number): void {
-    if (this.count >= this.capacity) return;
+    if (this.count >= this.capacity) {
+      // more cars than instances (the server's VIEW_MAX set higher): twice as many from the next frame on
+      this.capacity *= 2;
+      this.dispose(); // (lookChanged then sees no parts: rebuilt at the next begin)
+      this.sinceCheck = Infinity;
+      return;
+    }
     _q.setFromEuler(_e.set(pitch, heading, roll, 'YXZ'));
     _car.compose(_p.set(x, y, z), _q, _one);
     for (const part of this.parts) part.mesh.setMatrixAt(this.count, _m.multiplyMatrices(_car, part.local));
@@ -82,26 +86,34 @@ class RemoteCarFleet {
   }
 
   // The template's drawn meshes, in the order traverseVisible meets them (its lights left out: dozens of remote
-  // headlamps would swamp the clustered lighting)
-  private meshes(): THREE.Mesh[] {
-    const out: THREE.Mesh[] = [];
-    this.template.traverseVisible((o) => {
-      if (isPlainMesh(o)) out.push(o);
-    });
-    return out;
-  }
-
-  // What the remote cars copy of the template: each part's geometry, material and size (the model's scale)
-  private lookOf(): string {
+  // headlamps would swamp the clustered lighting), into `seen`
+  private look(): THREE.Mesh[] {
+    const seen = this.seen;
+    seen.length = 0;
     this.template.updateWorldMatrix(true, true);
-    return this.meshes().map((m) => `${m.geometry.uuid}:${Array.isArray(m.material) ? 'm' : m.material.uuid}:` +
-      m.matrixWorld.getMaxScaleOnAxis().toFixed(3)).join('|');
+    this.template.traverseVisible((o) => {
+      if (isPlainMesh(o)) seen.push(o);
+    });
+    return seen;
   }
 
+  // Whether the template's parts are other than the fleet's: their geometry, material or size (the model's scale)
+  private lookChanged(): boolean {
+    const seen = this.look();
+    if (seen.length !== this.parts.length || seen.length === 0) return true;
+    for (let i = 0; i < seen.length; i++) {
+      const m = seen[i], part = this.parts[i];
+      if (m.geometry !== part.mesh.geometry || m.material !== part.mesh.material) return true;
+      if (Math.abs(m.matrixWorld.getMaxScaleOnAxis() - part.scale) > 1e-3) return true;
+    }
+    return false;
+  }
+
+  // (from `seen`, as lookChanged just found it)
   private rebuild(): void {
     this.dispose();
     _root.copy(this.template.matrixWorld).invert();
-    for (const m of this.meshes()) {
+    for (const m of this.seen) {
       const mesh = new THREE.InstancedMesh(m.geometry, m.material, this.capacity);
       mesh.name = 'RemoteCars';
       mesh.castShadow = m.castShadow;
@@ -111,7 +123,7 @@ class RemoteCarFleet {
       mesh.count = 0;
       mesh.visible = false;
       this.scene.add(mesh);
-      this.parts.push({ mesh, local: new THREE.Matrix4().multiplyMatrices(_root, m.matrixWorld) });
+      this.parts.push({ mesh, local: new THREE.Matrix4().multiplyMatrices(_root, m.matrixWorld), scale: m.matrixWorld.getMaxScaleOnAxis() });
     }
   }
 }

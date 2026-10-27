@@ -130,17 +130,22 @@ void test('a near player\'s poses come every tick, a far one\'s every third (by 
     a.ws.send(encodeHello('nayarit', 'A'));
     near.ws.send(encodeHello('nayarit', 'Near'));
     far.ws.send(encodeHello('nayarit', 'Far'));
-    const [, wn, wf] = await Promise.all([a, near, far].map((c) => c.next(OP.WELCOME)));
-    const settle = () => new Promise((r) => setTimeout(r, 40));
+    const [wa, wn, wf] = await Promise.all([a, near, far].map((c) => c.next(OP.WELCOME)));
+    // (waits on what happened, not on a delay: a loaded machine only makes it slower)
+    const until = async (done: () => boolean) => {
+      for (let i = 0; i < 400 && !done(); i++) await new Promise((r) => setTimeout(r, 5));
+      assert.ok(done(), 'it came');
+    };
+    const at = (id: number) => server.players.get(id)?.state?.x;
     let seenNear = 0, seenFar = 0;
     for (let i = 0; i < 12; i++) {
       a.ws.send(pose(0, 0));
       near.ws.send(pose(50 + i, 0)); // 50 m off
       far.ws.send(pose(600 + i, 0)); // 600 m off
-      await settle();
+      await until(() => at(wa.id) === 0 && at(wn.id) === (50 + i) * 100 && at(wf.id) === (600 + i) * 100);
       const before = a.frames.length;
       server.tick();
-      await settle();
+      await until(() => a.frames.slice(before).some((m) => m.op === OP.TICK));
       for (const m of a.frames.slice(before)) {
         if (m.op !== OP.TICK) continue;
         if (m.moved.some((p) => p.id === wn.id)) seenNear++;

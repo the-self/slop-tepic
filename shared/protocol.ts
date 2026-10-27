@@ -39,7 +39,8 @@
 // and a newcomer gets the room's on joining. A player can also open a room of its own (CREATE): a title, a code
 // friends type to join it, an optional password, its sky and its rules; there only its host changes the sky and rules.
 
-const PROTOCOL_VERSION = 5;
+// (6: far players' poses come every second or third tick, which an older client took for players standing still)
+const PROTOCOL_VERSION = 6;
 const SEND_HZ = 10; // client pose updates per second
 const TICK_HZ = 10; // server ticks per second (OSRS runs 600 ms ticks; driving needs 100 ms)
 // How often a client hears another player's pose by how far off it is: every tick within NEAR_UPDATE, every other one
