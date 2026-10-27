@@ -17,6 +17,7 @@ import { KERB, QUEUE_GAP, atCurb, crosswalkTrack, footwayTrack, sidewalkTrack } 
 import { endConversation } from './walking.ts';
 
 const FOOT_SPAWN = 0.15; // of the people placed, the share started out on a footway near the focus (if any)
+const JOG_SHARE = 0.3; // of those placed in a park, the share out jogging (at 3-3.6 m/s: a jog, not a sprint)
 
 function nearView(ts: TrafficState, x: number, z: number, radius: number, distance: number): boolean {
   return ts.hasView && Math.hypot(x - ts.camX, ts.camY - hillAt(ts, x, z), z - ts.camZ) < distance && visible(ts, x, z, radius);
@@ -108,6 +109,8 @@ function spawnPed(ts: TrafficState, p: Ped, rMin: number, rMax: number, protectV
     p.dir = t < ts.track.len * 0.5 ? 1 : -1;
     p.x = x;
     p.z = z;
+    p.jog = !crosswalk && Math.random() < JOG_SHARE && ts.parkAt(x, z);
+    p.speed = p.jog ? 3 + Math.random() * 0.6 : p.pace;
     p.v = crosswalk ? 0 : p.speed;
     p.pause = 0;
     p.nextRoute = null;

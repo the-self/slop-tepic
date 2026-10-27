@@ -129,8 +129,11 @@ const FOOT_CELL = 100; // m, the cells of the lookup of the footways' tracks
 
 function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B extends WalkBlock, C extends WalkCrossing<E> = WalkCrossing<E>>(
   { walkable, onSidewalk }: WalkSurface, blockAt: (x: number, z: number) => B | null,
-  { bridges = [], nodes = [], streetCrossings = [], footways = [] }:
-  { bridges?: readonly WalkBridge[]; nodes?: readonly N[]; streetCrossings?: readonly C[]; footways?: readonly WalkFootway[] } = {}
+  { bridges = [], nodes = [], streetCrossings = [], footways = [], setBack = () => 0 }:
+  { bridges?: readonly WalkBridge[]; nodes?: readonly N[]; streetCrossings?: readonly C[]; footways?: readonly WalkFootway[];
+    /** how much further in from the curb (m) a sidewalk's lines run past a point on its nearer line: past a park's
+     *  verge, onto its walk (la-loma-plan.ts laLomaSetBack); 0 for a sidewalk at the curb */
+    setBack?: (x: number, z: number) => number } = {}
 ) {
   type Track = WalkTrack<N, E, B, C>;
   type Leg = WalkLeg<N, E, B, C>;
@@ -138,6 +141,8 @@ function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B 
   type Join = WalkJoin<N, E, B, C>;
   const sidewalks = new Map<E, Track[]>(), crossings = new Map<N, Track[]>(), junctions = new Map<N, Port[]>();
   const connections = new WeakMap<Track, Leg[][][]>();
+  // the sidewalk pieces set back from the curb, by how far (m): their corners keep within as much more of it
+  const setBacks = new WeakMap<Track, number>();
   // which side of edge e's centre line p lies (< 0 left, > 0 right)
   const sideOf = (e: E, p: WalkPoint) => (p.x - e.sx) * e.rx + (p.z - e.sz) * e.rz;
   const point = (track: Track, end: number): WalkPoint => ({ x: track.ax + track.ux * track.len * end, z: track.az + track.uz * track.len * end });
@@ -348,8 +353,11 @@ function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B 
     sidewalks.set(e, result);
     // Two walking lines on each side leave room for people to pass or stop together.
     for (const sign of [-1, 1]) {
+      // (both further in where there is a verge before the walk: by how far, at the edge's middle)
+      const near = sign * (e.half + 1.7);
+      const back = setBack(e.sx + e.rx * near + e.dx * e.len * 0.5, e.sz + e.rz * near + e.dz * e.len * 0.5);
       for (const inset of [1.7, 2.8]) {
-        const off = sign * (e.half + inset);
+        const off = sign * (e.half + inset + back);
         const a = { x: e.sx + e.rx * off, z: e.sz + e.rz * off };
         const b = { x: a.x + e.dx * e.len, z: a.z + e.dz * e.len };
         const block = blockAt(a.x, a.z);
@@ -361,6 +369,7 @@ function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B 
           const p = cut ? { x: a.x + e.dx * cut.s, z: a.z + e.dz * cut.s } : b;
           if (cut && Math.hypot(p.x - from.p.x, p.z - from.p.z) < 0.05) continue; // (two joins at one spot: the first)
           const piece = segment(from.p, p, { edge: e, block });
+          if (back > 0) setBacks.set(piece, back);
           if (from.j) { piece.fromJoin = from.j; from.j.ports.push({ track: piece, end: 0 }); } else piece.from = e.from;
           if (cut) { piece.toJoin = cut.j; cut.j.ports.push({ track: piece, end: 1 }); } else piece.to = e.to;
           result.push(piece);
@@ -472,8 +481,9 @@ function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B 
       const b = point(next, port.end), distance = Math.hypot(b.x - a.x, b.z - a.z);
       if (distance > 32 || blockAt(b.x, b.z) !== block) continue;
       const path: Leg[] = [];
+      const band = 4 + Math.max(setBacks.get(track) ?? 0, setBacks.get(next) ?? 0);
       if (distance > 0.01) {
-        if (cornerClear(a, b, block)) {
+        if (cornerClear(a, b, block, band)) {
           path.push({ track: segment(a, b), dir: 1 });
         } else {
           // Meeting the two offset sidewalk lines rounds the curb instead of cutting diagonally through a lot.
@@ -483,7 +493,7 @@ function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B 
           const t = ((b.x - a.x) * bz - (b.z - a.z) * bx) / cross;
           const c = { x: a.x + ax * t, z: a.z + az * t };
           if (t < 0 || t > 20 || (b.x - c.x) * bx + (b.z - c.z) * bz < 0 || Math.hypot(b.x - c.x, b.z - c.z) > 20) continue;
-          if (!cornerClear(a, c, block) || !cornerClear(c, b, block)) continue;
+          if (!cornerClear(a, c, block, band) || !cornerClear(c, b, block, band)) continue;
           if (t > 0.01) path.push({ track: segment(a, c), dir: 1 });
           if (Math.hypot(b.x - c.x, b.z - c.z) > 0.01) path.push({ track: segment(c, b), dir: 1 });
         }
