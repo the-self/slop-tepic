@@ -55,6 +55,9 @@ crop the neighbours, scale it to a known height, and simplify it.
 - `cars/tesla-cybertruck.glb`: modelled by script in Blender (`tools/models/blender/tesla-cybertruck.py`, on
   `carlib.py`) from its real sizes and photographs, then prepared with `tools/models/prepare-made.mjs`
   (`tools/models/jobs/cars/tesla-cybertruck.made.json`). Our own work, no third party's.
+- `cars/tesla-model-y.glb`: the 2025 Model Y ("Juniper"), modelled by script in Blender
+  (`tools/models/blender/tesla-model-y.py`, on `carlib.py`) from its real sizes and photographs, then prepared with
+  `tools/models/prepare-made.mjs` (`tools/models/jobs/cars/tesla-model-y.made.json`). Our own work, no third party's.
 - `people/player.glb`: the player, made with Meshy (Meshy 7.1, multi-image-to-3d) from a front and a back view that
   Meshy (Nano Banana Pro) drew from the prompts in `tools/models/jobs/people/player.json`; reposed into the crowd's bind
   pose and skinned to its 15 bones by `tools/models/prepare-person.mjs`.

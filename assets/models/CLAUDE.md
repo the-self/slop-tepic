@@ -120,8 +120,8 @@ Use `--keep-width` for props that stand alone.
 
 ## Cars and people
 
-- **Only the Cybertruck is a file** (2026-10-27): `cars/tesla-cybertruck.glb`, modelled by script in Blender
-  (`tools/models/blender/`). Every other car is drawn with its procedural body shape (`js/actors/actor-models.ts`,
+- **Only the cars modelled in Blender are files** (2026-10-27): `cars/tesla-cybertruck.glb` and `cars/tesla-model-y.glb`,
+  modelled by script (`tools/models/blender/`, below). Every other car is drawn with its procedural body shape (`js/actors/actor-models.ts`,
   `models/bodies.ts`). The ten Meshy cars and the four from Sketchfab below were taken out, files and jobs: they
   looked worse than the body shapes, and the heavy ones cost the game too much (the Onix 111k triangles, 13 MB). What
   was learnt making them stays here; their files and jobs are in git's history (before 2026-10-27).
@@ -183,7 +183,7 @@ Use `--keep-width` for props that stand alone.
   material a cell of a small palette texture (its colour, roughness, metal and paint mask; a textured part its
   texture's mean colour), the paint exactly the body's faces, the glass opaque and dark, the normals smoothed under
   40°, the front +x wheel apart. Each car's command, source and author are in `tools/models/jobs/cars/<id>.made.json`,
-  and its parts' roles in `<id>.roles.json` (now only the Cybertruck's, which goes through the same tool; the four
+  and its parts' roles in `<id>.roles.json` (now only the Blender cars', which go through the same tool; the four
   Sketchfab cars were removed with the Meshy ones).
   - **Writing a car's roles**: run it with `--report` first, each part's box in metres. The interior goes (`drop`):
     the glass is opaque. Lamp lenses over their reflectors go too. A second shell under the paint (the Onix's) is a
@@ -266,3 +266,19 @@ Use `--keep-width` for props that stand alone.
     folds into spikes: stop the glass where it is still taller than its frame.
   - **Judging it**: the photographs' light matters as much as the shape: a bright hazy sky, a grey horizon, dark
     asphalt (`carlib.hero`); a flat grey sky made the steel read as white plastic. Compare crops of the same parts.
+    `VIEWS=front,side SAMPLES=40` renders just those views, quickly, to iterate on.
+  - **A rounded car** (the Model Y): its sections are many points round, the stations close where it curves fast
+    (8 mm at the nose's and the tail's tips, 2 cm over the arches). The bumper's face is the sections' sides, upright,
+    the nose's plan a superellipse (broad and nearly flat across, tight corners, as photographs from straight ahead
+    show; a round bow and a nose where the top and bottom profiles met in a point both looked wrong, a flat shelf or
+    a pinched snout), the sides' tucks and the fenders' shelf faded out there (else they fold across the face as a
+    wave or a V). The end caps are inset in rings (`loft(cap_rings=...)`, after the duplicate points are merged):
+    one broad n-gon shaded as a lighter patch, and a cap closed to a sliver made a keel down the nose. The hood
+    sinks between the fenders' crests (`fender_rise`), which from ahead rise at its corners with the light bar's
+    ends; the side windows' top is a point of its own on the section, so the quarter window can close in a point
+    under the C pillar. Judge the front from straight ahead and close up (`face`, `lamp` views) against a photograph
+    from ahead: the 3/4 view hid all of this. No bevel on the body: the arches' rounded edges bent the
+    paint's normals into dark streaks up the fenders, and weighted normals (`tidy(..., weighted=False)`) smeared a
+    body curved all over. Lamps, slots, intakes and bumpers are drawn flat in a plane before the car (`decal`,
+    `panel`) and laid onto the skin (`onto`: a shrinkwrap, projected along y, or to the nearest point round a corner,
+    where a ray from behind would miss and leave the decal hanging in the air).

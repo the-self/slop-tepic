@@ -15,9 +15,9 @@ export const CARS: CarModel[] = [
     gears: 1, top: 262, limited: true, accel: 3.1, rarity: 0.5, paints: [0xf2f2ee, 0x1a1c20, 0x2a5aa8, 0xb3121b, 0x7d8288]
   },
   {
-    id: 'tesla-model-y', name: 'Tezla Modelo Ye', body: 'crossover', class: 'premium', electric: true,
-    size: [4.75, 1.92, 1.62], mass: 2000, drive: 'awd', power: [220, 6000], torque: [493, 0], redline: 17000,
-    gears: 1, top: 217, limited: true, accel: 4.8, rarity: 0.6, paints: [0xf2f2ee, 0x1a1c20, 0x7d8288, 0x2a5aa8]
+    id: 'tesla-model-y', glb: 'assets/models/cars/tesla-model-y.glb', name: 'Tezla Modelo Ye', body: 'crossover', class: 'premium', electric: true,
+    size: [4.80, 1.92, 1.62], mass: 2000, drive: 'awd', power: [220, 6000], torque: [493, 0], redline: 17000,
+    gears: 1, top: 217, limited: true, accel: 4.8, rarity: 0.6, paints: [0xf2f2ee, 0x1a1c20, 0x7d8288, 0x2a5aa8] // (the 2025 one, "Juniper", as its model)
   },
   {
     id: 'tesla-cybertruck', glb: 'assets/models/cars/tesla-cybertruck.glb', name: 'Tezla Ciberbronca', body: 'wedge', class: 'truck', electric: true,
