@@ -10,7 +10,7 @@ import type { CrimeSystem } from '../sim/crime.ts';
 import type { StoreTill } from '../world/store-interiors.ts';
 import type { Interiors } from '../world/interiors.ts';
 import type { StreetFood } from '../world/street-food.ts';
-import type { CarParksBuild, ParkedCarSpot } from '../world/car-parks.ts';
+import type { CarParksBuild, PlacedCar } from '../world/car-parks.ts';
 
 const BOARD_REACH = 1.6; // m from the vehicle's body
 const TILL_REACH = 1.8; // m from a store's till (store-interiors.ts)
@@ -24,7 +24,7 @@ type TrafficVehicle = NonNullable<ReturnType<TrafficSystem['vehicleNear']>>;
 /** What F would act on, on foot */
 type BoardTarget =
   | { taken: TrafficVehicle }
-  | { parked: ParkedCarSpot }
+  | { parked: PlacedCar }
   | { mode: VehicleMode; left: LeftCar | undefined }
   | { till: StoreTill };
 
@@ -65,11 +65,12 @@ export class Boarding {
     if (controllers.activeMode !== 'person' || controllers.entities.person.ragdoll) return null;
     const p = controllers.entities.person.position;
     const own = controllers.ownVehicleNear(BOARD_REACH);
+    // (the nearest of the traffic's and the car parks' wins)
     const reach = own ? Math.min(BOARD_REACH, own.distance) : BOARD_REACH;
-    const taken = traffic.vehicleNear(p.x, p.z, reach);
-    if (taken) return { taken };
     const parked = carParks.carNear(p.x, p.z, reach);
-    if (parked) return { parked };
+    const taken = traffic.vehicleNear(p.x, p.z, parked ? parked.distance : reach);
+    if (taken) return { taken };
+    if (parked) return { parked: parked.car };
     if (own) return { mode: own.mode, left: own.left };
     for (const till of tills) if (Math.hypot(till.x - p.x, till.z - p.z) < TILL_REACH) return { till };
     return null;

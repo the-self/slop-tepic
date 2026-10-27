@@ -164,15 +164,24 @@ interface PlacedCar {
 
 /** A parked car the player took (take): where it stood and its looks, for the player's own car to take its place */
 interface TakenParkedCar {
+  /** where it stood (m) */
   x: number;
   /** the lot's surface under it (m) */
   y: number;
   z: number;
+  /** rad, 0 facing +z */
   heading: number;
   bodyType: string;
+  /** its model's id (models/cars) */
   model: string;
   /** 0xrrggbb */
   paint: number;
+}
+
+/** The parked car nearest a point (carNear), and how far its body is from it (m) */
+interface NearParkedCar {
+  car: PlacedCar;
+  distance: number;
 }
 
 /** One body shape's instanced meshes: the full model and the stand-in, room for every parked car of that shape */
@@ -417,13 +426,15 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   }
 
   /** The parked car whose body is nearest (x, z), within `reach` m of it (as the traffic's vehicleNear), or null */
-  function carNear(x: number, z: number, reach: number): PlacedCar | null {
+  function carNear(x: number, z: number, reach: number): NearParkedCar | null {
     let best: PlacedCar | null = null;
     let bestDistance = reach;
     const ix0 = Math.floor(x / CAR_CELL), iz0 = Math.floor(z / CAR_CELL);
     for (let ix = ix0 - 1; ix <= ix0 + 1; ix++) {
       for (let iz = iz0 - 1; iz <= iz0 + 1; iz++) {
-        for (const c of cells.get(cellKey(ix, iz)) ?? []) {
+        const list = cells.get(cellKey(ix, iz));
+        if (!list) continue;
+        for (const c of list) {
           const dx = x - c.x, dz = z - c.z;
           if (c.taken || Math.abs(dx) > 10 || Math.abs(dz) > 10) continue;
           const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw);
@@ -437,7 +448,7 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
         }
       }
     }
-    return best;
+    return best ? { car: best, distance: bestDistance } : null;
   }
 
   /** Takes `car` off its stall for good (its instance and its wall gone): where it stood and its looks */
@@ -482,5 +493,5 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
 
 type CarParksBuild = ReturnType<typeof buildCarParks>;
 
-export type { CarParksBuild, PlacedCar as ParkedCarSpot, TakenParkedCar };
+export type { CarParksBuild, PlacedCar, TakenParkedCar };
 export { buildCarParks };

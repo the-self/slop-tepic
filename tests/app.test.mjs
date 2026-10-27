@@ -7,7 +7,8 @@ const at = (x, z) => ({ x, y: 0, z });
 
 // A world with the player on foot at the origin: `own` their vehicle within reach, `taken` the traffic's, `parked` a car
 // park's, `tills` the stores' tills; every call to the systems is recorded
-function world({ mode = 'person', own = null, taken = null, parked = null, tills = [], inside = false, food = '', door = '', state = 'play' } = {}) {
+// (`taken` and `parked` are `near` m from the player: the nearest within reach is the one taken)
+function world({ mode = 'person', own = null, taken = null, parked = null, near = { taken: 1, parked: 1 }, tills = [], inside = false, food = '', door = '', state = 'play' } = {}) {
   const calls = [];
   const crime = {
     state, money: 100,
@@ -26,12 +27,12 @@ function world({ mode = 'person', own = null, taken = null, parked = null, tills
     getGroundHeight: () => 0
   };
   const traffic = {
-    vehicleNear: () => taken,
+    vehicleNear: (x, z, reach) => (taken && near.taken < reach ? taken : null),
     hijack: (v) => ({ kind: v.bike ? 'cyclist' : 'car', police: Boolean(v.isPolice) }),
     panic: (...args) => calls.push(['panic', ...args])
   };
   const carParks = {
-    carNear: () => parked,
+    carNear: (x, z, reach) => (parked && near.parked < reach ? { car: parked, distance: near.parked } : null),
     take: (car) => { calls.push(['take', car]); return { x: 1, y: 0.2, z: 2, heading: 3, bodyType: 'sedan', model: 'nissan-tsuru', paint: 0xff0000 }; }
   };
   const interiors = { active: inside, act: () => calls.push(['act']), prompt: () => door };
@@ -64,9 +65,9 @@ test('F on foot steals the car parked within reach: off its stall, the player\'s
     ['enter', 'car', { kind: 'car', speed: 0, police: false, x: 1, y: 0.2, z: 2, heading: 3, bodyType: 'sedan', model: 'nissan-tsuru', paint: 0xff0000 }],
     ['report', 'carjack'], ['sync']
   ]);
-  // (the traffic's vehicle first, when both are within reach)
-  const both = world({ taken: { isPolice: true }, parked: spot });
-  assert.equal(both.boarding.prompt(), 'Robar la patrulla');
+  // (the nearer of the traffic's vehicle and the parked car, when both are within reach)
+  assert.equal(world({ taken: { isPolice: true }, parked: spot, near: { taken: 1, parked: 0.3 } }).boarding.prompt(), 'Robar el coche');
+  assert.equal(world({ taken: { isPolice: true }, parked: spot, near: { taken: 0.3, parked: 1 } }).boarding.prompt(), 'Robar la patrulla');
 });
 
 test('F gets into the player\'s own vehicle, or the car they left in the street', () => {
