@@ -5,7 +5,8 @@ import type { DrivenVehicle, LaneEntry, OnEdge } from './types.ts';
 import type { TrafficState } from './state.ts';
 import { phaseOf, runsRed } from './signals.ts';
 import { ahead, cross, straddle } from './occupancy.ts';
-import { bendSpeed, brake, follow, freeAcc, playerGap, stopAt } from './idm.ts';
+import { bendSpeed, brake, follow, freeAcc, pace, playerGap, stopAt } from './idm.ts';
+import { abandon } from './carjacking.ts';
 import { nearestLane } from './routing.ts';
 import { holdsOn, mergingAhead, pedsOut } from './right-of-way.ts';
 import { enter, leave, mayEnter, signalAhead } from './junctions.ts';
@@ -121,7 +122,8 @@ function accelerate(ts: TrafficState, v: DrivenVehicle, dt: number): void {
       const o = c && !v.claimed && mergingAhead(ts, v, f, j);
       if (o) worst = Math.min(worst, Math.max(-v.driver.b, brake(ts, v, o.s - o.v.half - vs - v.half, o.v.speed)));
       let vt = c ? bendSpeed(ts, v, c) : Infinity;
-      const cautious = e.to.signal ? (runsRed(v) && phaseOf(ts, e) !== 'green') || e.axisIndex > 1 : e.axisIndex !== 0;
+      // (someone fleeing gunfire goes through a red as it is, no edging)
+      const cautious = e.to.signal ? (runsRed(v) && v.fright !== 'flee' && phaseOf(ts, e) !== 'green') || e.axisIndex > 1 : e.axisIndex !== 0;
       if (cautious) vt = Math.min(vt, 5);
       cap = Math.sqrt(vt * vt + 5 * Math.max(0, d));
     }
@@ -159,8 +161,10 @@ function accelerate(ts: TrafficState, v: DrivenVehicle, dt: number): void {
   if (v.sirenNear) cap = Math.min(cap, 3); // (pulled over for a siren: crawling)
   cap = Math.min(cap, topeCap(v)); // (easing over a tope)
   if (v.flats) cap = Math.min(cap, LIMP); // (on a flat tyre)
+  // (gunfire: stopped dead where it is, gunfire.ts frighten; out of an intersection first, never across its box)
+  if ((v.fright === 'freeze' || v.fright === 'bail') && !v.conn) cap = 0;
   const acc = Math.min(freeAcc(ts, v) + worst, (cap - v.speed) * 2);
-  v.acc = clamp(acc, -9 * ts.roadGrip, v.driver.a);
+  v.acc = clamp(acc, -9 * ts.roadGrip, v.driver.a * pace(v));
   // a driver looking at their phone (mishaps.ts) drives on as on a free road
   if (v.distracted > 0) v.acc = Math.max(v.acc, Math.min(freeAcc(ts, v), v.driver.a));
 }
@@ -220,6 +224,14 @@ function drive(ts: TrafficState, v: DrivenVehicle, dt: number): void {
   if (v.laneTimer <= 0) {
     v.laneTimer = 0.4 + Math.random() * 0.3;
     changeLanes(ts, v);
+  }
+  // frightened by gunfire: over in a while (unless they're stopping to get out, then out once it stands)
+  if (v.fright) {
+    v.frightT -= dt;
+    if (v.fright === 'bail' ? v.speed < 0.4 && !v.conn : v.frightT <= 0) {
+      if (v.fright === 'bail') abandon(ts, v, true);
+      v.fright = null;
+    }
   }
   dodge(v);
   curbside(ts, v, dt);

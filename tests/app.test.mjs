@@ -91,7 +91,7 @@ test('a store\'s till pays out once, raises the alarm, then stays empty for ten 
   assert.equal(boarding.prompt(), 'Asaltar la caja');
   boarding.board();
   assert.ok(crime.money > 100 + 399 && crime.money < 100 + 1501, `took ${crime.money - 100}`);
-  assert.deepEqual(calls.slice(1), [['report', 'robbery', true], ['panic', 1, 0, 45]]);
+  assert.deepEqual(calls.slice(1), [['report', 'robbery', true], ['panic', 1, 0, 45, false]]); // (the people run; the drivers aren't frightened: no shot)
   assert.ok(till.refill - performance.now() / 1000 > 599);
   calls.length = 0;
   boarding.board();

@@ -7,7 +7,8 @@ import { PersonRig, OUTFIT, OUTFIT_SEED } from '../pedestrians.ts';
 import type { StreetGun } from '../crime-rules.ts';
 import { boxHit } from '../mayhem.ts';
 import { throwVelocity, bleedOf } from '../ragdolls.ts';
-import { roundBox, hitChance, wrapAngle } from '../weapons.ts';
+import { roundBox, hitChance, wrapAngle, rayBox } from '../weapons.ts';
+import { shotStopped } from './gunfire.ts';
 import { POLICE, GANGS, NARCO } from '../crime-rules.ts';
 import type { AgentKind, NpcGun, Agent } from './types.ts';
 import { MAX_AGENTS, BODY_R, RUN, THIEF_RUN, WALK, DOWN_TIME, DEAD_TIME, DESPAWN, NPC_GUN, FOE_DAMAGE, FOE_RANGE, SKILL, clamp, rand, dummy } from './constants.ts';
@@ -16,6 +17,16 @@ import { t } from '../../i18n/i18n.ts';
 
 const TYRE_HIT = 0.08; // share of the rounds hitting the player's car that burst a tyre
 const REVIVED_HP = 35; // what someone the paramédicos brought round has left of their health
+const BOARD_REACH = 90; // m an officer runs back to the patrol car they got out of; further off, they stay on foot
+
+// An officer no longer one of their car's crew (back in it, down, or too far off)
+function dropCar(a: Agent): void {
+  const car = a.car;
+  if (!car) return;
+  const i = car.crew.indexOf(a);
+  if (i >= 0) car.crew.splice(i, 1);
+  a.car = null;
+}
 
 // (a soldier, `army`, is one of the police: kind 'cop', in fatigues, with a rifle and more to them)
 export function spawnAgent(
@@ -32,7 +43,7 @@ export function spawnAgent(
     kind, gang, army, rig, x, z, heading: Math.atan2(crime.huntX - x, crime.huntZ - z), speed: 0, hp: army ? 150 : kind === 'cop' ? 100 : 80,
     fallen: null, dead: false, state: kind === 'thief' ? 'approach' : kind === 'gang' ? 'idle' : 'chase',
     t: 0, weapon, cooldown: rand(0.5, 1.5), burst: 0, homeX: x, homeZ: z, money: 0, arrest: 0, idleYaw: Math.random() * 6.28,
-    wanderT: rand(2, 6), los: false, losT: 0, stepT: 0, foe: null, foeT: Math.random() * 0.5
+    wanderT: rand(2, 6), los: false, losT: 0, stepT: 0, foe: null, foeT: Math.random() * 0.5, car: null
   };
   crime.agents.push(a);
   return a;
@@ -190,7 +201,34 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
   } else if (a.kind === 'cop') {
     const stars = crime.wanted.stars;
     const called = stars > 0 && (!a.army || POLICE.soldiers[stars] > 0); // (the army only from four stars)
-    if (!playing || !called || a.state === 'leave') {
+    // the car they got out of: back to it and on in it after the player once it gets away in a vehicle (or they're
+    // called off), as long as it is still there to drive
+    if (a.car && (!a.car.active || a.car.wreck)) dropCar(a);
+    const car = a.car;
+    // (once making for the car, only the player stopping close by again turns them round)
+    const boarding = a.state === 'board';
+    const away = crime.mode !== 'person' && (crime.pspeed > (boarding ? 3 : 7) || dist > (boarding ? 30 : 40));
+    if (car && crime.state !== 'busted' && (away || !playing || !called)) {
+      a.state = 'board';
+      // (their own door: the side of the car they're on)
+      const h = car.heading, lx = Math.cos(h), lz = -Math.sin(h);
+      const side = ((a.x - car.x) * lx + (a.z - car.z) * lz >= 0 ? 1 : -1) * (car.halfW + 0.6);
+      const gx = car.x + lx * side, gz = car.z + lz * side;
+      const d = Math.hypot(gx - a.x, gz - a.z);
+      if (d < 1.2) {
+        car.aboard++;
+        dropCar(a);
+        crime.removeAgent(a);
+        return;
+      }
+      if (d > BOARD_REACH) {
+        // too far off now: on foot for good, and the car goes on without them (someone stayed at the wheel)
+        car.aboard = Math.max(car.aboard, 1);
+        dropCar(a);
+      }
+      goalYaw = Math.atan2(gx - a.x, gz - a.z);
+      speed = RUN;
+    } else if (!playing || !called || a.state === 'leave') {
       a.state = playing && called ? 'chase' : 'leave';
       if (crime.state === 'busted') {
         goalYaw = toPlayer; // standing over the arrested player
@@ -210,6 +248,7 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
       speed = far ? RUN * 0.7 : 0;
       a.arrest = Math.max(0, a.arrest - dt);
     } else {
+      a.state = 'chase'; // (out again after the player, if they had turned back for the car)
       const gun = POLICE.shoots[stars] || a.army ? NPC_GUN[a.weapon ?? 'pistol'] : null;
       goalYaw = toPlayer;
       if (gun && a.los && dist < gun.range && dist > 2.2) {
@@ -385,7 +424,9 @@ export function npcShoot(crime: CrimeSystem, a: Agent, gun: NpcGun, skill: numbe
   crime.audio?.gunfire?.(a.weapon === 'rifle' ? 'smg' : a.weapon ?? 'pistol', hx, hy, hz);
   if (foe) {
     const fy = crime.groundAt(foe.x, foe.z) + 1.2;
-    if (Math.random() < hitChance(dist, foe.speed, skill, gun.range)) {
+    if (shotStopped(crime, hx, hy, hz, foe.x, fy, foe.z, BODY_R + 0.2, gun.damage)) {
+      // (a car or a wall between them: it took the round)
+    } else if (Math.random() < hitChance(dist, foe.speed, skill, gun.range)) {
       crime.fx.tracer(hx, hy, hz, foe.x, fy, foe.z);
       crime.fx.impact(foe.x, fy, foe.z, 'blood', Math.sin(yaw), Math.cos(yaw));
       crime.damageAgent(foe, gun.damage * FOE_DAMAGE, Math.sin(yaw), Math.cos(yaw), false);
@@ -395,8 +436,18 @@ export function npcShoot(crime: CrimeSystem, a: Agent, gun: NpcGun, skill: numbe
     crime.traffic.panic(a.x, a.z, 40);
     return;
   }
-  const hits = Math.random() < hitChance(dist, crime.pspeed, skill, gun.range);
   const py = crime.player.position.y + (crime.mode === 'person' ? 1.2 : 0.9);
+  // whatever stands between them takes the round first: up to the player's body, or its vehicle's side
+  const size = crime.playerSize();
+  const len = Math.hypot(crime.px - hx, crime.pz - hz) || 1;
+  const into = crime.mode !== 'person' && size
+    ? rayBox(hx, hz, (crime.px - hx) / len, (crime.pz - hz) / len, crime.px, crime.pz, crime.player.heading, size[0], size[1])
+    : -1;
+  if (shotStopped(crime, hx, hy, hz, crime.px, py, crime.pz, into > 0 ? len - into + 0.1 : BODY_R + 0.2, gun.damage)) {
+    crime.traffic.panic(a.x, a.z, 30);
+    return;
+  }
+  const hits = Math.random() < hitChance(dist, crime.pspeed, skill, gun.range);
   if (hits) {
     crime.fx.tracer(hx, hy, hz, crime.px, py, crime.pz);
     crime.fx.impact(crime.px, py, crime.pz, crime.mode === 'person' ? 'blood' : 'metal', -Math.sin(yaw), -Math.cos(yaw));

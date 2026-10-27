@@ -27,7 +27,7 @@ function responder(
     active: false, mesh: root, tiltPivot, bodyMesh, lightbar, paint, faction,
     x: 0, y: 0, z: 0, heading: 0, speed: 0, vx: 0, vz: 0, halfW: size.halfW, halfL: size.halfL, hw: size.halfW, hl: size.halfL,
     mass: size.mass, type: 'car', police: false, hp: CRUISER_HP[faction], wreck: 0, state: 'chase', path: null, pathI: 0,
-    replan: 0, stuckT: 0, checkX: 0, checkZ: 0, reverseT: 0, deployed: false, life: 0, pitch: 0, roll: 0,
+    replan: 0, stuckT: 0, checkX: 0, checkZ: 0, reverseT: 0, deployed: false, crew: [], aboard: 0, life: 0, pitch: 0, roll: 0,
     stuckCount: 0, slowT: 0, startX: 0, startZ: 0, goalX: 0, goalZ: 0, passSide: 0, lift: 0, vy: 0, siren: true,
     position: new THREE.Vector3() // (for the audio: crashes & sirens)
   };

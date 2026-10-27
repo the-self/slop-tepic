@@ -261,16 +261,18 @@ async function initApp(): Promise<void> {
   trafficSystem.setSirens(emergency.sirens); // (the cars ahead of them pull over)
   // Burning wrecks, house fires, the dry season's quemas, and the bomberos who come for them (sim/fires.ts)
   const fires = new Fires({ scene, crime: crimeSystem, services: emergency, controllers: controllerManager, houses: GEO.houses, stride: GEO.houseStride || 8 });
-  // Tepic's gas stations (sim/gas-stations.ts): the car fills up stopped by a pump; a pump shot, rammed or caught in a
+  // Tepic's gas stations (sim/gas-stations.ts): the car fills up stopped by a pump (G); a pump shot, rammed or caught in a
   // blast goes up
   const gasStations = new GasStations({
     scene, crime: crimeSystem, car: controllerManager.entities.car,
-    isSolidAt: (x, z, height, ground) => controllerManager.isSolidAt(x, z, height, ground),
+    isSolidAt: (x, z, height, ground, minSize) => controllerManager.isSolidAt(x, z, height, ground, minSize),
     groundAt: (x, z) => controllerManager.getGroundHeight(x, z, 'person'),
     active: () => controllerManager.getActiveEntity(), activeMode: () => controllerManager.activeMode,
     addColliders: (list) => { controllerManager.addColliders(list); },
     ignite: (kind, x, z, size) => fires.ignite(kind, x, z, size)
   });
+  // (the stations' driveways over the curb too, besides the car parks')
+  controllerManager.setCurbRamps((x, z) => Math.max(carParks.rampAt(x, z), gasStations.rampAt(x, z)));
   controllerManager.onFuelOut = () => { crimeSystem.toast(t('toast.outOfGas')); };
   crimeSystem.onExplosion = (x, y, z, radius) => {
     fires.onExplosion(x, y, z, radius);
@@ -326,6 +328,10 @@ async function initApp(): Promise<void> {
   events.on('collision', (impact) => { audioSystem.onCollision(impact); });
   // a hard crash (~32 km/h and up: the player's, or two of the traffic's): an ambulance (sim/emergency.ts)
   events.on('collision', (impact) => { if (impact.speed >= HARD_CRASH) emergency.callAmbulance(impact.x, impact.z); });
+  // the player's vehicle driven into a parked car (a wall to it, in Jolt): the parked car dented too (world/car-parks.ts)
+  events.on('collision', (impact) => {
+    if (impact.kind === 'building' && impact.a === controllerManager.getActiveEntity()) carParks.strike(impact.x, impact.z, impact.speed);
+  });
   let lastCrash = -Infinity;
   events.on('collision', (impact) => {
     // the car, bicycle, moto or helicopter the player is in, hitting something hard enough (crashDamage)
@@ -420,7 +426,7 @@ async function initApp(): Promise<void> {
     showLive(state);
   };
   const gamepadControls = new GamepadControls(controllerManager, cameraSystem, {
-    onBoard: () => { boarding.board(); },
+    onBoard: () => { if (!gasStations.refuel()) boarding.board(); }, // (by a pump: fill up, sim/gas-stations.ts)
     onCycleCamera: cycleCamera,
     onCycleWeapon: (dir) => { crimeSystem.cycleWeapon(dir); },
     // LB held: the weapon wheel, the right stick pointing
@@ -461,7 +467,7 @@ async function initApp(): Promise<void> {
   boardButton?.addEventListener('pointerdown', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    boarding.board();
+    if (!gasStations.refuel()) boarding.board(); // (by a pump: fill up, sim/gas-stations.ts)
   });
 
   function selectCamera(camId: CameraPresetId, snap = false) {
@@ -652,6 +658,7 @@ async function initApp(): Promise<void> {
     else if (keyBindings.is('cleanView', e.code)) hudToggleBtn?.click();
     else if (keyBindings.is('sound', e.code) && plain) audioSystem.setEnabled(!audioSystem.enabled);
     else if (keyBindings.is('horn', e.code) && plain && !mapSystem.isFullMapOpen) audioSystem.honk(controllerManager.getActiveEntity());
+    else if (keyBindings.is('refuel', e.code) && plain) gasStations.refuel();
   });
 
   window.addEventListener('resize', () => {
@@ -968,7 +975,9 @@ async function initApp(): Promise<void> {
       // The street corner of the player on the follow cameras, of the camera itself on the scenic ones
       const where = cameraSystem.getActivePreset().category === 'follow' ? entity.position : cameraSystem.currentPos;
       hud.showLocation(getLocationLabel(where.x, where.z));
-      hud.showPrompt(boarding.prompt(), boarding.promptAction);
+      // (stopped by a gas station's pump: G fills up, sim/gas-stations.ts; the touch button does too)
+      const text = boarding.prompt(), pump = gasStations.prompt();
+      hud.showPrompt(pump || text, pump ? 'use' : boarding.promptAction, pump ? 'refuel' : 'board');
     }
   });
 

@@ -29,7 +29,8 @@ import {
   spawnAgent, angerGang, removeAgent, damageAgent, knockAgent, kill, updateAgent, walkAgent, findFoe, npcShoot
 } from './crime/agents.ts';
 import {
-  spawnCruiser, takeOverPatrol, removeCruiser, damageCruiser, updateCruiser, pursue, blockerAhead, deployOfficers, moveCruiser, collideCruisers
+  spawnCruiser, takeOverPatrol, removeCruiser, damageCruiser, updateCruiser, pursue, blockerAhead, deployOfficers, moveCruiser, collideCruisers,
+  abandoned
 } from './crime/cruisers.ts';
 import { dispatch } from './crime/dispatch.ts';
 import { buildSpikes, updateSpikes } from './crime/spikes.ts';
@@ -221,7 +222,7 @@ class CrimeSystem {
 
     traffic.setKnockListener((_kind, x, z, speed) => {
       this.report('runOver', this.witnessed(x, z));
-      traffic.panic(x, z, 25);
+      traffic.panic(x, z, 25, false);
       this.fx.splatter(x, this.groundAt(x, z) + 0.9, z, speed);
       controllers.bloodyCar?.(x, z, speed); // (on the player's car, if it was the car)
     });
@@ -335,7 +336,7 @@ class CrimeSystem {
         if (!seen && a.los && inSight(sight, sight.length - SIGHT, px, pz)) seen = true;
       }
       for (const cr of this.cruisers) {
-        if (!cr.active || cr.wreck || !cr.police) continue;
+        if (!cr.active || cr.wreck || !cr.police || abandoned(cr)) continue;
         sight.push(cr.x, cr.z, cr.faction === 'army' ? ARMY_TRUCK_SIGHT : CRUISER_SIGHT, cr.heading, CRUISER_FOV, NEAR_SIGHT);
         if (!seen && inSight(sight, sight.length - SIGHT, px, pz) && this.clearLine(cr.x, cr.z, px, pz)) seen = true;
       }
