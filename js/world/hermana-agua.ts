@@ -129,7 +129,7 @@ function plants(spots: { x: number; z: number; y: number; kind: number }[], rnd:
       for (let i = 0; i < 11; i++) blade(s.x, s.y, s.z, (i / 11) * Math.PI * 2 + rnd() * 0.3, 0.13, 0.35 + rnd() * 0.25, 0.35, agaveBase, agaveTip);
     } else {
       const r = 0.35 + rnd() * 0.3;
-      const g = new THREE.IcosahedronGeometry(r, 1).scale(1, 0.75, 1).translate(s.x, s.y + r * 0.6, s.z).toNonIndexed();
+      const g = new THREE.IcosahedronGeometry(r, 1).scale(1, 0.75, 1).translate(s.x, s.y + r * 0.6, s.z); // (polyhedra come non-indexed)
       g.deleteAttribute('uv');
       const c = new THREE.Color(0x35552a).multiplyScalar(0.85 + rnd() * 0.3);
       g.setAttribute('color', new THREE.Float32BufferAttribute(new Array<number>(g.attributes.position.count * 3).fill(0).map((_, i) => (i % 3 === 0 ? c.r : i % 3 === 1 ? c.g : c.b)), 3));

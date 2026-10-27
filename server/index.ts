@@ -45,7 +45,8 @@ import {
   encodeChatLine,
   encodeShotSeen,
   encodeHurt,
-  encodeSkySet
+  encodeSkySet,
+  encodeNote
 } from '../shared/protocol.ts';
 import type { WirePose } from '../shared/protocol.ts';
 
@@ -337,17 +338,16 @@ function createServer({
         p.chatBudget -= 1;
         room.sky = msg.sky;
         const frame = encodeSkySet(p.id, room.sky);
-        const line = encodeChatLine(0, '', `${p.name ?? ''} cambió el clima`);
+        const note = encodeNote('sky', p.name ?? '');
         for (const other of room.players.values()) {
           send(other, frame);
-          send(other, line);
+          send(other, note);
         }
       } else if (msg.op === OP.DOWN && p.room) {
-        // the room hears who killed whom, as a line from the server
+        // the room hears who killed whom (each client words it in its own language)
         const killer = msg.killer && msg.killer !== p.id ? p.room.players.get(msg.killer) : undefined;
-        const text = killer ? `${killer.name ?? ''} mató a ${p.name ?? ''}` : `${p.name ?? ''} murió`;
-        const line = encodeChatLine(0, '', text);
-        for (const other of p.room.players.values()) send(other, line);
+        const note = killer ? encodeNote('killed', killer.name ?? '', p.name ?? '') : encodeNote('died', p.name ?? '');
+        for (const other of p.room.players.values()) send(other, note);
       }
     });
 

@@ -1383,7 +1383,8 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
       const curL = lod[i] === 255 ? 3 : lod[i];
       let nextL = d < LOD_NEAR ? 0 : d < LOD_MID ? 1 : d < maxD ? 2 : 3;
       if (Math.abs(nextL - curL) === 1) {
-        const edge = [LOD_NEAR, LOD_MID, maxD][Math.min(nextL, curL)];
+        const lower = Math.min(nextL, curL);
+        const edge = lower === 0 ? LOD_NEAR : lower === 1 ? LOD_MID : maxD; // (no array a tree: this runs over all of them)
         if (Math.abs(d - edge) < LOD_HYSTERESIS) nextL = curL;
       }
       const next = nextL === 3 ? 255 : nextL;

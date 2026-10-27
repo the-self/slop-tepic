@@ -647,6 +647,7 @@ class CityMapSystem {
   miniStreetText: string;
   miniScale: number; // radar px per metre, easing towards the altitude's
   miniCache: MiniCache | null;
+  miniFovGradient: CanvasGradient | null = null; // the camera's cone on the radar (made once: the context's own)
   modal: HTMLElement | null;
   fullCanvas: HTMLCanvasElement | null;
   fullCanvasWrap: HTMLElement | null;
@@ -1284,14 +1285,18 @@ class CityMapSystem {
     if (this.blipSource) drawBlips(ctx, v, this.blipSource());
 
     // Camera FOV Cone & Player Arrow at center (0, 0)
-    const camDir = this.cameraSystem.currentLookAt.clone().sub(this.cameraSystem.currentPos);
-    const camAngle = Math.atan2(camDir.x, camDir.z);
+    const { currentLookAt: look, currentPos: eye } = this.cameraSystem;
+    const camAngle = Math.atan2(look.x - eye.x, look.z - eye.z);
 
     ctx.save();
     ctx.rotate(-camAngle + Math.PI + MAP_ROT);
-    const grad = ctx.createRadialGradient(0, 0, 2, 0, 0, 58);
-    grad.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
-    grad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+    let grad = this.miniFovGradient;
+    if (!grad) {
+      // (a gradient's coordinates are read in the transform at fill time, so one made once serves every frame)
+      grad = this.miniFovGradient = ctx.createRadialGradient(0, 0, 2, 0, 0, 58);
+      grad.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+      grad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+    }
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.moveTo(0, 0);

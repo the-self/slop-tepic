@@ -146,7 +146,8 @@ class EmergencyServices {
       const road = base ? (Math.hypot(base.x - x, base.z - z) * ROAD_FACTOR) : 0; // m, a first guess
       const delay = Math.max(dial, due - road / CITY_SPEED);
       call = {
-        service: 'ambulance', x, z, want: 1, reach: 0, open: true, t: -delay, units: [], working: 0, closedT: 0, bodies: [], treated: 0, treatT: 0, due
+        service: 'ambulance', x, z, want: 1, reach: 0, open: true, t: -delay, units: [], working: 0, closedT: 0, bodies: [], treated: 0, treatT: 0,
+        due: due - delay // (on t's clock, which reaches 0 as it sets out, delay s after the hurt)
       };
       this.calls.push(call);
     }
@@ -302,7 +303,7 @@ class EmergencyServices {
             call.treated++;
             call.treatT = 0;
             const p = this.crime.player.position;
-            if (Math.hypot(p.x - b.px, p.z - b.pz) < 60) this.crime.toast('The paramédicos brought them round');
+            if (Math.hypot(p.x - b.px, p.z - b.pz) < 60) this.crime.toast(t('toast.revived'));
           }
           if (u.t > WORK_TIME && call.treated >= call.bodies.length) {
             call.open = false;
@@ -342,7 +343,7 @@ class EmergencyServices {
         const next = path.at(i + 1) ?? call; // (on the leg from it to the next: cruisers.ts follows path[pathI - 1] to path[pathI])
         Object.assign(cr, {
           x: p.x, z: p.z, heading: Math.atan2(next.x - p.x, next.z - p.z), speed: 0, vx: 0, vz: 0, pathI: Math.min(i + 1, path.length - 1),
-          stuckT: 0, stuckCount: 0, reverseT: 0, checkX: p.x, checkZ: p.z
+          stuckT: 0, stuckCount: 0, reverseT: 0, checkX: p.x, checkZ: p.z, passSide: 0, slowT: 0 // (not passing, set down)
         });
         cr.y = this.crime.groundAt(cr.x, cr.z);
         cr.mesh.position.set(cr.x, cr.y, cr.z);

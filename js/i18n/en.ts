@@ -254,6 +254,7 @@ export const en = {
   'toast.police': 'The police are after you',
   'toast.army': 'The army and a helicopter are coming',
   'toast.firefighters': 'The firefighters are on their way',
+  'toast.revived': 'The paramédicos brought them round',
   'toast.getMoneyBack': 'Get your money back!',
   'toast.busted': 'Arrested!',
   'toast.thief': 'A thief took ${take}! Catch the thief',
@@ -284,6 +285,9 @@ export const en = {
   'mp.chat': 'Chat',
   'mp.chatPlaceholder': 'Type and press Enter · Esc to close',
   'mp.you': '{name} (you)',
+  'mp.note.killed': '{a} killed {b}',
+  'mp.note.died': '{a} died',
+  'mp.note.sky': '{a} changed the weather',
 
   // Multiplayer rooms and the lobby
   'mp.rooms': 'Rooms',

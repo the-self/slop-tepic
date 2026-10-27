@@ -24,8 +24,12 @@ const TOUCH_LABELS: Readonly<Record<PlayerMode, Readonly<Record<TouchAction, Mes
 
 const DEAD_ZONE = 0.15;
 const MAX_RADIUS = 44;
-/** The media query of a touch screen: what shows these controls, and what gets the phone's graphics tier (main.ts) */
-const TOUCH_SCREEN = '(any-pointer: coarse)';
+/**
+ * The media query of a touch screen: what shows these controls, and what gets the phone's graphics tier (main.ts).
+ * The primary pointer's (not any-pointer: a laptop with a touch screen has its trackpad first, and keeps the keys' hints,
+ * the Keys tab and the full tier; a touch on it still brings the controls up, touchSeen)
+ */
+const TOUCH_SCREEN = '(pointer: coarse)';
 
 class TouchControls {
   controller: TouchTarget;

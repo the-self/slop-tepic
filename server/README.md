@@ -32,7 +32,7 @@ Besides poses, the server passes on what players do to each other:
 - **Chat (`CHAT` → `CHAT_LINE`):** a line (up to 140 characters, cleaned like names) goes to the whole room. Each player may say a line a second after a burst of five; past that, lines are dropped.
 - **Shots (`SHOT` → `SHOT_SEEN`):** each shot the player fires (its two ends, its weapon, rocket or bullet) goes to the players who have the shooter in view, so they see and hear it.
 - **Hits (`HIT` → `HURT`):** the shooter's client traces its shots, blows and blasts against the others' poses and says whom they struck. The server passes the damage on if the target is in the same room and within 400 m. It is a game among friends: nothing more is checked.
-- **Deaths (`DOWN`):** a killed player says who killed it (the last player to hit it in the last 10 s), and the room reads "Ana mató a Beto" in its chat.
+- **Deaths (`DOWN`):** a killed player says who killed it (the last player to hit it in the last 10 s), and the server tells the room (`NOTE`: who killed whom, or who changed the sky), which each client words in its player's language ("Ana mató a Beto", "Ana killed Beto") in its chat.
 
 A player can also ride in a friend's car (F by it, F again to get out): it then sends the car's pose with the mode `passenger`, and the others draw nothing for it but its name.
 

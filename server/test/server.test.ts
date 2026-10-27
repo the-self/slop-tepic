@@ -260,8 +260,8 @@ void test('a shot goes to those who see the shooter; a hit reaches its target wi
     a.ws.send(encodeHit(ids.far, 34)); // 2 km off: not believed
     a.ws.send(encodeHit(ids.a, 34)); // itself: ignored
     b.ws.send(encodeDown(ids.a));
-    const told = await far.next(OP.CHAT_LINE);
-    assert.deepEqual(told, { op: OP.CHAT_LINE, from: 0, name: '', text: 'Ana mató a Beto' });
+    const told = await far.next(OP.NOTE);
+    assert.deepEqual(told, { op: OP.NOTE, kind: 'killed', a: 'Ana', b: 'Beto' }, 'the clients word it, each in its language');
     await new Promise((r) => setTimeout(r, 100));
     assert.equal(b.frames.filter((m) => m.op === OP.SHOT_SEEN).length, 1, 'the 5 km shot was dropped');
     assert.ok(!far.frames.some((m) => m.op === OP.SHOT_SEEN || m.op === OP.HURT), 'Far neither saw the shot nor was hit');
@@ -281,7 +281,7 @@ void test('the sky is the room\'s: a newcomer gets it, a change reaches everyone
     const set = await far.next(OP.SKY_SET, (m) => m.from === ids.a);
     assert.deepEqual(set, { op: OP.SKY_SET, from: ids.a, time: 'midnight', weather: 'rain' }, 'out of view, still in the room');
     await a.next(OP.SKY_SET, (m) => m.from === ids.a); // (the one who changed it hears it back: one order for everyone)
-    assert.deepEqual(await b.next(OP.CHAT_LINE, (m) => m.from === 0), { op: OP.CHAT_LINE, from: 0, name: '', text: 'Ana cambió el clima' });
+    assert.deepEqual(await b.next(OP.NOTE), { op: OP.NOTE, kind: 'sky', a: 'Ana', b: '' });
     const late = connect(server.port);
     await late.opened;
     late.ws.send(encodeHello('nayarit', 'Late'));

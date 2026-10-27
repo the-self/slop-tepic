@@ -30,6 +30,8 @@
 //   HURT    u8 op, u16 from, u8 damage                                     to the player struck
 //   SKY_SET u8 op, u16 from (0: the room's, on joining), u8 time, u8 weather   to everyone in the room
 //   ROOM    u8 op, u16 host, u8 rules                                      the room's host or rules changed
+//   NOTE    u8 op, u8 kind, str a, str b                                   what happened in the room (NOTES), to everyone in it:
+//                                                                          the client words it in its player's language
 // rules = u8 flags: 1 the police come after crimes, 2 the players can hurt each other (PvP)
 // str = u8 byte length + UTF-8 bytes
 //
@@ -39,8 +41,9 @@
 // and a newcomer gets the room's on joining. A player can also open a room of its own (CREATE): a title, a code
 // friends type to join it, an optional password, its sky and its rules; there only its host changes the sky and rules.
 
-// (6: far players' poses come every second or third tick, which an older client took for players standing still)
-const PROTOCOL_VERSION = 6;
+// (6: the room's NOTEs; 7: far players' poses every second or third tick, which an older client took for players
+// standing still)
+const PROTOCOL_VERSION = 7;
 const SEND_HZ = 10; // client pose updates per second
 const TICK_HZ = 10; // server ticks per second (OSRS runs 600 ms ticks; driving needs 100 ms)
 // How often a client hears another player's pose by how far off it is: every tick within NEAR_UPDATE, every other one
@@ -55,6 +58,8 @@ const MODES = ['person', 'car', 'cyclist', 'helicopter', 'moto', 'passenger'] as
 // real conditions from Open-Meteo, the rest world/weather.ts's WEATHER_SAMPLES). New ones go at the end, as with MODES
 const SKY_TIMES = ['live', 'golden', 'midday', 'twilight', 'midnight'] as const;
 const SKY_WEATHERS = ['live', 'clear', 'cloudy', 'overcast', 'rain', 'storm', 'fog'] as const;
+// What a NOTE tells the room: a killed b, a died, a changed the sky. New ones go at the end
+const NOTES = ['killed', 'died', 'sky'] as const;
 const NAME_MAX = 24; // characters
 const CHAT_MAX = 140; // characters in a chat line
 const WEAPON_MAX = 16; // characters in a weapon's id
@@ -89,7 +94,8 @@ const OP = {
   SHOT_SEEN: 105,
   HURT: 106,
   SKY_SET: 107,
-  ROOM: 108
+  ROOM: 108,
+  NOTE: 109
 } as const;
 
 /** How a room is played: whether the police come after crimes, whether the players can hurt each other */
@@ -269,7 +275,16 @@ export interface SkySetMessage {
   time: SkyTime;
   weather: SkyWeather;
 }
-export type ServerMessage = WelcomeMessage | ErrorMessage | TickMessage | ChatLineMessage | ShotSeenMessage | HurtMessage | SkySetMessage | RoomMessage;
+export type Note = (typeof NOTES)[number];
+/** What happened in the room, by whom (a) and to whom (b: only a kill's), for the client to word */
+export interface NoteMessage {
+  op: typeof OP.NOTE;
+  kind: Note;
+  a: string;
+  b: string;
+}
+export type ServerMessage = WelcomeMessage | ErrorMessage | TickMessage | ChatLineMessage | ShotSeenMessage | HurtMessage | SkySetMessage |
+  RoomMessage | NoteMessage;
 
 /** What decodeClient / decodeServer read: a whole frame, as a byte view or its buffer */
 export type FrameData = Uint8Array | ArrayBuffer;
@@ -711,6 +726,16 @@ function encodeSkySet(from: number, sky: WireSky): Uint8Array<ArrayBuffer> {
   return w.done();
 }
 
+// What happened in the room (a NOTES kind), by player name a, to b ('' but for a kill)
+function encodeNote(kind: Note, a: string, b = ''): Uint8Array<ArrayBuffer> {
+  const w = new Writer(4 + NAME_MAX * 8);
+  w.u8(OP.NOTE);
+  w.u8(NOTES.indexOf(kind));
+  w.str(a);
+  w.str(b);
+  return w.done();
+}
+
 // Client side: one server frame → { op, ... } in metres / radians / m/s, or null when malformed
 function decodeServer(data: FrameData): ServerMessage | null {
   try {
@@ -732,6 +757,12 @@ function decodeServer(data: FrameData): ServerMessage | null {
     if (op === OP.HURT) return { op, from: r.u16(), damage: r.u8() };
     // (a newer server's sky this client doesn't know → 'live')
     if (op === OP.SKY_SET) return { op, from: r.u16(), time: SKY_TIMES.at(r.u8()) ?? 'live', weather: SKY_WEATHERS.at(r.u8()) ?? 'live' };
+    if (op === OP.NOTE) {
+      // (a newer server's kind this client doesn't know: nothing to say)
+      const kind = NOTES.at(r.u8());
+      const a = r.str(), b = r.str();
+      return kind ? { op, kind, a, b } : null;
+    }
     if (op !== OP.TICK) return null;
     const roomPlayers = r.u16();
     const gone: number[] = [];
@@ -761,6 +792,7 @@ export {
   MODES,
   SKY_TIMES,
   SKY_WEATHERS,
+  NOTES,
   NAME_MAX,
   CHAT_MAX,
   HIT_REACH,
@@ -795,5 +827,6 @@ export {
   encodeHurt,
   encodeSkySet,
   encodeRoom,
+  encodeNote,
   decodeServer
 };

@@ -211,6 +211,8 @@ export interface PhysicsWorld {
   bodies: Jolt.BodyInterface;
   groundAt: CarWorld['groundAt'];
   layers: { ragdoll: number; ragdollGround: number; debris: number };
+  /** the user data of a body on the ragdolls' layer that a vehicle's contact counts as a crash (a wall's) */
+  firm: number;
   // a static body of ground n samples cell m apart a side round (cx, cz), sampled from fromY; or `body` reshaped
   groundField(body: Jolt.Body | null, cx: number, cz: number, fromY: number, n: number, cell: number): Jolt.Body;
   dropBody(body: Jolt.Body): void;
@@ -271,6 +273,9 @@ const LAYER_RAGDOLL_GROUND = 3; // the ground under each of them, met by nothing
 // too, a field on a coarser grid than their own)
 const LAYER_DEBRIS = 4; // a heavy prop falling (a CFE pole, a tree: sim/mayhem.ts), through the car that snapped it
 const LAYERS = 5;
+// A body's user data saying it stands firm: a prop held where it stands on the ragdolls' layer (sim/mayhem.ts) that a
+// vehicle crashes into as into a wall, till it is knocked loose (a CFE pole or a tree struck short of snapping)
+const FIRM = 1;
 const PATCH_CELL = 0.5; // m between the ground's samples
 const PATCH_SAMPLES = 64; // per side: a 31.5 m square
 const PATCH_RECENTRE = 6; // m a vehicle may move from its patch's centre before it is sampled again around it
@@ -422,6 +427,7 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
   const shared: PhysicsWorld = {
     Jolt, system, bodies, groundAt: world.groundAt,
     layers: { ragdoll: LAYER_RAGDOLL, ragdollGround: LAYER_RAGDOLL_GROUND, debris: LAYER_DEBRIS },
+    firm: FIRM,
     groundField: (body, cx, cz, fromY, n, cell) => groundField(body, cx, cz, fromY, n, cell, LAYER_RAGDOLL_GROUND),
     dropBody,
     dropWall
@@ -581,7 +587,9 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
   contacts.OnContactAdded = (body1, body2, manifold) => {
     if (!byId.size) return;
     const b1 = Jolt.wrapPointer(body1, Jolt.Body), b2 = Jolt.wrapPointer(body2, Jolt.Body);
-    if (b1.GetObjectLayer() === LAYER_RAGDOLL || b2.GetObjectLayer() === LAYER_RAGDOLL) return;
+    // (on the ragdolls' layer, all but a prop standing firm: struck short of breaking, it is a wall)
+    if ((b1.GetObjectLayer() === LAYER_RAGDOLL && b1.GetUserData() !== FIRM) ||
+      (b2.GetObjectLayer() === LAYER_RAGDOLL && b2.GetUserData() !== FIRM)) return;
     const v1 = byId.get(b1.GetID().GetIndexAndSequenceNumber()), v2 = byId.get(b2.GetID().GetIndexAndSequenceNumber());
     if (!v1 && !v2) return;
     const n = Jolt.wrapPointer(manifold, Jolt.ContactManifold).mWorldSpaceNormal; // (from body 1 into body 2)

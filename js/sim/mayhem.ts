@@ -106,6 +106,8 @@ interface Prop extends BreakableProp {
   still: number;
   age: number;
   speed: number;
+  /** the car that snapped it (snap), which it lies through till it is clear of it (unghost), parked or driven */
+  snappedBy?: KnockingEntity | null;
 }
 // The collision told to the listener (main.ts: the audio and the crash damage); one object, reused. A heavy prop's is
 // between the vehicle that struck it (a) and the prop (b), so it hurts whoever drives it
@@ -139,6 +141,8 @@ interface PropPhysics {
     Jolt: typeof Jolt;
     bodies: Jolt.BodyInterface;
     layers: { ragdoll: number; debris: number };
+    // the user data that makes a body on the ragdolls' layer a wall to a car's contact (a heavy prop standing firm)
+    firm: number;
     // a static body of ground n samples cell m apart a side round (cx, cz), sampled from fromY; or `body` reshaped
     groundField(body: Jolt.Body | null, cx: number, cz: number, fromY: number, n: number, cell: number): Jolt.Body;
     dropBody: (body: Jolt.Body) => void;
@@ -253,6 +257,18 @@ function closingSpeed(vx: number, vz: number, nx: number, nz: number): number {
 /** A prop's body: its own, or its kind's */
 function bodyOf(p: BreakableProp): PropBody {
   return p.def ?? PROP_BODIES[p.kind];
+}
+
+// Whether snapped prop p, lying down, lies through vehicle `v` (half width hw & length hl, m) anywhere along its length,
+// foot to top
+function lyingThrough(p: Prop, v: KnockingEntity, hw: number, hl: number): boolean {
+  if (!p.root) return false;
+  const def = bodyOf(p), h = def.cyl[1], at = p.root.position, heading = v.heading || 0;
+  const up = _up.set(0, 1, 0).applyQuaternion(p.root.quaternion);
+  for (let k = 0; k <= 4; k++) {
+    if (boxHit(v.position.x, v.position.z, heading, hw + UNGHOST_MARGIN, hl + UNGHOST_MARGIN, at.x + up.x * h * k / 4, at.z + up.z * h * k / 4, def.reach)) return true;
+  }
+  return false;
 }
 
 /**
@@ -452,7 +468,7 @@ class PropBreaker {
 
   // Prop p into Jolt, static (anchored) where it stands or lies, ready to come loose (its wall out of it meanwhile)
   stand(p: Prop): void {
-    const { world: { Jolt, bodies, layers, dropWall }, tmpR, tmpQ } = this.j();
+    const { world: { Jolt, bodies, layers, firm, dropWall }, tmpR, tmpQ } = this.j();
     if (p.collider && !p.collider.broken) {
       p.collider.held = true;
       dropWall(p.collider);
@@ -477,6 +493,8 @@ class PropBreaker {
     bcs.mAngularDamping = 0.2;
     p.body = bodies.CreateBody(bcs);
     Jolt.destroy(bcs);
+    // (a heavy one is a wall to a car till it snaps: the crash is the car physics', knock()'s once it gives)
+    if (def.heavy) p.body.SetUserData(firm);
     bodies.AddBody(p.body.GetID(), Jolt.EActivation_DontActivate);
     this.anchored.add(p);
   }
@@ -505,6 +523,7 @@ class PropBreaker {
     p.still = 0;
     p.age = 0;
     bodies.SetMotionType(pb.GetID(), Jolt.EMotionType_Dynamic, Jolt.EActivation_Activate);
+    pb.SetUserData(0); // (loose: knock() tells this crash, the car's contacts no more)
     if (def.heavy && first) this.snap(p, pb, def, hit, speed, entity);
     this.loose.add(p);
     // too many flying about: the stillest lies where it is
@@ -558,6 +577,7 @@ class PropBreaker {
     const id = pb.GetID();
     bodies.SetObjectLayer(id, layers.debris);
     this.snapped.add(p);
+    p.snappedBy = entity;
     const [wx, wy, wz] = toppleSpin(hit.nx, hit.nz, speed, def.cyl[1]);
     // (its centre of mass swung forward about its foot, the foot itself carried on a little)
     const com = pb.GetCenterOfMassPosition().GetY() - pb.GetPosition().GetY();
@@ -580,24 +600,20 @@ class PropBreaker {
     if (!this.snapped.size) return;
     const { bodies, layers } = this.j().world;
     const vehicle = mode === 'car' || mode === 'cyclist' || mode === 'moto';
-    const heading = entity.heading || 0;
-    const hw = (mode === 'car' ? entity.halfW || 0.9 : 0.35) + UNGHOST_MARGIN;
-    const hl = (mode === 'car' ? entity.halfL || 2.25 : 1.0) + UNGHOST_MARGIN;
     for (const p of this.snapped) {
       if (!p.body) {
         this.snapped.delete(p);
         continue;
       }
       if (p.state !== 'down' || !p.root) continue;
-      if (vehicle) {
-        // (along its length, foot to top)
-        const up = _up.set(0, 1, 0).applyQuaternion(p.root.quaternion), h = bodyOf(p).cyl[1], at = p.root.position;
-        let inside = false;
-        for (let k = 0; k <= 4 && !inside; k++) inside = !!boxHit(entity.position.x, entity.position.z, heading, hw, hl, at.x + up.x * h * k / 4, at.z + up.z * h * k / 4, bodyOf(p).reach);
-        if (inside) continue;
-      }
+      // (still through the car that snapped it, even parked with the player out of it on foot, or through what the
+      // player rides now)
+      const by = p.snappedBy;
+      if (by && lyingThrough(p, by, by.halfW || 0.9, by.halfL || 2.25)) continue;
+      if (vehicle && entity !== by && lyingThrough(p, entity, mode === 'car' ? entity.halfW || 0.9 : 0.35, mode === 'car' ? entity.halfL || 2.25 : 1.0)) continue;
       bodies.SetObjectLayer(p.body.GetID(), layers.ragdoll);
       this.snapped.delete(p);
+      p.snappedBy = null;
     }
   }
 

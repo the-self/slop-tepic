@@ -63,6 +63,9 @@ import { t } from '../i18n/i18n.ts';
 // sees a crime), dispatch.ts (who turns up), pickups.ts. Their functions take the CrimeSystem;
 // its methods below hand on to them.
 
+// The gangs' blips on the map (a.gang indexes them)
+const GANG_BLIPS = ['rojos', 'verdes', 'narcos'] as const;
+
 class CrimeSystem {
   scene: THREE.Object3D;
   aim: CrimeAim | null;
@@ -628,7 +631,7 @@ class CrimeSystem {
   // x, z } (reused)
   blips(out: Blips = (this._blips ??= [])): Blips {
     out.length = 0;
-    for (const a of this.agents) if (!a.dead) out.push(a.kind === 'gang' ? ['rojos', 'verdes', 'narcos'][a.gang] : a.army ? 'soldier' : a.kind, a.x, a.z);
+    for (const a of this.agents) if (!a.dead) out.push(a.kind === 'gang' ? GANG_BLIPS[a.gang] : a.army ? 'soldier' : a.kind, a.x, a.z);
     for (const cr of this.cruisers) if (cr.active && !cr.wreck) out.push(BLIP_OF[cr.faction], cr.x, cr.z);
     if (this.heli.active && this.heli.state !== 'down') out.push('heli', this.heli.x, this.heli.z);
     for (const p of this.pickups) out.push(p.kind, p.x, p.z);
