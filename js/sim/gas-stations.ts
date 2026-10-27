@@ -1,7 +1,8 @@
 // js/sim/gas-stations.ts
-// Tepic's gas stations (the geodata's `fuel`, Overture Maps' places): a canopy over two pump islands laid on the lot
-// beside each, along its street, the islands solid. Stopped by a pump in the car, it fills up (its tank:
-// player/controllers' fuel) for the pesos it costs, and its flat tyres are mended; a pump shot to pieces, rammed hard
+// Tepic's gas stations (the geodata's `fuel`, Overture Maps' places): a canopy over two pump islands on a concrete
+// forecourt laid on the lot beside each, along its street, two driveways in from the street over the curb (rampAt),
+// the islands solid. Stopped by a pump in the car, G (refuel) fills it up (its tank: player/controllers' fuel) for the
+// pesos it costs, and mends its flat tyres; a pump shot to pieces, rammed hard
 // or caught in a blast goes up, the other with it, and the station burns (the bomberos come, fires.ts); it stands
 // again once the player has long gone.
 import * as THREE from 'three/webgpu';
@@ -11,6 +12,10 @@ import { blockAt, nearestRoads } from '../world/city-config.ts';
 import type { ShotProp } from './crime/types.ts';
 import type { FireKind } from './fires.ts';
 import { boxHit } from './mayhem.ts';
+import { SW_TOP, RAMP_OUT, RAMP_IN, rampHeight, rampTriangles } from '../world/car-parks.ts';
+import type { Ramp } from '../world/car-parks.ts';
+import { drapeGeometry } from '../world/drape.ts';
+import { townHeight } from '../world/ground.ts';
 import type { PlayerCollider } from '../player/controllers/types.ts';
 import { t } from '../i18n/i18n.ts';
 
@@ -29,13 +34,14 @@ interface Pump extends ShotProp {
   index: number; // its instance
   collider: PlayerCollider; // its island, solid to the player and the car (broken: gone with it)
 }
-/** A station: its canopy's middle (m), turn (rad: world = c + R_y(yaw)·local, local x along the street), name, pumps;
- *  burnt: s since it went up (0: whole) */
+/** A station: its canopy's middle (m), turn (rad: world = c + R_y(yaw)·local, local x along the street), name, pumps,
+ *  its driveways' ramps over the curb; burnt: s since it went up (0: whole) */
 interface Station extends XZ {
   name: string;
   y: number;
   yaw: number;
   pumps: Pump[];
+  drives: Ramp[];
   burnt: number;
   index: number;
 }
@@ -43,7 +49,7 @@ interface Station extends XZ {
  *  blasts (sim/crime.ts), the fires (sim/fires.ts) */
 interface StationsWorld {
   scene: THREE.Object3D;
-  isSolidAt(x: number, z: number, height?: number, ground?: number): boolean;
+  isSolidAt(x: number, z: number, height?: number, ground?: number, minSize?: number): boolean;
   groundAt(x: number, z: number): number;
   crime: {
     money: number;
@@ -75,6 +81,11 @@ const CANOPY: [along: number, across: number, height: number] = [13, 8, 5]; // m
 const PUMPS_AT = 3; // m either side of the canopy's middle, along the street
 const ISLAND: [halfLong: number, halfWide: number] = [1.6, 0.5]; // m: a pump's island
 const ISLAND_END = ISLAND[0] - ISLAND[1]; // m from the pump to the middle of each of its island's rounded ends
+const FORECOURT: [along: number, across: number] = [CANOPY[0] + 4, CANOPY[1] + 3]; // m of concrete round the canopy
+const LOT_Y = SW_TOP + 0.018; // m over the town's floor the forecourt lies, a hair over the block's ground (as a car park)
+const DRIVE_W = 4.5; // m: a driveway's width
+const DRIVE_AT = FORECOURT[0] / 2 - DRIVE_W / 2 - 0.4; // m either side of the middle the two driveways come in
+const RAMP_CELL = 16; // m: the cells the ramps are found by (rampAt)
 
 const box = (w: number, h: number, d: number, x: number, y: number, z: number) => new THREE.BoxGeometry(w, h, d).translate(x, y + h / 2, z).toNonIndexed();
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _up = new THREE.Vector3(0, 1, 0);
@@ -92,6 +103,9 @@ class GasStations {
   litres = 0;
   broke = false; // (told there's not the money for it: till the car leaves the pump)
   lastSpeed = 0; // m/s the player went at last frame (a ram is judged by the speed it came in at, not what the island left)
+  at: Pump | null = null; // the pump the car stands by (update)
+  wanted = false; // the player asked for a fill there (refuel: G)
+  rampCells = new Map<number, Ramp[]>();
 
   constructor(world: StationsWorld) {
     this.world = world;
@@ -101,8 +115,22 @@ class GasStations {
       const at = this.place(x, z);
       if (at) this.stations.push({ ...at, name, y: world.groundAt(at.x, at.z), pumps: [], burnt: 0, index: this.stations.length });
     }
-    // the canopy: a white roof on four posts, its fascia in the station's green with a red band, over a concrete
-    // forecourt; the islands, each a kerb with a white & red dispenser on it
+    // the ramps by RAMP_CELL cell (rampAt)
+    for (const s of this.stations) {
+      for (const r of s.drives) {
+        const reach = RAMP_OUT + r.half;
+        for (let ix = Math.floor((r.x - reach) / RAMP_CELL); ix <= Math.floor((r.x + reach) / RAMP_CELL); ix++) {
+          for (let iz = Math.floor((r.z - reach) / RAMP_CELL); iz <= Math.floor((r.z + reach) / RAMP_CELL); iz++) {
+            const k = ix * 4096 + iz;
+            let list = this.rampCells.get(k);
+            if (!list) this.rampCells.set(k, (list = []));
+            list.push(r);
+          }
+        }
+      }
+    }
+    // the canopy: a white roof on four posts, its fascia in the station's green with a red band; the islands, each a
+    // kerb with a white & red dispenser on it (the concrete forecourt under them is laid on the ground: forecourts)
     const [al, ac, ht] = CANOPY;
     const white = new THREE.MeshStandardNodeMaterial({ color: 0xf2f2ee, roughness: 0.5 });
     const green = new THREE.MeshStandardNodeMaterial({ color: 0x0b7a3e, roughness: 0.45 });
@@ -112,13 +140,12 @@ class GasStations {
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) posts.push(box(0.4, ht, 0.4, sx * (al / 2 - 1.5), 0, sz * (ac / 2 - 1.2)));
     const canopyGeo = mergeGeometries([
       mergeGeometries([box(al, 0.35, ac, 0, ht, 0)]), mergeGeometries([box(al + 0.1, 0.55, ac + 0.1, 0, ht + 0.35, 0)]),
-      mergeGeometries([box(al + 0.12, 0.14, ac + 0.12, 0, ht + 0.5, 0)]), mergeGeometries(posts),
-      mergeGeometries([box(al + 4, 0.08, ac + 3, 0, 0, 0)])
+      mergeGeometries([box(al + 0.12, 0.14, ac + 0.12, 0, ht + 0.5, 0)]), mergeGeometries(posts)
     ], true);
-    const concrete = new THREE.MeshStandardNodeMaterial({ color: 0xb8b5ad, roughness: 0.9 });
-    this.canopy = new THREE.InstancedMesh(canopyGeo, [white, green, red, grey, concrete], Math.max(1, this.stations.length));
+    this.canopy = new THREE.InstancedMesh(canopyGeo, [white, green, red, grey], Math.max(1, this.stations.length));
     const charred = new THREE.MeshStandardNodeMaterial({ color: 0x1d1b1a, roughness: 0.95, metalness: 0.1 });
-    this.ruin = new THREE.InstancedMesh(mergeGeometries([box(al, 0.3, ac, 0, ht, 0), ...posts, box(al + 4, 0.08, ac + 3, 0, 0, 0)]), charred, Math.max(1, this.stations.length));
+    this.ruin = new THREE.InstancedMesh(mergeGeometries([box(al, 0.3, ac, 0, ht, 0), ...posts]), charred, Math.max(1, this.stations.length));
+    this.forecourts(world.scene);
     const pumpGeo = mergeGeometries([
       mergeGeometries([box(3.2, 0.2, 1.0, 0, 0, 0)]), mergeGeometries([box(0.75, 1.75, 0.45, 0, 0.2, 0)]),
       mergeGeometries([box(0.78, 0.35, 0.48, 0, 1.6, 0)])
@@ -161,9 +188,10 @@ class GasStations {
 
   /**
    * Where a station by (x, z) lays its forecourt: beside the street nearest it, along it, on open ground clear of the
-   * buildings (the station's own shop, its neighbours), as near its point as can be. Null if no room nearby
+   * buildings (the station's own shop, its neighbours) with a way in from the street, as near its point as can be
+   * (where nowhere near has a clear way in, the nearest all the same, its driveways as they come). Null if no room
    */
-  place(x: number, z: number): { x: number; z: number; yaw: number } | null {
+  place(x: number, z: number): { x: number; z: number; yaw: number; drives: Ramp[] } | null {
     const near = nearestRoads(x, z, 90).at(0);
     if (!near) return null;
     // the street's segment nearest it: its direction, and which side the station is on
@@ -186,18 +214,114 @@ class GasStations {
     if ((x - qx) * nx + (z - qz) * nz < 0) { nx = -nx; nz = -nz; }
     const along0 = 0, edge = near.road.w / 2 + 2.5 + CANOPY[1] / 2;
     const yaw = Math.atan2(-uz, ux);
-    let found: { x: number; z: number; yaw: number } | null = null, foundD = Infinity;
+    type Spot = { x: number; z: number; yaw: number; drives: Ramp[] } | null;
+    let found: Spot = null, foundD = Infinity;
+    let blocked: Spot = null, blockedD = Infinity; // (the nearest without a clear way in)
     for (const along of [along0, 5, -5, 10, -10, 15, -15, 20, -20, 25, -25, 30, -30]) {
       for (let k = 0; k < 8; k++) {
         const cx = qx + ux * along + nx * (edge + k * 3), cz = qz + uz * along + nz * (edge + k * 3);
         const d = Math.hypot(cx - x, cz - z);
-        if (d >= foundD || d > 55 || !this.clear(cx, cz, ux, uz, nx, nz)) continue;
-        found = { x: cx, z: cz, yaw };
-        foundD = d;
+        if (d >= Math.max(foundD, blockedD) || d > 55 || !this.clear(cx, cz, ux, uz, nx, nz)) continue;
+        const drives = this.driveways(qx + ux * along, qz + uz * along, ux, uz, nx, nz, edge + k * 3);
+        if (drives.some((r) => r.open) && d < foundD) {
+          found = { x: cx, z: cz, yaw, drives: drives.filter((r) => r.open) };
+          foundD = d;
+        } else if (!found && d < blockedD) {
+          blocked = { x: cx, z: cz, yaw, drives };
+          blockedD = d;
+        }
       }
     }
-    return found;
+    return found ?? blocked;
   }
+
+  // The ways in from the street to a forecourt `depth` m off the road's middle at (rx, rz) (u along the road, n across it
+  // towards the forecourt), one near either end of it: from the curb (where the block's ground starts) across the
+  // sidewalk; open where nothing stands in the way (a wall, a barda: not a pole, driven round). Their ramps over the curb
+  driveways(rx: number, rz: number, ux: number, uz: number, nx: number, nz: number, depth: number): (Ramp & { open: boolean })[] {
+    const out: (Ramp & { open: boolean })[] = [];
+    const reach = depth - FORECOURT[1] / 2; // m from the road's middle to the forecourt's edge
+    const w = this.world;
+    for (const side of [-1, 1]) {
+      const bx = rx + ux * side * DRIVE_AT, bz = rz + uz * side * DRIVE_AT;
+      let curb = -1;
+      for (let t = 0; t <= reach; t += 0.25) {
+        if (blockAt(bx + nx * t, bz + nz * t)) {
+          curb = t;
+          break;
+        }
+      }
+      if (curb < 0) continue;
+      let open = true;
+      for (let t = curb; t <= reach + 1 && open; t += 0.5) {
+        for (const a of [-1, 0, 1]) {
+          const px = bx + nx * t + ux * a * (DRIVE_W / 2 - 0.3), pz = bz + nz * t + uz * a * (DRIVE_W / 2 - 0.3);
+          if (w.isSolidAt(px, pz, 1.5, w.groundAt(px, pz), 1)) open = false;
+        }
+      }
+      out.push({ x: bx + nx * curb, z: bz + nz * curb, nx, nz, half: DRIVE_W / 2, top: LOT_Y + 0.004, open });
+    }
+    return out;
+  }
+
+  // The forecourts and their driveways, in concrete laid on the town's slopes: each forecourt round its canopy, the
+  // ramps up over the curb (car-parks.ts's), the way on across the sidewalk to it. A station up on a hill (ground.ts:
+  // its ground over the town's floor) has its forecourt flat where the canopy stands instead, not buried under it
+  forecourts(scene: THREE.Object3D): void {
+    const tris: number[] = [], onHills: number[] = [];
+    let out = tris;
+    // (a flat quad, its two triangles wound to face up)
+    const quad = (pts: readonly [number, number][], y: number) => {
+      for (const [a, b, c] of [[0, 1, 2], [0, 2, 3]]) {
+        const A = pts[a], B = pts[b], C = pts[c];
+        const up = (B[1] - A[1]) * (C[0] - A[0]) - (B[0] - A[0]) * (C[1] - A[1]) > 0;
+        const [P, Q] = up ? [B, C] : [C, B];
+        out.push(A[0], y, A[1], P[0], y, P[1], Q[0], y, Q[1]);
+      }
+    };
+    const [fa, fc] = FORECOURT;
+    for (const s of this.stations) {
+      const ux = Math.cos(s.yaw), uz = -Math.sin(s.yaw), nx = -uz, nz = ux; // (along the street; across it)
+      const at = (a: number, c: number): [number, number] => [s.x + ux * a + nx * c, s.z + uz * a + nz * c];
+      const hill = s.y - townHeight(s.x, s.z) - SW_TOP > 0.1;
+      out = hill ? onHills : tris;
+      const y = hill ? s.y + LOT_Y - SW_TOP : LOT_Y; // (on a hill: over its ground, in the world's own heights)
+      quad([at(-fa / 2, -fc / 2), at(fa / 2, -fc / 2), at(fa / 2, fc / 2), at(-fa / 2, fc / 2)], y);
+      for (const r of s.drives) {
+        if (!hill) rampTriangles(tris, r);
+        // (from the ramp's top to the forecourt: its near edge, on the street's side of the station)
+        const len = (s.x - r.x) * r.nx + (s.z - r.z) * r.nz - fc / 2 + 0.3;
+        if (len <= RAMP_IN) continue;
+        const tx = -r.nz * r.half, tz = r.nx * r.half;
+        const a = [r.x + r.nx * RAMP_IN, r.z + r.nz * RAMP_IN], b = [r.x + r.nx * len, r.z + r.nz * len];
+        quad([[a[0] - tx, a[1] - tz], [a[0] + tx, a[1] + tz], [b[0] + tx, b[1] + tz], [b[0] - tx, b[1] - tz]], y + 0.002);
+      }
+    }
+    const material = new THREE.MeshStandardNodeMaterial({ color: 0xb8b5ad, roughness: 0.9 });
+    for (const [list, draped] of [[tris, true], [onHills, false]] as const) {
+      if (!list.length) continue;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(list, 3));
+      g.computeVertexNormals();
+      const mesh = new THREE.Mesh(draped ? drapeGeometry(g) : g, material);
+      mesh.name = 'GasStationForecourts';
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+    }
+  }
+
+  /** The height of a driveway's ramp over the curb at (x, z) (m over the town's floor), -1 off them (as car-parks.ts
+   *  rampAt: what the player and the car stand on) */
+  rampAt = (x: number, z: number): number => {
+    const list = this.rampCells.get(Math.floor(x / RAMP_CELL) * 4096 + Math.floor(z / RAMP_CELL));
+    if (!list) return -1;
+    for (const r of list) {
+      const dx = x - r.x, dz = z - r.z;
+      const s = dx * r.nx + dz * r.nz, t = dz * r.nx - dx * r.nz;
+      if (s >= -RAMP_OUT && s <= RAMP_IN && Math.abs(t) <= r.half) return rampHeight(r, s);
+    }
+    return -1;
+  };
 
   // Is the forecourt round (cx, cz) open ground off the street: on a block (the curb's island, not the road), no wall
   // anywhere under the canopy?
@@ -293,6 +417,9 @@ class GasStations {
       else if (mode === 'car' && Math.hypot(p.x - player.x, p.z - player.z) < NEAR) at = p;
     }
     this.lastSpeed = driving ? Math.abs(me.speed) : 0;
+    // (driven off the pump: asked afresh at the next)
+    if (at !== this.at) this.wanted = false;
+    this.at = at;
     this.fill(at, dt);
     for (const s of this.stations) {
       if (!s.burnt) continue;
@@ -309,21 +436,44 @@ class GasStations {
     }
   }
 
-  // Stopped by pump `at` (or null: not by one): the tank filling, paid for litre by litre, the bill once it's full
-  fill(at: Pump | null, dt: number): void {
+  // Whether the car stands still by a pump, with a tank to fill or a tyre to mend
+  servable(): boolean {
+    const car = this.world.car;
+    return this.at !== null && Math.abs(car.speed) < 0.6 && (car.fuel < TANK - 0.5 || car.damage.flats !== 0);
+  }
+
+  /** G (refuel), or the touch button by a pump: fill up there (its flat tyres mended first, if there's the money for
+   *  them), or stop filling. Whether it was by a pump to do so */
+  refuel(): boolean {
+    if (!this.servable() && !this.filling) return false;
+    this.wanted = !this.filling;
+    this.broke = false;
     const w = this.world, car = w.car;
-    // its flat tyres mended first, if there's the money for them
     const flats = car.damage.flats;
-    if (at && flats && Math.abs(car.speed) < 0.6) {
+    if (this.wanted && flats) {
       let n = 0;
       for (let b = flats; b; b >>= 1) n += b & 1;
       if (w.crime.money >= n * TYRE) {
         w.crime.money -= n * TYRE;
         car.damage.flats = 0;
         w.crime.toast(t('toast.tyres', { cost: n * TYRE }));
-      }
+      } else w.crime.toast(t('toast.noTyreMoney'));
     }
-    const wants = at && Math.abs(car.speed) < 0.6 && car.fuel < TANK - 0.05;
+    return true;
+  }
+
+  /** What G would do here, in the player's language ('' for nothing): fill up, at so much a litre, or stop */
+  prompt(): string {
+    if (this.world.activeMode() !== 'car') return '';
+    if (this.filling) return t('prompt.refuelStop');
+    return this.servable() ? t('prompt.refuel', { price: PRICE }) : '';
+  }
+
+  // Stopped by pump `at` (or null: not by one): the tank filling, once asked (refuel), paid for litre by litre, the
+  // bill once it's full or the filling stopped
+  fill(at: Pump | null, dt: number): void {
+    const w = this.world, car = w.car;
+    const wants = this.wanted && at && Math.abs(car.speed) < 0.6 && car.fuel < TANK - 0.05;
     if (!at) this.broke = false;
     if (!wants || this.broke) {
       if (this.filling && this.litres > 0.5) w.crime.toast(t('toast.gas', { litres: Math.round(this.litres), paid: Math.round(this.paid) }));
@@ -351,6 +501,8 @@ class GasStations {
       w.crime.money = Math.floor(w.crime.money);
       w.crime.toast(t('toast.fullTank', { litres: Math.round(this.litres), paid: Math.round(this.paid) }));
       this.litres = this.paid = 0;
+      this.filling = null;
+      this.wanted = false;
     }
   }
 

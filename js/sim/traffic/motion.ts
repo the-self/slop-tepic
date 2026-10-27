@@ -113,7 +113,8 @@ function place(ts: TrafficState, v: Vehicle, e: TrafficEdge, lane: number, s: nu
   v.fare = 0;
   v.vx = v.vz = v.yawOffset = v.yawVel = v.pitch = v.pitchVel = v.roll = v.rollVel = 0;
   v.damage = null; // (it comes back as another car, like new)
-  v.wrecked = false;
+  v.wrecked = v.abandoned = false;
+  v.fright = null;
   if (!onEdge(v)) return; // (it is: on e)
   locate(ts, v);
   v.prevX = v.x;

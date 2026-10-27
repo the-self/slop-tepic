@@ -25,6 +25,8 @@ import { paintsOf, pickBody, pickModel } from '../models/cars/index.ts';
 import type { CarPark, ParkedCar } from './parking.ts';
 import type { Collider } from './buildings.ts';
 import type { TileStreamer } from './streaming.ts';
+import { applyImpact, createDamage } from '../player/vehicle-damage.ts';
+import type { CarDamage } from '../player/vehicle-damage.ts';
 
 // The ground's heights the city-grid lays (city-grid.ts): a block's open ground just over its sidewalks, a park's walks
 // (PARK_Y: park-floor.ts), the open country's meadow; the lot a hair over each, its paint a hair over that
@@ -165,6 +167,8 @@ interface PlacedCar {
   height: number;
   collider: ParkedCollider | null;
   taken: boolean;
+  /** its dents from what drove into it (strike), drawn crushed as the traffic's are; null: none yet */
+  damage: CarDamage | null;
 }
 
 /** A parked car the player took (take): where it stood and its looks, for the player's own car to take its place */
@@ -216,7 +220,7 @@ function placeCar(car: Omit<ParkedCar, 'stall'> & { stall: Pick<ParkedCar['stall
     x: cx, y: liftAt(cx, cz) + y0, z: cz, yaw: car.heading, pitch: -Math.atan(ahead), roll: Math.atan(right), body, model: model.id,
     sx: model.size[1] / dims.width, sy: model.size[2] / dims.height, sz: model.size[0] / dims.length,
     paint: new THREE.Color(paints[Math.floor(car.paint * paints.length) % paints.length]),
-    halfW: model.size[1] / 2, halfL: model.size[0] / 2, height: model.size[2], collider: null, taken: false
+    halfW: model.size[1] / 2, halfL: model.size[0] / 2, height: model.size[2], collider: null, taken: false, damage: null
   };
 }
 
@@ -416,6 +420,9 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
           inst.setMatrixAt(slot, dummy.matrix);
           const paintAttr = inst.geometry.getAttribute('paintColor');
           paintAttr.setXYZ(slot, c.paint.r, c.paint.g, c.paint.b);
+          // (lamps off, no livery; how crushed each side is, 4 bits each, as the traffic's: traffic/render.ts)
+          const dm = c.damage, q = (v: number) => Math.round(Math.min(1, v) * 15);
+          inst.geometry.getAttribute('carState').setXYZW(slot, 0, 0, 0, dm ? 2 * (q(dm.front) + 16 * q(dm.rear) + 256 * q(dm.left) + 4096 * q(dm.right)) : 0);
         }
       }
     }
@@ -424,16 +431,34 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
         inst.instanceMatrix.clearUpdateRanges();
         inst.instanceMatrix.addUpdateRange(0, inst.count * 16);
         inst.instanceMatrix.needsUpdate = true;
-        const paintAttr = inst.geometry.getAttribute('paintColor');
-        if (paintAttr instanceof THREE.BufferAttribute) {
-          paintAttr.clearUpdateRanges();
-          paintAttr.addUpdateRange(0, inst.count * 3);
-          paintAttr.needsUpdate = true;
+        for (const [name, size] of [['paintColor', 3], ['carState', 4]] as const) {
+          const attr = inst.geometry.getAttribute(name);
+          if (!(attr instanceof THREE.BufferAttribute)) continue;
+          attr.clearUpdateRanges();
+          attr.addUpdateRange(0, inst.count * size);
+          attr.needsUpdate = true;
         }
         inst.visible = inst.count > 0;
         if (inst.count) inst.computeBoundingSphere();
       }
     }
+  }
+
+  /**
+   * A vehicle crashed into something at (x, z) coming at it `speed` m/s (the player's car into a wall, controllers.ts
+   * reportCollision): the parked car it struck there, if any, is dented on the side it was hit, as hard as a car of the
+   * traffic would be. Whether one was
+   */
+  function strike(x: number, z: number, speed: number): boolean {
+    // (the contact is reckoned at the struck thing's skin: within a hand of a car's body, not a wall or pole beside it)
+    const car = nearest(x, z, 0.4);
+    if (!car) return false;
+    car.damage ??= createDamage();
+    // (in its own frame, +z ahead and +x its left: from its middle towards where it was hit)
+    const dx = x - car.x, dz = z - car.z, sn = Math.sin(car.yaw), cs = Math.cos(car.yaw);
+    if (!applyImpact(car.damage, dx * cs - dz * sn, dx * sn + dz * cs, speed, car.halfW, car.halfL)) return false;
+    lastX = Infinity; // (drawn crushed on the next update)
+    return true;
   }
 
   let found = Infinity; // m from the body of the car `nearest` last found
@@ -515,11 +540,12 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     update,
     carNear,
     take,
-    clearAt
+    clearAt,
+    strike
   };
 }
 
 type CarParksBuild = ReturnType<typeof buildCarParks>;
 
-export type { CarParksBuild, PlacedCar, TakenParkedCar };
-export { buildCarParks };
+export type { CarParksBuild, PlacedCar, TakenParkedCar, Ramp };
+export { SW_TOP, RAMP_OUT, RAMP_IN, rampHeight, rampTriangles, buildCarParks };

@@ -7,7 +7,7 @@ import { roundBox } from '../weapons.ts';
 import { BUS_SPEC, buildBusWheelGeo } from '../../actors/actor-models.ts';
 import { clamp } from './constants.ts';
 import type {
-  Hijackable, LookKit, LookWheel, Ped, SidewalkPoint, TakenVehicle, TwoWheeler, VehicleLook
+  Hijackable, LookKit, LookWheel, Ped, SidewalkPoint, TakenVehicle, TwoWheeler, Vehicle, VehicleLook
 } from './types.ts';
 import type { TrafficState } from './state.ts';
 import { visible } from './view.ts';
@@ -19,12 +19,12 @@ const FLEE_SPEED = 4.6; // m/s running away
 const BAIL_TURN = 7; // rad/s
 
 // The car, camión, bicycle or moto the player on foot could take: the nearest whose body is within `reach` metres of
-// (x, z), going slowly enough to be stopped, its engine not dead
+// (x, z), going slowly enough to be stopped, its engine not dead (one left in the road by its driver too)
 function vehicleNear(ts: TrafficState, x: number, z: number, reach: number): Hijackable | null {
   let best: Hijackable | null = null;
   let bestDistance = reach;
   for (const v of ts.vehicles) {
-    if (v.wreck || v.wrecked || !v.edge || v.speed > 7) continue;
+    if (v.wreck || (v.wrecked && !(v.abandoned && (v.damage?.engine ?? 0) < 1)) || !v.edge || v.speed > 7) continue;
     const dx = x - v.x;
     const dz = z - v.z;
     if (Math.abs(dx) > 10 || Math.abs(dz) > 10) continue;
@@ -63,7 +63,7 @@ function hijack(ts: TrafficState, v: Hijackable): TakenVehicle {
   const two = v.bike || v.moto;
   const side = v.halfWidth + (two ? 0.4 : 0.55);
   const ahead = two ? 0 : v.bus ? 4.6 : 0.35;
-  bail(ts, v.x + Math.cos(yaw) * side + Math.sin(yaw) * ahead, v.z - Math.sin(yaw) * side + Math.cos(yaw) * ahead, yaw, two ? v : null);
+  if (!v.abandoned) bail(ts, v.x + Math.cos(yaw) * side + Math.sin(yaw) * ahead, v.z - Math.sin(yaw) * side + Math.cos(yaw) * ahead, yaw, two ? v : null);
   v.edge = null;
   v.conn = null;
   v.trail = null;
@@ -114,8 +114,8 @@ function lookKit(ts: TrafficState, look: VehicleLook | null): LookKit | null {
 }
 
 // A pedestrian out of sight (or not yet placed) becomes the driver, standing at (x, z); a cyclist keeps its own
-// looks (its rig swaps places with the pedestrian's, who rides the bicycle when it comes back)
-function bail(ts: TrafficState, x: number, z: number, heading: number, bike: TwoWheeler | null): void {
+// looks (its rig swaps places with the pedestrian's, who rides the bicycle when it comes back). Who it was, if anyone
+function bail(ts: TrafficState, x: number, z: number, heading: number, bike: TwoWheeler | null): Ped | null {
   let p: Ped | null = null;
   let far = -1;
   for (const q of ts.peds) {
@@ -127,7 +127,7 @@ function bail(ts: TrafficState, x: number, z: number, heading: number, bike: Two
       p = q;
     }
   }
-  if (!p) return;
+  if (!p) return null;
   if (p.conversation) endConversation(ts, p.conversation);
   if (bike) {
     const rig = p.rig;
@@ -139,6 +139,26 @@ function bail(ts: TrafficState, x: number, z: number, heading: number, bike: Two
   p.rig.placed = false;
   // stranded a moment, then either runs off or walks back to the sidewalk and carries on along it
   p.bail = { time: 0, heading, flee: Math.random() < 0.6, runFor: 5 + Math.random() * 4, goal: null, nextSearch: 0, best: Infinity, since: 0 };
+  return p;
+}
+
+// v left standing in the road by its driver (gunfire.ts frighten, shootVehicle): out of the door and running from where
+// the shots came from (`run`), or slumped at the wheel, shot (nobody gets out). It stays there, empty, its engine
+// running, for anyone to take (vehicleNear)
+function abandon(ts: TrafficState, v: Vehicle, run: boolean): void {
+  if (v.wrecked || v.bike || v.moto) return;
+  v.wrecked = v.abandoned = true;
+  v.blink = 0;
+  v.fright = null;
+  if (!run) return;
+  const yaw = v.yaw + v.yawOffset;
+  const side = v.halfWidth + 0.55, ahead = v.bus ? 4.6 : 0.35; // (the driver's door, on its left; a camión's at its nose)
+  const p = bail(ts, v.x + Math.cos(yaw) * side + Math.sin(yaw) * ahead, v.z - Math.sin(yaw) * side + Math.cos(yaw) * ahead, yaw, null);
+  if (!p?.bail) return;
+  p.bail.flee = true;
+  p.bail.runFor = 7 + Math.random() * 5;
+  p.bail.fromX = v.frightX;
+  p.bail.fromZ = v.frightZ;
 }
 
 // Can someone walk straight from (x0, z0) to (x1, z1) without going through a wall?
@@ -262,4 +282,4 @@ function renderBailed(ts: TrafficState, p: Ped, dt: number): void {
   ts.pedCrowd.add(p.rig, Math.hypot(p.x - ts.focusX, p.z - ts.focusZ));
 }
 
-export { BAIL_STUN, vehicleNear, hijack, lookKit, bail, bailWalk, renderBailed };
+export { BAIL_STUN, vehicleNear, hijack, lookKit, bail, abandon, bailWalk, renderBailed };

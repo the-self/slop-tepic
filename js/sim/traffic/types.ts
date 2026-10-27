@@ -346,6 +346,15 @@ interface VehicleBase {
   wheelSpin: number;
   damage: CarDamage | null;
   wrecked: boolean;
+  /** its driver frightened by gunfire near or a round into it (gunfire.ts frighten): what they do about it, s it lasts
+   *  (a 'bail' lasts till it has stopped and they are out), and where the shots came from (m); null: calm */
+  fright: Fright | null;
+  frightT: number;
+  frightX: number;
+  frightZ: number;
+  /** left standing in the road with nobody in it (its driver ran off, or was shot at the wheel): wrecked, as far as
+   *  the traffic goes, though its engine runs: the player can take it */
+  abandoned: boolean;
   smokeCarry: number;
   /** a car thrown about in a crash near the player: its body in Jolt (crash), or null */
   crash: CarCrash | null;
@@ -359,6 +368,10 @@ interface VehicleBase {
   _cosY: number;
   _braking: number;
 }
+
+/** What a frightened driver does: floors it out of there, freezes where they are (heads down), or stops and gets out
+ *  and runs */
+type Fright = 'flee' | 'freeze' | 'bail';
 
 /** A car of the traffic (taxis, police cruisers, combis and the car models), drawn as its model's body shape stretched
  *  to its size (sx, sy, sz; sw the wheels'), its paint as float32 rgb */
@@ -632,7 +645,7 @@ interface LookKit {
 
 export type {
   DriverModel, LaneEntry, TrafficNode, TrafficMove, TrafficEdge, StreetCrossing, TrafficNetwork, PedTrack, Conversation,
-  SidewalkPoint, Bail, Ped, Ride, CurbStop, BikeWreck, TwoWheelKit, VehicleBase, Car, Bus, Bike, Moto, TwoWheeler, Vehicle,
+  SidewalkPoint, Bail, Fright, Ped, Ride, CurbStop, BikeWreck, TwoWheelKit, VehicleBase, Car, Bus, Bike, Moto, TwoWheeler, Vehicle,
   Hijackable, VehicleKind, DrivenVehicle, OnEdge, CrashBody, CarCrash, CrashedCar, Spark, TrafficPlayer,
   TrafficPlayerEntity, ParkedVehicle, SirenSource, BumpBody, TrafficCollision, MayhemListener, KnockListener, SmokeEmitter,
   SolidQuery, HillQuery, SurfaceQuery, TrafficRayHit, RayAccept, BodyBox, RoadSpot, RouteLook, TakenVehicle,
