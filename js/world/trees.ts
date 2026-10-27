@@ -2,7 +2,9 @@ import * as THREE from 'three/webgpu';
 import { lights } from 'three/tsl';
 import { createTreeMaterial } from '../render/tsl-materials.ts';
 import { liftAt } from './ground.ts';
+import { hashPos } from './hash.ts';
 import type { Collider } from './buildings.ts';
+import type { PropBody } from '../sim/mayhem.ts';
 
 // js/world/trees.ts
 // Procedural street & park trees of Tepic, planted by street-details.ts (section 7):
@@ -20,6 +22,9 @@ import type { Collider } from './buildings.ts';
 // - Three levels of detail (two variants per species up close), picked per tree from the camera distance and
 //   regrouped per spatial cell / species / variant / level whenever the camera has moved a few metres (the farther
 //   the level, the wider its cells: LEVEL_CELL)
+// - The trees a car fells (sim/mayhem.ts, through street-details.ts): those whose trunk is thin enough to give
+//   (treeFall: the palms and the young and street trees; an old laurel or mango stops the car), each a body of its own
+//   size, taken out of the field and drawn falling in full detail (createTreeField fell & standIn)
 
 const V3 = THREE.Vector3;
 
@@ -1097,6 +1102,22 @@ interface TreeCell {
 // a few trees a cell at 200 m (~460 meshes of ~10 crowns at street level, ~300 tree draws a frame), share wider
 // squares: the coarse trees from 105 m, the whole-crown cards from 420 m. Near ones keep small cells to cull finely.
 const LEVEL_CELL = [200, 600, 1600];
+
+// Felling: a trunk's radius (m, at its foot's flare) and the closing speed (m/s) a car snaps it at: the thinner, the
+// slower (a young jacaranda at ~23 km/h, a street laurel at ~50); thicker than the last, it stands (and stops the car).
+// A palm's fibrous trunk snaps at ~40 km/h whatever its size. How hard each is to hit (player/stats.ts hardness)
+const FELL: { r: number; at: number; hard: number }[] = [
+  { r: 0.16, at: 6.5, hard: 0.4 },
+  { r: 0.24, at: 10, hard: 0.6 },
+  { r: 0.3, at: 14, hard: 0.8 }
+];
+const PALM_FELL = { at: 11, hard: 0.7 };
+const WOOD = 700; // kg/m³, green wood, its crown thrown in by FELL_CROWN
+const FELL_CROWN = 1.6;
+const FELL_MASS: [number, number] = [150, 1200]; // kg (heavier still, a car would stop dead on it: as mayhem.ts' poles)
+// The crown's box (m, half its width): a core of the crown, not all of it. The branches give against a wall, where a box
+// as wide as the crown, beside a facade the sidewalk trees all stand by, would be inside it and Jolt would throw it out
+const CROWN_CORE: [number, number] = [0.5, 0.9];
 const LOD_NEAR = 105; // full detail within (m)
 const LOD_MID = 420; // coarse cards & branches within; whole-crown cards beyond
 const LOD_HYSTERESIS = 6;
@@ -1105,10 +1126,6 @@ const LOD_HYSTERESIS = 6;
 const MAX_DIST = [3000, 1600, 950];
 const LOW_CUTOFF = 1150;
 
-function hashPos(x: number, y: number, z: number) {
-  const s = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;
-  return s - Math.floor(s);
-}
 
 /**
  * The trunks of the trees at `sites` (as createTreeField draws them) as colliders for the player (controllers.ts): a
@@ -1125,6 +1142,47 @@ function treeTrunkColliders(sites: TreeSite[]) {
     out.push({ minX: t.x - r, maxX: t.x + r, minZ: t.z - r, maxZ: t.z + r, minY: y - 0.5, maxY: y + Math.min(sp.trunk.top, 4) * s });
   }
   return out;
+}
+
+/** A tree a car can fell: its body (in its own frame: foot at the origin, turned `yaw`), how hard it is to hit */
+interface TreeFall {
+  def: PropBody;
+  yaw: number;
+  hard: number;
+}
+
+/**
+ * Whether the tree `t` gives to a car (null: too thick, it stands), and as what body: its trunk's cylinder up to where
+ * its crown starts (a palm's, near its top), and its crown's core from there up to `top` m (the crown `half` m round:
+ * CROWN_CORE of it), all at the tree's size. `bodies` keeps one body a size (rounded), shared by the trees of that size.
+ */
+function treeFall(t: TreeSite, top: number, half: number, yaw: number, bodies: Map<string, PropBody>): TreeFall | null {
+  const species = Math.min(SPECIES.length - 1, Math.max(0, t.species || 0));
+  const sp = SPECIES[species];
+  const s = t.scale * (0.9 + hashPos(t.x, 1.3, t.z) * 0.2); // (createTreeField's own)
+  const r = sp.trunk.r * s * Math.max(t.sx || 1, t.sz || 1);
+  const rule = sp.palm ? { ...PALM_FELL, r: Infinity } : FELL.find((f) => r < f.r);
+  if (!rule) return null;
+  // (rounded: a few dozen shapes for the town's trees)
+  const rr = Math.round(r * 50) / 50, hTop = Math.max(2, Math.round(top * 2) / 2);
+  const hw = Math.min(CROWN_CORE[1], Math.max(CROWN_CORE[0], Math.round(half * 0.35 * 10) / 10));
+  const trunk = sp.palm ? hTop - 1.2 : Math.min(sp.trunk.top * s, hTop - 1);
+  const key = `${species}:${rr}:${hTop}:${hw}`;
+  let def = bodies.get(key);
+  if (!def) {
+    const crownH = Math.max(0.8, hTop - trunk);
+    const mass = Math.PI * rr * rr * hTop * WOOD * FELL_CROWN;
+    def = {
+      mass: Math.min(FELL_MASS[1], Math.max(FELL_MASS[0], mass)),
+      cyl: [Math.max(0.06, rr * 0.8), trunk], // (the trunk above its flared foot)
+      boxes: [[0, trunk + crownH / 2, 0, hw, crownH / 2, hw]],
+      breakAt: rule.at,
+      reach: rr,
+      heavy: true
+    };
+    bodies.set(key, def);
+  }
+  return { def, yaw, hard: rule.hard };
 }
 
 /**
@@ -1160,6 +1218,8 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
   const cellOf = new Array<TreeCell>(N * 3); // cell per level
   const tier = new Uint8Array(N);
   const lod = new Uint8Array(N).fill(255);
+  const felled = new Uint8Array(N); // (1: knocked down, drawn by its stand-in: fell)
+  const typeOf = new Array<TreeType>(N); // each tree's full-detail type (its stand-in's)
 
   // Shared geometry types: lod 0 & 1 per species & variant, lod 2 per species
   const types: TreeType[] = [];
@@ -1211,6 +1271,7 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
     tier[i] = Math.min(2, t.tier || 0);
     const mi = meshIndex[sp];
     const treeTypes = [mi.l0[variant], mi.l1[variant], mi.l2];
+    typeOf[i] = mi.l0[variant];
     for (let l = 0; l < 3; l++) {
       const size = LEVEL_CELL[l];
       const key = `${l}:${Math.floor(t.x / size)},${Math.floor(t.z / size)}`;
@@ -1268,7 +1329,7 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
       for (const mi of cell.meshes.values()) counts[mi] = 0;
       const l = cell.level;
       for (const i of cell.trees) {
-        if (lod[i] !== l) continue;
+        if (lod[i] !== l || felled[i]) continue;
         const mi = meshOf[i * 3 + l];
         const mesh = instanced[mi];
         const treeData = mesh.geometry.attributes.aTreeData;
@@ -1364,12 +1425,59 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
     object.matrixWorldAutoUpdate = false;
   });
 
+  /** Tree i felled (sim/mayhem.ts): out of the field, its stand-in drawn in its place */
+  function fell(i: number) {
+    if (felled[i]) return;
+    felled[i] = 1;
+    if (lod[i] !== 255) {
+      dirtyCells.add(cellOf[i * 3 + lod[i]]);
+      rebuild();
+    }
+  }
+
+  /** Tree i's turn (rad) and, in its own turned frame (foot at the origin), its size: its top's height and its crown's
+   *  half width (m) */
+  const _q = new THREE.Quaternion(), _p = new V3(), _s = new V3(), _e = new THREE.Euler(), _m = new THREE.Matrix4();
+  function shapeOf(i: number) {
+    _m.fromArray(mats, i * 16).decompose(_p, _q, _s);
+    const box = typeOf[i].geo.boundingBox; // (TreeGeometryBuilder.build computes it)
+    const top = box ? box.max.y * _s.y : 6;
+    const half = box ? Math.max(-box.min.x, box.max.x, -box.min.z, box.max.z) * Math.max(_s.x, _s.z) * 0.7 : 2;
+    return { yaw: _e.setFromQuaternion(_q, 'YXZ').y, top, half };
+  }
+
+  /** Tree i drawn in full detail by itself, in its own turned frame (foot at the origin): a felled tree's stand-in */
+  function standIn(i: number) {
+    const type = typeOf[i];
+    const geo = new THREE.BufferGeometry();
+    for (const name of Object.keys(type.geo.attributes)) geo.setAttribute(name, type.geo.attributes[name]);
+    geo.setIndex(type.geo.index);
+    geo.boundingSphere = type.geo.boundingSphere;
+    geo.boundingBox = type.geo.boundingBox;
+    geo.setAttribute('aTreeData', new THREE.InstancedBufferAttribute(data.slice(i * 4, i * 4 + 4), 4));
+    const mesh = new THREE.InstancedMesh(geo, material, 1);
+    mesh.name = `FelledTree_${i}`;
+    _m.fromArray(mats, i * 16).decompose(_p, _q, _s);
+    // (as main.ts left the field's: storage on WebGPU, so the tree's pipeline is the one compiled already)
+    const array = new Float32Array(16);
+    _m.makeScale(_s.x, _s.y, _s.z).toArray(array);
+    mesh.instanceMatrix = instanced.at(0)?.instanceMatrix instanceof THREE.StorageInstancedBufferAttribute
+      ? new THREE.StorageInstancedBufferAttribute(array, 16)
+      : new THREE.InstancedBufferAttribute(array, 16);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.computeBoundingSphere();
+    if (mesh.boundingSphere) mesh.boundingSphere.radius += type.windPadding;
+    return mesh;
+  }
+
   const stats = {
     trees: N,
     triangles: geos.map((v) => v.map((l) => l.map((g) => (g.userData as TreeGeometryStats).triangles))),
     cards: geos.map((v) => v.map((l) => l.map((g) => (g.userData as TreeGeometryStats).cards)))
   };
-  return { group, material, atlas, update, meshes: instanced, stats };
+  return { group, material, atlas, update, meshes: instanced, stats, fell, shapeOf, standIn };
 }
 
-export { createTreeField, treeTrunkColliders, createLeafAtlas, buildTreeGeometries, SPECIES as TREE_SPECIES };
+export type { TreeFall };
+export { createTreeField, treeTrunkColliders, treeFall, createLeafAtlas, buildTreeGeometries, SPECIES as TREE_SPECIES };

@@ -216,3 +216,12 @@ test('a footbridge carries a walker up its stairs, over its deck and down, and h
   // beside it, nothing
   assert.equal(deckLift(20, 3, 6.1), 0);
 });
+
+test('no hill rises over a car park: its lot is laid on the town\'s floor, and its cars stand on what everyone does', async () => {
+  const { carParks, layStalls } = await import('../js/world/parking.ts');
+  let worst = 0;
+  for (const lot of carParks(GEO.parking)) {
+    for (const s of layStalls(lot)) worst = Math.max(worst, Math.abs(groundHeight(s.x, s.z) - townHeight(s.x, s.z)));
+  }
+  assert.ok(worst < 0.01, `a stall ${worst.toFixed(2)} m off the lot`);
+});

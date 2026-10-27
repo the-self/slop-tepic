@@ -4,7 +4,9 @@
 // lot, rampAt for what the player stands on), the white lines between the stalls, laid on the town's slopes like
 // the road paint, and the cars standing in some of the stalls. The cars are the traffic's own body shapes stretched to
 // real models (models/cars, by their rarity), drawn only round the camera: the full model near it, the ~250-triangle
-// stand-in further out, nothing past CAR_RADIUS. Each one stops the player like a wall (a collider of the city's).
+// stand-in further out, nothing past CAR_RADIUS. Each one stops the player like a wall (a collider of the city's), and
+// can be stolen (carNear, take: app/boarding.ts), the player's own car then taking its place; one with another vehicle
+// standing in it is taken away too (clearAt: the player's car put back in the stall on a reload, a friend's who stole it).
 import * as THREE from 'three/webgpu';
 import { GEO } from './city-geodata.js';
 import { blockAt } from './city-config.ts';
@@ -136,8 +138,11 @@ function rampTriangles(out: number[], r: Ramp): void {
   }
 }
 
+/** A parked car's wall: knocked out (`broken`, as mayhem.ts does a sign post's) once the player drives it off */
+type ParkedCollider = Collider & { broken?: boolean };
+
 /** A parked car as drawn: where it stands (m, on the ground), its turn and tilt (rad), its body shape stretched to its
- *  model's size, its paint, and its half width & length (m) */
+ *  model's size, its model and paint, its half width & length (m), its wall, and whether the player took it */
 interface PlacedCar {
   x: number;
   y: number;
@@ -146,6 +151,7 @@ interface PlacedCar {
   pitch: number;
   roll: number;
   body: string;
+  model: string;
   sx: number;
   sy: number;
   sz: number;
@@ -153,6 +159,30 @@ interface PlacedCar {
   halfW: number;
   halfL: number;
   height: number;
+  collider: ParkedCollider | null;
+  taken: boolean;
+}
+
+/** A parked car the player took (take): where it stood and its looks, for the player's own car to take its place */
+interface TakenParkedCar {
+  /** where it stood (m) */
+  x: number;
+  /** the lot's surface under it (m) */
+  y: number;
+  z: number;
+  /** rad, 0 facing +z */
+  heading: number;
+  bodyType: string;
+  /** its model's id (models/cars) */
+  model: string;
+  /** 0xrrggbb */
+  paint: number;
+}
+
+/** The parked car nearest a point (carNear), and how far its body is from it (m) */
+interface NearParkedCar {
+  car: PlacedCar;
+  distance: number;
 }
 
 /** One body shape's instanced meshes: the full model and the stand-in, room for every parked car of that shape */
@@ -178,17 +208,17 @@ function placeCar(car: ParkedCar, y0: number): PlacedCar | null {
   const ahead = (liftAt(cx + fx * 1.5, cz + fz * 1.5) - liftAt(cx - fx * 1.5, cz - fz * 1.5)) / 3;
   const right = (liftAt(cx + fz * 0.8, cz - fx * 0.8) - liftAt(cx - fz * 0.8, cz + fx * 0.8)) / 1.6;
   return {
-    x: cx, y: liftAt(cx, cz) + y0, z: cz, yaw: car.heading, pitch: -Math.atan(ahead), roll: Math.atan(right), body,
+    x: cx, y: liftAt(cx, cz) + y0, z: cz, yaw: car.heading, pitch: -Math.atan(ahead), roll: Math.atan(right), body, model: model.id,
     sx: model.size[1] / dims.width, sy: model.size[2] / dims.height, sz: model.size[0] / dims.length,
     paint: new THREE.Color(paints[Math.floor(car.paint * paints.length) % paints.length]),
-    halfW: model.size[1] / 2, halfL: model.size[0] / 2, height: model.size[2]
+    halfW: model.size[1] / 2, halfL: model.size[0] / 2, height: model.size[2], collider: null, taken: false
   };
 }
 
 /**
  * Builds the car parks into the scene (their ground & paint to `streamer` when there is one, laid tile by tile round
- * the camera). Returns the lots (for what must keep clear of them: the yards' trees), the parked cars' colliders, and
- * `update(x, z)`, which hands the cars round the camera their instances
+ * the camera). Returns the lots (for what must keep clear of them: the yards' trees), the parked cars' colliders,
+ * `update(x, z)`, which hands the cars round the camera their instances, and `carNear` & `take` for stealing one
  */
 function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addLayer'> | null = null) {
   const lots = carParks(GEO.parking);
@@ -311,11 +341,12 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   }
 
   // The parked cars stop the player like the walls (their turned boxes, a little short of the roof)
-  const colliders: Collider[] = placed.map((c) => {
+  const colliders: ParkedCollider[] = placed.map((c) => {
     const cs = Math.cos(c.yaw), sn = Math.sin(c.yaw);
     const ex = Math.abs(cs) * c.halfW + Math.abs(sn) * c.halfL, ez = Math.abs(sn) * c.halfW + Math.abs(cs) * c.halfL;
-    return { minX: c.x - ex, maxX: c.x + ex, minZ: c.z - ez, maxZ: c.z + ez, minY: c.y, maxY: c.y + c.height * 0.9,
+    c.collider = { minX: c.x - ex, maxX: c.x + ex, minZ: c.z - ez, maxZ: c.z + ez, minY: c.y, maxY: c.y + c.height * 0.9,
       obb: { cx: c.x, cz: c.z, hx: c.halfW, hz: c.halfL, cs, sn } };
+    return c.collider;
   });
 
   // The cars by CAR_CELL cell, and per body shape its two instanced meshes (the traffic's materials: the same pipelines)
@@ -362,6 +393,7 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
         const list = cells.get(cellKey(ix, iz));
         if (!list) continue;
         for (const c of list) {
+          if (c.taken) continue;
           const d = Math.hypot(c.x - x, c.z - z);
           const m = meshes.get(c.body);
           if (d > CAR_RADIUS || !m) continue;
@@ -394,6 +426,56 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     }
   }
 
+  let found = Infinity; // m from the body of the car `nearest` last found
+  // The parked car whose body is nearest (x, z), within `reach` m of it (as the traffic's vehicleNear), or null
+  function nearest(x: number, z: number, reach: number): PlacedCar | null {
+    let best: PlacedCar | null = null;
+    let bestDistance = reach;
+    const ix0 = Math.floor(x / CAR_CELL), iz0 = Math.floor(z / CAR_CELL);
+    for (let ix = ix0 - 1; ix <= ix0 + 1; ix++) {
+      for (let iz = iz0 - 1; iz <= iz0 + 1; iz++) {
+        const list = cells.get(cellKey(ix, iz));
+        if (!list) continue;
+        for (const c of list) {
+          const dx = x - c.x, dz = z - c.z;
+          if (c.taken || Math.abs(dx) > 10 || Math.abs(dz) > 10) continue;
+          const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw);
+          const along = Math.max(0, Math.abs(dx * fx + dz * fz) - c.halfL);
+          const across = Math.max(0, Math.abs(dz * fx - dx * fz) - c.halfW);
+          const distance = Math.hypot(along, across);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            best = c;
+          }
+        }
+      }
+    }
+    found = bestDistance;
+    return best;
+  }
+  /** The parked car whose body is nearest (x, z), within `reach` m of it, and how far, or null */
+  function carNear(x: number, z: number, reach: number): NearParkedCar | null {
+    const car = nearest(x, z, reach);
+    return car ? { car, distance: found } : null;
+  }
+  /**
+   * Takes away the parked car whose body (x, z) is in: a vehicle stands in its stall. The player's own car put back
+   * where they left it, in the stall they stole it from (the parked cars come back on a reload), or another player's
+   * who drove it off (a theft isn't sent: every client parks the same cars)
+   */
+  function clearAt(x: number, z: number): void {
+    const car = nearest(x, z, 1e-3);
+    if (car) take(car);
+  }
+
+  /** Takes `car` off its stall for good (its instance and its wall gone): where it stood and its looks */
+  function take(car: PlacedCar): TakenParkedCar {
+    car.taken = true;
+    if (car.collider) car.collider.broken = true;
+    lastX = Infinity; // (the cars round the camera handed out again, without it, on the next update)
+    return { x: car.x, y: car.y, z: car.z, heading: car.yaw, bodyType: car.body, model: car.model, paint: car.paint.getHex() };
+  }
+
   // Whether (x, z) is ground that stays open to the street: a lot, a driveway or an entrance's mouth (the lots by
   // RAMP_CELL cell, with the reach of their driveways round them)
   const lotCells = new Map<number, CarPark[]>();
@@ -420,11 +502,14 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     contains: (px: number, pz: number) => lots.some((l) => inCarPark(l, px, pz)),
     keepsOpen,
     rampAt,
-    update
+    update,
+    carNear,
+    take,
+    clearAt
   };
 }
 
 type CarParksBuild = ReturnType<typeof buildCarParks>;
 
-export type { CarParksBuild };
+export type { CarParksBuild, PlacedCar, TakenParkedCar };
 export { buildCarParks };

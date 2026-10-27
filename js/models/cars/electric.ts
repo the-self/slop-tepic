@@ -20,8 +20,8 @@ export const CARS: CarModel[] = [
     gears: 1, top: 217, limited: true, accel: 4.8, rarity: 0.6, paints: [0xf2f2ee, 0x1a1c20, 0x7d8288, 0x2a5aa8]
   },
   {
-    id: 'tesla-cybertruck', name: 'Tesla Cybertruck', body: 'wedge', class: 'truck', electric: true,
+    id: 'tesla-cybertruck', glb: 'assets/models/cars/tesla-cybertruck.glb', name: 'Tesla Cybertruck', body: 'wedge', class: 'truck', electric: true,
     size: [5.68, 2.03, 1.79], mass: 3100, drive: 'awd', power: [445, 6000], torque: [1000, 0], redline: 15000,
-    gears: 1, top: 180, limited: true, accel: 4.1, rarity: 0.15, paints: [0xaeb3b8]
+    gears: 1, top: 180, limited: true, accel: 4.1, rarity: 0.15, paints: [0x989ea4] // (bare stainless, as it looks outdoors)
   }
 ];

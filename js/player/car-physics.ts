@@ -42,7 +42,8 @@ export interface Point3 {
 
 /**
  * A wall a vehicle meets (collidersNear): a world box in m (y from its foot to its top, when it has them) and its
- * oriented box; `prop`, a breakable prop's (its breaker's own body stands for it, sim/mayhem.ts)
+ * oriented box; `prop`, a breakable prop's, a wall like the others save while `held` (its breaker's own body stands
+ * for it then, near the player's vehicle: sim/mayhem.ts)
  */
 export interface WallCollider {
   minX: number;
@@ -53,6 +54,7 @@ export interface WallCollider {
   maxY?: number;
   obb?: { cx: number; cz: number; hx: number; hz: number; cs: number; sn: number };
   prop?: unknown;
+  held?: boolean;
 }
 /** The game's world as a vehicle meets it: the height of what it stands on at (x, z) from fromY, the walls near (x, z) */
 export interface CarWorld {
@@ -208,10 +210,12 @@ export interface PhysicsWorld {
   system: Jolt.PhysicsSystem;
   bodies: Jolt.BodyInterface;
   groundAt: CarWorld['groundAt'];
-  layers: { ragdoll: number; ragdollGround: number };
+  layers: { ragdoll: number; ragdollGround: number; debris: number };
   // a static body of ground n samples cell m apart a side round (cx, cz), sampled from fromY; or `body` reshaped
   groundField(body: Jolt.Body | null, cx: number, cz: number, fromY: number, n: number, cell: number): Jolt.Body;
   dropBody(body: Jolt.Body): void;
+  /** Collider c's wall out of the world now (its breaker holds it: sim/mayhem.ts) */
+  dropWall(c: WallCollider): void;
 }
 /** A vehicle in Jolt (add): set its `input` before a step, read its `out` after one */
 export interface PhysicsVehicle {
@@ -265,6 +269,8 @@ const LAYER_MOVING = 1; // the vehicles
 const LAYER_RAGDOLL = 2; // people's parts (sim/ragdolls.ts)
 const LAYER_RAGDOLL_GROUND = 3; // the ground under each of them, met by nothing else (a vehicle's wheels would find it
 // too, a field on a coarser grid than their own)
+const LAYER_DEBRIS = 4; // a heavy prop falling (a CFE pole, a tree: sim/mayhem.ts), through the car that snapped it
+const LAYERS = 5;
 const PATCH_CELL = 0.5; // m between the ground's samples
 const PATCH_SAMPLES = 64; // per side: a 31.5 m square
 const PATCH_RECENTRE = 6; // m a vehicle may move from its patch's centre before it is sampled again around it
@@ -376,23 +382,25 @@ function leanAndPitch(fx: number, fy: number, fz: number, ux: number, uy: number
  */
 function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
   const settings = new Jolt.JoltSettings();
-  const pairs = new Jolt.ObjectLayerPairFilterTable(4);
+  const pairs = new Jolt.ObjectLayerPairFilterTable(LAYERS);
   pairs.EnableCollision(LAYER_STATIC, LAYER_MOVING);
   pairs.EnableCollision(LAYER_MOVING, LAYER_MOVING);
   pairs.EnableCollision(LAYER_STATIC, LAYER_RAGDOLL);
   pairs.EnableCollision(LAYER_MOVING, LAYER_RAGDOLL);
   pairs.EnableCollision(LAYER_RAGDOLL, LAYER_RAGDOLL);
   pairs.EnableCollision(LAYER_RAGDOLL_GROUND, LAYER_RAGDOLL);
+  for (const other of [LAYER_STATIC, LAYER_RAGDOLL, LAYER_RAGDOLL_GROUND, LAYER_DEBRIS]) pairs.EnableCollision(other, LAYER_DEBRIS);
   // broad phase: what never moves, and what does
-  const bp = new Jolt.BroadPhaseLayerInterfaceTable(4, 2);
+  const bp = new Jolt.BroadPhaseLayerInterfaceTable(LAYERS, 2);
   const still = new Jolt.BroadPhaseLayer(0), moving = new Jolt.BroadPhaseLayer(1);
   bp.MapObjectToBroadPhaseLayer(LAYER_STATIC, still);
   bp.MapObjectToBroadPhaseLayer(LAYER_RAGDOLL_GROUND, still);
   bp.MapObjectToBroadPhaseLayer(LAYER_MOVING, moving);
   bp.MapObjectToBroadPhaseLayer(LAYER_RAGDOLL, moving);
+  bp.MapObjectToBroadPhaseLayer(LAYER_DEBRIS, moving);
   settings.mObjectLayerPairFilter = pairs;
   settings.mBroadPhaseLayerInterface = bp;
-  settings.mObjectVsBroadPhaseLayerFilter = new Jolt.ObjectVsBroadPhaseLayerFilterTable(bp, 2, pairs, 4);
+  settings.mObjectVsBroadPhaseLayerFilter = new Jolt.ObjectVsBroadPhaseLayerFilterTable(bp, 2, pairs, LAYERS);
   settings.mMaxBodies = 4096;
   const jolt = new Jolt.JoltInterface(settings);
   Jolt.destroy(settings);
@@ -413,9 +421,10 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
   const systems: PhysicsSystemHooks[] = [];
   const shared: PhysicsWorld = {
     Jolt, system, bodies, groundAt: world.groundAt,
-    layers: { ragdoll: LAYER_RAGDOLL, ragdollGround: LAYER_RAGDOLL_GROUND },
+    layers: { ragdoll: LAYER_RAGDOLL, ragdollGround: LAYER_RAGDOLL_GROUND, debris: LAYER_DEBRIS },
     groundField: (body, cx, cz, fromY, n, cell) => groundField(body, cx, cz, fromY, n, cell, LAYER_RAGDOLL_GROUND),
-    dropBody
+    dropBody,
+    dropWall
   };
 
   // ---- The ground -----------------------------------------------------------------------------------------------
@@ -501,6 +510,14 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
     fedCount = foci.length;
   }
 
+  // Collider c's wall out of the world (a prop its breaker has just stood in Jolt as itself: none fed again while held)
+  function dropWall(c: WallCollider): void {
+    const body = walls.get(c);
+    if (!body) return;
+    dropBody(body);
+    walls.delete(c);
+  }
+
   // Whether the walls round the far movers want feeding again: one moved WALL_REFRESH m (or came, or went)
   function fociMoved(): boolean {
     if (fedCount !== foci.length) return true;
@@ -514,8 +531,8 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
   // set to `stamp`
   function stampWalls(x: number, z: number, y: number, reach: number, mark: '_player' | '_focus', stamp: number): void {
     for (const c of world.collidersNear(x, z, reach)) {
-      // (a breakable prop's is its breaker's body, sim/mayhem.ts)
-      if (c.prop) continue;
+      // (a breakable prop's, while its breaker holds it, is the breaker's own body: sim/mayhem.ts)
+      if (c.prop && c.held) continue;
       // (the list covers whole cells around (x, z): only what really comes within reach)
       const ox = Math.max(c.minX - x, 0, x - c.maxX), oz = Math.max(c.minZ - z, 0, z - c.maxZ);
       if (ox * ox + oz * oz > reach * reach) continue;

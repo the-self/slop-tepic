@@ -66,6 +66,9 @@ crop the neighbours, scale it to a known height, and simplify it.
     by Asadawut.Kaewma;
   - `volkswagen-virtus.glb`: ["2022 Volkswagen Virtus GT"](https://sketchfab.com/3d-models/2022-volkswagen-virtus-gt-3955e5c050f843398b49b2b21ab2f232)
     by BHP3D.
+- `cars/tesla-cybertruck.glb`: modelled by script in Blender (`tools/models/blender/tesla-cybertruck.py`, on
+  `carlib.py`) from its real sizes and photographs, then prepared with `tools/models/prepare-made.mjs`
+  (`tools/models/jobs/cars/tesla-cybertruck.made.json`). Our own work, no third party's.
 - `people/player.glb`: the player, made with Meshy (Meshy 7.1, multi-image-to-3d) from a front and a back view that
   Meshy (Nano Banana Pro) drew from the prompts in `tools/models/jobs/people/player.json`; reposed into the crowd's bind
   pose and skinned to its 15 bones by `tools/models/prepare-person.mjs`.

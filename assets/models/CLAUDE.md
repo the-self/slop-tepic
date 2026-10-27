@@ -120,6 +120,11 @@ Use `--keep-width` for props that stand alone.
 
 ## Cars and people
 
+- **The heavy files are unhooked for now** (2026-10-27): the Onix (111k triangles, 13 MB), the NP300 (115k, 12 MB),
+  the Virtus (86k, 9 MB) and the Versa (60k, 8 MB) cost the game too much, in traffic and to download. Their files
+  stay here and in their jobs, but their models have no `glb` field: the traffic draws them with their body shapes.
+  The light files (the Meshy cars at ~8k, the Tsuru at ~7k, the Cybertruck at ~10k) stay on. Put one back by its
+  `glb` field once it is lighter (a lower `--faces`, or remade).
 - **Cars are in.** The ten best sellers (Versa, Aveo, March, NP300, Vento, Gol, Kicks, Onix, Yaris, Rio) are
   Meshy models in `assets/models/cars/`. Nine were drawn white from one prompt each (`tools/models/jobs/cars/`, 18
   credits, Meshy T2.5 smart topology, ~8k triangles). The Versa is the pilot of the better way: four views drawn in a
@@ -243,3 +248,20 @@ Use `--keep-width` for props that stand alone.
     turns round; "Idle 3" (243) stands still.
     **Trap**: never `skeleton.pose()` on a Meshy rig: the hips' parent is the Armature (scale 0.01), not a bone, so
     pose() gives the hips the armature's scale again and the body shrinks to a dot (only its shadow shows).
+- **Cars modelled by script in Blender** (`tools/models/blender/<id>.py`, on `carlib.py`): when no good model exists,
+  write one. The Cybertruck is the first: a body lofted through cross-sections (straight lines between a few
+  stations, as its flat panels are), its windows inset panes with black frames, wheel arches cut, edges bevelled,
+  shut lines and slats as dark strips, lamps as bars on the steel, wheels with lugged tyres and petalled covers; each
+  part's material named for its role (paint, glass, trim, light, lamp, amber, tyre, aero...), which
+  `prepare-made.mjs` reads (`<id>.roles.json` maps the rest). `blender -b --factory-startup -P <script> -- <out.glb>
+  [<render dir>]` exports it and, with a folder, renders it in Cycles (`carlib.hero`) to judge it against photographs
+  from the same camera (a view's lens and target can be set).
+  - **Traps**: stations must run nose to tail (one out of order folds the body through itself: the script sorts
+    them). Cut every wheel well in one boolean (cut one at a time, the exact solver once read the body as inside
+    out and added the next cutter to it). Don't cut shut lines into the steel: a groove's edges shade as bright
+    streaks and a cut too many broke the body; dark strips on it read the same. Merge the points that fall together
+    before insetting windows (a zero-length edge bent a window's frame). Folds too shallow to bevel (the sill) are
+    marked sharp, or the smoothing bends the panels' shading into smears. A window's frame wider than its glass
+    folds into spikes: stop the glass where it is still taller than its frame.
+  - **Judging it**: the photographs' light matters as much as the shape: a bright hazy sky, a grey horizon, dark
+    asphalt (`carlib.hero`); a flat grey sky made the steel read as white plastic. Compare crops of the same parts.

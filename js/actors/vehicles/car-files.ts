@@ -21,6 +21,7 @@ export interface CarFile {
   wheel: { right: THREE.BufferGeometry; left: THREE.BufferGeometry } | null;
   map: THREE.Texture;
   paintMap: THREE.Texture | null; // R the paint mask, G the roughness (prepare.mjs paintMask)
+  glowMap: THREE.Texture | null; // what glows by itself day and night (prepare-made.mjs 'drl': a light bar), none mostly
   wheels: CarFileWheels | null; // (none: a file from before the wheels were taken out, its own drawn on it)
   // its lighter levels for further off, nearest first (tools/models/add-lods.mjs: a heavy car's ~30% & ~10%); none for
   // a light one
@@ -75,6 +76,17 @@ function isSingleMesh(o: THREE.Object3D): o is THREE.Mesh<THREE.BufferGeometry, 
   return o instanceof THREE.Mesh && !Array.isArray(o.material);
 }
 
+// The file's emissive texture, sampled without mipmaps: a lamp's few texels, averaged with the black round them, dimmed
+// out further off than it should
+function glowMapOf(material: THREE.MeshStandardMaterial): THREE.Texture | null {
+  const map = material.emissiveMap;
+  if (!map) return null;
+  map.generateMipmaps = false;
+  map.minFilter = THREE.LinearFilter;
+  map.needsUpdate = true;
+  return map;
+}
+
 /** Starts loading every car model's file (once; the later calls do nothing). A file that fails is left out. */
 export function loadCarFiles(): void {
   if (started) return;
@@ -110,6 +122,7 @@ export function loadCarFiles(): void {
           wheel: wheel ? { right: wheel.geometry, left: mirrored(wheel.geometry) } : null,
           map: src.material.map,
           paintMap: src.material.roughnessMap,
+          glowMap: glowMapOf(src.material),
           wheels: wheelsOf(src.userData),
           lods
         };

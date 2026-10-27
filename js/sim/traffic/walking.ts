@@ -33,11 +33,11 @@ function walk(ts: TrafficState, p: Ped, dt: number): void {
   }
   // at a bus stop, someone now and then stands waiting for their camión or combi (pickups.ts: the ones they want stop
   // for them there)
-  if (!p.node && !p.cross && p.route?.edge && p.pause <= 0 && ts.clock >= p.restTime && stopNear(ts, p.x, p.z, WAIT_AT_STOP)) {
+  if (!p.jog && !p.node && !p.cross && p.route?.edge && p.pause <= 0 && ts.clock >= p.restTime && stopNear(ts, p.x, p.z, WAIT_AT_STOP)) {
     p.pause = 20 + Math.random() * 40;
     p.restTime = ts.clock + 90 + Math.random() * 90;
   }
-  if (!p.node && p.route?.edge && p.t > 6 && p.t < p.len - 6 && ts.clock >= p.restTime && ts.rainNow < 0.3) {
+  if (!p.jog && !p.node && p.route?.edge && p.t > 6 && p.t < p.len - 6 && ts.clock >= p.restTime && ts.rainNow < 0.3) {
     p.pause = 1.5 + Math.random() * 3;
     p.restTime = ts.clock + 35 + Math.random() * 55;
   }
@@ -189,7 +189,7 @@ function meet(ts: TrafficState, dt: number): void {
   ts.nextMeeting = ts.clock + 1;
   ts.meetingCells.clear();
   for (const p of ts.peds) {
-    if (!p.placed || p.fallen || p.ride || p.node || !p.route?.edge || p.conversation || ts.clock < p.socialTime || p.t < 6 || p.t > p.len - 6) continue;
+    if (!p.placed || p.fallen || p.ride || p.jog || p.node || !p.route?.edge || p.conversation || ts.clock < p.socialTime || p.t < 6 || p.t > p.len - 6) continue;
     const ix = Math.floor(p.x / 2), iz = Math.floor(p.z / 2);
     let partner = null;
     for (let dx = -1; dx <= 1 && !partner; dx++) {

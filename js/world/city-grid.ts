@@ -21,6 +21,7 @@ import { openness } from './lot-greenery.ts';
 import { lampFinder } from './mapped-lamps.ts';
 import { cyclewayRuns, CYCLEWAY_HALF } from './medians.ts';
 import { insidePoly, insideRing, polyCover } from './rings.ts';
+import { inCampusBuilding } from './uan-campus.ts';
 import { PARK_WALK_Y as PARK_Y, PARK_BED_Y as BED_Y, isRaisedPark, offsetPolygonInward, parkBed } from './park-floor.ts';
 import type { Bounds, CityBlock, PointXZ } from './city-config.ts';
 import type { CyclewayPoint } from './medians.ts';
@@ -224,6 +225,34 @@ function setPavingStyle(geo: THREE.BufferGeometry, style: number) {
 
 // With `streamer` (streaming.ts) the flat ground layers go to it, laid tile by tile around the camera, instead of
 // laid on the slopes whole here
+
+// The mapped pitches & the stadiums' fields (OpenStreetMap's leisure=pitch | stadium), by PLAY_CELL m cell: no tree or
+// lamp of the game's own stands on one, nor within PLAY_CLEAR m of its edge (the park's, the lots' & yards')
+const PLAY_CLEAR = 3, PLAY_CELL = 50;
+let PLAYS: Map<number, number[][]> | null = null;
+function onPitch(x: number, z: number): boolean {
+  if (!PLAYS) {
+    PLAYS = new Map();
+    for (const p of GEO.parks) {
+      if (p.cat !== 'pitch' && p.cat !== 'stadium') continue;
+      for (const r of p.rings) {
+        let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+        for (let i = 0; i < r.length; i += 2) { x0 = Math.min(x0, r[i]); x1 = Math.max(x1, r[i]); z0 = Math.min(z0, r[i + 1]); z1 = Math.max(z1, r[i + 1]); }
+        for (let ix = Math.floor((x0 - PLAY_CLEAR) / PLAY_CELL); ix <= Math.floor((x1 + PLAY_CLEAR) / PLAY_CELL); ix++) {
+          for (let iz = Math.floor((z0 - PLAY_CLEAR) / PLAY_CELL); iz <= Math.floor((z1 + PLAY_CLEAR) / PLAY_CELL); iz++) {
+            const k = ix * 100003 + iz;
+            let list = PLAYS.get(k);
+            if (!list) PLAYS.set(k, (list = []));
+            list.push(r);
+          }
+        }
+      }
+    }
+  }
+  return (PLAYS.get(Math.floor(x / PLAY_CELL) * 100003 + Math.floor(z / PLAY_CELL)) ?? []).some((r) =>
+    ([[0, 0], [PLAY_CLEAR, 0], [-PLAY_CLEAR, 0], [0, PLAY_CLEAR], [0, -PLAY_CLEAR]] satisfies [number, number][]).some(([dx, dz]) => insideRing(r, x + dx, z + dz)));
+}
+
 function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addLayer'> | null = null): CityGrid {
   const group = new THREE.Group();
   group.name = 'CityGrid';
@@ -433,6 +462,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
 
   const nearMappedLamp = lampFinder(GEO.lamps);
   function addLamp(x: number, y: number, z: number) {
+    if (onPitch(x, z) || inCampusBuilding(x, z, 1)) return;
     lampMatrices.push(new THREE.Matrix4().makeTranslation(x, y + liftAt(x, z), z));
   }
 
@@ -614,6 +644,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   //    schools' courts): a football field's mown turf & white lines with its goals, or under 700 m2 a painted concrete
   //    court; laid as the smallest rectangle round the mapped outline, just over the ground it is on
   const pitchMat = createPitchMaterial();
+  const PITCH_CLEAR = (GEO.frame.sidewalk || 2.2) + 0.5; // m a pitch keeps in from its block's curb
   {
     const pitchGeos: THREE.BufferGeometry[] = [];
     const goals: THREE.Matrix4[] = [];
@@ -642,8 +673,17 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
       const cu = (best.u0 + best.u1) / 2, cv = (best.v0 + best.v1) / 2;
       const cx = cu * ux - cv * uz, cz = cu * uz + cv * ux;
       if (W > L) { [L, W] = [W, L]; a += Math.PI / 2; ux = Math.cos(a); uz = Math.sin(a); } // (u along the length)
-      if (L < 12 || W < 6 || L > 140) { oddPitches++; continue; }
       const b = blockAt(cx, cz);
+      // (OpenStreetMap's outline may reach over the property line, onto the sidewalk and past the walls: shrunk until
+      // the rectangle and the sidewalk's width round it keep to its block)
+      if (b && !b.rural) {
+        const fits = (l: number, w: number) => [[-1, -1], [1, -1], [1, 1], [-1, 1], [0, -1], [0, 1], [-1, 0], [1, 0]].every(([i, j]) => {
+          const u = i * (l / 2 + PITCH_CLEAR), v = j * (w / 2 + PITCH_CLEAR);
+          return blockAt(cx + u * ux - v * uz, cz + u * uz + v * ux) === b;
+        });
+        for (let k = 0; k < 12 && !fits(L, W); k++) { L *= 0.97; W *= 0.97; }
+      }
+      if (L < 12 || W < 6 || L > 140) { oddPitches++; continue; }
       const y = !b || b.rural ? 0.05 : parkSet.has(b) ? BED_Y + 0.012 : b.park > 0.6 ? PARK_Y + 0.012 : SW_TOP + 0.024;
       const court = L * W < 700 ? 1 : 0;
       const geo = new THREE.PlaneGeometry(L, W).rotateX(-Math.PI / 2).rotateY(-a).translate(cx, y, cz).toNonIndexed();
@@ -657,6 +697,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
       const gw = Math.min(7.32, Math.max(3, 7.32 * k)), gh = gw < 5 ? 2 : 2.44;
       for (const end of [-1, 1]) {
         const gx = cx + ux * end * (L / 2 - 0.4), gz = cz + uz * end * (L / 2 - 0.4);
+        if (inCampusBuilding(gx, gz, 1)) continue; // (a building of the UAN's stands over that end of it)
         goals.push(new THREE.Matrix4().compose(new THREE.Vector3(gx, y + liftAt(gx, gz), gz),
           new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a + (end > 0 ? Math.PI : 0)), new THREE.Vector3(gw / 7.32, gh / 2.44, 1)));
       }
@@ -685,7 +726,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   }
 
   // Park & plaza tree and lamp sites, read by street-details.ts after the city grid is built
-  parkTreeSites = treeSites;
+  parkTreeSites = treeSites.filter((t) => !onPitch(t.x, t.z));
   parkLampSites = lampMatrices.map((m) => ({ x: m.elements[12], y: m.elements[13] + 4.17, z: m.elements[14] }));
   pavedPlazaRects = pavedRects;
   sidewalkBlocks = blockSidewalks; // { cx, cz, w, d } raised sidewalk slabs (cross-street tree rows)
@@ -720,6 +761,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
 export {
   buildCityGrid,
   parkTreeSites,
+  onPitch,
   parkLampSites,
   pavedPlazaRects,
   sidewalkBlocks,
