@@ -2882,6 +2882,31 @@ const benches = [], bins = [], fuel = [];
 }
 
 // =====================================================================================================================
+// 6G. WALLS & FENCES (OSM barrier=wall | fence | retaining_wall, osm_tepic_land.json & osm_tepic_details.json): the
+//     bardas round the lots, the schools & the plants, the fences of the fields and the railings: [kind (0 a plastered
+//     barda, 1 a stone or brick wall, 2 a chain-link or wire fence, 3 an iron railing, 4 a retaining wall), flat points]
+//     each, cut to the box (js/world/barriers.ts stands them up; they stop the player)
+// =====================================================================================================================
+const barriers = [];
+{
+  const tally = [0, 0, 0, 0, 0];
+  const seenIds = new Set();
+  for (const e of [...landOSM.elements, ...detailsOSM.elements]) {
+    const t = e.tags || {};
+    if (e.type !== 'way' || !e.geometry || !/^(wall|fence|retaining_wall)$/.test(t.barrier || '') || seenIds.has(e.id)) continue;
+    seenIds.add(e.id);
+    const kind = t.barrier === 'retaining_wall' ? 4
+      : t.barrier === 'wall' ? (/stone|brick/.test(`${t.material || ''} ${t.wall || ''}`) ? 1 : 0)
+        : /railing|bars|metal/.test(`${t.fence_type || ''} ${t.material || ''}`) ? 3 : 2;
+    for (const piece of clipChain(e.geometry.map((g) => toWorld(g.lon, g.lat)))) {
+      barriers.push([kind, flat(rdp(piece, 0.3))]);
+      tally[kind]++;
+    }
+  }
+  log(`walls & fences: ${tally[0]} bardas, ${tally[1]} stone & brick walls, ${tally[2]} fences, ${tally[3]} railings, ${tally[4]} retaining walls`);
+}
+
+// =====================================================================================================================
 // 7. ASSEMBLE
 // =====================================================================================================================
 const GEO = {
@@ -2982,7 +3007,9 @@ const GEO = {
   benches,
   bins,
   // Gas stations' canopies (6F): [x, z (m), turn (mrad: its length along (cos θ, -sin θ)), length, width (dm)]
-  fuel
+  fuel,
+  // Walls & fences (6G): [kind (0 barda, 1 stone or brick wall, 2 fence, 3 railing, 4 retaining wall), flat points]
+  barriers
 };
 
 const json = JSON.stringify(GEO);

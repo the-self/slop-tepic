@@ -31,6 +31,7 @@ import { buildPowerLines } from '../world/power-lines.ts';
 import { buildPools } from '../world/pools.ts';
 import { buildFootways } from '../world/footways.ts';
 import { buildFurniture } from '../world/furniture.ts';
+import { buildBarriers } from '../world/barriers.ts';
 import { GEO } from '../world/city-geodata.js';
 import type { Collider } from '../world/buildings.ts';
 
@@ -119,6 +120,8 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   for (const c of buildPowerLines(scene).colliders) colliders.push(c);
   // The benches & the gas stations OpenStreetMap maps (their columns, pumps & benches stop the player)
   for (const c of buildFurniture(scene).colliders) colliders.push(c);
+  // The walls & fences OpenStreetMap maps: they stop the player
+  for (const c of buildBarriers(scene).colliders) colliders.push(c);
   mark('bridges');
   return { streamer, cityGrid, farGround, rivers, cityBlocks, stores, carParks, streetDetails, traffic, highwayTraffic, bridges, colliders };
 }

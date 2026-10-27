@@ -324,6 +324,9 @@ export interface CityGeodata {
   bins: number[];
   /** Gas stations' canopies: [x, z (m), turn (mrad: its length along (cos θ, -sin θ)), length, width (dm)]. */
   fuel: [x: number, z: number, turn: number, length: number, width: number][];
+  /** Walls & fences: [kind (0 a plastered barda, 1 a stone or brick wall, 2 a chain-link or wire fence, 3 an iron
+   *  railing, 4 a retaining wall), flat points]. */
+  barriers: [kind: 0 | 1 | 2 | 3 | 4, pts: FlatPoints][];
 }
 
 export declare const GEO: CityGeodata;
