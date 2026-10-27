@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { PersonCrowd, PersonRig } from '../sim/pedestrians.ts';
 import { isTypingInField } from '../world/city-config.ts';
+import { keyBindings } from '../input/keybindings.ts';
 import { PLAYER_PERSON } from '../player/controllers/constants.ts';
 import {
   SEND_HZ,
@@ -8,30 +9,32 @@ import {
   CHAT_MAX,
   encodeHello,
   encodeCreate,
-  encodeSettings,
+  encodeRules,
   encodeState,
   encodeChat,
   encodeShot,
   encodeHit,
   encodeDown,
+  encodeSky,
   decodeServer
 } from '../../shared/protocol.ts';
-import type { Mode, MovedPlayer, PoseSource, RoomSettings, ServerMessage, Shot } from '../../shared/protocol.ts';
-import { NAME_KEY, settingsSummary } from './lobby.ts';
+import type { Mode, MovedPlayer, PoseSource, RoomRules, ServerMessage, Shot, SkyTime, SkyWeather } from '../../shared/protocol.ts';
+import { NAME_KEY, rulesSummary } from './lobby.ts';
 import type { CurrentRoom, RoomEntry } from './lobby.ts';
 import type { CrimeSystem, RemoteTarget } from '../sim/crime.ts';
 import type { CarEntity, PersonEntity, PlayerEntity } from '../player/controllers.ts';
 import { onLocaleChange, setLabel, setText, t } from '../i18n/i18n.ts';
 
 // js/net/multiplayer.ts
+// (Which room it plays in is the lobby's, net/lobby.ts: the region's public rooms, a friend's by its code, or the
+// player's own, whose host alone sets its sky and its rules: police, PvP.)
 // Browser side of the room server (server/index.ts), loaded only with ?multiplayer=1 (see main.ts). Sends the active
 // player's pose SEND_HZ times a second, keeps a local list of the players the server says are in view, and draws them
 // INTERP_DELAY_MS in the past, interpolating between the poses it received so 10 Hz updates look smooth. And what the
 // players do to each other: a chat (Enter), shots seen and heard, the hits the player's shots, blows and blasts land
 // on the others (sim/crime.ts traces them against their poses) and theirs on the player, who killed whom, and riding
-// in a friend's car (F by it: the camera rides along, and F again gets out). Which room it plays in is the lobby's
-// (net/lobby.ts): the region's public rooms, a friend's by its code, or the player's own, whose settings (weather,
-// hour, police, PvP) everyone in it plays with (onSettings: main.ts applies them).
+// in a friend's car (F by it: the camera rides along, and F again gets out). The sky is the room's: the time of day
+// and weather picked in the menu (app/menu.ts) go to everyone in it, and the room's arrives on joining.
 //
 //   ?multiplayer=1               connect (to the page's own server, tools/play.ts; ws://<host>:8787 from localhost)
 //   &mp-server=wss://host/path   another server
@@ -112,6 +115,8 @@ export interface MultiplayerOptions {
   url: string; // ws:// or wss://
   region?: string;
   name?: string;
+  /** the room's sky changed (or, on joining, is what it is): the time of day & weather to show */
+  onSky?: ((time: SkyTime, weather: SkyWeather) => void) | null;
   entry?: RoomEntry; // the room to go into (default: the region's public rooms)
 }
 
@@ -256,23 +261,30 @@ class Multiplayer {
   chat: HTMLDivElement;
   chatLog: HTMLDivElement;
   chatInput: HTMLInputElement;
+  onSky: ((time: SkyTime, weather: SkyWeather) => void) | null;
   entry: RoomEntry;
-  /** the room the player is in (WELCOME; null till then) */
+  /** the room the player is in (WELCOME; null till then): its sky as the room last set it */
   current: (CurrentRoom & { hostId: number }) | null;
   roomsButton: HTMLButtonElement;
-  /** the room's settings arrived or changed: the weather, hour & police are main.ts's to apply */
-  onSettings: ((settings: RoomSettings) => void) | null;
+  /** the room's rules arrived or changed: the police are main.ts's to apply (PvP is this module's) */
+  onRules: ((rules: RoomRules) => void) | null;
   /** the server turned the player away from the room ('room', 'password', 'roomfull', 'wait'): main.ts reopens the lobby */
   onRejected: ((code: string) => void) | null;
   /** the HUD's Rooms button: main.ts opens the lobby */
   onLobby: (() => void) | null;
 
-  constructor({ scene, controllers, camera, crime = null, cameras = null, url, region = DEFAULT_REGION, name = '', entry = { kind: 'public' } }: MultiplayerOptions) {
+  constructor({ scene, controllers, camera, crime = null, cameras = null, url, region = DEFAULT_REGION, name = '', onSky = null, entry = { kind: 'public' } }: MultiplayerOptions) {
     this.scene = scene;
     this.controllers = controllers;
     this.camera = camera;
     this.crime = crime;
     this.cameras = cameras;
+    this.onSky = onSky;
+    this.entry = entry;
+    this.current = null;
+    this.onRules = null;
+    this.onRejected = null;
+    this.onLobby = null;
     this.targets = [];
     this.lastHurtBy = 0;
     this.lastHurtAt = -Infinity;
@@ -282,11 +294,6 @@ class Multiplayer {
     this.url = url;
     this.region = region;
     this.name = name;
-    this.entry = entry;
-    this.current = null;
-    this.onSettings = null;
-    this.onRejected = null;
-    this.onLobby = null;
     this.ws = null;
     this.id = 0;
     this.room = '';
@@ -311,7 +318,7 @@ class Multiplayer {
     this.labels = document.createElement('div');
     this.labels.className = 'mp-labels';
     document.body.append(this.labels);
-    // under the brand panel, top left, so it never collides with the toolbar
+    // under the frame rate, top left
     (document.querySelector('.hud-top-left') ?? document.body).append(this.badge);
     // the rooms: which one the player is in, its code, another to go to (net/lobby.ts)
     this.roomsButton = document.createElement('button');
@@ -331,16 +338,38 @@ class Multiplayer {
     this.connect();
   }
 
-  // The room's settings: PvP here (with it off, the player's shots pass through the others), the rest main.ts's
-  applySettings(settings: RoomSettings, announce: boolean): void {
-    if (this.crime) this.crime.remotes = settings.pvp ? this.targets : NO_TARGETS;
-    this.onSettings?.(settings);
-    if (announce) this.crime?.toast(t('mp.roomChanged', { summary: settingsSummary(settings) }));
+  // A frame to the server, when connected and in the room
+  sendFrame(frame: Uint8Array<ArrayBuffer>): void {
+    if (this.ws?.readyState === WebSocket.OPEN && this.status === 'online') this.ws.send(frame);
   }
 
-  // The host's new settings for the room (the server ignores anyone else's)
-  sendSettings(settings: RoomSettings): void {
-    if (this.current?.host) this.sendFrame(encodeSettings(settings));
+  get online(): boolean {
+    return this.status === 'online';
+  }
+
+  // Sets the room's sky for everyone in it; false when not in a room (the change stays this player's). In a room of
+  // its own the sky is its host's: a guest's choice is turned down (true: it doesn't show either)
+  setSky(time: SkyTime, weather: SkyWeather): boolean {
+    if (!this.online) return false;
+    const room = this.current;
+    if (room?.hostId && !room.host) {
+      this.crime?.toast(t('mp.hostOnly'));
+      return true;
+    }
+    this.sendFrame(encodeSky(time, weather));
+    return true;
+  }
+
+  // The room's rules: PvP here (with it off, the player's shots pass through the others), the police main.ts's
+  applyRules(rules: RoomRules, announce: boolean): void {
+    if (this.crime) this.crime.remotes = rules.pvp ? this.targets : NO_TARGETS;
+    this.onRules?.(rules);
+    if (announce) this.crime?.toast(t('mp.rulesChanged', { summary: rulesSummary(rules) || t('room.rulesUsual') }));
+  }
+
+  // The host's new rules for its room (the server ignores anyone else's)
+  sendRules(rules: RoomRules): void {
+    if (this.current?.host) this.sendFrame(encodeRules(rules));
   }
 
   // Leaves the room for `entry` (another the lobby chose): a fresh connection, the others in view dropped
@@ -355,11 +384,6 @@ class Multiplayer {
     this.stopped = false;
     this.retryMs = 1000;
     this.connect();
-  }
-
-  // A frame to the server, when connected and in the room
-  sendFrame(frame: Uint8Array<ArrayBuffer>): void {
-    if (this.ws?.readyState === WebSocket.OPEN && this.status === 'online') this.ws.send(frame);
   }
 
   // The chat: the lines said in the room (bottom left), and a field Enter opens (Enter again says it, Esc lets it go)
@@ -399,7 +423,7 @@ class Multiplayer {
     };
     button.addEventListener('click', open);
     window.addEventListener('keydown', (e) => {
-      if (e.code !== 'Enter' || !input.hidden || isTypingInField(e)) return;
+      if (!keyBindings.is('chat', e.code) || !input.hidden || isTypingInField(e)) return;
       e.preventDefault();
       open();
     });
@@ -477,22 +501,24 @@ class Multiplayer {
       this.tickMs = 1000 / Math.max(1, msg.tickHz);
       this.status = 'online';
       this.retryMs = 1000;
-      // a room the player opened is one to come back to by its code (the connection drops, the room stays)
-      if (this.entry.kind === 'create') this.entry = { kind: 'join', room: msg.code, password: this.entry.spec.password };
-      this.current = { title: msg.title, code: msg.code, host: msg.host === msg.id, hostId: msg.host, settings: msg.settings };
-      this.applySettings(msg.settings, false);
+      // a room the player opened is one to come back to by its code (the connection drops, the room waits)
+      const entry = this.entry;
+      if (entry.kind === 'create') this.entry = { kind: 'join', room: msg.code, password: entry.spec.password };
+      const sky = entry.kind === 'create' ? entry.spec : { time: 'live' as const, weather: 'live' as const }; // (SKY_SET follows)
+      this.current = { title: msg.title, code: msg.code, host: msg.host === msg.id, hostId: msg.host, rules: msg.rules, ...sky };
+      this.applyRules(msg.rules, false);
       this.renderBadge();
       return;
     }
     if (msg.op === OP.ROOM) {
       const room = this.current;
       if (!room) return;
-      const changed = settingsSummary(msg.settings) !== settingsSummary(room.settings);
+      const changed = rulesSummary(msg.rules) !== rulesSummary(room.rules);
       room.host = msg.host === this.id;
       if (room.host && room.hostId !== msg.host) this.crime?.toast(t('mp.host'));
       room.hostId = msg.host;
-      room.settings = msg.settings;
-      if (changed) this.applySettings(msg.settings, true);
+      room.rules = msg.rules;
+      if (changed) this.applyRules(msg.rules, true);
       return;
     }
     if (msg.op === OP.ERROR) {
@@ -510,6 +536,14 @@ class Multiplayer {
     }
     if (msg.op === OP.SHOT_SEEN) {
       this.crime?.showShot(msg.shot);
+      return;
+    }
+    if (msg.op === OP.SKY_SET) {
+      if (this.current) {
+        this.current.time = msg.time;
+        this.current.weather = msg.weather;
+      }
+      this.onSky?.(msg.time, msg.weather);
       return;
     }
     if (msg.op === OP.HURT) {

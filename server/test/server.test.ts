@@ -6,7 +6,7 @@ import type { Health, RoomList } from '../index.ts';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { OP, PROTOCOL_VERSION, DEFAULT_SETTINGS, encodeHello, encodeCreate, encodeSettings, encodeState, encodeChat, encodeShot, encodeHit, encodeDown, decodeServer } from '../../shared/protocol.ts';
+import { OP, PROTOCOL_VERSION, DEFAULT_RULES, encodeHello, encodeCreate, encodeRules, encodeState, encodeChat, encodeShot, encodeHit, encodeDown, encodeSky, decodeServer } from '../../shared/protocol.ts';
 import type { ServerMessage } from '../../shared/protocol.ts';
 
 const quiet = () => { /* the tests don't print the joins & leaves */ };
@@ -233,39 +233,73 @@ void test('a shot goes to those who see the shooter; a hit reaches its target wi
   }
 });
 
-void test('a player opens a room of their own: friends join by its code and password, the host sets the weather, PvP off stops hits', async () => {
+void test('the sky is the room\'s: a newcomer gets it, a change reaches everyone in the room and no other room', async () => {
+  const server = await createServer({ port: 0, tickHz: 20, viewRadius: 500, log: quiet });
+  try {
+    const { a, b, far, ids } = await threePlayers(server.port);
+    assert.deepEqual(await a.next(OP.SKY_SET), { op: OP.SKY_SET, from: 0, time: 'live', weather: 'live' }, 'a new room starts on the real sky');
+    a.ws.send(encodeSky('midnight', 'rain'));
+    const set = await far.next(OP.SKY_SET, (m) => m.from === ids.a);
+    assert.deepEqual(set, { op: OP.SKY_SET, from: ids.a, time: 'midnight', weather: 'rain' }, 'out of view, still in the room');
+    await a.next(OP.SKY_SET, (m) => m.from === ids.a); // (the one who changed it hears it back: one order for everyone)
+    assert.deepEqual(await b.next(OP.CHAT_LINE, (m) => m.from === 0), { op: OP.CHAT_LINE, from: 0, name: '', text: 'Ana cambió el clima' });
+    const late = connect(server.port);
+    await late.opened;
+    late.ws.send(encodeHello('nayarit', 'Late'));
+    await late.next(OP.WELCOME);
+    assert.deepEqual(await late.next(OP.SKY_SET), { op: OP.SKY_SET, from: 0, time: 'midnight', weather: 'rain' }, 'joining, the room\'s sky');
+    const other = connect(server.port);
+    await other.opened;
+    other.ws.send(encodeHello('jalisco', 'Otro'));
+    assert.deepEqual(await other.next(OP.SKY_SET), { op: OP.SKY_SET, from: 0, time: 'live', weather: 'live' }, 'another region keeps its own');
+    const bad = new Uint8Array([OP.SKY, 99, 0]);
+    b.ws.send(bad); // (no such time of day: dropped)
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(b.frames.filter((m) => m.op === OP.SKY_SET).length, 2, 'the room\'s on joining, and Ana\'s change');
+    for (const c of [a, b, far, late, other]) c.ws.close();
+  } finally {
+    await server.close();
+  }
+});
+
+void test('a player opens a room of their own: friends join by its code and password, only the host sets its sky and rules, PvP off stops hits', async () => {
   const server = await createServer({ port: 0, tickHz: 20, log: quiet });
   try {
     const [ana, beto, intruso, carla] = [connect(server.port), connect(server.port), connect(server.port), connect(server.port)];
     await Promise.all([ana.opened, beto.opened, intruso.opened, carla.opened]);
-    const settings = { ...DEFAULT_SETTINGS, weather: 'rain' as const, pvp: false };
-    ana.ws.send(encodeCreate('nayarit', 'Ana', { title: '  La banda ', password: 'tacos', settings }));
+    const rules = { ...DEFAULT_RULES, pvp: false };
+    ana.ws.send(encodeCreate('nayarit', 'Ana', { title: '  La banda ', password: 'tacos', time: 'midnight', weather: 'rain', rules }));
     const made = await ana.next(OP.WELCOME);
     assert.equal(made.title, 'La banda');
     assert.equal(made.locked, true);
     assert.equal(made.host, made.id, 'whoever opens it hosts it');
-    assert.deepEqual(made.settings, settings);
+    assert.deepEqual(made.rules, rules);
+    assert.deepEqual(await ana.next(OP.SKY_SET), { op: OP.SKY_SET, from: 0, time: 'midnight', weather: 'rain' }, 'it starts on its own sky');
 
     intruso.ws.send(encodeHello('nayarit', 'Intruso', made.code, 'nachos'));
     assert.equal((await intruso.next(OP.ERROR)).code, 'password');
     beto.ws.send(encodeHello('nayarit', 'Beto', made.code.toLowerCase(), 'tacos'));
     const joined = await beto.next(OP.WELCOME);
     assert.equal(joined.room, made.room);
-    assert.deepEqual(joined.settings, settings, 'the room\'s settings, to whoever comes in');
+    assert.deepEqual(joined.rules, rules, 'the room\'s rules, to whoever comes in...');
+    assert.equal((await beto.next(OP.SKY_SET)).weather, 'rain', '...and its sky');
     carla.ws.send(encodeHello('nayarit', 'Carla', 'ZZZZZ'));
     assert.equal((await carla.next(OP.ERROR)).code, 'room');
 
-    // listed (after the public rooms: none open yet), its password never
+    // listed (no public room is open yet), its password never
     const list = (await (await fetch(`http://127.0.0.1:${server.port}/rooms?region=nayarit`)).json()) as RoomList;
-    assert.deepEqual(list.rooms.map((r) => [r.title, r.code, r.players, r.locked]), [['La banda', made.code, 2, true]]);
+    assert.deepEqual(list.rooms.map((r) => [r.title, r.code, r.players, r.locked, r.weather]), [['La banda', made.code, 2, true, 'rain']]);
     assert.ok(!JSON.stringify(list).includes('tacos'));
     assert.equal((await fetch(`http://127.0.0.1:${server.port}/rooms?region=../x`)).status, 400);
 
-    // only the host changes the settings; everyone hears them
-    beto.ws.send(encodeSettings({ ...settings, weather: 'fog' }));
-    ana.ws.send(encodeSettings({ ...settings, weather: 'storm', time: 'night' }));
-    const changed = await beto.next(OP.ROOM);
-    assert.deepEqual(changed, { op: OP.ROOM, host: made.id, settings: { ...settings, weather: 'storm', time: 'night' } });
+    // only the host changes the sky and the rules; everyone hears them
+    beto.ws.send(encodeSky('midday', 'fog'));
+    beto.ws.send(encodeRules({ police: false, pvp: true }));
+    ana.ws.send(encodeSky('live', 'storm'));
+    ana.ws.send(encodeRules({ police: false, pvp: false }));
+    assert.deepEqual(await beto.next(OP.SKY_SET, (m) => m.from === made.id), { op: OP.SKY_SET, from: made.id, time: 'live', weather: 'storm' });
+    assert.deepEqual(await beto.next(OP.ROOM), { op: OP.ROOM, host: made.id, rules: { police: false, pvp: false } });
+    assert.ok(!beto.frames.some((m) => m.op === OP.SKY_SET && m.weather === 'fog'), 'a guest doesn\'t set the sky');
 
     // PvP off: a hit reaches nobody
     ana.ws.send(pose(0, 0, 'person'));

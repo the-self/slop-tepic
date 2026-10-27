@@ -14,6 +14,8 @@ import {
   encodeShot,
   encodeHit,
   encodeDown,
+  encodeSky,
+  encodeSkySet,
   decodeClient,
   encodeWelcome,
   encodeTick,
@@ -22,10 +24,10 @@ import {
   encodeShotSeen,
   encodeHurt,
   encodeCreate,
-  encodeSettings,
+  encodeRules,
   encodeRoom,
   sanitizeTitle,
-  DEFAULT_SETTINGS,
+  DEFAULT_RULES,
   decodeServer
 } from '../shared/protocol.ts';
 import { RoomManager } from '../server/rooms.ts';
@@ -79,12 +81,22 @@ test('a TICK frame carries departures, newcomers and only the moved poses', () =
   assert.deepEqual([m.x, m.y, m.z, m.mode, m.speed], [1, 2, -3, 'car', -5.5]);
   assert.ok(Math.abs(m.heading - Math.PI / 2) < 1e-9);
 
-  const room = { id: 'nayarit#2', title: '', code: '', locked: false, host: 0, settings: DEFAULT_SETTINGS };
+  const room = { id: 'nayarit#2', title: '', code: '', locked: false, host: 0, rules: DEFAULT_RULES };
   assert.deepEqual(decodeServer(encodeWelcome(65535, 200, 10, room)), {
-    op: OP.WELCOME, id: 65535, capacity: 200, tickHz: 10, room: 'nayarit#2', title: '', code: '', locked: false, host: 0, settings: { ...DEFAULT_SETTINGS }
+    op: OP.WELCOME, id: 65535, capacity: 200, tickHz: 10, room: 'nayarit#2', title: '', code: '', locked: false, host: 0, rules: { ...DEFAULT_RULES }
   });
   assert.deepEqual(decodeServer(encodeError('version')), { op: OP.ERROR, code: 'version' });
   assert.equal(decodeServer(frame.subarray(0, frame.length - 3)), null, 'truncated tick');
+});
+
+test('the room\'s sky travels as two indices; unknown names go as the real sky, unknown indices are dropped', () => {
+  assert.deepEqual(decodeClient(encodeSky('twilight', 'fog')), { op: OP.SKY, sky: { time: 3, weather: 6 } });
+  assert.deepEqual(decodeClient(encodeSky('dawn', 'snow')), { op: OP.SKY, sky: { time: 0, weather: 0 } });
+  assert.equal(decodeClient(new Uint8Array([OP.SKY, 5, 0])), null, 'no such time of day');
+  assert.equal(decodeClient(new Uint8Array([OP.SKY, 0, 7])), null, 'no such weather');
+  assert.deepEqual(decodeServer(encodeSkySet(12, { time: 4, weather: 5 })), { op: OP.SKY_SET, from: 12, time: 'midnight', weather: 'storm' });
+  assert.deepEqual(decodeServer(encodeSkySet(0, { time: 200, weather: 200 })), { op: OP.SKY_SET, from: 0, time: 'live', weather: 'live' },
+    'a newer server\'s sky: the real one');
 });
 
 test('a full view of 64 moving players fits in about 1.2 KB per tick', () => {
@@ -168,31 +180,29 @@ test('hits carry their target and capped damage; a death names its killer', () =
   assert.deepEqual(decodeServer(encodeHurt(4, 22)), { op: OP.HURT, from: 4, damage: 22 });
 });
 
-test('a room of one\'s own: CREATE carries its title, password and settings; SETTINGS and ROOM carry the changes', () => {
-  const settings = { weather: 'storm', time: 'night', police: false, pvp: true };
-  assert.deepEqual(decodeClient(encodeCreate('nayarit', 'Ana', { title: 'La banda', password: 'secreto', settings })), {
-    op: OP.CREATE, version: PROTOCOL_VERSION, region: 'nayarit', name: 'Ana', title: 'La banda', password: 'secreto', settings
+test('a room of one\'s own: CREATE carries its title, password, sky and rules; RULES and ROOM carry the changes', () => {
+  const rules = { police: false, pvp: true };
+  assert.deepEqual(decodeClient(encodeCreate('nayarit', 'Ana', { title: 'La banda', password: 'secreto', time: 'midnight', weather: 'storm', rules })), {
+    op: OP.CREATE, version: PROTOCOL_VERSION, region: 'nayarit', name: 'Ana', title: 'La banda', password: 'secreto', sky: { time: 4, weather: 5 }, rules
   });
   assert.deepEqual(decodeClient(encodeHello('nayarit', 'Beto', 'K7Q2M', 'secreto')).room, 'K7Q2M');
-  assert.deepEqual(decodeClient(encodeSettings(settings)), { op: OP.SETTINGS, settings });
-  assert.deepEqual(decodeServer(encodeRoom(7, settings)), { op: OP.ROOM, host: 7, settings });
-  const room = { id: 'nayarit~K7Q2M', title: 'La banda', code: 'K7Q2M', locked: true, host: 7, settings };
+  assert.deepEqual(decodeClient(encodeRules(rules)), { op: OP.RULES, rules });
+  assert.deepEqual(decodeServer(encodeRoom(7, rules)), { op: OP.ROOM, host: 7, rules });
+  const room = { id: 'nayarit~K7Q2M', title: 'La banda', code: 'K7Q2M', locked: true, host: 7, rules };
   const welcome = decodeServer(encodeWelcome(9, 200, 10, room));
   assert.equal(welcome.code, 'K7Q2M');
   assert.equal(welcome.locked, true);
-  assert.deepEqual(welcome.settings, settings);
-  // a newer weather or hour this side doesn't know reads as the real one
-  const frame = encodeSettings(settings);
-  frame[1] = 250;
-  frame[2] = 250;
-  assert.deepEqual(decodeClient(frame).settings, { weather: 'live', time: 'live', police: false, pvp: true });
+  assert.deepEqual(welcome.rules, rules);
+  const bad = encodeCreate('nayarit', 'Ana', { title: '', password: '', time: 'live', weather: 'live', rules });
+  bad[bad.length - 3] = 99; // (a time of day nobody knows)
+  assert.equal(decodeClient(bad), null);
   assert.equal(sanitizeTitle('  La\nbanda\u200b de la Loma, la mejor de todo Tepic  '), 'La banda de la Loma, la mejor de');
 });
 
 test('a player\'s own room: a code to find it by, its host passed on when it leaves, listed after the public ones', () => {
   const rooms = new RoomManager({ capacity: 2 });
   const pub = rooms.join('nayarit', { id: 1 });
-  const own = rooms.create('nayarit', { id: 2 }, { title: 'La banda', password: null, settings: { ...DEFAULT_SETTINGS, police: false } });
+  const own = rooms.create('nayarit', { id: 2 }, { title: 'La banda', password: null, sky: { time: 4, weather: 4 }, rules: { ...DEFAULT_RULES, police: false } });
   assert.match(own.code, /^[A-HJ-NP-Z2-9]{5}$/, 'five letters and digits, none to misread');
   assert.equal(own.id, `nayarit~${own.code}`);
   assert.equal(own.host, 2);

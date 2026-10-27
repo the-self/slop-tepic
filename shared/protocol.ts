@@ -9,15 +9,17 @@
 //   HELLO  u8 op, u8 version, str region, str name, str room, str password   once, right after connecting: room '' is
 //                                                                          the region's public rooms, else a room's id
 //                                                                          or its code (a private room's password)
-//   CREATE u8 op, u8 version, str region, str name, str title, str password, settings   instead of HELLO: opens a room
+//   CREATE u8 op, u8 version, str region, str name, str title, str password, u8 time, u8 weather, u8 rules
+//                                                                          instead of HELLO: opens a room of its own
 //   STATE  u8 op, i32 x, i32 y, i32 z (cm), u16 heading, u8 mode, i16 speed (dm/s)   SEND_HZ times a second
 //   CHAT   u8 op, str text                                                 a line said to the room
 //   SHOT   u8 op, i32 × 3 from, i32 × 3 to (cm), str weapon, u8 flags      a shot the player fired (flags: 1 rocket)
 //   HIT    u8 op, u16 target, u8 damage                                    the player's shot, blow or blast struck a player
 //   DOWN   u8 op, u16 killer (0: nobody)                                   the player was killed
-//   SETTINGS u8 op, settings                                               the room's host changes them
+//   SKY    u8 op, u8 time, u8 weather                                      the player set the room's sky (SKY_TIMES, SKY_WEATHERS)
+//   RULES  u8 op, u8 rules                                                 the host of a room of its own changes them
 // server → client
-//   WELCOME u8 op, u16 id, u16 capacity, u8 tickHz, str room, str title, str code, u8 flags (1 locked), u16 host, settings
+//   WELCOME u8 op, u16 id, u16 capacity, u8 tickHz, str room, str title, str code, u8 flags (1 locked), u16 host, u8 rules
 //   TICK    u8 op, u16 players in room,
 //           u16 nGone,  nGone × u16 id                                    left the view or the room
 //           u16 nInfo,  nInfo × (u16 id, str name)                        came into view
@@ -26,18 +28,26 @@
 //   CHAT    u8 op, u16 from (0: the server), str name, str text            to everyone in the room
 //   SHOT    u8 op, u16 from, i32 × 3 from, i32 × 3 to (cm), str weapon, u8 flags   to those who have the shooter in view
 //   HURT    u8 op, u16 from, u8 damage                                     to the player struck
-//   ROOM    u8 op, u16 host, settings                                      the room's host or settings changed
-// str = u8 byte length + UTF-8 bytes; settings = u8 weather (ROOM_WEATHERS), u8 time (ROOM_TIMES), u8 flags (1 police,
-// 2 PvP)
+//   SKY_SET u8 op, u16 from (0: the room's, on joining), u8 time, u8 weather   to everyone in the room
+//   ROOM    u8 op, u16 host, u8 rules                                      the room's host or rules changed
+// rules = u8 flags: 1 the police come after crimes, 2 the players can hurt each other (PvP)
+// str = u8 byte length + UTF-8 bytes
 //
 // Shots are the shooter's to judge (its client traces them against the others' poses and says whom they hit), as
 // befits a game among friends: the server only checks that the target is in the same room and within reach.
+// The sky (the time of day and the weather) is the room's: whoever changes it changes it for everyone in the room,
+// and a newcomer gets the room's on joining. A player can also open a room of its own (CREATE): a title, a code
+// friends type to join it, an optional password, its sky and its rules; there only its host changes the sky and rules.
 
-const PROTOCOL_VERSION = 4;
+const PROTOCOL_VERSION = 5;
 const SEND_HZ = 10; // client pose updates per second
 const TICK_HZ = 10; // server ticks per second (OSRS runs 600 ms ticks; driving needs 100 ms)
 // (new modes go at the end: older clients' indices hold). A passenger travels at its driver's pose, inside its car
 const MODES = ['person', 'car', 'cyclist', 'helicopter', 'moto', 'passenger'] as const;
+// The room's sky: the time of day (render/lighting.ts's presets, 'live' the real clock) and the weather ('live' the
+// real conditions from Open-Meteo, the rest world/weather.ts's WEATHER_SAMPLES). New ones go at the end, as with MODES
+const SKY_TIMES = ['live', 'golden', 'midday', 'twilight', 'midnight'] as const;
+const SKY_WEATHERS = ['live', 'clear', 'cloudy', 'overcast', 'rain', 'storm', 'fog'] as const;
 const NAME_MAX = 24; // characters
 const CHAT_MAX = 140; // characters in a chat line
 const WEAPON_MAX = 16; // characters in a weapon's id
@@ -49,12 +59,8 @@ const WORLD_LIMIT = 2e7; // |x|, |y|, |z| in metres, inside the i32-centimetre r
 const MAX_FRAME = 4096; // bytes a client may send in one message
 const TITLE_MAX = 32; // characters in a room's title
 const PASSWORD_MAX = 64; // characters in a room's password
-// A room's fixed weather (WEATHER_SAMPLES in js/world/weather.ts; 'live' is Tepic's real one) and fixed hour ('live' is
-// the real clock); new ones go at the end, so older clients' indices hold
-const ROOM_WEATHERS = ['live', 'clear', 'cloudy', 'overcast', 'rain', 'storm', 'fog'] as const;
-const ROOM_TIMES = ['live', 'morning', 'midday', 'sunset', 'night'] as const;
-const SETTING_POLICE = 1; // settings flags: the police come after crimes...
-const SETTING_PVP = 2; // ...and the players can hurt each other
+const RULE_POLICE = 1; // rules flags: the police come after crimes...
+const RULE_PVP = 2; // ...and the players can hurt each other
 const ROOM_LOCKED = 1; // WELCOME flags: the room has a password
 
 const OP = {
@@ -65,8 +71,9 @@ const OP = {
   SHOT: 4,
   HIT: 5,
   DOWN: 6,
-  CREATE: 7,
-  SETTINGS: 8,
+  SKY: 7,
+  CREATE: 8,
+  RULES: 9,
   // server → client
   WELCOME: 101,
   TICK: 102,
@@ -74,24 +81,28 @@ const OP = {
   CHAT_LINE: 104,
   SHOT_SEEN: 105,
   HURT: 106,
-  ROOM: 107
+  SKY_SET: 107,
+  ROOM: 108
 } as const;
 
-export type RoomWeather = (typeof ROOM_WEATHERS)[number];
-export type RoomTime = (typeof ROOM_TIMES)[number];
-/** What a room's host sets for everyone in it */
-export interface RoomSettings {
-  weather: RoomWeather;
-  time: RoomTime;
+/** How a room is played: whether the police come after crimes, whether the players can hurt each other */
+export interface RoomRules {
   police: boolean;
   pvp: boolean;
 }
-/** A public room's, and a new room's unless its host says otherwise: the real Tepic, police and PvP on */
-const DEFAULT_SETTINGS: Readonly<RoomSettings> = Object.freeze({ weather: 'live', time: 'live', police: true, pvp: true });
+/** A public room's, and a new room's unless its host says otherwise: police and PvP on */
+const DEFAULT_RULES: Readonly<RoomRules> = Object.freeze({ police: true, pvp: true });
 
 /** A player mode as it travels on the wire (its index in MODES) */
 export type Mode = (typeof MODES)[number];
 export type Op = (typeof OP)[keyof typeof OP];
+export type SkyTime = (typeof SKY_TIMES)[number];
+export type SkyWeather = (typeof SKY_WEATHERS)[number];
+/** The room's sky in wire units: indices in SKY_TIMES and SKY_WEATHERS */
+export interface WireSky {
+  time: number;
+  weather: number;
+}
 
 /** A pose in wire units: x/y/z in centimetres, h in 1/65536 turns, m the MODES index, s the speed in dm/s */
 export interface WirePose {
@@ -126,11 +137,12 @@ export interface CreateMessage {
   name: string;
   title: string; // raw: the server sanitizes it
   password: string; // '' for none
-  settings: RoomSettings;
+  sky: WireSky;
+  rules: RoomRules;
 }
-export interface SettingsMessage {
-  op: typeof OP.SETTINGS;
-  settings: RoomSettings;
+export interface RulesMessage {
+  op: typeof OP.RULES;
+  rules: RoomRules;
 }
 export interface StateMessage {
   op: typeof OP.STATE;
@@ -164,7 +176,11 @@ export interface DownMessage {
   op: typeof OP.DOWN;
   killer: number; // 0: nobody
 }
-export type ClientMessage = HelloMessage | CreateMessage | StateMessage | ChatMessage | ShotMessage | HitMessage | DownMessage | SettingsMessage;
+export interface SkyMessage {
+  op: typeof OP.SKY;
+  sky: WireSky;
+}
+export type ClientMessage = HelloMessage | CreateMessage | StateMessage | ChatMessage | ShotMessage | HitMessage | DownMessage | SkyMessage | RulesMessage;
 
 // server → client, decoded by the client in metres / radians / m/s
 export interface WelcomeMessage {
@@ -176,14 +192,14 @@ export interface WelcomeMessage {
   title: string; // '' for a public room
   code: string; // what friends type to join it ('' for a public room)
   locked: boolean; // it has a password
-  host: number; // the player who sets its settings (0: nobody, a public room)
-  settings: RoomSettings;
+  host: number; // the player who sets its sky and rules (0: nobody, a public room: anyone sets its sky)
+  rules: RoomRules;
 }
-/** The room's host or settings changed */
+/** The room's host or rules changed */
 export interface RoomMessage {
   op: typeof OP.ROOM;
   host: number;
-  settings: RoomSettings;
+  rules: RoomRules;
 }
 export interface ErrorMessage {
   op: typeof OP.ERROR;
@@ -239,7 +255,14 @@ export interface HurtMessage {
   from: number;
   damage: number; // hit points
 }
-export type ServerMessage = WelcomeMessage | ErrorMessage | TickMessage | ChatLineMessage | ShotSeenMessage | HurtMessage | RoomMessage;
+/** The room's sky, set by player `from` (0: as the room had it when this client joined) */
+export interface SkySetMessage {
+  op: typeof OP.SKY_SET;
+  from: number;
+  time: SkyTime;
+  weather: SkyWeather;
+}
+export type ServerMessage = WelcomeMessage | ErrorMessage | TickMessage | ChatLineMessage | ShotSeenMessage | HurtMessage | SkySetMessage | RoomMessage;
 
 /** What decodeClient / decodeServer read: a whole frame, as a byte view or its buffer */
 export type FrameData = Uint8Array | ArrayBuffer;
@@ -274,13 +297,16 @@ function sanitizeChat(text: string | null | undefined): string {
   return cleanText(text, CHAT_MAX);
 }
 
-function isRegion(region: unknown): region is string {
-  return typeof region === 'string' && REGION_RE.test(region);
-}
-
 // A room's title as everyone reads it ('' when nothing visible is left)
 function sanitizeTitle(text: string | null | undefined): string {
   return cleanText(text, TITLE_MAX);
+}
+
+const rulesFlags = (r: RoomRules) => (r.police ? RULE_POLICE : 0) | (r.pvp ? RULE_PVP : 0);
+const rulesOf = (flags: number): RoomRules => ({ police: (flags & RULE_POLICE) !== 0, pvp: (flags & RULE_PVP) !== 0 });
+
+function isRegion(region: unknown): region is string {
+  return typeof region === 'string' && REGION_RE.test(region);
 }
 
 const toCm = (m: number) => Math.round(m * 100);
@@ -325,11 +351,6 @@ class Writer {
     this.str(Array.from(s.weapon).slice(0, WEAPON_MAX).join(''));
     this.u8(s.flags);
   }
-  settings(s: RoomSettings): void {
-    this.u8(Math.max(0, ROOM_WEATHERS.indexOf(s.weather)));
-    this.u8(Math.max(0, ROOM_TIMES.indexOf(s.time)));
-    this.u8((s.police ? SETTING_POLICE : 0) | (s.pvp ? SETTING_PVP : 0));
-  }
   done(): Uint8Array<ArrayBuffer> {
     return this.bytes.slice(0, this.at);
   }
@@ -364,13 +385,6 @@ class Reader {
   shot(): WireShot {
     return { ox: this.i32(), oy: this.i32(), oz: this.i32(), ex: this.i32(), ey: this.i32(), ez: this.i32(), weapon: this.str(), flags: this.u8() };
   }
-  // (a newer side's weather or hour this one doesn't know reads as 'live': u8s, so .at() never counts from the end)
-  settings(): RoomSettings {
-    const weather = ROOM_WEATHERS.at(this.u8()) ?? 'live';
-    const time = ROOM_TIMES.at(this.u8()) ?? 'live';
-    const flags = this.u8();
-    return { weather, time, police: (flags & SETTING_POLICE) !== 0, pvp: (flags & SETTING_PVP) !== 0 };
-  }
 }
 
 const SHOT_ROCKET = 1; // WireShot.flags: the bazooka's rocket (it flies, then blows up), not a bullet
@@ -400,11 +414,13 @@ function encodeHello(region: string, name?: string | null, room = '', password =
   return w.done();
 }
 
-/** A room to open: its title, its password ('' for none) and its settings */
+/** A room to open: its title, its password ('' for none), the sky it starts with and its rules */
 export interface RoomSpec {
   title: string;
   password: string;
-  settings: RoomSettings;
+  time: SkyTime;
+  weather: SkyWeather;
+  rules: RoomRules;
 }
 
 // Opens a room (`spec`) and puts the player in it, as its host
@@ -416,20 +432,24 @@ function encodeCreate(region: string, name: string, spec: RoomSpec): Uint8Array<
   w.str(capped(name, NAME_MAX));
   w.str(capped(spec.title, TITLE_MAX));
   w.str(capped(spec.password, PASSWORD_MAX));
-  w.settings(spec.settings);
+  w.u8(Math.max(0, SKY_TIMES.indexOf(spec.time)));
+  w.u8(Math.max(0, SKY_WEATHERS.indexOf(spec.weather)));
+  w.u8(rulesFlags(spec.rules));
   return w.done();
 }
 
-// The host's new settings for the room
-function encodeSettings(settings: RoomSettings): Uint8Array<ArrayBuffer> {
-  const w = new Writer(4);
-  w.u8(OP.SETTINGS);
-  w.settings(settings);
+// The host's new rules for its room
+function encodeRules(rules: RoomRules): Uint8Array<ArrayBuffer> {
+  const w = new Writer(2);
+  w.u8(OP.RULES);
+  w.u8(rulesFlags(rules));
   return w.done();
 }
 
 // MODES widened to plain strings, so any mode name can be looked up (an unknown one goes as MODES[0])
 const MODE_NAMES: readonly string[] = MODES;
+const SKY_TIME_NAMES: readonly string[] = SKY_TIMES;
+const SKY_WEATHER_NAMES: readonly string[] = SKY_WEATHERS;
 
 // A player entity ({ position, heading, speed }) in a MODES mode → STATE frame (18 bytes)
 function encodeState(entity: PoseSource, mode: string): Uint8Array<ArrayBuffer> {
@@ -476,6 +496,15 @@ function encodeDown(killer: number): Uint8Array<ArrayBuffer> {
   return w.done();
 }
 
+// The player set the room's sky (an unknown name goes as 'live')
+function encodeSky(time: string, weather: string): Uint8Array<ArrayBuffer> {
+  const w = new Writer(3);
+  w.u8(OP.SKY);
+  w.u8(Math.max(0, SKY_TIME_NAMES.indexOf(time)));
+  w.u8(Math.max(0, SKY_WEATHER_NAMES.indexOf(weather)));
+  return w.done();
+}
+
 // Server side: one client frame → { op, ... } or null when malformed / out of range
 function decodeClient(data: FrameData | null | undefined): ClientMessage | null {
   try {
@@ -484,9 +513,12 @@ function decodeClient(data: FrameData | null | undefined): ClientMessage | null 
     const op = r.u8();
     if (op === OP.HELLO) return { op, version: r.u8(), region: r.str(), name: r.str(), room: r.str(), password: r.str() };
     if (op === OP.CREATE) {
-      return { op, version: r.u8(), region: r.str(), name: r.str(), title: r.str(), password: r.str(), settings: r.settings() };
+      const version = r.u8(), region = r.str(), name = r.str(), title = r.str(), password = r.str();
+      const sky = { time: r.u8(), weather: r.u8() };
+      if (sky.time >= SKY_TIMES.length || sky.weather >= SKY_WEATHERS.length) return null;
+      return { op, version, region, name, title, password, sky, rules: rulesOf(r.u8()) };
     }
-    if (op === OP.SETTINGS) return { op, settings: r.settings() };
+    if (op === OP.RULES) return { op, rules: rulesOf(r.u8()) };
     if (op === OP.STATE) {
       const st = r.pose();
       const lim = WORLD_LIMIT * 100;
@@ -504,6 +536,10 @@ function decodeClient(data: FrameData | null | undefined): ClientMessage | null 
       return target && damage <= DAMAGE_MAX ? { op, target, damage } : null;
     }
     if (op === OP.DOWN) return { op, killer: r.u16() };
+    if (op === OP.SKY) {
+      const sky = { time: r.u8(), weather: r.u8() };
+      return sky.time < SKY_TIMES.length && sky.weather < SKY_WEATHERS.length ? { op, sky } : null;
+    }
     return null;
   } catch {
     return null;
@@ -519,7 +555,7 @@ export interface RoomInfo {
   code: string;
   locked: boolean;
   host: number;
-  settings: RoomSettings;
+  rules: RoomRules;
 }
 
 function encodeWelcome(id: number, capacity: number, tickHz: number, room: RoomInfo): Uint8Array<ArrayBuffer> {
@@ -533,16 +569,16 @@ function encodeWelcome(id: number, capacity: number, tickHz: number, room: RoomI
   w.str(room.code);
   w.u8(room.locked ? ROOM_LOCKED : 0);
   w.u16(room.host);
-  w.settings(room.settings);
+  w.u8(rulesFlags(room.rules));
   return w.done();
 }
 
-// The room's host (0: nobody) and settings, to everyone in it when either changes
-function encodeRoom(host: number, settings: RoomSettings): Uint8Array<ArrayBuffer> {
-  const w = new Writer(6);
+// The room's host (0: nobody) and rules, to everyone in it when either changes
+function encodeRoom(host: number, rules: RoomRules): Uint8Array<ArrayBuffer> {
+  const w = new Writer(4);
   w.u8(OP.ROOM);
   w.u16(host);
-  w.settings(settings);
+  w.u8(rulesFlags(rules));
   return w.done();
 }
 
@@ -606,6 +642,16 @@ function encodeHurt(from: number, damage: number): Uint8Array<ArrayBuffer> {
   return w.done();
 }
 
+// The room's sky (wire indices), set by player `from` (0: sent to a newcomer as the room has it)
+function encodeSkySet(from: number, sky: WireSky): Uint8Array<ArrayBuffer> {
+  const w = new Writer(5);
+  w.u8(OP.SKY_SET);
+  w.u16(from);
+  w.u8(sky.time);
+  w.u8(sky.weather);
+  return w.done();
+}
+
 // Client side: one server frame → { op, ... } in metres / radians / m/s, or null when malformed
 function decodeServer(data: FrameData): ServerMessage | null {
   try {
@@ -614,9 +660,9 @@ function decodeServer(data: FrameData): ServerMessage | null {
     if (op === OP.WELCOME) {
       const id = r.u16(), capacity = r.u16(), tickHz = r.u8(), room = r.str(), title = r.str(), code = r.str();
       const locked = (r.u8() & ROOM_LOCKED) !== 0;
-      return { op, id, capacity, tickHz, room, title, code, locked, host: r.u16(), settings: r.settings() };
+      return { op, id, capacity, tickHz, room, title, code, locked, host: r.u16(), rules: rulesOf(r.u8()) };
     }
-    if (op === OP.ROOM) return { op, host: r.u16(), settings: r.settings() };
+    if (op === OP.ROOM) return { op, host: r.u16(), rules: rulesOf(r.u8()) };
     if (op === OP.ERROR) return { op, code: r.str() };
     if (op === OP.CHAT_LINE) return { op, from: r.u16(), name: r.str(), text: r.str() };
     if (op === OP.SHOT_SEEN) {
@@ -625,6 +671,8 @@ function decodeServer(data: FrameData): ServerMessage | null {
       return { op, from, shot: { ox: s.ox / 100, oy: s.oy / 100, oz: s.oz / 100, ex: s.ex / 100, ey: s.ey / 100, ez: s.ez / 100, weapon: s.weapon, rocket: (s.flags & SHOT_ROCKET) !== 0 } };
     }
     if (op === OP.HURT) return { op, from: r.u16(), damage: r.u8() };
+    // (a newer server's sky this client doesn't know → 'live')
+    if (op === OP.SKY_SET) return { op, from: r.u16(), time: SKY_TIMES.at(r.u8()) ?? 'live', weather: SKY_WEATHERS.at(r.u8()) ?? 'live' };
     if (op !== OP.TICK) return null;
     const roomPlayers = r.u16();
     const gone: number[] = [];
@@ -649,15 +697,15 @@ export {
   SEND_HZ,
   TICK_HZ,
   MODES,
+  SKY_TIMES,
+  SKY_WEATHERS,
   NAME_MAX,
   CHAT_MAX,
   HIT_REACH,
   DAMAGE_MAX,
   TITLE_MAX,
   PASSWORD_MAX,
-  ROOM_WEATHERS,
-  ROOM_TIMES,
-  DEFAULT_SETTINGS,
+  DEFAULT_RULES,
   OP,
   STATE_BYTES,
   ROW_BYTES,
@@ -667,12 +715,13 @@ export {
   isRegion,
   encodeHello,
   encodeCreate,
-  encodeSettings,
+  encodeRules,
   encodeState,
   encodeChat,
   encodeShot,
   encodeHit,
   encodeDown,
+  encodeSky,
   decodeClient,
   encodeWelcome,
   encodeTick,
@@ -680,6 +729,7 @@ export {
   encodeChatLine,
   encodeShotSeen,
   encodeHurt,
+  encodeSkySet,
   encodeRoom,
   decodeServer
 };

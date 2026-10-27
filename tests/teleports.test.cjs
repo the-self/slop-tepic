@@ -62,7 +62,7 @@ test('preset and map teleports share arrival resets and leave no GPS waypoint', 
       ['teleport', point.x, point.z, point.heading], ['touch'], ['gamepad'], ['camera'], ['selectCamera', 'chase', true]
     ]);
   }
-  assert.equal(closed, Object.keys(TELEPORT_LOCATIONS).length, 'each button closes its popover');
+  assert.equal(closed, Object.keys(TELEPORT_LOCATIONS).length, 'each button closes the menu');
   // the full map's teleport (CityMapSystem onTeleport): the default heading, and the safe spot the controller found
   calls.length = 0;
   assert.deepEqual(teleportTo(100, 200), landed, 'map teleports return the safe position from the controller');

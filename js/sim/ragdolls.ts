@@ -131,7 +131,9 @@ interface RagdollHandle {
   tracked: number;
   trackT: number;
   down?: boolean; // (traffic.ts: it has been told it lies on the ground)
-  awaiting?: boolean; // (sim/emergency.ts: an ambulance is on its way: they lie there till the paramédicos take them)
+  awaiting?: boolean; // (sim/emergency.ts: an ambulance is on its way: they lie there till the paramédicos see to them)
+  revived?: boolean; // (sim/emergency.ts: the paramédicos brought them round: dead or not, they get up)
+  released?: boolean; // let go (release): out of the world, its rig another's (nobody lies there any more)
 }
 interface Ragdolls {
   onSettle: ((h: RagdollHandle) => void) | null;
@@ -463,6 +465,7 @@ function createRagdolls(physics: RagdollPhysics): Ragdolls {
   function release(h: RagdollHandle | null | undefined): void {
     if (!h || !handles.has(h)) return;
     h.settled = true; // (no onSettle for one let go)
+    h.released = true;
     freeze(h);
     handles.delete(h);
   }

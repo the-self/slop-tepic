@@ -8,6 +8,7 @@ import {
 } from './city-config.ts';
 import type { CityBlock, GridStreet } from './city-config.ts';
 import { GEO } from './city-geodata.js';
+import { carFree } from './car-free.ts';
 
 // js/world/road-network.ts
 // Drivable road graph derived from the ground layout that city-grid.ts actually builds: avenue corridors
@@ -1251,6 +1252,10 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     paintOf.set(e, paint);
     return paint;
   });
+
+  // The roads closed to the traffic (car-free.ts: the road up the Cerro de la Cruz), painted above, left out of its
+  // graph from here on: the roads leading only to them end there, dead ends 7. drops (the cars turn off before them)
+  edges = edges.filter((e) => !carFree(e.x0, e.z0, e.x0 + e.dx * e.span, e.z0 + e.dz * e.span));
 
   // 6. Movements at each intersection (no U-turns) and the lane each lane leads to, along obstacle-free curves:
   //    straight on, lane i keeps to lane i + k ahead, k chosen to use as many lanes there as possible with the least

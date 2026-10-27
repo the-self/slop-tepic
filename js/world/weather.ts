@@ -202,20 +202,21 @@ class LiveWeather {
   location: WeatherLocation;
   fetchImpl: FetchLike | null;
   storage: StorageLike | null;
-  /** what fetches the real conditions, kept while hold() pins others (release() goes back to it) */
-  readonly ownFetch: FetchLike | null;
   current: Weather;
   /** true once real conditions (fresh or cached) are in */
   live: boolean;
   pending: Promise<boolean> | null;
   /** ms since the epoch */
   nextAttempt: number;
+  /** true while hold() pins the conditions */
+  held = false;
+  /** the fetch hold() set aside, for release() */
+  heldFetch: FetchLike | null = null;
 
   constructor(location = WEATHER_LOCATION,
     { fetchImpl = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null, storage }: { fetchImpl?: FetchLike | null; storage?: StorageLike | null } = {}) {
     this.location = location;
     this.fetchImpl = fetchImpl;
-    this.ownFetch = fetchImpl;
     if (storage === undefined) {
       try {
         storage = globalThis.localStorage; // reading it throws a SecurityError where site data is blocked
@@ -259,6 +260,7 @@ class LiveWeather {
         return res.json();
       })
       .then((json) => {
+        if (this.held) return false; // (pinned while the request was out: the real conditions wait for release())
         this.current = parseOpenMeteo(json as OpenMeteoResponse);
         this.live = true;
         this.nextAttempt = Date.now() + REFRESH_MS;
@@ -282,15 +284,19 @@ class LiveWeather {
 
   // Pins the conditions (no more fetching), e.g. to WEATHER_SAMPLES.storm
   hold(conditions: Partial<Weather>): void {
+    if (!this.held) this.heldFetch = this.fetchImpl;
+    this.held = true;
     this.fetchImpl = null;
     this.current = { ...CLEAR_WEATHER, ...conditions, fetchedAt: Date.now() };
     this.live = true;
   }
 
-  // Back to the real conditions after a hold(): the cached ones, else clear until the next fetch (right away)
+  // Lets go of held conditions: back to the real ones, the cached first, then fresh
   release(): void {
-    if (this.fetchImpl === this.ownFetch) return;
-    this.fetchImpl = this.ownFetch;
+    if (!this.held) return;
+    this.held = false;
+    this.fetchImpl = this.heldFetch;
+    this.heldFetch = null;
     this.current = { ...CLEAR_WEATHER };
     this.live = false;
     this.nextAttempt = 0;

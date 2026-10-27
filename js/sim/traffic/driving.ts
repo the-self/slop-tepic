@@ -3,7 +3,7 @@
 import { LOOKAHEAD, clamp } from './constants.ts';
 import type { DrivenVehicle, LaneEntry, OnEdge } from './types.ts';
 import type { TrafficState } from './state.ts';
-import { phaseOf } from './signals.ts';
+import { phaseOf, runsRed } from './signals.ts';
 import { ahead, cross, straddle } from './occupancy.ts';
 import { bendSpeed, brake, follow, freeAcc, playerGap, stopAt } from './idm.ts';
 import { nearestLane } from './routing.ts';
@@ -121,7 +121,7 @@ function accelerate(ts: TrafficState, v: DrivenVehicle, dt: number): void {
       const o = c && !v.claimed && mergingAhead(ts, v, f, j);
       if (o) worst = Math.min(worst, Math.max(-v.driver.b, brake(ts, v, o.s - o.v.half - vs - v.half, o.v.speed)));
       let vt = c ? bendSpeed(ts, v, c) : Infinity;
-      const cautious = e.to.signal ? (v.isPolice && phaseOf(ts, e) !== 'green') || e.axisIndex > 1 : e.axisIndex !== 0;
+      const cautious = e.to.signal ? (runsRed(v) && phaseOf(ts, e) !== 'green') || e.axisIndex > 1 : e.axisIndex !== 0;
       if (cautious) vt = Math.min(vt, 5);
       cap = Math.sqrt(vt * vt + 5 * Math.max(0, d));
     }

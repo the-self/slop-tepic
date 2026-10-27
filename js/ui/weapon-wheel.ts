@@ -10,6 +10,7 @@
 
 import { WEAPONS, WEAPON_ORDER, weaponStats } from '../sim/weapons.ts';
 import type { Arsenal, WeaponId, WeaponStats } from '../sim/weapons.ts';
+import { keyBindings } from '../input/keybindings.ts';
 import type { WeaponIcons } from './weapon-icons.ts';
 import { setText, t } from '../i18n/i18n.ts';
 import type { MessageKey } from '../i18n/i18n.ts';
@@ -304,7 +305,7 @@ class WeaponWheel {
     if (!root) return;
     window.addEventListener('keydown', (e) => {
       if (isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.code === 'Tab') {
+      if (keyBindings.is('weaponWheel', e.code)) {
         e.preventDefault(); // (not the browser's focus hopping)
         if (!e.repeat && !this.isOpen) this.open(true);
       } else if (e.code === 'Escape' && this.isOpen) {
@@ -312,7 +313,7 @@ class WeaponWheel {
       }
     });
     window.addEventListener('keyup', (e) => {
-      if (e.code === 'Tab' && this.isOpen && this.byKey) this.close(true);
+      if (keyBindings.is('weaponWheel', e.code) && this.isOpen && this.byKey) this.close(true);
     });
     window.addEventListener('blur', () => {
       if (this.isOpen) this.close(false);

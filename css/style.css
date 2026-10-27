@@ -29,7 +29,6 @@
 
   /* Shape & motion */
   --edge: 20px;
-  --bar-h: 50px;
   --r-panel: 16px;
   --r-ctl: 10px;
   --shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.2);
@@ -276,9 +275,6 @@ body::after {
   text-transform: uppercase;
 }
 
-/* the HUD's small one, top left */
-.tepic-logo-sm { font-size: 22px; }
-.tepic-logo-sm .tl { filter: drop-shadow(0 1px 0 var(--side)) drop-shadow(0 1px 0 var(--side)) drop-shadow(0 2px 2px rgba(0, 0, 0, 0.4)); }
 
 .loader-progress {
   width: 100%;
@@ -413,13 +409,6 @@ body::after {
 .loader-lang:hover { background: rgba(255, 194, 26, 0.18); border-color: rgba(255, 194, 26, 0.5); }
 .loader-lang .icon { width: 16px; height: 16px; }
 
-/* The toolbar's language button: the code of the language in use */
-.lang-btn .lang-code {
-  font-weight: 750;
-  font-size: 12px;
-  letter-spacing: 0.04em;
-}
-
 @media (max-height: 640px) {
   .loader-keys { display: none; }
   .loader { margin-bottom: 0; padding: 22px 20px 18px; }
@@ -480,6 +469,7 @@ body::after {
 }
 
 .hud-top-right {
+  display: none; /* (the menu's button: touch screens only, Esc on a keyboard) */
   top: var(--edge);
   right: var(--edge);
 }
@@ -508,7 +498,12 @@ body::after {
   bottom: var(--edge);
 }
 
-/* Clean view [H]: everything but the toggle itself steps out of the way */
+/* The speed cluster is a vehicle's: on foot there is none (hud.ts sets data-mode) */
+body[data-mode='person'] .hud-bottom-right {
+  display: none;
+}
+
+/* Clean view [H]: the HUD steps out of the way (the menu, [Esc], brings it back; on touch screens its button stays) */
 body.hud-minimized::before,
 body.hud-minimized::after {
   opacity: 0;
@@ -528,15 +523,12 @@ body.hud-minimized .hud-bottom-left,
 body.hud-minimized .hud-bottom-right { transform: translateY(12px); }
 body.hud-minimized .hud-bottom-center { transform: translate(-50%, 12px); }
 
-body.hud-minimized .toolbar > :not(#btn-toggle-hud) {
-  display: none;
-}
 
 /* ------------------------------------------------------------------------------------------------------------------
-   Crime: wanted stars, health, money & weapon under the toolbar; messages, the hurt edges, WASTED / BUSTED
+   Crime: wanted stars, health, money & weapon top right; messages, the hurt edges, WASTED / BUSTED
    ------------------------------------------------------------------------------------------------------------------ */
 .hud-crime {
-  top: calc(var(--edge) + var(--bar-h) + 12px);
+  top: var(--edge);
   right: var(--edge);
   display: flex;
   flex-direction: column;
@@ -682,7 +674,7 @@ body.hud-minimized .toolbar > :not(#btn-toggle-hud) {
 .crime-toast {
   position: fixed;
   z-index: 12;
-  top: calc(var(--edge) + var(--bar-h) + 14px);
+  top: var(--edge);
   left: 50%;
   transform: translateX(-50%);
   padding: 8px 16px;
@@ -1151,16 +1143,8 @@ body.is-aiming canvas {
 }
 
 /* ------------------------------------------------------------------------------------------------------------------
-   Top left: brand
+   Top left: the frame rate, big
    ------------------------------------------------------------------------------------------------------------------ */
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  height: var(--bar-h);
-  padding: 0 18px 0 14px;
-}
-
 .mta-bullet {
   width: 30px;
   height: 30px;
@@ -1177,93 +1161,39 @@ body.is-aiming canvas {
   box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.18);
 }
 
-.brand-heading {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.brand-subtitle {
-  font-size: 11.5px;
-  line-height: 1.4;
-  color: var(--text-3);
+.fps-meter {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 14px 7px;
+  border-radius: 14px;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  pointer-events: none;
 }
 
 #hud-fps {
-  font-weight: 650;
-  color: var(--text-2);
+  min-width: 2ch;
+  font-size: 34px;
+  font-weight: 750;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--text);
 }
 
 #hud-fps.fps-ok { color: var(--ok); }
 #hud-fps.fps-warn { color: var(--warn); }
 #hud-fps.fps-bad { color: var(--bad); }
 
+.fps-unit {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text-3);
+}
+
 /* ------------------------------------------------------------------------------------------------------------------
-   Top right: toolbar (time of day, teleport, map, clean view)
+   Buttons
    ------------------------------------------------------------------------------------------------------------------ */
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  height: var(--bar-h);
-  padding: 0 5px;
-}
-
-.toolbar-divider {
-  flex: none;
-  width: 1px;
-  height: 20px;
-  margin: 0 5px;
-  background: var(--divider);
-}
-
-.time-switch {
-  display: flex;
-  gap: 2px;
-}
-
-.time-btn {
-  height: 36px;
-  padding: 0 9px;
-  border-radius: var(--r-ctl);
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  color: var(--text-2);
-  transition: background-color 0.2s ease, color 0.2s ease, gap 0.35s var(--ease-out), padding 0.35s var(--ease-out);
-}
-
-.time-btn:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-
-/* The active time of day spells out its name */
-.time-btn .seg-label {
-  max-width: 0;
-  opacity: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 600;
-  transition: max-width 0.4s var(--ease-out), opacity 0.25s ease;
-}
-
-.time-btn.active,
-.time-btn.active:hover {
-  gap: 7px;
-  padding: 0 12px 0 10px;
-  background: var(--text);
-  color: #121314;
-}
-
-.time-btn.active .seg-label {
-  max-width: 120px;
-  opacity: 1;
-}
-
 .tool-btn {
   height: 36px;
   padding: 0 11px;
@@ -1278,19 +1208,8 @@ body.is-aiming canvas {
   transition: background-color 0.2s ease;
 }
 
-.tool-btn:hover,
-.tool-btn.is-open {
+.tool-btn:hover {
   background: var(--hover);
-}
-
-.tool-btn .icon-sm {
-  margin-left: -2px;
-  color: var(--text-3);
-  transition: transform 0.3s var(--ease-out);
-}
-
-.tool-btn.is-open .icon-sm {
-  transform: rotate(180deg);
 }
 
 .tool-btn.icon-only {
@@ -1299,76 +1218,111 @@ body.is-aiming canvas {
   justify-content: center;
 }
 
-.icon-show {
-  display: none;
-}
-
-body.hud-minimized .icon-hide {
-  display: none;
-}
-
-body.hud-minimized .icon-show {
-  display: block;
-}
-
 .tool-btn:active,
-.time-btn:active,
 .icon-btn:active,
-.camera-current:active,
-.pop-item:active {
+.menu-chip:active,
+.menu-item:active {
   transform: scale(0.97);
 }
 
 /* ------------------------------------------------------------------------------------------------------------------
-   Popovers (teleport destinations, cameras)
+   The menu [Esc] (app/menu.ts): the sky, cameras, teleports, settings & keys over the dimmed city
    ------------------------------------------------------------------------------------------------------------------ */
-.popover {
+.game-menu {
   position: fixed;
-  inset: auto;
-  margin: 0;
-  padding: 6px;
-  min-width: 264px;
-  max-height: calc(100vh - 2 * var(--edge) - 64px);
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: max(var(--edge), env(safe-area-inset-top)) max(var(--edge), env(safe-area-inset-right)) max(var(--edge), env(safe-area-inset-bottom)) max(var(--edge), env(safe-area-inset-left));
+  animation: menu-fade 0.18s ease both;
+}
+
+.game-menu[hidden] { display: none; }
+
+.game-menu-backdrop {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(8, 9, 11, 0.45), rgba(8, 9, 11, 0.78));
+}
+
+.game-menu-panel {
+  position: relative;
+  width: min(760px, 100%);
+  height: min(560px, 100%); /* (the same for every tab: switching doesn't make it jump) */
+  display: flex;
+  flex-direction: column;
+  background: var(--grain), var(--glass-strong);
+  animation: rise-in 0.26s var(--ease-out) both;
+}
+
+.game-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 14px 12px 22px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.game-menu-head h2 {
+  font-size: 20px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+/* the tabs, a pause menu's: Q / E step through them */
+.menu-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--divider);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.menu-tab {
+  flex: none;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--r-ctl);
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text-2);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.menu-tab:hover { color: var(--text); background: var(--hover); }
+
+.menu-tab[aria-selected='true'],
+.menu-tab[aria-selected='true']:hover {
+  color: var(--taxi-ink);
+  background: var(--taxi);
+}
+
+.menu-tabs-hint {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+  padding-left: 12px;
+}
+
+.game-menu-body {
+  flex: 1;
+  padding: 2px 22px 20px;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  color: var(--text);
-  background: var(--grain), var(--glass-strong);
-  -webkit-backdrop-filter: blur(26px) saturate(170%);
-  backdrop-filter: blur(26px) saturate(170%);
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 28px 60px -22px rgba(0, 0, 0, 0.8), 0 4px 14px rgba(0, 0, 0, 0.3);
-  transform-origin: top right;
-  transition: opacity 0.18s ease, transform 0.26s var(--ease-out), overlay 0.26s allow-discrete, display 0.26s allow-discrete;
 }
 
-.popover[data-side='above'] {
-  transform-origin: bottom right;
-}
+.menu-page[hidden] { display: none; }
 
-.popover:not(:popover-open) {
-  opacity: 0;
-  transform: translateY(-4px) scale(0.98);
-}
-
-.popover[data-side='above']:not(:popover-open) {
-  transform: translateY(4px) scale(0.98);
-}
-
-@starting-style {
-  .popover:popover-open {
-    opacity: 0;
-    transform: translateY(-4px) scale(0.98);
-  }
-
-  .popover[data-side='above']:popover-open {
-    transform: translateY(4px) scale(0.98);
-  }
-}
-
-.pop-title {
-  padding: 9px 10px 6px;
+.menu-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 8px;
   font-size: 10.5px;
   font-weight: 650;
   letter-spacing: 0.1em;
@@ -1376,19 +1330,69 @@ body.hud-minimized .icon-show {
   color: var(--text-3);
 }
 
-.pop-title:not(:first-child) {
-  margin-top: 5px;
-  padding-top: 12px;
-  border-top: 1px solid var(--divider);
+.menu-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.pop-item {
+.menu-chip {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.menu-chip:hover { color: var(--text); background: var(--hover); }
+
+.menu-chip.active,
+.menu-chip.active:hover {
+  background: var(--text);
+  color: #121314;
+  box-shadow: none;
+}
+
+.menu-chip:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.menu-chip[aria-pressed='true'] { color: var(--text); }
+#btn-toggle-hud[aria-pressed='true'] { background: var(--text); color: #121314; }
+
+.menu-note {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+.menu-list {
+  display: grid;
+  gap: 2px;
+}
+
+.menu-list-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 12px;
+}
+
+.menu-item {
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 8px 10px;
+  padding: 7px 10px;
   border-radius: 9px;
   text-align: left;
   font-size: 13px;
@@ -1397,20 +1401,94 @@ body.hud-minimized .icon-show {
   transition: background-color 0.15s ease;
 }
 
-.pop-item:hover {
-  background: var(--hover);
-}
+.menu-item:hover { background: var(--hover); }
 
-.pop-item.active,
-.pop-item.active:hover {
+.menu-item.active,
+.menu-item.active:hover {
   background: var(--text);
   color: #121314;
 }
 
-.pop-item.active kbd {
+.menu-item.active kbd {
   color: rgba(0, 0, 0, 0.55);
   background: rgba(0, 0, 0, 0.08);
   box-shadow: none;
+}
+
+/* The Keys tab (ui/key-config.ts): a row per binding, its two keys as buttons */
+.key-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.key-head .menu-note { margin-top: 0; }
+
+.key-rows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 22px;
+}
+
+.key-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 34px;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.key-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.key-slots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.key-slot {
+  min-width: 52px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  transition: background-color 0.15s ease;
+}
+
+.key-slot:hover { background: rgba(255, 255, 255, 0.16); }
+.key-slot.is-empty { color: var(--text-3); }
+
+.key-slot.is-listening {
+  color: var(--taxi-ink);
+  background: var(--taxi);
+  animation: key-wait 1s ease-in-out infinite;
+}
+
+.key-also {
+  grid-column: 1 / -1;
+  margin-top: -3px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+@keyframes key-wait {
+  50% { opacity: 0.65; }
+}
+
+@keyframes menu-fade {
+  from { opacity: 0; }
 }
 
 .tp-btn {
@@ -1555,40 +1633,8 @@ body.hud-minimized .icon-show {
 }
 
 /* ------------------------------------------------------------------------------------------------------------------
-   Bottom centre: the F prompt & keyboard guide
+   Bottom centre: the F prompt (the keys are in the menu's Keys tab)
    ------------------------------------------------------------------------------------------------------------------ */
-.controls-hint {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 6px 16px;
-  max-width: 600px;
-  font-size: 12px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.88);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
-  pointer-events: none;
-}
-
-.hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  white-space: nowrap;
-  animation: rise-in 0.35s var(--ease-out) both;
-}
-
-.hint kbd {
-  color: #ffffff;
-  background: rgba(12, 13, 15, 0.55);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
-  text-shadow: none;
-}
-
-.hint-label {
-  margin-left: 4px;
-}
-
 /* What F would do here: get in, take the car or bicycle at hand, or get out */
 .action-prompt {
   display: inline-flex;
@@ -1815,14 +1861,6 @@ body[data-mode='moto'] .tacho {
 
 .tacho.is-dead .tacho-warning { display: block; }
 
-.camera-switch {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 4px;
-  border-top: 1px solid var(--divider);
-}
-
 .icon-btn {
   flex: none;
   width: 36px;
@@ -1839,36 +1877,6 @@ body[data-mode='moto'] .tacho {
   background: var(--hover);
 }
 
-.camera-current {
-  flex: 1;
-  min-width: 0;
-  height: 36px;
-  padding: 0 8px;
-  border-radius: var(--r-ctl);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  transition: background-color 0.15s ease;
-}
-
-.camera-current:hover,
-.camera-current.is-open {
-  background: var(--hover);
-}
-
-.camera-current .icon {
-  color: var(--text-3);
-}
-
-#hud-active-camera {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 /* ------------------------------------------------------------------------------------------------------------------
    Full-screen interactive street map ([M])
@@ -2124,10 +2132,6 @@ body[data-mode='moto'] .tacho {
   .fullmap-legend { display: none; }
 }
 
-@media (max-width: 1240px) {
-  .controls-hint { display: none; }
-}
-
 @media (max-width: 1080px) {
   .tool-label,
   .tool-btn kbd { display: none; }
@@ -2136,8 +2140,7 @@ body[data-mode='moto'] .tacho {
 
 @media (max-width: 820px) {
   :root { --edge: 12px; }
-  /* the brand panel had nothing left to show on narrow screens (its title & telemetry are hidden here) */
-  .hud-top-left { display: none; }
+  #hud-fps { font-size: 28px; }
   .radar { width: 220px; height: 148px; }
   .cluster { width: 220px; }
   #hud-speed { font-size: 34px; }
@@ -2148,12 +2151,12 @@ body[data-mode='moto'] .tacho {
 }
 
 @media (max-width: 620px) {
-  .time-btn.active .seg-label { display: none; }
-  .time-btn.active { padding: 0 9px; gap: 0; }
   .radar { display: none; }
-  .hud-bottom-right { bottom: calc(var(--edge) + 64px); }
-  .gauge { display: none; }
-  .camera-switch { border-top: 0; }
+  .hud-bottom-right { display: none; } /* (the gauge was all the cluster had left) */
+  .game-menu-body { padding: 2px 16px 16px; }
+  .menu-list-2,
+  .key-rows { grid-template-columns: 1fr; }
+  .game-menu-head { padding-left: 16px; }
 }
 
 /* Touch controls reserve the bottom corners; mode and camera selection remain within reach. */
@@ -2258,29 +2261,25 @@ body[data-mode='moto'] .tacho {
 .touch-action[hidden] { display: none; }
 .touch-action.is-pressed { color: var(--taxi-ink); background: var(--taxi); border-color: var(--taxi); }
 
-body.touch-enabled .controls-hint,
 body.touch-enabled .radar,
 body.touch-enabled .gauge,
 body.touch-enabled kbd,
-body.touch-enabled .toolbar-divider,
-body.touch-enabled .seg-label { display: none; }
+body.touch-enabled .menu-tab[data-tab='keys'],
+body.touch-enabled .menu-tabs-hint { display: none; }
 
-body.touch-enabled .hud-top-right { top: max(var(--edge), env(safe-area-inset-top)); right: max(var(--edge), env(safe-area-inset-right)); }
-body.touch-enabled .toolbar { gap: 2px; padding: 4px; }
-body.touch-enabled .time-btn,
-body.touch-enabled .time-btn.active { height: 44px; min-width: 44px; padding: 0 8px; gap: 0; }
+body.touch-enabled .hud-top-right { display: block; top: max(var(--edge), env(safe-area-inset-top)); right: max(var(--edge), env(safe-area-inset-right)); }
+body.touch-enabled .hud-crime { top: calc(max(var(--edge), env(safe-area-inset-top)) + 56px); }
+body.touch-enabled .menu-btn { width: 44px; height: 44px; }
 body.touch-enabled .tool-btn { min-width: 44px; min-height: 44px; }
+body.touch-enabled .menu-chip { height: 40px; }
+body.touch-enabled .menu-item { min-height: 44px; }
 body.touch-enabled .tool-label { display: none; }
 body.touch-enabled .hud-bottom-center { bottom: max(var(--edge), env(safe-area-inset-bottom)); }
 body.touch-enabled .action-prompt { display: none; }
-body.touch-enabled .hud-bottom-right { top: calc(max(var(--edge), env(safe-area-inset-top)) + 62px); right: max(var(--edge), env(safe-area-inset-right)); bottom: auto; }
-body.touch-enabled .cluster { width: 230px; }
-body.touch-enabled .camera-switch { border: 0; }
-body.touch-enabled .camera-switch .icon-btn { width: 44px; height: 44px; }
+body.touch-enabled .hud-bottom-right { display: none; } /* (the gauge is hidden: nothing left in the cluster) */
 body.touch-enabled .hud-bottom-left { left: max(var(--edge), env(safe-area-inset-left)); bottom: calc(max(var(--edge), env(safe-area-inset-bottom)) + 254px); max-width: calc(100% - 2 * var(--edge)); }
 body.touch-enabled .fullmap-header { top: max(var(--edge), env(safe-area-inset-top)); left: max(var(--edge), env(safe-area-inset-left)); right: max(var(--edge), env(safe-area-inset-right)); }
 body.touch-enabled .map-controls .icon-btn { width: 44px; height: 44px; }
-body.touch-enabled .pop-item { min-height: 44px; }
 
 /* Multiplayer (js/net/multiplayer.ts): room status pill, name tags over the other players, and the chat */
 .mp-badge {
@@ -2329,9 +2328,6 @@ body.touch-enabled .pop-item { min-height: 44px; }
   font: 600 11px/1.3 var(--font-sans);
   white-space: nowrap;
   will-change: transform;
-}
-@media (max-width: 820px) {
-  .mp-badge { margin-top: 18px; } /* clear the camera panel, which sits beside the brand on phones */
 }
 body.hud-minimized .mp-labels,
 body.hud-minimized .mp-badge { display: none; }
@@ -2388,21 +2384,8 @@ body.hud-minimized .mp-badge { display: none; }
 .mp-chat-btn:hover { color: var(--text); background: var(--grain), var(--glass-strong); }
 body.hud-minimized .mp-chat-btn { display: none; }
 
-/* Phones: the toolbar keeps Live, Midday & Night (plus whichever preset is active) so it fits the screen width */
-@media (max-width: 440px) {
-  .time-btn:not(.active):is([data-time="golden"], [data-time="twilight"]) { display: none; }
-  #btn-teleport .icon-sm { display: none; }
-}
-
-@media (max-width: 360px) {
-  body.touch-enabled .toolbar { width: 194px; height: auto; flex-wrap: wrap; justify-content: center; }
-  body.touch-enabled .hud-bottom-right { top: calc(max(var(--edge), env(safe-area-inset-top)) + 114px); }
-  .touch-look-hint { top: calc(max(var(--edge), env(safe-area-inset-top)) + 172px); }
-}
-
 @media (max-height: 500px) {
   body.touch-enabled .hud-bottom-left { display: none; }
-  body.touch-enabled .hud-bottom-right { top: calc(max(var(--edge), env(safe-area-inset-top)) + 58px); }
   #touch-controls { bottom: max(var(--edge), env(safe-area-inset-bottom)); }
 }
 

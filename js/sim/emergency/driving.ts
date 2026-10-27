@@ -63,7 +63,7 @@ function ahead(svc: EmergencyServices, cr: Cruiser, fx: number, fz: number, mx: 
 }
 
 // Each station's ways out: the four intersections nearest it a street leads on from, and how far each is from it (m)
-const waysOut = new Map<Station, [number, number][]>();
+const waysOut = new WeakMap<Station, [number, number][]>();
 function startsFor(svc: EmergencyServices, home: Station): [number, number][] {
   let out = waysOut.get(home);
   if (!out) {

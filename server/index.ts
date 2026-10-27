@@ -5,9 +5,11 @@
 // (server/aoi.ts): who left the view, who entered it, and only the poses that changed since that client last heard
 // them, so traffic per client stays flat however many players share the room and parked players cost nothing. It
 // relays poses as sent (no physics), only checking their shape. It passes on what players do to each other: chat lines
-// to the room, shots to those who see the shooter, and the hits a shooter's client found to the player struck.
-// A player can open a room of its own (CREATE: a title, a code to share, an optional password, the weather, hour,
-// police and PvP it is played with) that friends join by its code, and GET /rooms lists a region's rooms.
+// to the room, shots to those who see the shooter, and the hits a shooter's client found to the player struck. It
+// keeps each room's sky (time of day & weather): a player who changes it changes it for the whole room.
+// A player can open a room of its own (CREATE: a title, a code to share, an optional password, the sky and the rules,
+// police and PvP, it is played with) that friends join by its code; there only its host changes the sky and rules.
+// GET /rooms lists a region's rooms.
 // With STATIC_DIR it also serves the game's page (index.html, css/, dist/, assets/ under it), so one address, behind
 // one tunnel (tools/play.ts), is the game and its server.
 //
@@ -32,16 +34,17 @@ import {
   HIT_REACH,
   sanitizeName,
   sanitizeChat,
-  sanitizeTitle,
   isRegion,
   decodeClient,
   encodeWelcome,
   encodeRoom,
+  sanitizeTitle,
   encodeTick,
   encodeError,
   encodeChatLine,
   encodeShotSeen,
-  encodeHurt
+  encodeHurt,
+  encodeSkySet
 } from '../shared/protocol.ts';
 import type { WirePose } from '../shared/protocol.ts';
 
@@ -51,7 +54,7 @@ const MAX_MSGS_PER_SEC = 40; // a client sends ~10 poses/s; far more is a bug or
 const MAX_BUFFERED = 256 * 1024; // skip snapshots to a client whose socket is this far behind
 const CHAT_PER_SEC = 1; // chat lines a player may say a second, sustained...
 const CHAT_BURST = 5; // ...after a burst of this many
-const PASSWORD_FAILS = 10; // wrong passwords a room takes a minute (from everyone) before it refuses the rest
+const PASSWORD_FAILS = 10; // passwords a room checks a minute (from everyone) that aren't right before it refuses the rest
 const PASSWORD_WINDOW_MS = 60000;
 const ROOM_GRACE_MS = 120000; // a player's own room left empty waits this long for them to come back (a dropped connection)
 
@@ -166,7 +169,8 @@ function createServer({
   };
   const welcome = (p: Player, room: Room<Player>) => {
     p.room = room;
-    send(p, encodeWelcome(p.id, rooms.capacity, tickHz, { id: room.id, title: room.title, code: room.code, locked: room.password !== null, host: room.host, settings: room.settings }));
+    send(p, encodeWelcome(p.id, rooms.capacity, tickHz, { id: room.id, title: room.title, code: room.code, locked: room.password !== null, host: room.host, rules: room.rules }));
+    send(p, encodeSkySet(0, room.sky)); // (the sky everyone in the room already sees)
     log(`[mp] ${p.name ?? ''} (#${p.id}) joined ${room.id} (${room.players.size}/${rooms.capacity})`);
   };
   const toRoom = (room: Room<Player>, frame: Uint8Array) => {
@@ -200,7 +204,7 @@ function createServer({
       }
     }
     if (!rooms.rooms.has(room.id)) {
-      fail(p, 'room'); // (its last player left while the password was checked)
+      fail(p, 'room'); // (it closed while the password was checked)
       return;
     }
     if (!rooms.enter(room, p)) {
@@ -279,20 +283,20 @@ function createServer({
           return;
         }
         // a room of its own: its title (else its host's name), the password kept hashed
-        const { settings, password } = msg;
+        const { sky, rules, password } = msg;
         const title = sanitizeTitle(msg.title) || p.name;
         void (password ? hashPassword(password) : Promise.resolve(null))
           .then((hash) => {
             if (p.ws.readyState !== p.ws.OPEN) return;
-            welcome(p, rooms.create(region, p, { title, password: hash, settings }));
+            welcome(p, rooms.create(region, p, { title, password: hash, sky, rules }));
           })
           .catch(broke)
           .finally(done);
-      } else if (msg.op === OP.SETTINGS && p.room) {
-        // only its host changes a room's settings (a public room has none); everyone in it hears them
+      } else if (msg.op === OP.RULES && p.room) {
+        // only its host changes a room's rules (a public room has none to change); everyone in it hears them
         if (p.room.host !== p.id) return;
-        p.room.settings = { ...msg.settings };
-        toRoom(p.room, encodeRoom(p.room.host, p.room.settings));
+        p.room.rules = { ...msg.rules };
+        toRoom(p.room, encodeRoom(p.room.host, p.room.rules));
       } else if (msg.op === OP.STATE && p.room) {
         const st = msg.state; // centimetres: the grid works in the same units
         // Keep the old object for an unchanged pose, so ticks can tell "moved" by identity and skip parked players
@@ -312,11 +316,26 @@ function createServer({
         const frame = encodeShotSeen(p.id, msg.shot);
         for (const other of p.room.players.values()) if (other !== p && other.sent.has(p.id)) send(other, frame);
       } else if (msg.op === OP.HIT && p.room && p.state) {
-        if (!p.room.settings.pvp) return; // (a room without PvP: nobody hurts anybody)
+        if (!p.room.rules.pvp) return; // (a room without PvP: nobody hurts anybody)
         const target = p.room.players.get(msg.target);
         if (!target || target === p || !target.state) return;
         const reach = Math.hypot(target.state.x - p.state.x, target.state.y - p.state.y, target.state.z - p.state.z) / 100;
         if (reach <= HIT_REACH) send(target, encodeHurt(p.id, msg.damage));
+      } else if (msg.op === OP.SKY && p.room) {
+        // the chat's bucket: a sky a second, after a burst, so nobody strobes the room's weather
+        p.chatBudget = Math.min(CHAT_BURST, p.chatBudget + ((now - p.chatAt) / 1000) * CHAT_PER_SEC);
+        p.chatAt = now;
+        const room = p.room;
+        if (room.host && room.host !== p.id) return; // (a room of its own: the sky is its host's to set)
+        if (p.chatBudget < 1 || (msg.sky.time === room.sky.time && msg.sky.weather === room.sky.weather)) return;
+        p.chatBudget -= 1;
+        room.sky = msg.sky;
+        const frame = encodeSkySet(p.id, room.sky);
+        const line = encodeChatLine(0, '', `${p.name ?? ''} cambió el clima`);
+        for (const other of room.players.values()) {
+          send(other, frame);
+          send(other, line);
+        }
       } else if (msg.op === OP.DOWN && p.room) {
         // the room hears who killed whom, as a line from the server
         const killer = msg.killer && msg.killer !== p.id ? p.room.players.get(msg.killer) : undefined;
@@ -332,7 +351,7 @@ function createServer({
       if (p.room) {
         const room = p.room;
         // someone else hosts the room now: everyone hears who
-        if (rooms.leave(room, p.id)) toRoom(room, encodeRoom(room.host, room.settings));
+        if (rooms.leave(room, p.id)) toRoom(room, encodeRoom(room.host, room.rules));
         // everyone who had this player in view drops it now rather than waiting for the next tick
         for (const other of room.players.values()) {
           if (other.sent.delete(p.id)) send(other, encodeTick(room.players.size, [p.id], [], []));

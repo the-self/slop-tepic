@@ -3,14 +3,14 @@
 // `capacity` players. When every room of a region is full the next player opens a mirror room ("nayarit#2"), and
 // empty rooms are dropped, so busy regions split instead of overflowing while quiet ones stay together.
 // A player can also open a room of their own (create): a title, a short code friends type to join it, an optional
-// password (kept hashed, server/passwords.ts) and its settings (weather, hour, police, PvP), which its host may change.
-// When the host leaves, the oldest player left takes over. Left empty, it waits a while (sweep) for its players to come
-// back, a dropped connection rejoining by its code, before it closes.
+// password (kept hashed, server/passwords.ts), the sky it starts with and its rules (police, PvP), which only its host
+// changes. When the host leaves, the oldest player left takes over. Left empty, it waits a while (sweep) for its
+// players to come back, a dropped connection rejoining by its code, before it closes.
 
 import { randomInt } from 'node:crypto';
 import { SpatialGrid } from './aoi.ts';
-import { DEFAULT_SETTINGS } from '../shared/protocol.ts';
-import type { RoomSettings } from '../shared/protocol.ts';
+import { DEFAULT_RULES, SKY_TIMES, SKY_WEATHERS } from '../shared/protocol.ts';
+import type { RoomRules, SkyTime, SkyWeather, WireSky } from '../shared/protocol.ts';
 import type { PasswordHash } from './passwords.ts';
 
 const CODE_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // (no 0/O or 1/I: read out loud or off a phone)
@@ -26,11 +26,13 @@ export interface Room<P> {
   index: number;
   players: Map<number, P>;
   grid: SpatialGrid;
+  /** the time of day & weather everyone in the room sees (wire indices; a new room starts on the real ones, 0 & 0) */
+  sky: WireSky;
   title: string; // '' for a public room
   code: string; // what friends type to join it ('' for a public room)
   password: PasswordHash | null;
-  settings: RoomSettings;
-  host: number; // the player who sets the settings (0: nobody, a public room)
+  rules: RoomRules;
+  host: number; // the player who sets the sky and rules (0: nobody, a public room: anyone sets its sky)
   fails: number; // passwords tried (and not right) since failsAt (ms, Date.now()): the brake on guessing
   failsAt: number;
   emptyAt: number; // ms (Date.now()) a player's own room was left empty (0: someone is in it)
@@ -44,14 +46,17 @@ export interface RoomSummary {
   players: number;
   capacity: number;
   locked: boolean;
-  settings: RoomSettings;
+  time: SkyTime;
+  weather: SkyWeather;
+  rules: RoomRules;
 }
 
 /** What a player's own room opens with */
 export interface RoomOpening {
   title: string;
   password: PasswordHash | null;
-  settings: RoomSettings;
+  sky: WireSky;
+  rules: RoomRules;
 }
 
 export interface RoomStats {
@@ -91,7 +96,7 @@ class RoomManager<P extends { id: number }> {
   open(region: string): Room<P> {
     let index = 1;
     while (this.rooms.has(`${region}#${index}`)) index++;
-    const room = this.room(`${region}#${index}`, region, index, '', { title: '', password: null, settings: DEFAULT_SETTINGS });
+    const room = this.room(`${region}#${index}`, region, index, '', { title: '', password: null, sky: { time: 0, weather: 0 }, rules: DEFAULT_RULES });
     this.rooms.set(room.id, room);
     return room;
   }
@@ -119,7 +124,7 @@ class RoomManager<P extends { id: number }> {
   // Puts `player` in `room` unless it is full; true when it got in
   enter(room: Room<P>, player: P): boolean {
     if (room.players.size >= this.capacity) return false;
-    if (room.players.size === 0) room.host = player.id; // (the first one back into an empty room hosts it)
+    if (room.code && room.players.size === 0) room.host = player.id; // (the first one back into an empty room hosts it)
     room.emptyAt = 0;
     room.players.set(player.id, player);
     return true;
@@ -151,11 +156,17 @@ class RoomManager<P extends { id: number }> {
     return [...this.rooms.values()]
       .filter((r) => r.region === region)
       .sort((a, b) => Number(Boolean(a.code)) - Number(Boolean(b.code)) || b.players.size - a.players.size)
-      .map((r) => ({ id: r.id, title: r.title, code: r.code, players: r.players.size, capacity: this.capacity, locked: r.password !== null, settings: r.settings }));
+      .map((r) => ({
+        id: r.id, title: r.title, code: r.code, players: r.players.size, capacity: this.capacity, locked: r.password !== null,
+        time: SKY_TIMES.at(r.sky.time) ?? 'live', weather: SKY_WEATHERS.at(r.sky.weather) ?? 'live', rules: r.rules
+      }));
   }
 
-  private room(id: string, region: string, index: number, code: string, { title, password, settings }: RoomOpening): Room<P> {
-    return { id, region, index, players: new Map(), grid: new SpatialGrid(this.cellSize), title, code, password, settings: { ...settings }, host: 0, fails: 0, failsAt: 0, emptyAt: 0 };
+  private room(id: string, region: string, index: number, code: string, { title, password, sky, rules }: RoomOpening): Room<P> {
+    return {
+      id, region, index, players: new Map(), grid: new SpatialGrid(this.cellSize), sky: { ...sky }, title, code, password,
+      rules: { ...rules }, host: 0, fails: 0, failsAt: 0, emptyAt: 0
+    };
   }
 
   stats(): RoomStats {

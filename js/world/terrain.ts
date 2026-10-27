@@ -5,9 +5,11 @@ import { cityUniforms, createRiverWaterMaterial, createLakeWaterMaterial } from 
 import { triangulate, fillRing } from './lakes.ts';
 import { farGroundColor } from './far-ground.ts';
 import { ISLAND_BOUNDS } from './city-config.ts';
-import { SINK, SLOPES, hillHeights, terrainHeight, hillGround, townHeight, lakes } from './ground.ts';
+import { SINK, SLOPES, hillHeights, terrainHeight, hillGround, townHeight, lakes, hillPaths } from './ground.ts';
+import { PATH_STEP } from './hill-paths.ts';
 import type { Node } from 'three/webgpu';
 import type { FarGround } from './far-ground.ts';
+import type { PathSection } from './hill-paths.ts';
 import type { TileMask } from './streaming.ts';
 
 // js/world/terrain.ts
@@ -212,54 +214,45 @@ function buildTerrain(scene: THREE.Object3D, { mask = null, far = null }: { mask
 // The ways up the hills (city-geodata.js terrain.paths): ribbons laid on the hillside (each edge on the ground under
 // it), cobbled, paved or earth; the cobbled calzadas with a dry-stone wall on their downhill side and a lamp every 30 m
 function buildHillPaths(group: THREE.Group) {
-  if (!T) return;
-  const paths = T.paths;
-  const STEP = 2.5;
+  if (!T || !hillPaths) return;
   const PATH_LIFT = 0.04;
   const ribbons: [number[], number[], number[]] = [[], [], []]; // positions per surface
-  const walls: [Vec3, Vec3][] = [];
+  const walls: [a: Vec3, b: Vec3, footA: number, footB: number][] = []; // along the path's edge, down to the hillside
+  const banks: number[] = []; // the embankment's earth face under an edge without a wall
   const lamps: Vec3[] = [];
-  for (const [surface, width, flat] of paths) {
-    const pts: [number, number][] = [];
-    for (let i = 0; i < flat.length; i += 2) pts.push([flat[i], flat[i + 1]]);
-    // resample every STEP m
-    const samples: [x: number, z: number, dx: number, dz: number][] = [];
-    for (let i = 0; i + 1 < pts.length; i++) {
-      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
-      const L = Math.hypot(bx - ax, bz - az);
-      if (L < 0.01) continue;
-      const n = Math.max(1, Math.ceil(L / STEP));
-      for (let k = 0; k < n; k++) samples.push([ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n, (bx - ax) / L, (bz - az) / L]);
-    }
-    if (pts.length > 1) {
-      const [ax, az] = pts[pts.length - 2], [bx, bz] = pts[pts.length - 1];
-      const L = Math.hypot(bx - ax, bz - az) || 1;
-      samples.push([bx, bz, (bx - ax) / L, (bz - az) / L]);
-    }
-    const hw = width / 2;
+  // where the hillside's mesh is at (x, z), under the path's level
+  const bare = (x: number, z: number) => meshHeight(x, z, terrainHeight(x, z));
+  // Each run between two cross-sections (hill-paths.ts), level across: its corners at its sections' levels
+  for (const { surface, half: hw, sections, on } of hillPaths.paths) {
     const out = ribbons[surface];
     let run = 0;
-    for (let k = 0; k + 1 < samples.length; k++) {
-      const a = samples[k], b = samples[k + 1];
-      const ha = terrainHeight(a[0], a[1]), hb = terrainHeight(b[0], b[1]);
-      run += STEP;
-      if (Math.max(ha, hb) < 0.3) continue; // in town: the streets are there already
-      const corner = (s: [number, number, number, number], side: number): Vec3 => {
-        const x = s[0] - s[3] * side * hw, z = s[1] + s[2] * side * hw;
-        return [x, meshHeight(x, z, terrainHeight(x, z)) + PATH_LIFT, z]; // just over the hill's mesh, where walkers stand
-      };
+    for (let k = 0; k + 1 < sections.length; k++) {
+      run += PATH_STEP;
+      if (!on[k]) continue; // in town: the streets are there already
+      const a = sections[k], b = sections[k + 1];
+      const corner = (s: PathSection, side: number): Vec3 => [s.x - s.dz * side * hw, s.level + PATH_LIFT, s.z + s.dx * side * hw];
       const a0 = corner(a, -1), a1 = corner(a, 1), b0 = corner(b, -1), b1 = corner(b, 1);
       out.push(...a0, ...a1, ...b0, ...a1, ...b1, ...b0); // counter-clockwise from above
-      if (surface === 0 && width >= 4) {
-        // the wall on the downhill side, from the hillside below up to knee height over the path
-        const below = (side: number) => {
-          const x = a[0] - a[3] * side * (hw + 3), z = a[1] + a[2] * side * (hw + 3);
-          return terrainHeight(x, z) + townHeight(x, z);
-        };
-        const side = below(-1) < below(1) ? -1 : 1;
-        const wa = side < 0 ? a0 : a1, wb = side < 0 ? b0 : b1;
-        walls.push([wa, wb]);
-        if (run % 30 < STEP) lamps.push([wa[0] - a[3] * side * -0.5, wa[1], wa[2] + a[2] * side * -0.5]);
+      // the downhill side: the wall of a road (from the hillside below up to knee height over the path), the bare
+      // embankment of the others (and of a road's uphill side, where the hillside dips under its level)
+      const below = (side: number) => {
+        const x = a.x - a.dz * side * (hw + 3), z = a.z + a.dx * side * (hw + 3);
+        return terrainHeight(x, z) + townHeight(x, z);
+      };
+      const down = below(-1) < below(1) ? -1 : 1;
+      const walled = surface === 0 && hw >= 2;
+      for (const side of [-1, 1]) {
+        const p = side < 0 ? a0 : a1, q = side < 0 ? b0 : b1;
+        const fp = bare(p[0], p[2]), fq = bare(q[0], q[2]);
+        if (walled && side === down) {
+          walls.push([p, q, fp, fq]);
+          if (run % 30 < PATH_STEP) lamps.push([p[0] - a.dz * side * -0.5, p[1], p[2] + a.dx * side * -0.5]);
+        } else if (Math.max(p[1] - fp, q[1] - fq) > 0.06) {
+          // (sunk a little into the hillside, so its foot never shows a gap; outward-facing either side)
+          const pf: Vec3 = [p[0], fp - 0.25, p[2]], qf: Vec3 = [q[0], fq - 0.25, q[2]];
+          if (side > 0) banks.push(...p, ...pf, ...q, ...q, ...pf, ...qf);
+          else banks.push(...p, ...q, ...pf, ...q, ...qf, ...pf);
+        }
       }
     }
   }
@@ -293,16 +286,17 @@ function buildHillPaths(group: THREE.Group) {
     group.add(mesh);
   });
   if (walls.length) {
-    // a dry-stone wall 0.45 m thick: its outer face reaching 1.2 m down the slope, 0.8 m over the path
+    // a dry-stone wall: its outer face reaching down the slope, 0.8 m over the path
     const pos: number[] = [];
-    for (const [a, b] of walls) {
-      const top = 0.8, bot = -1.2;
-      const quad = (p0: Vec3, p1: Vec3, y0: number, y1: number) => {
-        pos.push(p0[0], p0[1] + y0, p0[2], p1[0], p1[1] + y0, p1[2], p0[0], p0[1] + y1, p0[2]);
-        pos.push(p0[0], p0[1] + y1, p0[2], p1[0], p1[1] + y0, p1[2], p1[0], p1[1] + y1, p1[2]);
+    for (const [a, b, fa, fb] of walls) {
+      // (its foot 1.2 m under the hillside below it at least: the path's embankment may stand a few metres over it)
+      const top = 0.8, botA = Math.min(-1.2, fa - a[1] - 1.2), botB = Math.min(-1.2, fb - b[1] - 1.2);
+      const quad = (p0: Vec3, p1: Vec3, y00: number, y01: number, y10: number, y11: number) => {
+        pos.push(p0[0], p0[1] + y00, p0[2], p1[0], p1[1] + y10, p1[2], p0[0], p0[1] + y01, p0[2]);
+        pos.push(p0[0], p0[1] + y01, p0[2], p1[0], p1[1] + y10, p1[2], p1[0], p1[1] + y11, p1[2]);
       };
-      quad(a, b, bot, top);
-      quad(b, a, bot, top);
+      quad(a, b, botA, top, botB, top);
+      quad(b, a, botB, top, botA, top);
       // coping
       pos.push(a[0], a[1] + top, a[2], b[0], b[1] + top, b[2], a[0], a[1] + top + 0.08, a[2]);
     }
@@ -316,6 +310,17 @@ function buildHillPaths(group: THREE.Group) {
     mat.colorNode = mix(color(0x4a453d), mix(color(0x857b6c), color(0xa39784), vnoise(floor(q).mul(1.3))), stone);
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+  if (banks.length) {
+    // the embankments' faces: packed earth, a little darker than the trails
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(banks, 3));
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.97, side: THREE.DoubleSide });
+    mat.colorNode = mix(color(0x6f4f38), color(0x87603f), vnoise(positionWorld.xz.add(positionWorld.y).mul(0.7)));
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.receiveShadow = true;
     group.add(mesh);
   }
   if (lamps.length) {

@@ -1,29 +1,14 @@
 // js/app/hud.ts
-// The HUD's text parts, built with safe DOM APIs only (textContent, classList, replaceChildren): the keys guide for the
-// mode the player is in, the place and street corner they are at (drawn as a pair of street-name signs), what F does
-// here, the sound button, and the 250 ms telemetry (fps, speed, altitude). The popovers (camera, time, teleports) open
-// against the control that toggles them.
+// The HUD's text parts, built with safe DOM APIs only (textContent, classList, replaceChildren): the mode the player
+// is in, the place and street corner they are at (drawn as a pair of street-name signs), what F (or whichever key the
+// menu gave it, input/keybindings.ts) does here, the menu's sound button, and the 250 ms telemetry (fps, speed,
+// altitude).
+import { keyBindings } from '../input/keybindings.ts';
 import type { PlayerMode } from '../player/controllers.ts';
 import type { PromptAction } from './boarding.ts';
-import { setText, t, tName } from '../i18n/i18n.ts';
+import { setText, t } from '../i18n/i18n.ts';
 import type { MessageKey } from '../i18n/i18n.ts';
 
-/** A keyboard guide row: [keys (a key's name, or the message key of a word: 'key.space'), what they do] */
-type Hint = readonly [keys: readonly string[], action: MessageKey];
-
-// Keyboard guide for each mode
-const CONTROL_HINTS: Readonly<Record<PlayerMode, readonly Hint[]>> = {
-  // (the mouse looks once a click has locked the pointer, cameras.ts)
-  person: [[['W', 'A', 'S', 'D'], 'hint.walk'], [['key.mouse'], 'hint.look'], [['Shift'], 'hint.sprint'], [['key.space'], 'hint.jump'],
-    [['key.rmb', 'Z'], 'hint.aim'], [['key.lmb', 'X'], 'hint.fire'], [['Tab', '1-4'], 'hint.weapons'], [['F'], 'hint.stealBoard']], // (3 again: SMG / rifle)
-  // (Shift's Nitro only in a car with a kit, drivetrain.ts)
-  car: [[['W', 'S'], 'hint.gasBrake'], [['A', 'D'], 'hint.steer'], [['Shift'], 'hint.nitro'], [['key.space'], 'hint.handbrake'], [['E', 'Q'], 'hint.gears'],
-    [['T'], 'hint.gearbox'], [['key.rmb', 'X'], 'hint.shoot'], [['F'], 'hint.exit']],
-  cyclist: [[['W', 'S'], 'hint.pedal'], [['A', 'D'], 'hint.lean'], [['Shift'], 'hint.sprint'], [['key.rmb', 'X'], 'hint.shoot'], [['F'], 'hint.exit']],
-  moto: [[['W', 'S'], 'hint.gasBrake'], [['A', 'D'], 'hint.lean'], [['Shift'], 'hint.nitro'], [['E', 'Q'], 'hint.gears'], [['T'], 'hint.gearbox'],
-    [['key.rmb', 'X'], 'hint.shoot'], [['F'], 'hint.exit']],
-  helicopter: [[['W', 'S'], 'hint.pitch'], [['A', 'D'], 'hint.yaw'], [['key.space', 'E'], 'hint.ascend'], [['Q', 'C'], 'hint.descend'], [['F'], 'hint.exit']]
-};
 // The touch button's word for what F would do
 const BOARD_LABELS: Readonly<Record<PromptAction, MessageKey>> = {
   none: 'touch.board.board', board: 'touch.board.board', steal: 'touch.board.steal', exit: 'touch.board.exit', use: 'touch.board.use'
@@ -52,12 +37,10 @@ export interface Telemetry {
 export class Hud {
   private readonly fps = document.getElementById('hud-fps');
   private readonly mode = document.getElementById('hud-active-mode');
-  private readonly camera = document.getElementById('hud-active-camera');
   private readonly speed = document.getElementById('hud-speed');
   private readonly speedMeter = document.getElementById('hud-speed-meter');
   private readonly altitude = document.getElementById('hud-altitude');
   private readonly location = document.getElementById('hud-location');
-  private readonly controlsHint = document.getElementById('hud-controls-hint');
   private readonly prompt = document.getElementById('hud-prompt');
   private readonly boardButton = document.getElementById('touch-board');
   private readonly soundButton = document.getElementById('btn-sound');
@@ -73,31 +56,10 @@ export class Hud {
     if (this.fps) this.fps.textContent = '60';
   }
 
-  /** The mode's name (the vehicle the player is in) and its keys guide; `nitro` when the vehicle has the kit */
-  showMode(mode: PlayerMode, label: string, nitro: boolean): void {
+  /** The mode's name (the vehicle the player is in) */
+  showMode(mode: PlayerMode, label: string): void {
     document.body.dataset.mode = mode;
     if (this.mode) this.mode.textContent = label;
-    if (!this.controlsHint) return;
-    const hints = CONTROL_HINTS[mode].filter(([, action]) => action !== 'hint.nitro' || nitro);
-    const items = hints.map(([keys, action]) => {
-      const item = document.createElement('span');
-      item.className = 'hint';
-      for (const key of keys) {
-        const kbd = document.createElement('kbd');
-        kbd.textContent = tName(key);
-        item.appendChild(kbd);
-      }
-      const text = document.createElement('span');
-      text.className = 'hint-label';
-      setText(text, action);
-      item.appendChild(text);
-      return item;
-    });
-    this.controlsHint.replaceChildren(...items);
-  }
-
-  showCamera(name: string): void {
-    if (this.camera) this.camera.textContent = name;
   }
 
   /** Where the player is: "place · streets", a place, or a street corner ("A & B", "near A & B") */
@@ -142,9 +104,10 @@ export class Hud {
     this.location.replaceChildren(...nodes);
   }
 
-  /** What F does here (`text`, '' for nothing), over the controls guide; `action`, its word on the touch button */
+  /** What F (the board key, input/keybindings.ts) does here (`text`, '' for nothing); `action`, its word on the touch
+   * button */
   showPrompt(text: string, action: PromptAction): void {
-    const state = `${action}:${text}`;
+    const state = `${action}:${keyBindings.label('board')}:${text}`; // (the key too: the menu may change it)
     if (state === this.promptState) return;
     this.promptState = state;
     if (this.boardButton) {
@@ -157,7 +120,7 @@ export class Hud {
     this.prompt.hidden = !text;
     if (!text) return;
     const key = document.createElement('kbd');
-    key.textContent = 'F';
+    key.textContent = keyBindings.label('board');
     const label = document.createElement('span');
     label.textContent = text;
     this.prompt.replaceChildren(key, label);
@@ -168,9 +131,10 @@ export class Hud {
     if (!button) return;
     if (button instanceof HTMLButtonElement) button.disabled = !supported;
     button.setAttribute('aria-pressed', String(enabled));
-    button.setAttribute('aria-label', t(enabled ? 'sound.mute' : 'sound.enable'));
     button.title = t(!supported ? 'sound.unavailable' : enabled ? 'sound.muteTitle' : 'sound.enableTitle');
     button.querySelector('use')?.setAttribute('href', enabled ? '#i-sound' : '#i-sound-off');
+    const label = button.querySelector<HTMLElement>('[data-sound-label]');
+    if (label) setText(label, enabled ? 'sound.on' : 'sound.off');
   }
 
   showTelemetry({ fps, mode, kmh, altitudeFt, boosting }: Telemetry): void {
@@ -183,47 +147,4 @@ export class Hud {
     document.body.classList.toggle('is-boosting', boosting && kmh > 0);
     if (this.altitude) this.altitude.textContent = altitudeFt.toLocaleString('en-US');
   }
-}
-
-/**
- * Popovers (native [popover]: light dismiss & Esc for free) open against the control that toggles them: data-anchor
- * names the element they sit above / below, data-align the one whose right edge they line up with. Returns the
- * function that closes them all.
- */
-export function wirePopovers(): () => void {
-  const popovers = document.querySelectorAll<HTMLElement>('.popover[popover]');
-  const supportsPopover = typeof HTMLElement.prototype.togglePopover === 'function';
-  popovers.forEach((pop) => {
-    const invoker = document.querySelector(`[popovertarget="${pop.id}"]`);
-    pop.addEventListener('beforetoggle', (e) => {
-      const open = e.newState === 'open';
-      if (invoker) invoker.classList.toggle('is-open', open);
-      if (!open) return;
-      const anchor = document.getElementById(pop.dataset.anchor ?? '') ?? invoker;
-      const align = document.getElementById(pop.dataset.align ?? '') ?? invoker;
-      if (!anchor || !align) return;
-      const r = anchor.getBoundingClientRect();
-      const spaceAbove = Math.max(0, r.top - 20);
-      const spaceBelow = Math.max(0, window.innerHeight - r.bottom - 20);
-      let above = pop.dataset.side === 'above';
-      // The camera control moves to the top on touch screens; open toward the available space.
-      if ((above ? spaceAbove : spaceBelow) < 160) above = spaceAbove > spaceBelow;
-      pop.style.right = `${Math.max(8, window.innerWidth - align.getBoundingClientRect().right)}px`;
-      if (above) {
-        pop.style.top = 'auto';
-        pop.style.bottom = `${window.innerHeight - r.top + 8}px`;
-        pop.style.maxHeight = `${spaceAbove}px`;
-      } else {
-        pop.style.bottom = 'auto';
-        pop.style.top = `${r.bottom + 8}px`;
-        pop.style.maxHeight = `${spaceBelow}px`;
-      }
-    });
-  });
-  return () => {
-    if (!supportsPopover) return;
-    popovers.forEach((pop) => {
-      if (pop.matches(':popover-open')) pop.hidePopover();
-    });
-  };
 }

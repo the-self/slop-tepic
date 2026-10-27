@@ -8,11 +8,11 @@ Besides the region's public rooms, a player can open a room of their own from th
 
 - a **title**, and a **code** of five letters and digits (`K7Q2M`, no 0/O or 1/I) that friends type to join it;
 - an optional **password**, kept only as a salted scrypt hash ([`passwords.ts`](passwords.ts)). After ten tries in a minute that weren't right (counted as they come in, so a burst on many sockets meets the brake too), the room refuses the rest (`wait`) until the minute is up;
-- **settings** that everyone in it plays with: the weather (Tepic's real one, or clear, cloudy, overcast, rain, storm or fog), the hour (the real one, or 9:00, 13:00, 18:45 or 23:00, held there), police on or off, and PvP on or off. With PvP off the server passes on no hits.
+- its **sky** (the time of day and the weather, as any room has: `SKY` → `SKY_SET`) and its **rules**: police on or off, and PvP on or off. With PvP off the server passes on no hits.
 
-Whoever opens a room hosts it: only the host changes its settings (`SETTINGS`), and everyone in it hears them (`ROOM`). When the host leaves, the player who has been in it longest takes over. Left empty, it waits two minutes for its players to come back (a dropped connection rejoins it by its code, and the first one back hosts it), then closes.
+Whoever opens a room hosts it: only the host changes its sky (a guest's `SKY` is ignored) and its rules (`RULES`), and everyone in it hears them (`SKY_SET`, `ROOM`). When the host leaves, the player who has been in it longest takes over. Left empty, it waits two minutes for its players to come back (a dropped connection rejoins it by its code, and the first one back hosts it), then closes.
 
-`GET /rooms?region=nayarit` lists a region's rooms (public first, then the players' own, fullest first): their title, code, players, whether they have a password, and their settings. Never the password.
+`GET /rooms?region=nayarit` lists a region's rooms (public first, then the players' own, fullest first): their title, code, players, whether they have a password, and their sky and rules. Never the password.
 
 The wire protocol ([`shared/protocol.ts`](../shared/protocol.ts)) is binary, in the spirit of RuneScape's. Every frame starts with a 1-byte opcode, and positions travel as integer centimetres.
 

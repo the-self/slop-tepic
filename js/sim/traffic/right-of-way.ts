@@ -4,7 +4,7 @@
 import type { CurvePoint, LaneCurve } from '../../world/road-network.ts';
 import type { DrivenVehicle, LaneEntry, OnEdge, TrafficEdge, TrafficNode, Vehicle } from './types.ts';
 import type { TrafficState } from './state.ts';
-import { phaseOf } from './signals.ts';
+import { phaseOf, runsRed } from './signals.ts';
 import { laneCoord, leadOf } from './occupancy.ts';
 import { canStopBefore, timeTo } from './idm.ts';
 
@@ -27,7 +27,7 @@ function yieldOncoming(ts: TrafficState, o: TrafficEdge | null, impatient: boole
   for (const list of o.occ) {
     const lead = leadOf(list);
     if (!lead || (lead.v.edge === o && lead.v.move.turn === 'L')) continue;
-    if (red && !lead.v.isPolice) continue;
+    if (red && !runsRed(lead.v)) continue;
     if (!canStop(ts, lead, o, impatient)) return true;
     const u = lead.v;
     const j = u.edge === o ? u.move.out[u.lane] : -1;
