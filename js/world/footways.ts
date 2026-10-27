@@ -1,16 +1,15 @@
-import * as THREE from 'three/webgpu';
-import { GEO } from './city-geodata.js';
-import { blockAt } from './city-config.ts';
-import { createPavementMaterial } from '../render/tsl-materials.ts';
-import { drapeGeometry } from './drape.ts';
-import type { TileStreamer } from './streaming.ts';
-
 // js/world/footways.ts
 // The footways OpenStreetMap maps (city-geodata.js `footways`): the walks across the parks & plazas and the andadores
 // between the houses in poured concrete, the paths in earth, the centro's pedestrian streets in setts, the steps in
 // concrete; a strip per segment of each, laid on the ground it crosses (a park's lawn, a yard, the open country, the
 // road deck where a pedestrian street runs between the blocks) and on the town's slopes like the pavements, each run
 // on half its width past its ends so the bends close. The people walk them (sim/pedestrian-routes.ts).
+import * as THREE from 'three/webgpu';
+import { GEO } from './city-geodata.js';
+import { blockAt } from './city-config.ts';
+import { createPavementMaterial } from '../render/tsl-materials.ts';
+import { drapeGeometry } from './drape.ts';
+import type { TileStreamer } from './streaming.ts';
 
 // over what: the road deck (a pedestrian street), the open country, a park's lawn, a yard's open ground
 const ROAD_Y = 0.007, FIELD_Y = 0.036, PARK_Y = 0.416, LOT_Y = 0.24;

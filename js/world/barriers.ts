@@ -1,13 +1,12 @@
-import * as THREE from 'three/webgpu';
-import { GEO } from './city-geodata.js';
-import { liftAt } from './ground.ts';
-import type { Collider } from './buildings.ts';
-
 // js/world/barriers.ts
 // The walls & fences OpenStreetMap maps (city-geodata.js `barriers`): the plastered bardas round the lots, the schools
 // & the plants, the stone & brick walls, the chain-link fences of the fields, the iron railings, a retaining wall. Each
 // stands on the ground along its line in pieces of up to PIECE m (each its own height off the slope); every piece
 // stops the player.
+import * as THREE from 'three/webgpu';
+import { GEO } from './city-geodata.js';
+import { liftAt } from './ground.ts';
+import type { Collider } from './buildings.ts';
 
 /** A kind's height & thickness (m), its colour, and how see-through (a fence's mesh) */
 const KINDS: { h: number; t: number; color: number; opacity: number }[] = [

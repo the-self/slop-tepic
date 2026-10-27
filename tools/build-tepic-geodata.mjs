@@ -571,8 +571,9 @@ for (const d of linkDrafts) {
     if (lifts[i] < 0 || lifts[i + 1] < 0) sunkLen += L;
   }
   // [a, b, name, width, lanes, dir, inner, lifts (dm over the ground at a, inner..., b; < 0 down in a cut) or 0,
-  //  way (1: a bridge way, 2: a tunnel way, 0 neither)]
-  links.push([d.a, d.b, d.ni, d.spec.w, d.spec.lanes, d.spec.dir, inner, any ? lifts : 0, d.bridge ? 1 : d.tunnel ? 2 : 0]);
+  //  way (1: a bridge way, 2: a tunnel way, 0 neither), minor (1: an alley, a service road or a track, minorDrive)]
+  links.push([d.a, d.b, d.ni, d.spec.w, d.spec.lanes, d.spec.dir, inner, any ? lifts : 0, d.bridge ? 1 : d.tunnel ? 2 : 0,
+    /^(service|track)$/.test(d.spec.hw) ? 1 : 0]);
 }
 const rails = railLines.map((r) => {
   const lifts = r.line.map((_, i) => Math.round(railLift(r.line, i) * 10));

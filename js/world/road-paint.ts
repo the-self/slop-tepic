@@ -25,7 +25,6 @@ const HEIGHT = 0.012; // above the asphalt
 const TOPE_LEN = 0.9; // along the street (m)
 const TOPE_H = 0.09;
 const TOPE_SEGS = 6;
-const NARROW = 2.8; // m: a road under twice this curb to curb is an alley's or a track's (city-geodata.js minor ways)
 const ZEBRA_CLEAR = 4; // m from a stop line a mapped crossing must be for a zebra of its own (nearer, the junction's)
 
 /** A point on the ground [x, z] (m) */
@@ -155,7 +154,7 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
 
   for (const [e, back] of roads.values()) {
     // (no lines on the empedrado & the earth, nor down an alley or a service road: too narrow for lanes)
-    if (e.half < NARROW || unpainted(...at(e, e.len / 2, 0))) continue;
+    if (e.minor || unpainted(...at(e, e.len / 2, 0))) continue;
     const firstLine = lines.length;
     // Lanes of both directions, measured to the right of e, left to right
     const lanes = e.lanes.map((o) => ({ o, dir: 1 }));

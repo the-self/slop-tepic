@@ -1,14 +1,13 @@
+// js/world/pools.ts
+// The swimming pools OpenStreetMap maps (city-geodata.js `pools`: the balnearios', the sports centres', a few houses'):
+// a concrete coping round the outline and the water inside it, a hand's breadth in, flat on the ground of the lot
+// it lies in (the yards', a park's, the open country's).
 import * as THREE from 'three/webgpu';
 import { GEO } from './city-geodata.js';
 import { blockAt } from './city-config.ts';
 import { liftAt } from './ground.ts';
 import { triangulate, insetOutline } from './lakes.ts';
 import { createPoolWaterMaterial } from '../render/tsl-materials.ts';
-
-// js/world/pools.ts
-// The swimming pools OpenStreetMap maps (city-geodata.js `pools`: the balnearios', the sports centres', a few houses'):
-// a concrete coping round the outline and the water inside it, a hand's breadth in, flat on the ground of the lot
-// it lies in (the yards', a park's, the open country's).
 
 const COPING = 0.45; // m of concrete round the water
 const YARD_Y = 0.22 + 0.012; // the yards' open ground over the road (city-grid.ts)

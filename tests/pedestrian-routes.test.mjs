@@ -105,6 +105,17 @@ test('a street crossing on a junction\'s crosswalk is one of the junction\'s way
   assert.ok(over, 'from the north sidewalk at B over to the south');
 });
 
+test('a crossing mid-block on its own edge but by an end of the edge back is the junction\'s there, not lost', () => {
+  const { A, B, ab, ba } = street();
+  // ba's stop line stands 6 m further out than ab's: the crossing 5 m short of ab's end is 1 m into ba
+  ba.len = 34;
+  const crossing = { edge: ab, s: 35, back: ba, bs: -1 };
+  const routes = createPedestrianRoutes(surface, blockAt, { nodes: [A, B], streetCrossings: [crossing] });
+  const track = routes.crossingTrack(crossing);
+  assert.ok(track && track.from === B && track.to === B, 'B\'s');
+  assert.equal(routes.along(ab).length, 4); // (no sidewalk split for it)
+});
+
 test('a footway is walked: from the sidewalk its end comes out by, along it and on to the next', () => {
   const { A, B, ab, ba } = street();
   // a path from the north sidewalk at x = 50 (its end 9 m off the street's centre line, 2 m in from the curb) north

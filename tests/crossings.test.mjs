@@ -95,6 +95,23 @@ test('a vehicle stops short of a crossing with someone out on it, and drives on 
   assert.equal(crossingBrake(ts, v), 0);
 });
 
+test('a vehicle turning through an intersection stops short of a crossing just round the corner', () => {
+  const { edges, ab, ba } = roads();
+  // a crossing 4 m into ab, and a car on the curve into it, 6 m from its end
+  const [c] = placeStreetCrossings([10, 1, 1], edges);
+  assert.ok(c.edge === ab || c.back === ab);
+  const v = { edge: ba, conn: { len: 12 }, cs: 6, move: { to: ab }, s: 0, half: 2.2, speed: 5, driver: { a: 1.5, b: 2, T: 1.2, s0: 2 }, desired: 14 };
+  const ts = { roadGrip: 1, headway: 1, caution: 1 };
+  assert.equal(crossingBrake(ts, v), 0);
+  c.walkers.push({});
+  assert.ok(crossingBrake(ts, v) < -1);
+  // ...and someone stepping off there sees it coming: claim() puts it in ab's lane, short of its start
+  c.walkers.length = 0;
+  ab.occ[0] = [{ v, s: v.cs - v.conn.len }];
+  ba.occ[0] = [];
+  assert.ok(!mayCrossStreet({ stWalk: true, aveWalk: true }, { speed: 1.3, cross: c }));
+});
+
 test('Tepic\'s mapped crossings: most on the streets, the marked ones as zebras', () => {
   const n = GEO.crossings.length / 3;
   assert.ok(n > 300);

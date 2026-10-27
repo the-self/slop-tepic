@@ -15,18 +15,23 @@ const LOOK = 1.5; // s between a vehicle's looks along the curb ahead
 const STEP = 1.3; // m/s stepping to the door and off it
 const PULL_IN = 35; // m before its stop it starts pulling over
 const GIVE_UP = 25; // s a vehicle stands for someone who doesn't come
-const STOP_COVER = 250; // m from a mapped stop within which a camión or combi stops at the stops only
+const STOP_COVER = 250; // m from a mapped stop on its street within which a camión or combi stops at the stops only
 const AT_STOP = 7; // m from a stop someone waiting there hails from
 const LET_OFF = 0.4; // the share of stops a camión or combi lets someone off at
 
-// The nearest bus stop to (x, z) within `reach` m, or null
-function stopNear(ts: TrafficState, x: number, z: number, reach: number): BusStop<TrafficEdge> | null {
+// Is a stop on edge f on e's street: e's road either way, or a street of the same name (a stop round the corner on a
+// cross street leaves e's riders still hailing)
+const sameStreet = (e: TrafficEdge, f: TrafficEdge) => f === e || f === e.opposite || (!!e.name && f.name === e.name);
+
+// The nearest bus stop to (x, z) within `reach` m (on `along`'s street, if given), or null
+function stopNear(ts: TrafficState, x: number, z: number, reach: number, along: TrafficEdge | null = null): BusStop<TrafficEdge> | null {
   let best: BusStop<TrafficEdge> | null = null, bestD = reach;
   const n = Math.ceil(reach / STOP_CELL);
   const ci = Math.floor(x / STOP_CELL), cj = Math.floor(z / STOP_CELL);
   for (let i = ci - n; i <= ci + n; i++) {
     for (let j = cj - n; j <= cj + n; j++) {
       for (const st of ts.stopCells.get(i * 100003 + j) ?? []) {
+        if (along && !sameStreet(along, st.edge)) continue;
         const d = Math.hypot(st.x - x, st.z - z);
         if (d < bestD) { bestD = d; best = st; }
       }
@@ -121,8 +126,8 @@ function look(ts: TrafficState, v: DrivenVehicle): void {
   }
   if (v.fleet !== null) {
     // a camión or combi on its route: at the next stop ahead on its road, if anyone waits there for it or is to get
-    // off there (whether they are, the same for this vehicle at this stop each time it looks); and in a part of town
-    // whose stops are mapped, nowhere else
+    // off there (whether they are, the same for this vehicle at this stop each time it looks); and along a stretch
+    // of street whose stops are mapped, nowhere else
     for (const st of e.stops) {
       const s = st.s - door;
       if (s < v.s + 15) continue;
@@ -132,7 +137,7 @@ function look(ts: TrafficState, v: DrivenVehicle): void {
       if (p || off) plan(ts, v, p, off, door, s);
       return;
     }
-    if (stopNear(ts, v.x, v.z, STOP_COVER)) return;
+    if (stopNear(ts, v.x, v.z, STOP_COVER, e)) return;
   }
   const p = hailer(ts, v, door);
   if (p) {

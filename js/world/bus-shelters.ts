@@ -1,3 +1,7 @@
+// js/world/bus-shelters.ts
+// Tepic's paradas on the sidewalks (bus-stops.ts): where OpenStreetMap has a shelter, a parabús of steel posts, a
+// roof and a glass back with a bench under it; where only a bench, the bench; and at every stop the blue PARADA sign
+// on its pole at the curb end. Their backs and benches stop the player.
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GEO } from './city-geodata.js';
@@ -5,11 +9,6 @@ import { liftAt } from './ground.ts';
 import { placeBusStops } from './bus-stops.ts';
 import type { PlaceEdge } from './edge-places.ts';
 import type { Collider } from './buildings.ts';
-
-// js/world/bus-shelters.ts
-// Tepic's paradas on the sidewalks (bus-stops.ts): where OpenStreetMap has a shelter, a parabús of steel posts, a
-// roof and a glass back with a bench under it; where only a bench, the bench; and at every stop the blue PARADA sign
-// on its pole at the curb end. Their backs and benches stop the player.
 
 const SW_TOP = 0.22; // the sidewalks' top over the road (city-grid.ts)
 const SHELTER_LEN = 4.2; // m along the street

@@ -286,13 +286,16 @@ function createLakes(list: readonly Lake[] | null | undefined,
       }
     }
   }
-  // a basin's carving at (x, z), bilinear between its grid's nodes (0 off it)
+  // a basin's carving at (x, z), bilinear between its grid's nodes (0 off it, and outside its shore: in a cell the shore
+  // runs through, the nodes inside would pull the ground down a step's width beyond it, under the yards & the road)
   const carveAt = (b: Basin, x: number, z: number) => {
     const fx = (x - b.x0) / b.step, fz = (z - b.z0) / b.step;
     const i = Math.floor(fx), j = Math.floor(fz);
     if (i < 0 || j < 0 || i >= b.cols - 1 || j >= b.rows - 1) return 0;
     const tx = fx - i, tz = fz - j, k = j * b.cols + i, c = b.carve;
-    return (c[k] * (1 - tx) + c[k + 1] * tx) * (1 - tz) + (c[k + b.cols] * (1 - tx) + c[k + b.cols + 1] * tx) * tz;
+    const c00 = c[k], c10 = c[k + 1], c01 = c[k + b.cols], c11 = c[k + b.cols + 1];
+    if ((c00 === 0 || c10 === 0 || c01 === 0 || c11 === 0) && !insideShore(b.ring, x, z)) return 0;
+    return (c00 * (1 - tx) + c10 * tx) * (1 - tz) + (c01 * (1 - tx) + c11 * tx) * tz;
   };
 
   /** How far (m, <= 0) the basins carve the ground at (x, z) under the town's floor: their banks & beds, 0 off them */

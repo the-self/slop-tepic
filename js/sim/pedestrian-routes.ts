@@ -160,8 +160,14 @@ function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B 
     }
     return j;
   };
-  // (one on a junction's crosswalk, at either end of its edge, is that junction's: its track meets the sidewalks there)
-  const atJunction = (c: C): N | null => (c.s < CROSS_SPLIT ? c.edge.from : c.s > c.edge.len - CROSS_SPLIT ? c.edge.to : null);
+  // (one on a junction's crosswalk, at either end of its edge, is that junction's: its track meets the sidewalks there;
+  // so is one by an end of the edge back, whose stop lines may stand further out: its sidewalks split there no more)
+  const atJunction = (c: C): N | null => {
+    if (c.s < CROSS_SPLIT) return c.edge.from;
+    if (c.s > c.edge.len - CROSS_SPLIT) return c.edge.to;
+    if (!c.back) return null;
+    return c.bs < CROSS_SPLIT ? c.back.from : c.bs > c.back.len - CROSS_SPLIT ? c.back.to : null;
+  };
   const junctionCrossings = new Map<N, C[]>();
   const crossJoins = new Map<C, Join>();
   for (const c of streetCrossings) {
@@ -170,7 +176,7 @@ function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B 
       let list = junctionCrossings.get(n);
       if (!list) junctionCrossings.set(n, (list = []));
       list.push(c);
-    } else if (!(c.back && (c.bs < CROSS_SPLIT || c.bs > c.back.len - CROSS_SPLIT))) {
+    } else {
       crossJoins.set(c, joinOn(c.edge, c.s, c.back, c.bs, c));
     }
   }

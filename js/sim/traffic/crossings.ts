@@ -49,31 +49,36 @@ function mayCrossStreet(ts: TrafficState, p: Ped): boolean {
   if (!c) return true;
   if (c.signal && !(c.group === 0 ? ts.stWalk : ts.aveWalk)) return false;
   const overIn = (c.len + 2) / Math.max(0.8, p.speed); // s to get over
-  for (const [e, at] of [[c.edge, c.s], [c.back, c.bs]] as const) {
-    if (!e) continue;
-    for (const list of e.occ) {
-      for (const o of list) {
-        const gap = at - STOP_SHORT - o.s - o.v.half;
-        if (gap < -2 * o.v.half - STOP_SHORT) continue; // (past it)
-        if (gap < 0.5) return false; // (on it, or standing right at it)
-        const v = o.v.speed;
-        if (c.kind > 0 || c.signal) {
-          if (v * SEEN + (v * v) / (2 * COMFORT) > gap) return false;
-        } else if (v > 0.5 && gap / v < overIn + MARGIN) {
-          return false;
-        }
+  return clearUpTo(c, c.edge, c.s, overIn) && (!c.back || clearUpTo(c, c.back, c.bs, overIn));
+}
+
+// Could every vehicle on e (those turning into it too: claim() puts them in its lanes, short of its start) stop short
+// of c, `at` m along e, before p is over it in `overIn` s?
+function clearUpTo(c: StreetCrossing, e: TrafficEdge, at: number, overIn: number): boolean {
+  for (const list of e.occ) {
+    for (const o of list) {
+      const gap = at - STOP_SHORT - o.s - o.v.half;
+      if (gap < -2 * o.v.half - STOP_SHORT) continue; // (past it)
+      if (gap < 0.5) return false; // (on it, or standing right at it)
+      const v = o.v.speed;
+      if (c.kind > 0 || c.signal) {
+        if (v * SEEN + (v * v) / (2 * COMFORT) > gap) return false;
+      } else if (v > 0.5 && gap / v < overIn + MARGIN) {
+        return false;
       }
     }
   }
   return true;
 }
 
-/** The braking (m/s², <= 0) v wants for a street crossing ahead on its edge with someone out on the road on it */
+/** The braking (m/s², <= 0) v wants for a street crossing ahead on its edge with someone out on the road on it; or,
+ *  turning through an intersection, on the edge it is turning into (a crossing just round the corner) */
 function crossingBrake(ts: TrafficState, v: DrivenVehicle): number {
-  if (v.conn) return 0;
-  const list = v.edge.crossings;
-  for (const { c, s } of list) {
-    const d = s - STOP_SHORT - v.s - v.half;
+  const e = v.conn ? v.move.to : v.edge;
+  // (where v is along e: through an intersection, short of its start by what is left of the curve)
+  const at = v.conn ? v.cs - v.conn.len : v.s;
+  for (const { c, s } of e.crossings) {
+    const d = s - STOP_SHORT - at - v.half;
     if (d < -STOP_SHORT) continue; // (its front past it)
     if (d > LOOKAHEAD) break;
     if (c.walkers.length) return stopAt(ts, v, Math.max(d, 0.05), 0.5);

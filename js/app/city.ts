@@ -117,11 +117,12 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   // The CFE's concrete poles stop the player (not the traffic: they stand on the sidewalks' outer edge)
   for (const c of streetDetails.colliders) colliders.push(c);
   // The high-voltage lines over the valley & the hills; their towers in the town stop the player
-  for (const c of buildPowerLines(scene).colliders) colliders.push(c);
+  const powerLines = buildPowerLines(scene);
+  for (const c of powerLines.colliders) colliders.push(c);
   // The benches & the gas stations OpenStreetMap maps (their columns, pumps & benches stop the player)
   for (const c of buildFurniture(scene).colliders) colliders.push(c);
   // The walls & fences OpenStreetMap maps: they stop the player
   for (const c of buildBarriers(scene).colliders) colliders.push(c);
   mark('bridges');
-  return { streamer, cityGrid, farGround, rivers, cityBlocks, stores, carParks, streetDetails, traffic, highwayTraffic, bridges, colliders };
+  return { streamer, cityGrid, farGround, rivers, cityBlocks, stores, carParks, streetDetails, powerLines, traffic, highwayTraffic, bridges, colliders };
 }

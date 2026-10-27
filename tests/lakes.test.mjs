@@ -71,6 +71,20 @@ test('a lake on a level floor: banks falling from the shore to a flat bed, the w
   for (let k = 1; k < water.position.length; k += 3) close(water.position[k], b.level, 1e-4); // (Float32)
 });
 
+test('a basin carves nothing outside its shore, where the shore runs across its grid\'s cells', () => {
+  // a diamond 100 m across: its shore crosses the grid's cells on the slant, never along their sides
+  const ring = [50, 0, 100, 50, 50, 100, 0, 50];
+  const w = createLakes([['pond', 'Rombo', 0, ring]], { floor: () => 20 });
+  let inside = 0;
+  for (let t = 0.02; t < 1; t += 0.013) {
+    // (0.4 m out from the north-east shore, and as far in)
+    const x = 50 + 50 * t, z = 50 * t, nx = 0.7071, nz = -0.7071;
+    assert.equal(w.offset(x + nx * 0.4, z + nz * 0.4), 0);
+    if (w.offset(x - nx * 0.4, z - nz * 0.4) < 0) inside++;
+  }
+  assert.ok(inside > 60, `${inside} carved just inside`);
+});
+
 test('on a slope the water stands flat under the shore\'s lowest point; an intermittent one lower still', () => {
   const floor = (x) => 60 - x / 20; // (falling 3 m across the pond)
   const [b] = createLakes([['lake', '', 0, L]], { floor }).basins;

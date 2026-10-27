@@ -1,15 +1,14 @@
+// js/world/furniture.ts
+// The street furniture & the gas stations OpenStreetMap maps (city-geodata.js `benches`, `fuel`): the parks' and
+// plazas' benches (steel legs, wooden slats and back) where they stand, along the street nearest them; and each gas
+// station's canopy over its forecourt, on its columns, with the pump islands under it. The canopies' columns, the
+// pumps and the benches stop the player. (The bins OpenStreetMap maps join street-details.ts' own, which knock over.)
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GEO } from './city-geodata.js';
 import { liftAt } from './ground.ts';
 import { surfaceY } from './footways.ts';
 import type { Collider } from './buildings.ts';
-
-// js/world/furniture.ts
-// The street furniture & the gas stations OpenStreetMap maps (city-geodata.js `benches`, `fuel`): the parks' and
-// plazas' benches (steel legs, wooden slats and back) where they stand, along the street nearest them; and each gas
-// station's canopy over its forecourt, on its columns, with the pump islands under it. The canopies' columns, the
-// pumps and the benches stop the player. (The bins OpenStreetMap maps join street-details.ts' own, which knock over.)
 
 const CANOPY_H = 5.6; // m to the canopy's underside
 const ISLAND_EVERY = 7; // m of canopy length per pump island

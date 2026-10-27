@@ -655,6 +655,27 @@ test('where the stops are mapped, a combi passes someone hailing it mid-block an
   assert.equal(hailing.placed, true, 'the one hailing it mid-block didn\'t');
 });
 
+test('a stop mapped round the corner, on another street, leaves a combi still taking someone hailing it', () => {
+  const { ts, v, step, curb } = roadHarness({ pickups: true });
+  v.fleet = 'combi';
+  v.react = 0.4;
+  const p = { placed: true, fallen: null, bail: null, ride: null, node: null, cross: null, conversation: null, wish: 0, x: -5.6, z: 110, v: 1 };
+  while ((p.wish * 9.7 + v.react * 31.3) % 1 >= 0.2) p.wish += 0.01;
+  ts.peds.push(p);
+  // (40 m off, on a cross street of another name)
+  const other = { name: 'Calle de Junto', stops: [] };
+  const stop = { x: -40, z: 120, s: 30, edge: other, shelter: true, bench: true, dx: 1, dz: 0 };
+  other.stops.push(stop);
+  ts.stopCells.set(Math.floor(stop.x / 100) * 100003 + Math.floor(stop.z / 100), [stop]);
+  assert.equal(curb.stopNear(ts, -1.8, 100, 250, v.edge), null);
+  assert.equal(curb.stopNear(ts, -1.8, 100, 250), stop);
+  for (let i = 0; i < 60 * 40 && p.placed; i++) {
+    step();
+    if (p.ride) curb.rideStep(ts, p, 1 / 60);
+  }
+  assert.equal(p.placed, false, 'they got on');
+});
+
 // The closest the player and v come side by side (m, centre to centre) as the player drives past it head on
 function headOn(h, x, z, speed = 12) {
   Object.assign(h.ts.player, { active: true, x, z, vx: 0, vz: -speed });

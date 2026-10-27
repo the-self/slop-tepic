@@ -110,7 +110,7 @@ async function initApp(): Promise<void> {
   // 3. The city: streets, hills, landmarks, blocks, street details & traffic
   loading.status(`Construyendo ${CITY.city || 'la ciudad'}: calles, manzanas y colonias...`);
   const city = buildCity(scene, { stream: params.get('stream') !== '0', mark: (label) => { loading.mark(label); } });
-  const { streamer, rivers, cityBlocks, stores, carParks, streetDetails, traffic: trafficSystem, highwayTraffic, colliders } = city;
+  const { streamer, rivers, cityBlocks, stores, carParks, streetDetails, powerLines, traffic: trafficSystem, highwayTraffic, colliders } = city;
 
   // 4. The player (on foot, car, bicycle, moto, helicopter), its cameras and its input
   const controllerManager = new ThirdPersonControllerManager(scene, colliders);
@@ -648,6 +648,7 @@ async function initApp(): Promise<void> {
       carParks.update(eye.x, eye.z);
       cityBlocks.updateLights(cameraSystem.camera);
       streetDetails.update(cameraSystem.camera);
+      powerLines.update(cameraSystem.camera.position);
       lightingSystem.update(eye);
     })
     .add(weather)

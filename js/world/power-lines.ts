@@ -1,16 +1,16 @@
+// js/world/power-lines.ts
+// The CFE's high-voltage lines (city-geodata.js `powerLines`, OpenStreetMap power=line: the 115 kV lines round the
+// valley, the 230 & 400 kV ones over the hills): a steel lattice tower at each of the line's points, turned square to
+// it, and the conductors and the shield wire sagging from tower to tower (the CFE's poles & wires down the streets
+// are street-details.ts': Tepic maps none of its distribution lines). The towers in the town stop the player. The
+// wires are built in CELL m cells, each hidden once it is all beyond the wire material's WIRE_FADE.
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GEO } from './city-geodata.js';
 import { landHeight } from './ground.ts';
 import { ISLAND_BOUNDS } from './city-config.ts';
-import { createWireMaterial } from '../render/tsl-materials.ts';
+import { createWireMaterial, WIRE_FADE } from '../render/tsl-materials.ts';
 import type { Collider } from './buildings.ts';
-
-// js/world/power-lines.ts
-// The CFE's high-voltage lines (city-geodata.js `powerLines`, OpenStreetMap power=line: the 115 kV lines round the
-// valley, the 230 & 400 kV ones over the hills): a steel lattice tower at each of the line's points, turned square to
-// it, and the conductors and the shield wire sagging from tower to tower (the CFE's poles & wires down the streets
-// are street-details.ts': Tepic maps none of its distribution lines). The towers in the town stop the player.
 
 /** A tower's height (m) to its peak by the line's kV, and the half spans of its arms (m) */
 const TOWER: { minKv: number; h: number; arm: number }[] = [
@@ -21,6 +21,7 @@ const TOWER: { minKv: number; h: number; arm: number }[] = [
 const towerOf = (kv: number) => TOWER.find((t) => kv >= t.minKv) ?? TOWER[TOWER.length - 1];
 const SAG = 0.035; // of a span, the conductors' sag at its middle
 const BASE = 3.2; // m: half the tower's footprint at the ground
+const CELL = 200; // m: the wires' cells (street-details.ts' for the CFE's)
 
 // A lattice tower h m high: four legs tapering from BASE to 0.6 m at the waist, braced at each level, the waist on up
 // to the peak, and two crossarms `arm` m either side (x across the line, z along it, y up)
@@ -59,15 +60,21 @@ function towerGeometry(h: number, arm: number) {
 // The conductors' attachment points in a tower's frame (x across the line): three phases & the shield wire at the peak
 const phases = (h: number, arm: number) => [[-arm, h * 0.72 - 2.2], [arm, h * 0.72 - 2.2], [-arm * 0.7, h * 0.86 - 2.2], [0, h + 0.2]];
 
-/** The lines drawn into `scene`: the colliders of the towers in the detailed box */
-function buildPowerLines(scene: THREE.Object3D): { colliders: Collider[] } {
+/** The lines drawn into `scene`: the colliders of the towers in the detailed box, and update(), which hides the cells
+ *  of wire out of sight of the camera at `at` */
+function buildPowerLines(scene: THREE.Object3D): { colliders: Collider[]; update(at: { x: number; z: number }): void } {
   const group = new THREE.Group();
   group.name = 'PowerLines';
   const colliders: Collider[] = [];
   const byKind = new Map<(typeof TOWER)[number], THREE.Matrix4[]>();
-  const pos: number[] = [], wire: number[] = [], idx: number[] = [];
+  // (each cell's ribbons: positions, tangent & half width per vertex, indices; by the cell its span's middle is in)
+  const cells = new Map<number, { pos: number[]; wire: number[]; idx: number[] }>();
   const up = new THREE.Vector3(0, 1, 0), p = new THREE.Vector3(), tan = new THREE.Vector3();
   const addWire = (a: THREE.Vector3, b: THREE.Vector3, sag: number, r: number) => {
+    const key = Math.floor((a.x + b.x) / 2 / CELL) * 100003 + Math.floor((a.z + b.z) / 2 / CELL);
+    let c = cells.get(key);
+    if (!c) cells.set(key, (c = { pos: [], wire: [], idx: [] }));
+    const { pos, wire, idx } = c;
     const segs = Math.max(4, Math.min(12, Math.ceil(a.distanceTo(b) / 30)));
     const base = pos.length / 3;
     for (let s = 0; s <= segs; s++) {
@@ -133,21 +140,36 @@ function buildPowerLines(scene: THREE.Object3D): { colliders: Collider[] } {
     mesh.name = 'PowerTowers';
     group.add(mesh);
   }
-  if (pos.length) {
+  // (a cell is in sight while any of it, its spans hundreds of m long reaching out of it, is within WIRE_FADE)
+  const wireCells: { mesh: THREE.Mesh; at: THREE.Vector3; reach: number }[] = [];
+  const wireMat = createWireMaterial();
+  for (const c of cells.values()) {
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setAttribute('wire', new THREE.Float32BufferAttribute(wire, 4));
-    geo.setIndex(new THREE.Uint32BufferAttribute(idx, 1));
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(c.pos, 3));
+    geo.setAttribute('wire', new THREE.Float32BufferAttribute(c.wire, 4));
+    geo.setIndex(c.pos.length / 3 > 65535 ? new THREE.Uint32BufferAttribute(c.idx, 1) : new THREE.Uint16BufferAttribute(c.idx, 1));
     geo.computeBoundingSphere();
-    const mesh = new THREE.Mesh(geo, createWireMaterial());
+    const sphere = geo.boundingSphere;
+    if (!sphere) continue;
+    sphere.radius += 1; // (the ribbons widen in the vertex shader)
+    const mesh = new THREE.Mesh(geo, wireMat);
     mesh.name = 'PowerWires';
-    mesh.renderOrder = 2;
-    mesh.frustumCulled = false; // (a single mesh kilometres across: always in view of something)
+    mesh.renderOrder = 2; // (update() hides the far cells after the warm-up frame has compiled them)
     group.add(mesh);
+    wireCells.push({ mesh, at: sphere.center, reach: sphere.radius + WIRE_FADE });
   }
+  for (const c of wireCells.slice(1)) c.mesh.userData.sharesPipelineWith = wireCells[0].mesh;
   scene.add(group);
-  console.info(`[power] ${GEO.powerLines.length} high-voltage lines, ${towers} towers (${colliders.length} in the town)`);
-  return { colliders };
+  console.info(`[power] ${GEO.powerLines.length} high-voltage lines, ${towers} towers (${colliders.length} in the town), wires in ${wireCells.length} cells`);
+  return {
+    colliders,
+    update(at) {
+      for (const c of wireCells) {
+        const dx = c.at.x - at.x, dz = c.at.z - at.z;
+        c.mesh.visible = dx * dx + dz * dz < c.reach * c.reach;
+      }
+    }
+  };
 }
 
 export { buildPowerLines };

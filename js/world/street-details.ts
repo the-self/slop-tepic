@@ -6,6 +6,7 @@ import { cityUniforms, createTreeGrateMaterial, atlasSlotUV, createWireMaterial,
 import { PropBreaker } from '../sim/mayhem.ts';
 import { createTreeField, treeTrunkColliders } from './trees.ts';
 import { mappedTreeSites, clearOfMapped } from './mapped-trees.ts';
+import { lampFinder } from './mapped-lamps.ts';
 import { lotTrees } from './lot-greenery.ts';
 import { medianTrees } from './medians.ts';
 import { parkTreeSites, sidewalkBlocks, parkLampSites, medianRuns } from './city-grid.ts';
@@ -373,23 +374,10 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
   // 1b. THE STREET LAMPS OPENSTREETMAP MAPS (highway=street_lamp): each on the sidewalk where it is mapped (or the
   //     nearest spot of one within LAMP_SNAP m), a cobra head with its arm out over the nearest roadway, or a post-top
   //     globe where no roadway is near (in a plaza). Round them (LAMP_REPLACE m) the lamps of sections 2 & 2b, which
-  //     guess where the town's lamps are, aren't put up: there the map knows better
+  //     guess where the town's lamps are, aren't put up: there the map knows better (mapped-lamps.ts)
   // =========================================================================
-  const LAMP_SNAP = 4, LAMP_REPLACE = 45, LAMP_CELL = 50;
-  const mappedLampCells = new Map<number, PointXZ[]>();
-  for (let k = 0; k + 1 < GEO.lamps.length; k += 2) {
-    const key = poleKey(Math.floor(GEO.lamps[k] / LAMP_CELL), Math.floor(GEO.lamps[k + 1] / LAMP_CELL));
-    let list = mappedLampCells.get(key);
-    if (!list) mappedLampCells.set(key, (list = []));
-    list.push({ x: GEO.lamps[k], z: GEO.lamps[k + 1] });
-  }
-  const nearMappedLamp = (x: number, z: number) => {
-    const ix = Math.floor(x / LAMP_CELL), iz = Math.floor(z / LAMP_CELL);
-    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
-      for (const p of mappedLampCells.get(poleKey(ix + a, iz + b)) ?? []) if (Math.hypot(p.x - x, p.z - z) < LAMP_REPLACE) return true;
-    }
-    return false;
-  };
+  const LAMP_SNAP = 4;
+  const nearMappedLamp = lampFinder(GEO.lamps);
   {
     let cobras = 0, posts = 0, off = 0;
     for (let k = 0; k + 1 < GEO.lamps.length; k += 2) {

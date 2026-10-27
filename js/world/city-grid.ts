@@ -18,6 +18,7 @@ import { SLOPES, liftAt, groundSlope } from './ground.ts';
 import { drapeMeshes, streamMeshes, cutOnCells } from './drape.ts';
 import { cutDeckHoles } from './river-channels.ts';
 import { openness } from './lot-greenery.ts';
+import { lampFinder } from './mapped-lamps.ts';
 import { cyclewayRuns, CYCLEWAY_HALF } from './medians.ts';
 import { insidePoly, insideRing, polyCover } from './rings.ts';
 import type { Bounds, CityBlock, PointXZ } from './city-config.ts';
@@ -482,6 +483,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   const treeSites: ParkTreeSite[] = []; // { x, y, z, scale, species } park trees planted by street-details.ts (section 7)
   const pavedRects: Bounds[] = []; // park slab bounds, exported so street trees (street-details.ts) stay off them
 
+  const nearMappedLamp = lampFinder(GEO.lamps);
   function addLamp(x: number, y: number, z: number) {
     lampMatrices.push(new THREE.Matrix4().makeTranslation(x, y + liftAt(x, z), z));
   }
@@ -519,9 +521,11 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     // roadways, and the traffic would lose the lanes beside it)
     if (b.rect) addFootprint((b.minX + b.maxX) * 0.5, (b.minZ + b.maxZ) * 0.5, b.maxX - b.minX, b.maxZ - b.minZ);
     else footprints.push(...polyCover(b.poly, PARK_COVER_BAND));
-    // (narrower where a wide one would fold over itself: a park round a lake)
+    // (narrower where a wide one would fold over itself: a park round a lake; a narrow park's first inset is under
+    // the 0.75 m the retries stop at, and is tried all the same)
     let bed: PointXZ[] | null = null;
-    for (let d = Math.min(5, Math.min(b.maxX - b.minX, b.maxZ - b.minZ) * 0.2); !bed && d >= 0.75; d /= 2) {
+    const d0 = Math.min(5, Math.min(b.maxX - b.minX, b.maxZ - b.minZ) * 0.2);
+    for (let d = d0; !bed && (d === d0 || d >= 0.75); d /= 2) {
       const inset = offsetPolygonInward(b.poly, d);
       if (inset && !crossesItself(inset)) bed = inset;
     }
@@ -546,7 +550,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
         treeSites.push({ x: tx, y: BED_Y + liftAt(tx, tz), z: tz, scale: 0.9 + prand(tx, tz, 3) * 0.4, species });
       }
     }
-    // lampposts every ~34 m along the walk
+    // lampposts every ~34 m along the walk (not round a lamp the map has: street-details.ts puts that one up)
     for (let i = 0; i < slab.length; i++) {
       const a = slab[i];
       const c = slab[(i + 1) % slab.length];
@@ -554,7 +558,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
       for (let t = 17; t < len - 8; t += 34) {
         const px = a.x + ((c.x - a.x) * t) / len;
         const pz = a.z + ((c.z - a.z) * t) / len;
-        addLamp(px, PARK_Y, pz);
+        if (!nearMappedLamp(px, pz)) addLamp(px, PARK_Y, pz);
       }
     }
   }

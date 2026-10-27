@@ -127,6 +127,8 @@ export interface RoadEdge {
   lift?: LiftProfile | null;
   /** The street's name (OpenStreetMap's; '' none) */
   name?: string;
+  /** An alley's, a service road's or a track's (city-geodata.js links' `minor`): too narrow for lane lines */
+  minor?: boolean;
   /** Its index among the one-way centreline edges (step 5; -1 none) */
   oneWay: number;
   /** A vehicle could both reach it and leave it */
@@ -178,6 +180,8 @@ export interface PaintEdge {
   half: number;
   lanes: number[];
   lift: LiftProfile | null | undefined;
+  /** An alley's, a service road's or a track's: no lane lines (RoadEdge.minor) */
+  minor: boolean;
 }
 
 /** Cubic Bézier from one lane's stop line to the next edge's lane start (m): control points, arc-length table */
@@ -269,6 +273,7 @@ interface StreetLink {
   a: number;
   b: number;
   name: string;
+  minor: boolean;
   w: number;
   lanes: number;
   dir: number;
@@ -290,6 +295,7 @@ interface StreetRun extends RunLanes {
   to: RoadNode;
   profile: LinkPoint[] | null;
   name: string;
+  minor: boolean;
   divided?: boolean;
   /** From or to a junction that stands off the link's own end (see 4b): its lanes aren't tested for obstacles */
   approach?: boolean;
@@ -607,7 +613,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     }
     // Links the grid already carries: most of their length runs along an avenue (north-south) or a cross street
     const links: StreetLink[] = [];
-    for (const [a, b, ni, w, lanes, dir, inner, lifts] of RG.links) {
+    for (const [a, b, ni, w, lanes, dir, inner, lifts, , minor] of RG.links) {
       const pts: LinkPoint[] = [pos[a]];
       for (let k = 0; k < inner.length; k += 2) pts.push({ x: inner[k], z: inner[k + 1] });
       pts.push(pos[b]);
@@ -620,7 +626,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
         if ((Math.abs(dz) > 0.94 && aveAt(x, z, 1.5)) || (Math.abs(dx) > 0.94 && pieceAt(x, z, 1.5, false))) hit++;
       });
       if (n && hit > n * 0.5) continue;
-      links.push({ a, b, name: RG.names[ni], w, lanes, dir, pts, len });
+      links.push({ a, b, name: RG.names[ni], minor: minor === 1, w, lanes, dir, pts, len });
     }
     // Junctions a few metres apart (divided roads, offset corners) are one: collapse links under 14 m
     const parent = pos.map((_, i) => i);
@@ -858,7 +864,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
           }
         }
         const approach = (k === 0 && approachA) || (k === stations.length - 2 && approachB);
-        runs.push({ from: stations[k], to: stations[k + 1], ...lanes, profile, name: l.name || '', approach });
+        runs.push({ from: stations[k], to: stations[k + 1], ...lanes, profile, name: l.name || '', minor: l.minor, approach });
       }
     }
     console.info(`[roads] centreline streets: ${links.length} links not on the grid, ${runs.length} straight runs`);
@@ -918,7 +924,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     }
     return true;
   };
-  function addEdgeGeneral(from: RoadNode, to: RoadNode, axis: RoadAxis, lanes: number[], half: number, divided: boolean | undefined, profile: LinkPoint[] | null = null, name = '', approach = false) {
+  function addEdgeGeneral(from: RoadNode, to: RoadNode, axis: RoadAxis, lanes: number[], half: number, divided: boolean | undefined, profile: LinkPoint[] | null = null, name = '', approach = false, minor = false) {
     const x0 = from.x;
     const z0 = from.z;
     const span = Math.hypot(to.x - x0, to.z - z0);
@@ -932,7 +938,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     // (every point of a raised link's profile has its lift)
     const lift = profile ? profile.map((p): [number, number] => [(p.x - x0) * dx + (p.z - z0) * dz, p.lift ?? 0]).sort((p, q) => p[0] - q[0]) : null;
     // (`name`: the street's, OpenStreetMap's; the traffic weighs the busiest avenues by it, traffic-demand.ts)
-    edges.push({ from, to, axis, x0, z0, dx, dz, rx: -dz, rz: dx, span, half, lanes: open.sort((p, q) => p - q), moves: [], general: true, cand: lanes, divided: !!divided, lift, name, ...unplaced });
+    edges.push({ from, to, axis, x0, z0, dx, dz, rx: -dz, rz: dx, span, half, lanes: open.sort((p, q) => p - q), moves: [], general: true, cand: lanes, divided: !!divided, lift, name, minor, ...unplaced });
   }
   // A divided road drawn as two one-way roadways between the same two junctions (most of the Bowery) runs both ways
   // along one centreline here: each way keeps to the right of it, as on a two-way street, and the road is as wide as
@@ -963,8 +969,8 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     if (r.half >= 7.25) r.axis = o.axis = 'ave'; // as wide as a major road (see lanesOf)
   }
   for (const r of genRuns) {
-    if (r.fwd.length) addEdgeGeneral(r.from, r.to, r.axis, r.fwd, r.half, r.divided, r.profile, r.name, r.approach);
-    if (r.back.length) addEdgeGeneral(r.to, r.from, r.axis, r.back, r.half, r.divided, r.profile, r.name, r.approach);
+    if (r.fwd.length) addEdgeGeneral(r.from, r.to, r.axis, r.fwd, r.half, r.divided, r.profile, r.name, r.approach, r.minor);
+    if (r.back.length) addEdgeGeneral(r.to, r.from, r.axis, r.back, r.half, r.divided, r.profile, r.name, r.approach, r.minor);
   }
   // Two edges from one node to the same next one (a service road whose ends were drawn onto its main road's junctions)
   // would drive through each other: keep the grid's, else the one with the most lanes
@@ -1241,7 +1247,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     const { from, to, axis, x0, z0, sx, sz, dx, dz, rx, rz, span, len, half, lanes, lift } = e;
     const pFrom = paintNodes.get(from), pTo = paintNodes.get(to);
     if (!pFrom || !pTo) throw new Error('[roads] an edge off the node list'); // (every node is in it)
-    const paint = { from: pFrom, to: pTo, axis, x0, z0, sx, sz, dx, dz, rx, rz, span, len, half, lanes, lift };
+    const paint = { from: pFrom, to: pTo, axis, x0, z0, sx, sz, dx, dz, rx, rz, span, len, half, lanes, lift, minor: e.minor === true };
     paintOf.set(e, paint);
     return paint;
   });

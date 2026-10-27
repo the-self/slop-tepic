@@ -44,10 +44,11 @@ export type Road = [name: string, width: number, dir: 'TW' | 'FT' | 'TF', lanes:
 
 /** A road-graph link between two nodes: [a, b (node indices), name (index into `names`), width (m), lanes,
  *  dir, inner (flat interior points, a → b), lifts (dm over the ground at a, inner..., b, < 0 down in an underpass's
- *  cut; 0 when all at grade), way (1: a bridge way, 2: a tunnel way, 0 neither)]. */
+ *  cut; 0 when all at grade), way (1: a bridge way, 2: a tunnel way, 0 neither), minor (1: an alley, a service road
+ *  or a track of the town, 0 a street)]. */
 export type GraphLink = [
   a: number, b: number, name: number, width: number, lanes: number, dir: LinkDir,
-  inner: FlatPoints, lifts: number[] | 0, way: 0 | 1 | 2
+  inner: FlatPoints, lifts: number[] | 0, way: 0 | 1 | 2, minor: Flag
 ];
 
 export interface RoadGraph {
