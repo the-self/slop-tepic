@@ -81,6 +81,8 @@ interface TrafficEdge extends RoadEdge {
   crossings: { c: StreetCrossing; s: number }[];
   /** the bus stops by its right curb (world/bus-stops.ts), by s */
   stops: BusStop<TrafficEdge>[];
+  /** the topes across it (topes.ts): m from its start stop line, in order */
+  topes: number[];
 }
 
 /** A street crossing along a road (crossings.ts): where it is taken, its kind, the edges it crosses (pedestrian-

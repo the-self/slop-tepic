@@ -295,6 +295,9 @@ export interface CityGeodata {
   crossings: number[];
   /** Bus stops on the sidewalks, 3 numbers each: x, z (m), flags (1 a shelter, 2 a bench). */
   busStops: number[];
+  /** Speed bumps mapped on the streets, 3 numbers each: x, z (m), kind (0 a bump or hump, 1 a table, 2 a cushion, 3 a
+   *  rumble strip). */
+  topes: number[];
 }
 
 export declare const GEO: CityGeodata;

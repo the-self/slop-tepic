@@ -672,6 +672,25 @@ const busStops = [];
   for (const s of stops) busStops.push(q(s.x), q(s.z), (s.shelter ? 1 : 0) | (s.bench ? 2 : 0));
   log(`bus stops: ${stops.length} (${stops.filter((s) => s.shelter).length} with a shelter, ${stops.filter((s) => s.bench).length} with a bench), ${tally.merged} more points of the same stops, ${tally.off} off the box`);
 }
+// The speed bumps (OSM traffic_calming=*: a node of the street's way, or a way across it, a raised crossing's table):
+// [x, z, kind] each, flat; kind 0 a bump or hump (the topes), 1 a table, 2 a cushion, 3 a rumble strip
+const topes = [];
+{
+  const KINDS = { bump: 0, hump: 0, yes: 0, table: 1, cushion: 2, rumble_strip: 3 };
+  const tally = { off: 0, other: 0 };
+  for (const e of detailsOSM.elements) {
+    const t = e.tags || {};
+    if (!t.traffic_calming) continue;
+    const kind = KINDS[t.traffic_calming];
+    if (kind === undefined) { tally.other++; continue; } // (chicanes, islands, choked lanes: no hump)
+    const g = e.type === 'node' ? [e] : e.geometry || [];
+    if (!g.length) continue;
+    const p = (e.type === 'node' && nodeWorld.get(nodeKey(e))) || toWorld(g.reduce((s, n) => s + n.lon, 0) / g.length, g.reduce((s, n) => s + n.lat, 0) / g.length);
+    if (!inBox(p[0], p[1])) { tally.off++; continue; }
+    topes.push(q(p[0]), q(p[1]), kind);
+  }
+  log(`speed bumps: ${topes.length / 3} mapped in the box, ${tally.off} off it, ${tally.other} of other kinds`);
+}
 
 // =====================================================================================================================
 // 4. BLOCKS: the box minus every roadway (and the things that cut blocks without carrying traffic)
@@ -2637,7 +2656,9 @@ const GEO = {
   // Pedestrian crossings on the streets (3): x, z (m), kind (0 unmarked, 1 marked, 2 with lights), flat
   crossings: pedCrossings,
   // Bus stops on the sidewalks (3): x, z (m), flags (1 a shelter, 2 a bench), flat
-  busStops
+  busStops,
+  // Speed bumps (3): x, z (m), kind (0 a bump or hump, 1 a table, 2 a cushion, 3 a rumble strip), flat
+  topes
 };
 
 const json = JSON.stringify(GEO);

@@ -11,6 +11,7 @@ import { holdsOn, mergingAhead, pedsOut } from './right-of-way.ts';
 import { enter, leave, mayEnter, signalAhead } from './junctions.ts';
 import { curbBrake, curbside } from './pickups.ts';
 import { crossingBrake } from './crossings.ts';
+import { topeCap } from './topes.ts';
 
 // Overtake into an adjacent lane when it is clearly quicker (MOBIL), or work towards a lane the planned turn
 // can be made from; either only if neither v nor its new follower has to brake hard for it. Not while still
@@ -156,6 +157,7 @@ function accelerate(ts: TrafficState, v: DrivenVehicle, dt: number): void {
   }
   worst = Math.min(worst, curbBrake(ts, v), crossingBrake(ts, v));
   if (v.sirenNear) cap = Math.min(cap, 3); // (pulled over for a siren: crawling)
+  cap = Math.min(cap, topeCap(v)); // (easing over a tope)
   const acc = Math.min(freeAcc(ts, v) + worst, (cap - v.speed) * 2);
   v.acc = clamp(acc, -9 * ts.roadGrip, v.driver.a);
   // a driver looking at their phone (mishaps.ts) drives on as on a free road

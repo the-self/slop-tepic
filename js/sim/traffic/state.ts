@@ -32,6 +32,8 @@ import { createLightPools } from './render.ts';
 import { kindOf } from './population.ts';
 import { placeStreetCrossings } from './crossings.ts';
 import { placeBusStops } from '../../world/bus-stops.ts';
+import { planTopes } from '../../world/topes.ts';
+import { placeTopes } from './topes.ts';
 import type { BusStop } from '../../world/bus-stops.ts';
 
 /** Where spawnPed places someone: a track's fields, copied onto them */
@@ -286,7 +288,10 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     e.lefts = 0; // and to the left
     e.crossings = []; // the street crossings along it (crossings.ts)
     e.stops = []; // the bus stops by its right curb (pickups.ts)
+    e.topes = []; // the topes across it (topes.ts)
   }
+  // The topes, the paint's (world/topes.ts): the traffic slows down for each
+  placeTopes(planTopes(network.paintEdges, GEO.topes), edges);
   // The bus stops (world/bus-stops.ts): the camiones & combis on their routes pull in to them (pickups.ts)
   const stopCells = new Map<number, BusStop<TrafficEdge>[]>();
   for (const st of placeBusStops(GEO.busStops, edges)) {
