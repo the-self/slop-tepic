@@ -98,3 +98,14 @@ test("the generated routes drive connected streets of the road graph, each the w
     }
   }
 });
+
+test('each route is run by camiones or combis as the Ayuntamiento lists them', async () => {
+  const { GEO } = await import('../js/world/city-geodata.js');
+  const fleet = new Map(GEO.transit.routes.map((r) => [r[0], r[3]]));
+  for (const name of ['Progreso 6-2', 'Sauces 1', 'UNINAY', 'Allende', 'Insurgentes', 'México', 'Río Suchiate', 'Cantera Hospitales 1']) {
+    assert.equal(fleet.get(name), 'combi', name);
+  }
+  for (const name of ['Progreso 1', 'Progreso 5', 'Mololoa Alamo', 'CUAUHTEMOC', 'Llanitos Aurora', 'Venceremos', 'Peñitas']) {
+    assert.equal(fleet.get(name), 'bus', name);
+  }
+});

@@ -302,6 +302,11 @@ interface VehicleBase {
   pathS: number;
   nextPathS: number;
   lost: number;
+  /** the roads back onto its route where no move runs on along it (routing.ts detour), the next of them to take, and
+   *  where the last ends on the route (m); detourAt === detour.length: none left to take */
+  detour: TrafficEdge[];
+  detourAt: number;
+  detourS: number;
   sign: number;
   pitch: number;
   roll: number;

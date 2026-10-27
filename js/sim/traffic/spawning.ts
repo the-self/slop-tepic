@@ -41,6 +41,7 @@ function joinRoute(v: Vehicle, on: PathAlong): void {
   v.path = on.path;
   v.pathS = on.s;
   v.lost = 0;
+  v.detour.length = v.detourAt = 0;
   v.sign = on.path.routeIndex;
   if (v.bus) v.livery = liveryOf(on.path.name);
 }

@@ -21,8 +21,9 @@ function createVehicle<B extends boolean>(bus: B, half: number, halfWidth: numbe
     dl: 0, dlv: 0, blink: 0, blinkPhase: Math.random() * 0.8,
     x: 0, z: 0, prevX: 0, prevZ: 0, tx: 0, tz: 1, nose: 0, yaw: 0, yawRate: 0, steer: 0,
     // on a bus or combi route (transit.ts): its fleet, the path, metres along it to the end of this road and to the
-    // end of the next, how many moves since it last found its way along it, and the route's sign row (-1 none yet)
-    fleet: null, path: null, pathS: 0, nextPathS: 0, lost: 0, sign: -1,
+    // end of the next, how many moves since it last found its way along it, the roads back onto it (routing.ts), and
+    // the route's sign row (-1 none yet)
+    fleet: null, path: null, pathS: 0, nextPathS: 0, lost: 0, detour: [], detourAt: 0, detourS: 0, sign: -1,
     pitch: 0, roll: 0, pitchVel: 0, rollVel: 0, vx: 0, vz: 0, yawOffset: 0, yawVel: 0,
     pAhead: Infinity, pRight: 0, pSpeed: 0, pSide: 0, pHalfW: 0.86, pHalfL: 2.18, pParked: false, wheelSpin: Math.random() * Math.PI * 2,
     // (an attentive driver's reaction: 0.35-0.75 s from seeing the player in its way to braking or steering)
