@@ -3,7 +3,7 @@
 # sections, its windows inset in frames, wheel arches cut, the wheels, and a few review renders. Every part's material
 # is named for its role (paint, glass, trim, light, lamp, tyre, rim...), which tools/models/prepare-made.mjs reads to
 # make the game's file. Run one with
-#   blender -b --factory-startup -P tools/models/blender/<id>.py -- <out.glb> [<render dir>]
+#   blender -b --factory-startup -P tools/models/blender/<id>.py -- <out.glb> [<render dir> [<out.blend>]]
 # Blender's frame: metres, x to the car's right, y ahead (the nose to +y), z up from the ground.
 import bpy
 import bmesh
@@ -31,9 +31,18 @@ LOOKS = {
 
 
 def args():
-    """The script's own arguments (after Blender's --): the out .glb and, optionally, a folder for review renders"""
+    """The script's own arguments (after Blender's --): the out .glb, and optionally a folder for review renders and a
+    .blend to save the model in (to open and work on in Blender); '' skips one"""
     a = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
-    return (a[0] if a else None), (a[1] if len(a) > 1 else None)
+    pick = lambda i: (a[i] or None) if len(a) > i else None
+    return pick(0), pick(1), pick(2)
+
+
+def save_blend(path):
+    """The scene saved as a .blend (compressed), the model as it was built, before any review render's sky and ground"""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(path), compress=True, copy=True)
+    print(f'saved {path}')
 
 
 def reset():

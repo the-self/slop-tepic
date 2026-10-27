@@ -72,14 +72,16 @@ function carPlateTexture() {
  * texture is white. The paint follows the texture's brightness, so its baked shading shows through, under a clear
  * coat that mirrors the sky as a car's lacquer does; the mask's B is the metal (chrome trim).
  */
-export function createModelCarMaterial(map: THREE.Texture, paintMap: THREE.Texture | null = null, paintHex: number | null = null): THREE.MeshPhysicalNodeMaterial {
+export function createModelCarMaterial(map: THREE.Texture, paintMap: THREE.Texture | null = null, paintHex: number | null = null, glowMap: THREE.Texture | null = null): THREE.MeshPhysicalNodeMaterial {
   const mat = new THREE.MeshPhysicalNodeMaterial({ metalness: 0.0 });
   const rgb = texture(map).rgb;
   const lum = rgb.dot(vec3(0.299, 0.587, 0.114));
   let body: Node<'float'>;
+  let bare: Node<'float'> = float(0);
   if (paintMap) {
     const mask = texture(paintMap);
     body = mask.r;
+    bare = mask.b; // (metal: under the paint, bare steel that takes no clear coat)
     // (the paint under its clear coat is never glossier than ~0.4: the coat is what mirrors the sky)
     mat.roughnessNode = mix(mask.g, max(mask.g, float(PAINT_ROUGHNESS)), body);
     mat.metalnessNode = mask.b;
@@ -101,13 +103,12 @@ export function createModelCarMaterial(map: THREE.Texture, paintMap: THREE.Textu
   mat.colorNode = mix(rgb, shaded.mul(min(float(1), float(PAINT_ALBEDO).div(max(brightest, 1e-3)))), body);
   // a clear coat that shows the sky in it, softened, rather than a mirror of it all over the car; none on bare metal
   // (a Cybertruck's steel: the paint mask's B, prepare-made.mjs 'steel')
-  const bare = paintMap ? texture(paintMap).b : float(0);
   mat.clearcoatNode = body.mul(CLEAR_COAT).mul(float(1).sub(bare));
   mat.clearcoatRoughnessNode = float(0.12);
   const lamp = smoothstep(0.2, 0.4, rgb.r.sub(max(rgb.g, rgb.b))).mul(step(positionLocal.z, 0.0));
-  // a lamp lit day and night (the Cybertruck's light bar, prepare-made.mjs 'drl'): pure white and glossier than glass
-  const drl = paintMap ? step(0.985, lum).mul(step(texture(paintMap).g, 0.03)) : float(0);
-  mat.emissiveNode = color(0xff2a1a).mul(lamp).mul(state.x.mul(2.2)).add(color(0xfff4e6).mul(drl).mul(1.8));
+  const brake = color(0xff2a1a).mul(lamp).mul(state.x.mul(2.2));
+  // and a lamp lit day and night (the Cybertruck's light bar): the file's emissive texture, car-files.ts glowMap
+  mat.emissiveNode = glowMap ? brake.add(texture(glowMap).rgb.mul(color(0xfff4e6)).mul(1.8)) : brake;
   return mat;
 }
 

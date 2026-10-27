@@ -64,7 +64,7 @@ const LOOK = {
   rim: { rgb: [196, 198, 200], rough: 0.28, metal: 0.85 },
   chrome: { rgb: [210, 212, 215], rough: 0.14, metal: 1 },
   light: { rgb: [220, 224, 228], rough: 0.08, metal: 0.9 },
-  drl: { rgb: [255, 255, 255], rough: 0.02, metal: 0 }, // (a daytime light bar: the game lights it always, pure white and glossy)
+  drl: { rgb: [240, 242, 245], rough: 0.08, metal: 0, glow: true }, // (a daytime light bar: in the emissive texture, lit always)
   lamp: { rgb: [178, 22, 24], rough: 0.12, metal: 0 }, // (red: the game lights it with the brake, at the back)
   amber: { rgb: [230, 120, 20], rough: 0.12, metal: 0 },
   white: { rgb: [235, 235, 235], rough: 0.12, metal: 0 },
@@ -378,6 +378,9 @@ for (const t of tris) t.cell = cellOf(t);
 // (and under the palette, with --plates, the plate's picture: 128 × 64 px)
 const C = 16, cols = 8, rows = Math.ceil(cells.size / cols), TW = C * cols, PH = opt('plates') ? 64 : 0, TH = C * Math.max(1, rows) + PH;
 const base = Buffer.alloc(TW * TH * 3), mr = Buffer.alloc(TW * TH * 3);
+// (what glows by itself, day and night: the 'drl' role's cells white, all else black: the glTF's emissive texture)
+const glow = Buffer.alloc(TW * TH * 3);
+let glows = false;
 for (const { i, role, rgb } of cells.values()) {
   const look = LOOK[role], x0 = (i % cols) * C, y0 = Math.floor(i / cols) * C;
   for (let y = y0; y < y0 + C; y++) {
@@ -386,6 +389,7 @@ for (const { i, role, rgb } of cells.values()) {
       base.set(rgb, o);
       const metal = role === 'wheel' && Math.max(...rgb) > 120 ? 0.8 : look.metal;
       mr.set([Math.round((look.paint ?? 0) * 255), Math.round(look.rough * 255), Math.round(metal * 255)], o);
+      if (look.glow) { glow.set([255, 255, 255], o); glows = true; }
     }
   }
 }
@@ -419,6 +423,7 @@ const material = doc.createMaterial('car')
   .setBaseColorTexture(doc.createTexture('palette').setImage(await png(base)).setMimeType('image/png'))
   .setMetallicRoughnessTexture(doc.createTexture('paint').setImage(await png(mr)).setMimeType('image/png'))
   .setMetallicFactor(1).setRoughnessFactor(1);
+if (glows) material.setEmissiveTexture(doc.createTexture('glow').setImage(await png(glow)).setMimeType('image/png')).setEmissiveFactor([1, 1, 1]);
 const primitive = (list, offset) => {
   const P = new Float32Array(list.length * 9), N = new Float32Array(list.length * 9), U = new Float32Array(list.length * 6);
   list.forEach((t, j) => {

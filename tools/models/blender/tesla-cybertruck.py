@@ -5,14 +5,15 @@
 # from the roof to the tail either side of its sunk roll-up cover, the shut lines cut into the steel, angular mirrors,
 # six-spoke aero covers, and a cabin behind the glass. Real sizes (Tesla's data sheet): 5.68 m long, 2.03 m wide over
 # the flares (no mirrors), 1.79 m high, a 3.81 m wheelbase, 285/65 R20 tyres (0.88 m across).
-#   blender -b --factory-startup -P tools/models/blender/tesla-cybertruck.py -- <out.glb> [<render dir>]
+#   blender -b --factory-startup -P tools/models/blender/tesla-cybertruck.py -- <out.glb> [<render dir> [<out.blend>]]
+# (tools/models/blender/tesla-cybertruck.blend is the model saved so, to open in Blender)
 import math
 import os
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
 import carlib as car  # noqa: E402
 
-out, renders = car.args()
+out, renders, blend = car.args()
 car.reset()
 
 NOSE, TAIL = 2.84, -2.84
@@ -275,6 +276,8 @@ for yc in AXLES:
 
 if out:
     car.export(out)
+if blend:
+    car.save_blend(blend)
 if renders:
     car.hero(renders, 'cybertruck', views=[('front', 35, 7, 11), ('rear', 150, 10, 11.5), ('side', 92, 2, 12.5),
                                            ('close', 28, 4, 6.8), ('high', 140, 32, 9.5)])
