@@ -89,8 +89,10 @@ function buildTerrain(scene: THREE.Object3D, { mask = null, far = null }: { mask
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
   if (SLOPES) geo.setAttribute('hill', new THREE.Float32BufferAttribute(hill, 1)); // the height over the floor, for the colours
-  // (the normals from every cell drawn, before the flat ones go into a mesh of their own)
-  geo.setIndex(new THREE.Uint32BufferAttribute([...rising, ...flat], 1));
+  // (the normals from every cell drawn, before the flat ones and the floor under the deck go into meshes of their own:
+  // a vertex only the floor under the deck used kept a zero normal, NaN once normalized, and that floor drew black
+  // beyond the streamed tiles)
+  geo.setIndex(new THREE.Uint32BufferAttribute([...rising, ...flat, ...under], 1));
   geo.computeVertexNormals();
   geo.setIndex(new THREE.Uint32BufferAttribute(rising, 1));
   geo.computeBoundingSphere();
