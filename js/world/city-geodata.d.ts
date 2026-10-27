@@ -100,6 +100,9 @@ export type Waterway = [kind: WaterwayKind, halfWidth: number, name: string, fla
 /** A river's whole course where it runs on beyond the detailed box: [name, flat points downstream]. */
 export type FarRiver = [name: string, pts: FlatPoints];
 
+/** A footway, path, pedestrian street or flight of steps: [kind (0, 1, 2, 3), width (m), flat points]. */
+export type Footway = [kind: 0 | 1 | 2 | 3, width: number, pts: FlatPoints];
+
 /** A high-voltage line: [kV (0 not said), flat points, a tower at each]. */
 export type PowerLine = [kv: number, pts: FlatPoints];
 
@@ -312,6 +315,9 @@ export interface CityGeodata {
   /** The surfaces of the minor ways (alleys, service roads, the town's tracks) where not asphalt: [kind (2 earth, 3
    *  concrete), width (m), flat centreline]. */
   minorSurfaces: [kind: number, width: number, pts: FlatPoints][];
+  /** Footways, paths, pedestrian streets & steps: [kind (0 footway, 1 path, 2 pedestrian street, 3 steps), width (m),
+   *  flat points]. */
+  footways: Footway[];
 }
 
 export declare const GEO: CityGeodata;

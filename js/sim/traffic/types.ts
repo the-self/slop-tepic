@@ -160,6 +160,8 @@ interface Ped {
   node: TrafficNode | null;
   /** the street crossing (along a road) it is on, or null */
   cross: StreetCrossing | null;
+  /** on a footway (pedestrian-routes.ts): on the ground of whatever it crosses, not up on a sidewalk */
+  foot: boolean;
   side: number;
   coord: number;
   line: number;

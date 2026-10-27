@@ -29,6 +29,7 @@ import { buildCarParks } from '../world/car-parks.ts';
 import { buildBusShelters } from '../world/bus-shelters.ts';
 import { buildPowerLines } from '../world/power-lines.ts';
 import { buildPools } from '../world/pools.ts';
+import { buildFootways } from '../world/footways.ts';
 import { GEO } from '../world/city-geodata.js';
 import type { Collider } from '../world/buildings.ts';
 
@@ -101,6 +102,7 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   const highwayTraffic = createHighwayTraffic(scene, cityGrid.highwayLanes);
   buildRoadPaint(scene, traffic.network, streamer);
   buildPavements(scene, streamer); // (the empedrado, adoquín, earth & concrete streets, under the paint)
+  buildFootways(scene, streamer); // (the walks, andadores, paths, pedestrian streets & steps)
   buildAirport(scene); // (the runway, taxiways & apron south-east of town, and the airliners at the gates)
   mark('roadPaint');
   // The overpasses, their ramps & the railway; their walls, parapets & piers stop the player (not the traffic's

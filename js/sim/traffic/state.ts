@@ -45,6 +45,7 @@ interface TrackPick {
   len: number;
   node: TrafficNode | null;
   cross: StreetCrossing | null;
+  foot: boolean;
   side: number;
   line: number;
   route: PedTrack | null;
@@ -347,6 +348,8 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
   const pedRoutes = createPedestrianRoutes<TrafficNode, TrafficEdge, CityBlock, StreetCrossing>(network, blockAt, {
     nodes: network.nodes,
     streetCrossings,
+    // (the footways, paths, pedestrian streets & steps: walked as well)
+    footways: GEO.footways.map(([, , flat]) => ({ pts: Array.from({ length: flat.length / 2 }, (_, i) => ({ x: flat[i * 2], z: flat[i * 2 + 1] })) })),
     bridges: GEO.footbridges.map(([flat, lifts]) => ({
       pts: Array.from({ length: flat.length / 2 }, (_, i) => ({ x: flat[i * 2], z: flat[i * 2 + 1] })),
       lifts: lifts.map((v) => v / 10)
@@ -449,7 +452,7 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     warnedNowhere: false,
     crashed: [],
     mishap: { next: MISHAP_FIRST, v: null, o: null },
-    track: { ax: 0, az: 0, ux: 0, uz: 1, len: 1, node: null, cross: null, side: 0, line: 0, route: null },
+    track: { ax: 0, az: 0, ux: 0, uz: 1, len: 1, node: null, cross: null, foot: false, side: 0, line: 0, route: null },
     curbNodes: [],
     walkedNodes: [],
     walkedCrossings: [],

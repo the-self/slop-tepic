@@ -43,6 +43,7 @@ function createPeds() {
       dir: 1,
       node: null, // the intersection of its crosswalk, which side of it, where along it
       cross: null, // ...or the street crossing it is on
+      foot: false, // on a footway
       side: 0,
       coord: 0,
       line: 0, // its line over the crosswalk, off the centre line
@@ -79,6 +80,8 @@ function createPeds() {
 // with 2 m of sidewalk (the rig steps down and up the curbs)
 const SIDEWALK_Y = 0.22;
 const CROSSWALK_Y = 0.012;
+const FOOT_Y = 0.01; // a footway over the road deck (a pedestrian street)
+const FOOT_PARK_Y = 0.42; // ...over a park's lawn (city-grid.ts BED_Y)
 // How high over the ground a pedestrian walks along its track: up a footbridge's stairs and over its deck, else 0
 function pedLift(p: Ped): number {
   if (!p.la && !p.lb) return 0;
@@ -94,6 +97,11 @@ function pedGround(ts: TrafficState, p: Ped, x: number, z: number): number {
     // it walks onto
     const b = blockAt(x, z);
     return (b && !(b.park > 0.6 && !b.median) ? SIDEWALK_Y : 0) + hill;
+  }
+  if (p.foot) {
+    // a footway: on the ground it crosses (a park's lawn, a yard, a pedestrian street's paving at the road's level)
+    const b = blockAt(x, z);
+    return (!b ? FOOT_Y : b.park > 0.6 && !b.median ? FOOT_PARK_Y : SIDEWALK_Y) + hill;
   }
   if (!p.node && !p.cross) return SIDEWALK_Y + hill;
   const t = (x - p.ax) * p.ux + (z - p.az) * p.uz;

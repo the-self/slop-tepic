@@ -155,6 +155,8 @@ const minorDrive = new Set();
   }
   log(`minor ways driven: ${tally.service} service roads, ${tally.alley} alleys, ${tally.track} tracks in town; ${tally.lot} service roads round a car park left to it`);
 }
+// The ways up the hills drawn on the hillside (5D's `paths`): left out of the footways below
+const hillPathWays = new Set();
 // Is way w driven: a street, or one of the minor ways above
 const drives = (w) => DRIVE.has(w.tags.highway) || minorDrive.has(w);
 // ...their surfaces where not asphalt (js/world/street-surfaces.ts adds them to pavement-data.ts's): [kind (2 earth:
@@ -2514,6 +2516,7 @@ const { ground = null, ...terrainGrid } = (() => {
     const line = rdp(pts, 0.6);
     for (let i = 1; i < line.length; i++) pathLen += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]);
     paths.push([surface, width, flat(line)]);
+    hillPathWays.add(w);
   }
   log(`hill paths: ${paths.length} ways, ${(pathLen / 1000).toFixed(1)} km`);
   if (process.env.TERRAIN_DEBUG) {
@@ -2738,6 +2741,33 @@ for (const o of BUILDING_OVERRIDES) {
 if (BUILDING_OVERRIDES.length) log(`overrides: ${overrides.length} of ${BUILDING_OVERRIDES.length} pinned to a building`);
 
 // =====================================================================================================================
+// 6E. FOOTWAYS: the walks through the parks & plazas, the andadores between the houses, the pedestrian streets of the
+//     centro, the paths and the steps (OSM highway=footway | path | pedestrian | steps; not the sidewalks or the
+//     crossings mapped as ways, which the streets' own sidewalks & crossings stand for, nor the private ones, nor those
+//     up the hills, 5D's paths): [kind (0 a footway, 1 a path, 2 a pedestrian street, 3 steps), width (m), flat points]
+//     each, cut to the box. js/world/footways.ts draws them; the people walk them (js/sim/pedestrian-routes.ts)
+// =====================================================================================================================
+const footways = [];
+{
+  const KIND = { footway: 0, path: 1, pedestrian: 2, steps: 3 };
+  const WIDTH = [2, 1.4, 4, 2];
+  const tally = [0, 0, 0, 0];
+  let skipped = 0;
+  for (const w of ways) {
+    const t = w.tags;
+    const kind = KIND[t.highway];
+    if (kind === undefined) continue;
+    if (/^(sidewalk|crossing|access_aisle)$/.test(t.footway || '') || /^(private|no)$/.test(t.access || '') || hillPathWays.has(w)) { skipped++; continue; }
+    const width = Math.min(12, Math.max(1, num(t.width) ?? WIDTH[kind]));
+    for (const piece of clipChain(w.geometry.map((g) => toWorld(g.lon, g.lat)))) {
+      footways.push([kind, Math.round(width * 10) / 10, flat(rdp(piece, 0.3))]);
+      tally[kind]++;
+    }
+  }
+  log(`footways: ${tally[0]} footways, ${tally[1]} paths, ${tally[2]} pedestrian streets, ${tally[3]} flights of steps; ${skipped} sidewalks, crossings, private or up the hills left out`);
+}
+
+// =====================================================================================================================
 // 7. ASSEMBLE
 // =====================================================================================================================
 const GEO = {
@@ -2831,7 +2861,9 @@ const GEO = {
   // Swimming pools (4): their outlines, flat rings
   pools,
   // The minor ways' surfaces where not asphalt (2): [kind (2 earth, 3 concrete), width (m), flat centreline]
-  minorSurfaces
+  minorSurfaces,
+  // Footways (6E): [kind (0 footway, 1 path, 2 pedestrian street, 3 steps), width (m), flat points]
+  footways
 };
 
 const json = JSON.stringify(GEO);
