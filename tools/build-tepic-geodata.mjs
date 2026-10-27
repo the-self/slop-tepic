@@ -1935,15 +1935,22 @@ const { ground = null, ...terrainGrid } = (() => {
   // so no triangle under one may rise, or a stretch of street vanishes under a brown hump of hillside and comes out
   // the other side (the streets of the colonias up the lomas, the boulevards past empty lots)
   const roadV = new Uint8Array(TW * TH);
-  // (the airfield likewise: the runway & taxiways as their strips, the apron cell by cell)
+  // (the airfield likewise: the runway & taxiways as their strips, the apron cell by cell; and the car parks, laid flat
+  // on the town's floor: under a hill they were buried, their cars standing on its slope over them)
+  const flatCell = (x, z) => {
+    const i = Math.floor((x - TX0) / CELL), j = Math.floor((z - TZ0) / CELL);
+    if (i < 0 || j < 0 || i >= TW - 1 || j >= TH - 1) return;
+    roadV[j * TW + i] = roadV[j * TW + i + 1] = roadV[(j + 1) * TW + i] = roadV[(j + 1) * TW + i + 1] = 1;
+  };
   for (const ring of airportRings) {
     const bb = bbox(ring);
-    for (let z = bb.z0; z <= bb.z1; z += CELL / 4) for (let x = bb.x0; x <= bb.x1; x += CELL / 4) {
-      if (!inRing(ring, x, z)) continue;
-      const i = Math.floor((x - TX0) / CELL), j = Math.floor((z - TZ0) / CELL);
-      if (i < 0 || j < 0 || i >= TW - 1 || j >= TH - 1) continue;
-      roadV[j * TW + i] = roadV[j * TW + i + 1] = roadV[(j + 1) * TW + i] = roadV[(j + 1) * TW + i + 1] = 1;
-    }
+    for (let z = bb.z0; z <= bb.z1; z += CELL / 4) for (let x = bb.x0; x <= bb.x1; x += CELL / 4) if (inRing(ring, x, z)) flatCell(x, z);
+  }
+  // (a lot's corners too: a small one may fall between those samples)
+  for (const { poly } of parkingLots) {
+    const bb = bbox(poly);
+    for (let z = bb.z0; z <= bb.z1; z += CELL / 8) for (let x = bb.x0; x <= bb.x1; x += CELL / 8) if (inRing(poly, x, z)) flatCell(x, z);
+    for (const [x, z] of poly) flatCell(x, z);
   }
   for (const s of [...drivePieces, ...airfieldPieces]) {
     const L = Math.hypot(s.x1 - s.x0, s.z1 - s.z0);

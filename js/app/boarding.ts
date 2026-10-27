@@ -1,6 +1,7 @@
 // js/app/boarding.ts
 // GTA-style boarding (F, the gamepad's Y, the touch button): on foot, get into the nearest of the player's own vehicles,
-// take the nearest car, bicycle or moto from the traffic (its driver is left in the street), rob a store's till, buy
+// take the nearest car, bicycle or moto from the traffic (its driver is left in the street) or a car parked in a car
+// park, rob a store's till, buy
 // from a taco stand or go in through a door; in a vehicle, get out (a helicopter once it has landed). In multiplayer,
 // by a friend's car, get in with them (and F again gets out). And the prompt for what F would do here.
 import type { ThirdPersonControllerManager, LeftCar, VehicleMode } from '../player/controllers.ts';
@@ -9,6 +10,7 @@ import type { CrimeSystem } from '../sim/crime.ts';
 import type { StoreTill } from '../world/store-interiors.ts';
 import type { Interiors } from '../world/interiors.ts';
 import type { StreetFood } from '../world/street-food.ts';
+import type { CarParksBuild, ParkedCarSpot } from '../world/car-parks.ts';
 
 const BOARD_REACH = 1.6; // m from the vehicle's body
 const TILL_REACH = 1.8; // m from a store's till (store-interiors.ts)
@@ -22,12 +24,15 @@ type TrafficVehicle = NonNullable<ReturnType<TrafficSystem['vehicleNear']>>;
 /** What F would act on, on foot */
 type BoardTarget =
   | { taken: TrafficVehicle }
+  | { parked: ParkedCarSpot }
   | { mode: VehicleMode; left: LeftCar | undefined }
   | { till: StoreTill };
 
 export interface BoardingSystems {
   controllers: ThirdPersonControllerManager;
   traffic: TrafficSystem;
+  /** the car parks' parked cars, to steal */
+  carParks: Pick<CarParksBuild, 'carNear' | 'take'>;
   crime: CrimeSystem;
   tills: readonly StoreTill[];
   interiors: Interiors;
@@ -55,13 +60,16 @@ export class Boarding {
   }
 
   private target(): BoardTarget | null {
-    const { controllers, traffic, tills } = this.systems;
+    const { controllers, traffic, carParks, tills } = this.systems;
     // (not while lying in the road, thrown out of a car)
     if (controllers.activeMode !== 'person' || controllers.entities.person.ragdoll) return null;
     const p = controllers.entities.person.position;
     const own = controllers.ownVehicleNear(BOARD_REACH);
-    const taken = traffic.vehicleNear(p.x, p.z, own ? Math.min(BOARD_REACH, own.distance) : BOARD_REACH);
+    const reach = own ? Math.min(BOARD_REACH, own.distance) : BOARD_REACH;
+    const taken = traffic.vehicleNear(p.x, p.z, reach);
     if (taken) return { taken };
+    const parked = carParks.carNear(p.x, p.z, reach);
+    if (parked) return { parked };
     if (own) return { mode: own.mode, left: own.left };
     for (const till of tills) if (Math.hypot(till.x - p.x, till.z - p.z) < TILL_REACH) return { till };
     return null;
@@ -86,7 +94,7 @@ export class Boarding {
 
   /** F */
   board(): void {
-    const { controllers, traffic, crime, interiors, streetFood, mapOpen, onModeChange } = this.systems;
+    const { controllers, traffic, carParks, crime, interiors, streetFood, mapOpen, onModeChange } = this.systems;
     if (mapOpen() || crime.state !== 'play') return;
     if (this.ride?.riding) {
       this.ride.leaveRide();
@@ -125,6 +133,12 @@ export class Boarding {
       // taking a patrol car is always a crime (its crew saw it); any other car, if the police see it
       if (taken.kind === 'car' && taken.police) crime.report('stealCop', true);
       else crime.report('carjack');
+    } else if ('parked' in target) {
+      // a parked car: off its stall, the player's own car in its place (a theft, if the police see it)
+      const car = carParks.take(target.parked);
+      controllers.leaveCarBehind();
+      controllers.enterVehicle('car', { kind: 'car', speed: 0, police: false, ...car });
+      crime.report('carjack');
     } else if (target.left) {
       controllers.takeLeftCar(target.left);
     } else {
@@ -144,6 +158,7 @@ export class Boarding {
       if (!target) return (interiors.active ? '' : streetFood.prompt()) || interiors.prompt();
       if ('till' in target) return 'Asaltar la caja';
       if ('mode' in target) return PROMPT_NAMES[target.mode];
+      if ('parked' in target) return 'Robar el coche';
       const v = target.taken;
       return v.bike ? 'Robar la bici' : v.moto ? 'Robar la moto' : v.isPolice ? 'Robar la patrulla' : v.bus ? 'Robar el camión' : v.fleet === 'combi' ? 'Robar la combi' : 'Robar el coche';
     }

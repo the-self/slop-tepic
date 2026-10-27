@@ -407,7 +407,7 @@ async function initApp(): Promise<void> {
   }
 
   const boarding = new Boarding({
-    controllers: controllerManager, traffic: trafficSystem, crime: crimeSystem, tills: stores.tills, interiors: rooms, streetFood,
+    controllers: controllerManager, traffic: trafficSystem, carParks, crime: crimeSystem, tills: stores.tills, interiors: rooms, streetFood,
     mapOpen: () => mapSystem.isFullMapOpen, onModeChange: syncMode
   });
   boardButton?.addEventListener('pointerdown', (event) => {

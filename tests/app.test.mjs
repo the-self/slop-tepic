@@ -5,9 +5,9 @@ import { playerStateKey, restorePlayer, savePlayer } from '../js/app/player-stat
 
 const at = (x, z) => ({ x, y: 0, z });
 
-// A world with the player on foot at the origin: `own` their vehicle within reach, `taken` the traffic's, `tills` the
-// stores' tills; every call to the systems is recorded
-function world({ mode = 'person', own = null, taken = null, tills = [], inside = false, food = '', door = '', state = 'play' } = {}) {
+// A world with the player on foot at the origin: `own` their vehicle within reach, `taken` the traffic's, `parked` a car
+// park's, `tills` the stores' tills; every call to the systems is recorded
+function world({ mode = 'person', own = null, taken = null, parked = null, tills = [], inside = false, food = '', door = '', state = 'play' } = {}) {
   const calls = [];
   const crime = {
     state, money: 100,
@@ -30,10 +30,14 @@ function world({ mode = 'person', own = null, taken = null, tills = [], inside =
     hijack: (v) => ({ kind: v.bike ? 'cyclist' : 'car', police: Boolean(v.isPolice) }),
     panic: (...args) => calls.push(['panic', ...args])
   };
+  const carParks = {
+    carNear: () => parked,
+    take: (car) => { calls.push(['take', car]); return { x: 1, y: 0.2, z: 2, heading: 3, bodyType: 'sedan', model: 'nissan-tsuru', paint: 0xff0000 }; }
+  };
   const interiors = { active: inside, act: () => calls.push(['act']), prompt: () => door };
   const streetFood = { buy: () => (food ? (calls.push(['buy']), true) : false), prompt: () => food };
   const boarding = new Boarding({
-    controllers, traffic, crime, tills, interiors, streetFood, mapOpen: () => false, onModeChange: () => calls.push(['sync'])
+    controllers, traffic, carParks, crime, tills, interiors, streetFood, mapOpen: () => false, onModeChange: () => calls.push(['sync'])
   });
   return { boarding, calls, crime };
 }
@@ -48,6 +52,21 @@ test('F on foot takes the traffic vehicle within reach: a patrol car is always a
   assert.equal(bike.boarding.prompt(), 'Robar la bici');
   bike.boarding.board();
   assert.deepEqual(bike.calls, [['enter', 'cyclist', { kind: 'cyclist', police: false }], ['report', 'carjack'], ['sync']]);
+});
+
+test('F on foot steals the car parked within reach: off its stall, the player\'s own car in its place', () => {
+  const spot = { id: 'spot' };
+  const { boarding, calls } = world({ parked: spot });
+  assert.equal(boarding.prompt(), 'Robar el coche');
+  boarding.board();
+  assert.deepEqual(calls, [
+    ['take', spot], ['leaveCarBehind'],
+    ['enter', 'car', { kind: 'car', speed: 0, police: false, x: 1, y: 0.2, z: 2, heading: 3, bodyType: 'sedan', model: 'nissan-tsuru', paint: 0xff0000 }],
+    ['report', 'carjack'], ['sync']
+  ]);
+  // (the traffic's vehicle first, when both are within reach)
+  const both = world({ taken: { isPolice: true }, parked: spot });
+  assert.equal(both.boarding.prompt(), 'Robar la patrulla');
 });
 
 test('F gets into the player\'s own vehicle, or the car they left in the street', () => {
