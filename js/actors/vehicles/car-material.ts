@@ -99,11 +99,15 @@ export function createModelCarMaterial(map: THREE.Texture, paintMap: THREE.Textu
   const shaded = paint.mul(lum).mul(1.12);
   const brightest = max(shaded.r, max(shaded.g, shaded.b));
   mat.colorNode = mix(rgb, shaded.mul(min(float(1), float(PAINT_ALBEDO).div(max(brightest, 1e-3)))), body);
-  // a clear coat that shows the sky in it, softened, rather than a mirror of it all over the car
-  mat.clearcoatNode = body.mul(CLEAR_COAT);
+  // a clear coat that shows the sky in it, softened, rather than a mirror of it all over the car; none on bare metal
+  // (a Cybertruck's steel: the paint mask's B, prepare-made.mjs 'steel')
+  const bare = paintMap ? texture(paintMap).b : float(0);
+  mat.clearcoatNode = body.mul(CLEAR_COAT).mul(float(1).sub(bare));
   mat.clearcoatRoughnessNode = float(0.12);
   const lamp = smoothstep(0.2, 0.4, rgb.r.sub(max(rgb.g, rgb.b))).mul(step(positionLocal.z, 0.0));
-  mat.emissiveNode = color(0xff2a1a).mul(lamp).mul(state.x.mul(2.2));
+  // a lamp lit day and night (the Cybertruck's light bar, prepare-made.mjs 'drl'): pure white and glossier than glass
+  const drl = paintMap ? step(0.985, lum).mul(step(texture(paintMap).g, 0.03)) : float(0);
+  mat.emissiveNode = color(0xff2a1a).mul(lamp).mul(state.x.mul(2.2)).add(color(0xfff4e6).mul(drl).mul(1.8));
   return mat;
 }
 

@@ -13,8 +13,8 @@
 // over the lamps goes (a model whose lamps' lenses are its windows' material). --plates: a plate
 // front and back, at those heights (m). --flip: turns it end for end (the nose is found by the head
 // lamps' side, which a model with unnamed lamps can't tell). --report: each part's box, to write its roles.
-// Roles: paint, glass, tyre, rim, wheel (any other part of a wheel, its own colour), chrome, trim (black plastic),
-// under, light (head lamps' reflectors), lamp (red tail lamps), amber, white (reversing lamps), own (its material's own
+// Roles: paint, steel (bare metal, tinted by the paint), glass, tyre, rim, wheel (any other part of a wheel, its own colour), chrome, trim (black plastic),
+// under, light (head lamps' reflectors), drl (a lamp lit day and night: the Cybertruck's light bar), lamp (red tail lamps), amber, white (reversing lamps), own (its material's own
 // colour: the default), backing (black, pushed 4 mm in: a second shell under the paint that fills its gaps), lamps (a
 // material shared by the head and tail lamps: light in the front half, lamp in the back) and drop
 // (not drawn: the interior, behind the now opaque glass, and the lamps' lenses).
@@ -58,11 +58,13 @@ const roleOf = (name) => {
 // Each role's look: colour (sRGB, 0-255; null: the material's own), roughness, metal, paint mask
 const LOOK = {
   paint: { rgb: [232, 232, 232], rough: 0.26, metal: 0, paint: 1 }, // (the game multiplies its colour by this grey)
+  steel: { rgb: [232, 232, 232], rough: 0.4, metal: 1, paint: 1 }, // (bare stainless: the paint's colour as a metal's, no clear coat)
   glass: { rgb: [16, 20, 24], rough: 0.04, metal: 0 },
   tyre: { rgb: [26, 26, 27], rough: 0.85, metal: 0 },
   rim: { rgb: [196, 198, 200], rough: 0.28, metal: 0.85 },
   chrome: { rgb: [210, 212, 215], rough: 0.14, metal: 1 },
   light: { rgb: [220, 224, 228], rough: 0.08, metal: 0.9 },
+  drl: { rgb: [255, 255, 255], rough: 0.02, metal: 0 }, // (a daytime light bar: the game lights it always, pure white and glossy)
   lamp: { rgb: [178, 22, 24], rough: 0.12, metal: 0 }, // (red: the game lights it with the brake, at the back)
   amber: { rgb: [230, 120, 20], rough: 0.12, metal: 0 },
   white: { rgb: [235, 235, 235], rough: 0.12, metal: 0 },
@@ -217,7 +219,7 @@ if (args.includes('--lenses')) {
 // never the paint, glass, lamps or wheels
 if (args.includes('--cabin')) {
   const g = box(tris, (t) => t.role === 'glass');
-  const keepRoles = new Set(['paint', 'glass', 'lamp', 'amber', 'white', 'light', 'tyre', 'rim', 'wheel']);
+  const keepRoles = new Set(['paint', 'steel', 'glass', 'lamp', 'amber', 'white', 'light', 'drl', 'tyre', 'rim', 'wheel']);
   const inside = (t) => {
     for (let k = 0; k < 9; k += 3) {
       const [x, y, z] = [t.p[k], t.p[k + 1], t.p[k + 2]];
@@ -322,7 +324,7 @@ if (seedBox.some((b) => !Number.isFinite(b.lo[0]))) throw new Error('no wheel at
 const wheelR = tris.some(named) ? seedBox.reduce((r, b) => r + (b.hi[1] - b.lo[1]) / 2, 0) / 4 : wheelArg;
 if (!(wheelR > 0)) throw new Error('no part is named as the tyres: give --wheel <radius m>');
 const cyl = seedBox.map((b) => ({ z: (b.lo[2] + b.hi[2]) / 2, outer: Math.max(Math.abs(b.lo[0]), Math.abs(b.hi[0])) }));
-const notWheel = new Set(['paint', 'glass', 'lamp', 'amber', 'white', 'light']);
+const notWheel = new Set(['paint', 'steel', 'glass', 'lamp', 'amber', 'white', 'light', 'drl']);
 // (inside its wheel's cylinder, named or not: what is named as wheel but lies elsewhere stays with the body)
 const inWheel = (t) => {
   if (notWheel.has(t.role)) return false;
