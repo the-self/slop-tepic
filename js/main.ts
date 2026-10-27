@@ -492,6 +492,7 @@ async function initApp(): Promise<void> {
   wireTeleportButtons(document.querySelectorAll('[data-teleport]'), TELEPORT_LOCATIONS, teleportTo, closePopovers);
   // (the police, gangs, pickups, fires & gas stations on the radar)
   mapSystem.setBlipSource(() => gasStations.blips(fires.blips(crimeSystem.blips())));
+  mapSystem.setPolice(crimeSystem); // (where the police can see the player, on both maps)
   document.getElementById('btn-open-map')?.addEventListener('click', () => { mapSystem.toggleFullMap(true); });
 
   hudToggleBtn?.addEventListener('click', () => {

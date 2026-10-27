@@ -11,7 +11,8 @@ import {
 } from '../world/city-config.ts';
 import type { Bounds, CityLandmark, CityRoad, PointXZ } from '../world/city-config.ts';
 import type { Footprint } from '../world/buildings.ts';
-import type { Blips } from '../sim/crime.ts';
+import type { Blips, SightCones } from '../sim/crime.ts';
+import { SIGHT } from '../sim/crime-rules.ts';
 import type { Vector3 } from 'three/webgpu';
 
 // js/ui/city-map.ts
@@ -452,6 +453,74 @@ function fitScale(b: Bounds, w: number, h: number, mx: number, my: number): numb
   return Math.min(w / ((bw * c + bd * n) * mx + 1), h / ((bw * n + bd * c) * my + 1));
 }
 
+/** What the radar's police sight cones use of the crime system (sim/crime.ts) */
+interface PoliceSight {
+  wanted: { stars: number };
+  sight: SightCones;
+}
+
+// Lightbar colours the police blink between on the radar, each unit a half beat from the next
+const SIREN = ['#ff3b3b', '#3b82ff'] as const;
+const sirenPhase = () => (performance.now() % 700 < 350 ? 0 : 1);
+
+// Where the police can see the player while it is wanted, GTA-style: a cone like a torch's beam out of each of them,
+// turning with them, and a little circle round them (right beside them); the helicopter's all round (it looks down).
+// The overlapping ones are filled as one. Out of all of them, the stars start to go (crime-rules.ts Wanted).
+function drawPoliceSight(ctx: CanvasRenderingContext2D, v: MapView, police: PoliceSight | null | undefined): void {
+  if (!police || police.wanted.stars === 0 || police.sight.length === 0) return;
+  const c = police.sight;
+  ctx.beginPath();
+  for (let i = 0; i < c.length; i += SIGHT) {
+    const x = v.toX(c[i], c[i + 1]), y = v.toY(c[i], c[i + 1]);
+    const r = c[i + 2] * v.s, half = c[i + 4], near = c[i + 5] * v.s;
+    if (half >= Math.PI) {
+      ctx.moveTo(x + r, y);
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      continue;
+    }
+    // where it looks, turned onto the screen (a point ahead of it through the map's own turn)
+    const ax = c[i] + Math.sin(c[i + 3]), az = c[i + 1] + Math.cos(c[i + 3]);
+    const look = Math.atan2(v.toY(ax, az) - y, v.toX(ax, az) - x);
+    ctx.moveTo(x, y);
+    ctx.arc(x, y, r, look - half, look + half);
+    ctx.closePath();
+    if (near > 0) {
+      ctx.moveTo(x + near, y);
+      ctx.arc(x, y, near, 0, Math.PI * 2);
+    }
+  }
+  const blue = sirenPhase();
+  ctx.fillStyle = blue ? 'rgba(59, 130, 246, 0.32)' : 'rgba(239, 68, 68, 0.32)';
+  ctx.strokeStyle = blue ? 'rgba(96, 165, 250, 0.85)' : 'rgba(248, 113, 113, 0.85)';
+  ctx.lineWidth = 1.2;
+  ctx.fill();
+  ctx.stroke();
+}
+
+// The police, gangs, thieves, pickups, fires & gas stations (crime.ts blips: kind, x, z, ...), on either map, clamped to
+// its edge; the police (on foot, their patrol cars, the helicopter) blinking red and blue like their lightbars, each a
+// half beat from the last
+function drawBlips(ctx: CanvasRenderingContext2D, v: MapView, blips: Blips): void {
+  const siren = sirenPhase();
+  for (let i = 0, n = 0; i < blips.length; i += 3) {
+    const kind = blips[i];
+    const style = BLIP_STYLES[kind];
+    const x = blips[i + 1];
+    const z = blips[i + 2];
+    if (!style || typeof x !== 'number' || typeof z !== 'number') continue;
+    const bx = Math.max(-v.w * 0.46, Math.min(v.w * 0.46, v.toX(x, z)));
+    const by = Math.max(-v.h * 0.46, Math.min(v.h * 0.46, v.toY(x, z)));
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.beginPath();
+    ctx.arc(bx, by, style[1] + 1.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = kind === 'cop' || kind === 'cruiser' || kind === 'heli' ? SIREN[(n++ + siren) % 2] : style[0];
+    ctx.beginPath();
+    ctx.arc(bx, by, style[1], 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 // Player heading arrow at the (already rotated) origin: white, on a dark halo
 function drawPlayerArrow(ctx: CanvasRenderingContext2D, tipY: number, halfWidth: number, tailY: number): void {
   ctx.beginPath();
@@ -552,6 +621,7 @@ class CityMapSystem {
   searchBounds?: Bounds;
   textWidths: Map<string, number>; // px, by font, spacing & text
   blipSource?: (() => Blips) | null;
+  police?: PoliceSight | null; // whose sight cones to draw (setPolice)
   playerInfoText?: string;
 
   constructor({ controllerManager, cameraSystem, trafficSystem, allBlocks = [], onTeleport, onToggle }: CityMapOptions) {
@@ -1032,6 +1102,11 @@ class CityMapSystem {
     this.blipSource = typeof fn === 'function' ? fn : null;
   }
 
+  // The police whose sight cones both maps draw (crime.ts sight)
+  setPolice(police: PoliceSight | null): void {
+    this.police = police;
+  }
+
   update(): void {
     // The full map covers the whole screen, radar included
     if (this.isFullMapOpen) {
@@ -1152,26 +1227,10 @@ class CityMapSystem {
       }
     }
 
-    // The police, gangs, thieves and pickups (crime.ts blips: kind, x, z, ...), clamped to the radar's edge
-    if (this.blipSource) {
-      const blips = this.blipSource();
-      for (let i = 0; i < blips.length; i += 3) {
-        const style = BLIP_STYLES[blips[i]];
-        const x = blips[i + 1];
-        const z = blips[i + 2];
-        if (!style || typeof x !== 'number' || typeof z !== 'number') continue;
-        const bx = Math.max(-w * 0.46, Math.min(w * 0.46, v.toX(x, z)));
-        const by = Math.max(-h * 0.46, Math.min(h * 0.46, v.toY(x, z)));
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-        ctx.beginPath();
-        ctx.arc(bx, by, style[1] + 1.4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = style[0];
-        ctx.beginPath();
-        ctx.arc(bx, by, style[1], 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
+    drawPoliceSight(ctx, v, this.police);
+
+    // The police, gangs, thieves and pickups, clamped to the radar's edge
+    if (this.blipSource) drawBlips(ctx, v, this.blipSource());
 
     // Camera FOV Cone & Player Arrow at center (0, 0)
     const camDir = this.cameraSystem.currentLookAt.clone().sub(this.cameraSystem.currentPos);
@@ -1237,6 +1296,8 @@ class CityMapSystem {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(this.fullStatic, 0, 0);
     v.screen(ctx);
+    drawPoliceSight(ctx, v, this.police);
+    if (this.blipSource) drawBlips(ctx, v, this.blipSource());
 
     // Live Player Blip & Heading Arrow, with a slow pulse to find it at a glance
     const px = v.toX(ent.position.x, ent.position.z);

@@ -27,7 +27,7 @@ export function spawnAgent(
     scale: rand(0.95, 1.06), girth: rand(0.95, 1.12), hair: rand(0, 0.25), armSwing: rand(0.9, 1.1)
   });
   const a: Agent = {
-    kind, gang, army, rig, x, z, heading: Math.atan2(crime.px - x, crime.pz - z), speed: 0, hp: army ? 150 : kind === 'cop' ? 100 : 80,
+    kind, gang, army, rig, x, z, heading: Math.atan2(crime.huntX - x, crime.huntZ - z), speed: 0, hp: army ? 150 : kind === 'cop' ? 100 : 80,
     fallen: null, dead: false, state: kind === 'thief' ? 'approach' : kind === 'gang' ? 'idle' : 'chase',
     t: 0, weapon, cooldown: rand(0.5, 1.5), burst: 0, homeX: x, homeZ: z, money: 0, arrest: 0, idleYaw: Math.random() * 6.28,
     wanderT: rand(2, 6), los: false, losT: 0, stepT: 0, foe: null, foeT: Math.random() * 0.5
@@ -154,7 +154,7 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
   a.losT -= dt;
   if (a.losT <= 0) {
     a.losT = 0.3 + Math.random() * 0.2;
-    a.los = dist < 60 && crime.clearLine(a.x, a.z, crime.px, crime.pz);
+    a.los = dist < 70 && crime.clearLine(a.x, a.z, crime.px, crime.pz);
   }
   const toPlayer = Math.atan2(dx, dz);
   const playing = crime.state === 'play';
@@ -193,6 +193,13 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
           return;
         }
       }
+    } else if (!crime.seen) {
+      // lost: to where the police last saw the player, and looking round there
+      const hx = crime.lastSeen.x - a.x, hz = crime.lastSeen.z - a.z;
+      const far = Math.hypot(hx, hz) > 4;
+      goalYaw = far ? Math.atan2(hx, hz) : a.heading + dt * 1.2;
+      speed = far ? RUN * 0.7 : 0;
+      a.arrest = Math.max(0, a.arrest - dt);
     } else {
       const gun = POLICE.shoots[stars] || a.army ? NPC_GUN[a.weapon ?? 'pistol'] : null;
       goalYaw = toPlayer;

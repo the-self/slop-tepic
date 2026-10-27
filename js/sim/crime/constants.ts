@@ -32,6 +32,16 @@ const DRAW_TIME = 0.32; // s to put one weapon away and bring the next up (the a
 const RESPAWN_TIME = 4.2; // s on the WASTED / BUSTED screen
 const COP_SIGHT = 45; // m an officer sees the player from (a patrol car: 70)
 const CRUISER_SIGHT = 70;
+// rad either side of where they look that an officer (on foot or in a patrol car) sees across, GTA-style: a cone ahead of
+// them, not all round (the helicopter, looking down, sees all round)
+const COP_FOV = 0.75;
+const CRUISER_FOV = 0.6;
+// The army's eyes, sharper than the police's: m a soldier sees the player from, and rad either side (its trucks: ARMY_TRUCK_SIGHT)
+const ARMY_SIGHT = 65;
+const ARMY_FOV = 0.95;
+const ARMY_TRUCK_SIGHT = 90;
+// m all round in which anyone of them notices the player whichever way they look: right beside them, heard, bumped into
+const NEAR_SIGHT = 8;
 const CRUISER = { halfW: 0.92, halfL: 2.3, mass: 1600, accel: 7.5, brake: 14, turn: 1.9 };
 const CRUISER_HP: Readonly<Record<Faction, number>> = { police: 100, narco: 140, army: 180, fire: 400, ambulance: 140 };
 // The police helicopter (four stars on): it circles HELI_ORBIT m round the player HELI_ALT m over the ground, sees it
@@ -64,5 +74,5 @@ const zero = new THREE.Matrix4().makeScale(0, 0, 0);
 const tint = new THREE.Color();
 
 export {
-  MAX_AGENTS, MAX_CRUISERS, MAX_TRUCKS, MAX_ARMY, MAX_PICKUPS, HEALTH_PICKUP, ARMOR_PICKUP, PARKED_Y, BODY_R, PERSON_H, CAR_H, BUS_H, inBody, RUN, THIEF_RUN, WALK, DOWN_TIME, DEAD_TIME, DESPAWN, GRIP_REACH, DRAW_TIME, RESPAWN_TIME, COP_SIGHT, CRUISER_SIGHT, CRUISER, CRUISER_HP, HELI_ALT, HELI_ORBIT, HELI_SPEED, HELI_SIGHT, HELI_HP, HELI_R, HELI_GUN, HELI_RESPAWN, NPC_GUN, FOE_DAMAGE, FOE_RANGE, SKILL, PICKUP_COLORS, clamp, rand, dummy, zero, tint
+  MAX_AGENTS, MAX_CRUISERS, MAX_TRUCKS, MAX_ARMY, MAX_PICKUPS, HEALTH_PICKUP, ARMOR_PICKUP, PARKED_Y, BODY_R, PERSON_H, CAR_H, BUS_H, inBody, RUN, THIEF_RUN, WALK, DOWN_TIME, DEAD_TIME, DESPAWN, GRIP_REACH, DRAW_TIME, RESPAWN_TIME, COP_SIGHT, CRUISER_SIGHT, COP_FOV, CRUISER_FOV, ARMY_SIGHT, ARMY_FOV, ARMY_TRUCK_SIGHT, NEAR_SIGHT, CRUISER, CRUISER_HP, HELI_ALT, HELI_ORBIT, HELI_SPEED, HELI_SIGHT, HELI_HP, HELI_R, HELI_GUN, HELI_RESPAWN, NPC_GUN, FOE_DAMAGE, FOE_RANGE, SKILL, PICKUP_COLORS, clamp, rand, dummy, zero, tint
 };

@@ -3,7 +3,8 @@
 // patrol car (the chase's or the traffic's own) within CRUISER_SIGHT, past the buildings; the helicopter from above
 // within HELI_SIGHT.
 import type { Car } from '../traffic.ts';
-import { COP_SIGHT, CRUISER_SIGHT, HELI_SIGHT } from './constants.ts';
+import { COP_SIGHT, CRUISER_SIGHT, CRUISER_FOV, NEAR_SIGHT, HELI_SIGHT } from './constants.ts';
+import { inSight } from '../crime-rules.ts';
 import type { CrimeSystem } from '../crime.ts';
 
 export function witnessed(crime: CrimeSystem, x: number, z: number): boolean {
@@ -20,17 +21,35 @@ export function witnessed(crime: CrimeSystem, x: number, z: number): boolean {
   return trafficPatrolSees(crime, x, z) !== null;
 }
 
-// The nearest of the traffic's patrol cars on the road that sees (x, z) within CRUISER_SIGHT, or null
-export function trafficPatrolSees(crime: CrimeSystem, x: number, z: number): Car | null {
+// The nearest of the traffic's patrol cars on the road that sees (x, z) within CRUISER_SIGHT past the buildings, or
+// null: all round (a crime, heard), or with `looking`, only in the cone ahead of it or right beside it (the wanted
+// player, spotted: crime.ts update, dispatch.ts)
+export function trafficPatrolSees(crime: CrimeSystem, x: number, z: number, looking = false): Car | null {
   let best: Car | null = null;
   let bestD = CRUISER_SIGHT;
   for (const v of crime.trafficPolice) {
     if (!v.edge || v.wrecked) continue;
     const d = Math.hypot(v.x - x, v.z - z);
-    if (d < bestD && crime.clearLine(v.x, v.z, x, z)) {
+    if (d >= bestD) continue;
+    if (looking) {
+      patrolEyes(v, eyes, 0);
+      if (!inSight(eyes, 0, x, z)) continue;
+    }
+    if (crime.clearLine(v.x, v.z, x, z)) {
       bestD = d;
       best = v;
     }
   }
   return best;
 }
+
+// A patrol car of the traffic's eyes, into `out` at `i` (crime/types.ts SightCones)
+export function patrolEyes(v: Car, out: number[], i: number): void {
+  out[i] = v.x;
+  out[i + 1] = v.z;
+  out[i + 2] = CRUISER_SIGHT;
+  out[i + 3] = v.yaw + v.yawOffset;
+  out[i + 4] = CRUISER_FOV;
+  out[i + 5] = NEAR_SIGHT;
+}
+const eyes: number[] = [];

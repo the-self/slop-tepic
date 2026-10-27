@@ -23,10 +23,11 @@ export function spawnCruiser(
 ): Cruiser | null {
   const cr = crime.cruisers.find((c) => !c.active && c.faction === faction);
   if (!cr) return null;
-  const s = at ?? crime.traffic.roadSpot(crime.px, crime.pz, 70, 160);
+  // (round where the police are looking for the player)
+  const s = at ?? crime.traffic.roadSpot(crime.huntX, crime.huntZ, 70, 160);
   if (!s) return null;
   Object.assign(cr, {
-    active: true, x: s.x, z: s.z, heading: at ? at.heading : Math.atan2(crime.px - s.x, crime.pz - s.z), speed: at ? at.speed : 6,
+    active: true, x: s.x, z: s.z, heading: at ? at.heading : Math.atan2(crime.huntX - s.x, crime.huntZ - s.z), speed: at ? at.speed : 6,
     vx: 0, vz: 0, hp: CRUISER_HP[faction],
     wreck: 0, state: 'chase', path: null, pathI: 0, replan: 0, stuckT: 0, checkX: s.x, checkZ: s.z, reverseT: 0,
     deployed: false, life: 0, pitch: 0, roll: 0, lift: 0, vy: 0, stuckCount: 0, slowT: 0, startX: s.x, startZ: s.z
@@ -99,22 +100,24 @@ export function updateCruiser(crime: CrimeSystem, cr: Cruiser, dt: number): void
     return;
   }
 
-  // where to: straight at the player when it can be seen, else along the roads
-  let tx = crime.px, tz = crime.pz;
+  // where to: straight at the player when it can be seen, else along the roads; to where the police last saw it, once
+  // they have lost it
+  const hx = crime.huntX, hz = crime.huntZ;
+  let tx = hx, tz = hz;
   if (cr.state === 'leave') {
     tx = cr.x + Math.sin(cr.heading) * 40;
     tz = cr.z + Math.cos(cr.heading) * 40;
   } else {
     cr.replan -= dt;
-    const direct = dist < 55 && crime.clearLine(cr.x, cr.z, crime.px, crime.pz);
+    const direct = crime.seen && dist < 55 && crime.clearLine(cr.x, cr.z, crime.px, crime.pz);
     if (direct) {
       const lead = Math.min(1.2, dist / 18);
       tx = crime.px + crime.pvx * lead;
       tz = crime.pz + crime.pvz * lead;
     } else {
       // a new route when the player has moved on from where the last one led (or it ran out, or the car got stuck)
-      if (!cr.path || (cr.replan <= 0 && Math.hypot(crime.px - cr.goalX, crime.pz - cr.goalZ) > 25)) {
-        cr.path = crime.route(cr.x, cr.z, crime.px, crime.pz);
+      if (!cr.path || (cr.replan <= 0 && Math.hypot(hx - cr.goalX, hz - cr.goalZ) > 25)) {
+        cr.path = crime.route(cr.x, cr.z, hx, hz);
         // (without the intersections it is already past: on the way from the first to the second)
         while (cr.path && cr.path.length > 1 &&
           Math.hypot(cr.path[1].x - cr.x, cr.path[1].z - cr.z) < Math.hypot(cr.path[1].x - cr.path[0].x, cr.path[1].z - cr.path[0].z)) {
@@ -123,8 +126,8 @@ export function updateCruiser(crime: CrimeSystem, cr: Cruiser, dt: number): void
         cr.pathI = 0;
         cr.startX = cr.x;
         cr.startZ = cr.z;
-        cr.goalX = crime.px;
-        cr.goalZ = crime.pz;
+        cr.goalX = hx;
+        cr.goalZ = hz;
         cr.replan = 3;
       }
       if (cr.path && crime.pursue(cr, 10 + Math.abs(cr.speed) * 0.6) && crime._aim) {
