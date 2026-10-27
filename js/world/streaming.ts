@@ -81,6 +81,8 @@ export interface TileStreamerOptions {
   box?: Rect | null;
   holes?: Float32Array | null;
   workers?: number;
+  /** lattice cells a tile side (tiles.ts TILE_CELLS) */
+  cells?: number;
 }
 export interface StreamLayerOptions {
   name?: string;
@@ -139,8 +141,8 @@ class TileStreamer {
    * holes in the road deck (ground.ts deckHoles(): flat triangles x0 z0 x1 z1 x2 z2), cut out of the layers that ask
    * for it once laid.
    */
-  constructor({ scene, lattice, ground, box = null, holes = null, workers = 2 }: TileStreamerOptions) {
-    this.grid = createTileGrid(lattice, TILE_CELLS);
+  constructor({ scene, lattice, ground, box = null, holes = null, workers = 2, cells = TILE_CELLS }: TileStreamerOptions) {
+    this.grid = createTileGrid(lattice, cells);
     this.root = new THREE.Group();
     this.root.name = 'StreamedTiles';
     this.root.matrixAutoUpdate = false; // (the tiles are in world space)
@@ -160,7 +162,7 @@ class TileStreamer {
       const slot: WorkerSlot = { worker, busy: 0 };
       worker.onmessage = ({ data }: MessageEvent<TileWorkerOut>) => { this.receive(slot, data); };
       worker.onerror = (e) => { console.error('[streaming] tile worker', e.message || e); };
-      worker.postMessage({ type: 'init', lattice, cells: TILE_CELLS, ground, holes } satisfies TileInitMessage);
+      worker.postMessage({ type: 'init', lattice, cells, ground, holes } satisfies TileInitMessage);
       this.workers.push(slot);
     }
   }

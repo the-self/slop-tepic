@@ -59,14 +59,14 @@ function streamerModule() {
   });
 }
 
-// A lattice of 10 m cells from the origin: 120 m tiles
+// A lattice of 10 m cells from the origin: 120 m tiles (12 cells a side, the streamer told so)
 const lattice10 = { x0: 0, z0: 0, cell: 10 };
 const reply = (worker, data) => worker.onmessage({ data });
 
 test('a layer is bucketed by tile, each worker sent only its own tiles\' triangles, each of them once', () => {
   const { TileStreamer } = streamerModule();
   const scene = new Object3D();
-  const streamer = new TileStreamer({ scene, lattice: lattice10, ground: null, workers: 2 });
+  const streamer = new TileStreamer({ scene, lattice: lattice10, cells: 12, ground: null, workers: 2 });
   assert.ok(scene.children.includes(streamer.root));
   assert.deepEqual(workers.map((w) => w.sent[0].msg.type), ['init', 'init']);
   const g = streamer.grid;
@@ -98,7 +98,7 @@ test('a layer is bucketed by tile, each worker sent only its own tiles\' triangl
 
 test('tiles are asked for nearest first a few at a time, shown as they come, and dropped once left behind', () => {
   const { TileStreamer } = streamerModule();
-  const streamer = new TileStreamer({ scene: new Object3D(), lattice: lattice10, ground: null, workers: 1, box: { x0: 0, x1: 2400, z0: 0, z1: 2400 } });
+  const streamer = new TileStreamer({ scene: new Object3D(), lattice: lattice10, cells: 12, ground: null, workers: 1, box: { x0: 0, x1: 2400, z0: 0, z1: 2400 } });
   const g = streamer.grid;
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(new Float32Array(9), 3));
@@ -136,7 +136,7 @@ test('tiles are asked for nearest first a few at a time, shown as they come, and
 
 test('the radius grows with the camera\'s height, and its velocity looks ahead but not across a teleport', () => {
   const { TileStreamer, DETAIL_RADIUS } = streamerModule();
-  const streamer = new TileStreamer({ scene: new Object3D(), lattice: lattice10, ground: null, workers: 1 });
+  const streamer = new TileStreamer({ scene: new Object3D(), lattice: lattice10, cells: 12, ground: null, workers: 1 });
   streamer.update({ x: 0, z: 0 }, 0, 0.1);
   assert.equal(streamer.focus.radius, DETAIL_RADIUS);
   streamer.update({ x: 0, z: 0 }, 300, 0.1);
@@ -152,7 +152,7 @@ test('the radius grows with the camera\'s height, and its velocity looks ahead b
 
 test('a tile its worker could not lay is let go, not waited on, and its worker freed', async () => {
   const { TileStreamer } = streamerModule();
-  const streamer = new TileStreamer({ scene: new Object3D(), lattice: lattice10, ground: null, workers: 1 });
+  const streamer = new TileStreamer({ scene: new Object3D(), lattice: lattice10, cells: 12, ground: null, workers: 1 });
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(new Float32Array([10, 0, 10, 20, 0, 10, 10, 0, 20]), 3));
   streamer.addLayer(geometry, {}, { covers: true });
@@ -235,7 +235,7 @@ test('in the flat city the worker cuts a deck tile in small cells before its hol
 
 test('after a teleport the tiles round the player are asked for at once and shown with a larger budget', () => {
   const { TileStreamer } = streamerModule();
-  const streamer = new TileStreamer({ scene: new Object3D(), lattice: lattice10, ground: null, workers: 1 });
+  const streamer = new TileStreamer({ scene: new Object3D(), lattice: lattice10, cells: 12, ground: null, workers: 1 });
   const g = streamer.grid;
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(new Float32Array(9), 3));

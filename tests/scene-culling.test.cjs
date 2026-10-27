@@ -318,3 +318,36 @@ test('a box mostly of air counts as smaller than its extents; a box, a card and 
   assert.ok(fill > 0.04 && fill < 0.1, `${fill}`);
   assert.equal(surfaceFill(card, null, { x: 0, y: 0, z: 0 }), 1, 'no box, no shrinking');
 });
+
+test('meshes merge when they share a parent, a material, a layout and a square; never one moved, transparent or reachable', () => {
+  class BufferAttribute {
+    constructor(array, itemSize) { Object.assign(this, { array, itemSize, normalized: false }); }
+  }
+  const identity = { isIdentity: true };
+  const ctx = {
+    THREE: { BufferAttribute }, Object, String, Math, Infinity, MERGE_CELL: Number(source.match(/^const MERGE_CELL = (\d+);/m)[1]),
+    _identity: identity
+  };
+  const mergeKey = vm.runInNewContext(`(${topLevel('mergeKey')})`, ctx);
+  const parent = { uuid: 'p' };
+  const material = { uuid: 'm', transparent: false };
+  const mesh = (x, extra = {}) => ({
+    material, matrixWorld: { equals: (m) => m === identity && !extra.moved }, castShadow: false, receiveShadow: true, renderOrder: 0,
+    layers: { mask: 1 }, userData: extra.userData ?? {},
+    geometry: {
+      groups: [], drawRange: { start: 0, count: Infinity }, morphAttributes: {}, index: null,
+      attributes: { position: new BufferAttribute(new Float32Array(9), 3) },
+      boundingSphere: { center: { x, y: 0, z: 10 } }
+    },
+    ...(extra.material ? { material: extra.material } : {})
+  });
+  const key = mergeKey(mesh(10), parent);
+  assert.ok(key);
+  assert.equal(mergeKey(mesh(ctx.MERGE_CELL - 1), parent), key, 'the same square');
+  assert.notEqual(mergeKey(mesh(ctx.MERGE_CELL + 1), parent), key, 'the next square');
+  assert.notEqual(mergeKey(mesh(10), { uuid: 'q' }), key, 'another parent');
+  assert.equal(mergeKey(mesh(10, { moved: true }), parent), null, 'moved by its matrix');
+  assert.equal(mergeKey(mesh(10, { material: { uuid: 'w', transparent: true } }), parent), null, 'transparent: drawn sorted');
+  assert.equal(mergeKey(mesh(10, { userData: { floods: 1 } }), parent), null, 'data something may reach it by');
+  assert.equal(mergeKey(mesh(10, { userData: { sharesPipelineWith: {} } }), parent), key, 'a pipeline donor is no reason');
+});
