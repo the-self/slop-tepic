@@ -674,6 +674,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     const pitchGeos: THREE.BufferGeometry[] = [];
     const goals: THREE.Matrix4[] = [];
     const parkSet = new Set(genericParks);
+    let oddPitches = 0; // (a rodeo's ring, a running track's field, a sliver: no pitch to draw)
     for (const p of GEO.parks) {
       const r = p.cat === 'pitch' && p.rings[0];
       if (!r || r.length < 6) continue;
@@ -697,7 +698,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
       const cu = (best.u0 + best.u1) / 2, cv = (best.v0 + best.v1) / 2;
       const cx = cu * ux - cv * uz, cz = cu * uz + cv * ux;
       if (W > L) { [L, W] = [W, L]; a += Math.PI / 2; ux = Math.cos(a); uz = Math.sin(a); } // (u along the length)
-      if (L < 12 || W < 6 || L > 140) continue;
+      if (L < 12 || W < 6 || L > 140) { oddPitches++; continue; }
       const b = blockAt(cx, cz);
       const y = !b || b.rural ? 0.05 : parkSet.has(b) ? BED_Y + 0.012 : b.park > 0.6 ? PARK_Y + 0.012 : SW_TOP + 0.024;
       const court = L * W < 700 ? 1 : 0;
@@ -716,6 +717,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
           new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a + (end > 0 ? Math.PI : 0)), new THREE.Vector3(gw / 7.32, gh / 2.44, 1)));
       }
     }
+    console.info(`[cityGrid] ${pitchGeos.length} pitches & courts of ${GEO.parks.filter((p) => p.cat === 'pitch').length} mapped (${oddPitches} of no pitch's size)`);
     for (let i = 0; i < pitchGeos.length; i += 200) {
       const m = new THREE.Mesh(mergeGeometries(pitchGeos.slice(i, i + 200), false), pitchMat);
       m.receiveShadow = true;

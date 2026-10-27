@@ -28,6 +28,7 @@ import { buildCotos } from '../world/cotos.ts';
 import { buildCarParks } from '../world/car-parks.ts';
 import { buildBusShelters } from '../world/bus-shelters.ts';
 import { buildPowerLines } from '../world/power-lines.ts';
+import { buildPools } from '../world/pools.ts';
 import { GEO } from '../world/city-geodata.js';
 import type { Collider } from '../world/buildings.ts';
 
@@ -75,6 +76,8 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   const { colliders: cotoColliders } = buildCotos(scene);
   // The supermarkets', plazas' & hospitals' car parks: their asphalt & stalls, and the cars parked in them
   const carParks = buildCarParks(scene, streamer);
+  // (and the swimming pools in the lots)
+  buildPools(scene);
   mark('carParks');
   const colliders: Collider[] = [...landmarkColliders, ...modelColliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...cityGrid.colliders];
   // (one by one, like the bridges' below)

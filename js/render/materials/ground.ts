@@ -241,3 +241,26 @@ export function createLakeWaterMaterial() {
   })();
   return mat;
 }
+
+/**
+ * A swimming pool's water (js/world/pools.ts): clear turquoise over a painted floor, the sky's mirror at grazing angles
+ * (the Fresnel on metalness, as the lakes'), small wind ripples drifting across it. uv are metres east & south.
+ */
+export function createPoolWaterMaterial() {
+  const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.04, metalness: 0.0 });
+  const viewDir = normalize(cameraPosition.sub(positionWorld));
+  const fresnel = pow(float(1.0).sub(clamp(viewDir.y, 0.0, 1.0)), 5.0).mul(0.98).add(0.02);
+  mat.colorNode = Fn(() => {
+    const p = uv();
+    const caustic = noise2D(p.mul(0.9).add(vec2(time.mul(0.25), time.mul(-0.18))));
+    return mix(color(0x0f6f99), color(0x3aaccd), caustic.mul(0.35).add(0.2));
+  })();
+  mat.metalnessNode = clamp(fresnel.mul(0.9), 0.0, 0.6);
+  mat.normalNode = Fn(() => {
+    const camDist = length(positionWorld.sub(cameraPosition));
+    const detail = smoothstep(80.0, 6.0, camDist);
+    const p = uv();
+    return bumpNormal(noise2D(p.mul(1.6).add(vec2(time.mul(0.4), time.mul(0.15)))).mul(0.03).mul(detail));
+  })();
+  return mat;
+}

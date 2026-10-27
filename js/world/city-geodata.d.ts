@@ -307,6 +307,8 @@ export interface CityGeodata {
   lamps: number[];
   /** High-voltage lines: [kV (0 not said), flat points, a tower at each]. */
   powerLines: PowerLine[];
+  /** Swimming pools: their outlines (flat rings, m). */
+  pools: FlatPoints[];
 }
 
 export declare const GEO: CityGeodata;

@@ -721,6 +721,20 @@ const mappedTrees = [];
   }
   log(`trees: ${tally.lone} mapped one by one, ${tally.inRows} along ${tally.rows} rows, ${tally.off} off the box`);
 }
+// The swimming pools (OSM leisure=swimming_pool: the balnearios', the sports centres', the houses' with a yard big
+// enough): each its outline, a flat ring
+const pools = [];
+{
+  let off = 0;
+  for (const e of landOSM.elements) {
+    if (e.tags?.leisure !== 'swimming_pool') continue;
+    for (const ring of elemRings(e)) {
+      if (!ring.every(([x, z]) => inBox(x, z)) || Math.abs(ringArea(ring)) < 12) { off++; continue; }
+      pools.push(flat(rdpRing(ring, 0.2)));
+    }
+  }
+  log(`swimming pools: ${pools.length}, ${off} off the box or too small`);
+}
 // The street lamps OpenStreetMap maps (highway=street_lamp): x, z each, flat
 const streetLamps = [];
 for (const e of poisOSM.elements) {
@@ -1158,7 +1172,8 @@ for (const b of blocks) {
   log(`${rings.length} roundabouts, ${islands} islands planted`);
 }
 log(`${greens.length} green/water areas; ${blocks.filter((b) => b.park > 0.6).length} park blocks`);
-const parks = greens.filter((g) => g.name || g.rings.some((r) => Math.abs(ringArea(r)) > 2500)).map((g) => ({
+// (every pitch: the colonias' canchas are mostly unnamed and under 2500 m², city-grid.ts draws each)
+const parks = greens.filter((g) => g.name || g.cat === 'pitch' || g.rings.some((r) => Math.abs(ringArea(r)) > 2500)).map((g) => ({
   name: g.name, cat: g.cat, acres: Math.round((g.rings.reduce((t, r) => t + Math.abs(ringArea(r)), 0) / 4046.86) * 10) / 10,
   rings: g.rings.map((r) => flat(rdpRing(r, 0.8)))
 }));
@@ -2732,7 +2747,9 @@ const GEO = {
   // Street lamps OpenStreetMap maps (3): x, z (m), flat
   lamps: streetLamps,
   // High-voltage lines (3): [kV (0 not said), flat points: a tower at each]
-  powerLines
+  powerLines,
+  // Swimming pools (4): their outlines, flat rings
+  pools
 };
 
 const json = JSON.stringify(GEO);

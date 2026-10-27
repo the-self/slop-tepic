@@ -201,6 +201,30 @@ function shoreDistance(ring: Numbers, x: number, z: number) {
   return best;
 }
 
+/** A ring's (flat x, z) vertices `d` m in, each along the bisector of its edges' inward normals (a near convex outline,
+ *  a pool's: the miter capped at sharp corners) */
+function insetOutline(ring: Numbers, d: number): number[] {
+  const n = ring.length / 2;
+  let area = 0;
+  for (let i = 0, j = n - 1; i < n; j = i++) area += ring[j * 2] * ring[i * 2 + 1] - ring[i * 2] * ring[j * 2 + 1];
+  const s = area > 0 ? 1 : -1; // (the inside lies left of each edge in x & z where the area is positive)
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const p = (i + n - 1) % n, q = (i + 1) % n;
+    const ax = ring[i * 2] - ring[p * 2], az = ring[i * 2 + 1] - ring[p * 2 + 1];
+    const bx = ring[q * 2] - ring[i * 2], bz = ring[q * 2 + 1] - ring[i * 2 + 1];
+    const la = Math.hypot(ax, az) || 1, lb = Math.hypot(bx, bz) || 1;
+    // (the inward normals: left of each edge, (-dz, dx), for a positive area)
+    const n1x = (-az / la) * s, n1z = (ax / la) * s, n2x = (-bz / lb) * s, n2z = (bx / lb) * s;
+    let mx = n1x + n2x, mz = n1z + n2z;
+    const ml = Math.hypot(mx, mz) || 1;
+    mx /= ml; mz /= ml;
+    const k = Math.min(2.5, 1 / Math.max(0.4, mx * n1x + mz * n1z));
+    out.push(ring[i * 2] + mx * d * k, ring[i * 2 + 1] + mz * d * k);
+  }
+  return out;
+}
+
 /**
  * The lakes of `list` (GEO.lakes: [kind, name, flags, flat shore]) sunk into the town's floor `floor(x, z)`, where
  * the hills `hills(x, z)` (their height over it) leave their shores bare; the rest laid on the hillside.
@@ -333,4 +357,4 @@ function createLakes(list: readonly Lake[] | null | undefined,
   return { basins, hillside, offset, holes, meshData };
 }
 
-export { LAKES, createLakes, triangulate, fillRing, insideShore };
+export { LAKES, createLakes, triangulate, fillRing, insideShore, insetOutline };
