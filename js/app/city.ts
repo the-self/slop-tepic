@@ -1,9 +1,9 @@
 // js/app/city.ts
 // Builds the city into the scene, in the order its parts depend on each other: the streamed ground (tiles laid round
 // the camera by workers, world/streaming.ts; ?stream=0 lays all of them at start-up), the streets, the floor painted
-// beyond the tiles, the hills, the rivers, the landmarks, the blocks and stores, the car parks, the bardas, the street
-// details, the traffic on the road network, the paint, the pavements, the airport and the overpasses; and gathers what
-// the player collides with.
+// beyond the tiles, the hills, the rivers, the landmarks (and Forum Tepic), the blocks and stores, the car parks, the
+// bardas, the street details, the traffic on the road network, the paint, the pavements, the airport and the
+// overpasses; and gathers what the player collides with.
 import type * as THREE from 'three/webgpu';
 import { color } from 'three/tsl';
 import { ISLAND_BOUNDS } from '../world/city-config.ts';
@@ -35,6 +35,8 @@ import { buildFootways } from '../world/footways.ts';
 import { buildFurniture } from '../world/furniture.ts';
 import { buildBardas } from '../world/bardas.ts';
 import { buildUan } from '../world/uan.ts';
+import { buildForum } from '../world/forum.ts';
+import { FORUM_RESERVE } from '../world/forum-plan.ts';
 import { campusClaims } from '../world/uan-campus.ts';
 import { GEO } from '../world/city-geodata.js';
 import type { Collider } from '../world/buildings.ts';
@@ -80,6 +82,8 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   const { colliders: lomaColliders } = buildLaLoma(scene);
   // (and the UAN's campus: its walls, gates & buildings)
   const uan = buildUan(scene);
+  // (and Forum Tepic: the mall, walked into, its two floors, its shoppers)
+  const forum = buildForum(scene);
   mark('landmarks');
   const cityBlocks = buildCityBlocks(scene);
   // The big chain stores you can walk into: their walls, door, shelves & tills (world/store-interiors.ts)
@@ -92,7 +96,7 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   // (and the swimming pools in the lots)
   buildPools(scene);
   mark('carParks');
-  const colliders: Collider[] = [...landmarkColliders, ...glorietaColliders, ...modelColliders, ...lomaColliders, ...uan.colliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...cityGrid.colliders];
+  const colliders: Collider[] = [...landmarkColliders, ...glorietaColliders, ...modelColliders, ...lomaColliders, ...uan.colliders, ...forum.colliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...cityGrid.colliders];
   // The bardas round the big open plots (the canchas, the ranchos, the vacant lots), not across a car park nor on the
   // UAN's grounds (walled by uan.ts)
   const bardas = buildBardas(scene, carParks.keepsOpen, campusClaims);
@@ -101,8 +105,8 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   for (const c of carParks.colliders) colliders.push(c);
   for (const c of bardas.colliders) colliders.push(c);
 
-  // (no yard tree in a store's hall or a car park)
-  const streetDetails = buildStreetDetails(scene, [...stores.reserves, carParks, GLORIETA_CLEAR]);
+  // (no yard tree in a store's hall, a car park or the mall)
+  const streetDetails = buildStreetDetails(scene, [...stores.reserves, carParks, GLORIETA_CLEAR, FORUM_RESERVE]);
   mark('streetDetails');
   // Buildings turned along non-grid streets have oriented colliders whose world bounds reach past their lots: they stay
   // inside the property line anyway, so the road network (lanes & sidewalks) doesn't need them.
@@ -137,5 +141,5 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   // The benches OpenStreetMap maps (they stop the player)
   for (const c of buildFurniture(scene).colliders) colliders.push(c);
   mark('bridges');
-  return { streamer, cityGrid, farGround, rivers, cityBlocks, uan, stores, carParks, streetDetails, powerLines, traffic, highwayTraffic, bridges, colliders };
+  return { streamer, cityGrid, farGround, rivers, cityBlocks, uan, forum, stores, carParks, streetDetails, powerLines, traffic, highwayTraffic, bridges, colliders };
 }

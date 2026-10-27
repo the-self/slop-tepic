@@ -1297,6 +1297,57 @@ const PARKING_SKIP = /^(multi-storey|underground|street_side|rooftop|lane|layby|
 const NOT_PARKING = [
   { lat: 21.490935, lon: -104.881585, note: 'beside Walmart Insurgentes, round the lienzo charro: it has no car park' }
 ];
+// Car parks OpenStreetMap leaves out where someone who knows the place says the ground is one lot (its outline in
+// degrees, along the streets round it): asphalt round every building OpenStreetMap maps in it (a mall, a store, a food
+// court) and the ones it leaves out (`buildings`, rings in degrees), `clear` m off their walls for the sidewalk, and
+// round the points in `keep` (a pad restaurant OSM maps as a point), `r` m about each
+const KNOWN_PARKING = [
+  {
+    name: 'Forum Tepic', clear: 4, note: "Forum's lots round the mall, Liverpool, the Fiesta Inn & Sam's Club, from the Boulevard Colosio to " +
+      'the Paseo de Forum: OSM maps their aisles, not the lots',
+    ring: [[21.493637, -104.866361], [21.491958, -104.862715], [21.489995, -104.863762], [21.490425, -104.864635], [21.490438, -104.864868],
+      [21.490015, -104.866146], [21.489701, -104.866917], [21.489673, -104.867173], [21.490405, -104.868735], [21.490540, -104.868898],
+      [21.490722, -104.868955], [21.490968, -104.868883], [21.492945, -104.867846], [21.493087, -104.867728], [21.493208, -104.867573],
+      [21.493271, -104.867008], [21.493715, -104.866226]],
+    buildings: [
+      // the food court & the PlayCity casino on the mall's south side (Overture's footprint)
+      [[21.4916724, -104.8669222], [21.4914694, -104.8664909], [21.4909608, -104.8667641], [21.4911638, -104.8671955]]
+    ],
+    keep: [
+      { lat: 21.4920409, lon: -104.8659292, r: 9, note: "Carl's Jr." },
+      // the mall's glass entrances, standing out of its walls under their canopies (js/world/forum-plan.ts entrances)
+      { lat: 21.4921138, lon: -104.8658813, r: 10, note: 'the north entrance' },
+      { lat: 21.4917612, lon: -104.8675995, r: 10, note: 'the west entrance' },
+      { lat: 21.4903043, lon: -104.8677935, r: 9, note: 'the south entrance' }
+    ]
+  }
+];
+// ...as OSM elements: their rings closed, and the cells they leave clear ((x, z) in the world: a building's or a kept
+// point's)
+const knownParking = KNOWN_PARKING.map((p) => {
+  const ring = p.ring.map(([lat, lon]) => toWorld(lon, lat));
+  const holes = [];
+  for (const e of [...bldOSM.elements, ...detailsOSM.elements]) {
+    const t = e.tags || {};
+    if (e.type !== 'way' || !(t.building || t.shop === 'mall' || t.amenity === 'food_court')) continue;
+    for (const r of elemRings(e)) {
+      if (!inRing(ring, ...centroid(r))) continue;
+      const out = insetRing(r, -p.clear);
+      holes.push({ ring: out, box: bbox(out) });
+    }
+  }
+  for (const b of p.buildings) {
+    const out = insetRing(b.map(([lat, lon]) => toWorld(lon, lat)), -p.clear);
+    holes.push({ ring: out, box: bbox(out) });
+  }
+  const discs = p.keep.map((k) => [...toWorld(k.lon, k.lat), k.r]);
+  return {
+    type: 'way', tags: { amenity: 'parking', parking: 'surface', name: p.name },
+    geometry: [...p.ring, p.ring[0]].map(([lat, lon]) => ({ lat, lon })),
+    clear: (x, z) => holes.some(({ ring: h, box }) => x >= box.x0 && x <= box.x1 && z >= box.z0 && z <= box.z1 && inRing(h, x, z)) ||
+      discs.some(([cx, cz, r]) => Math.hypot(x - cx, z - cz) < r)
+  };
+});
 const PARKING_MIN = 150; // m²: smaller pieces are a strip along a wall, not a lot (8 stalls is about 100 m² with its aisle)
 // the lot's surface: 0 asphalt (OSM's untagged lots are, mostly), 1 poured concrete, 2 setts (adoquín, empedrado),
 // 3 earth or gravel
@@ -1305,7 +1356,7 @@ const PARKING_SURFACE = (t) => /^(concrete|concrete:plates)$/.test(t) ? 1 : /^(p
 const parkingLots = [];
 {
   let skipped = 0, small = 0;
-  for (const e of landOSM.elements) {
+  for (const e of [...landOSM.elements, ...knownParking]) {
     const t = e.tags || {};
     if (t.amenity !== 'parking') continue;
     if (PARKING_SKIP.test(t.parking || '')) { skipped++; continue; }
@@ -1315,6 +1366,7 @@ const parkingLots = [];
       const byBlock = new Map();
       ringCells(ring, raster, (L, k) => {
         if (!prop[k] || !byLab.has(L)) return;
+        if (e.clear && e.clear(X0 + ((k % W) + 0.5) * RES, Z0 + (Math.floor(k / W) + 0.5) * RES)) return;
         if (!byBlock.has(L)) byBlock.set(L, []);
         byBlock.get(L).push(k);
       });
@@ -2808,6 +2860,7 @@ const SPOTS = [
   ['central', 'Central de Autobuses', 'Av. Insurgentes · Ciudad del Valle', 21.49839, -104.88706],
   ['estacion', 'Antigua estación del tren', 'Av. Allende · Ferrocarril', 21.50392, -104.88208],
   ['juventud', 'Parque Lineal Juventud', 'Colonia Juventud', 21.49525, -104.87694],
+  ['forum', 'Forum Tepic', 'Blvd. Colosio · Plaza Forum', 21.49252, -104.86586, 21.49208, -104.86589],
   ['xalisco', 'Xalisco Centro', 'Plaza Benito Juárez · Xalisco', 21.44370, -104.90170],
   ['bonaterra', 'Bonaterra', 'Libramiento · Bonaterra', 21.46550, -104.84385],
   ['aeropuerto', 'Aeropuerto de Tepic', 'Terminal · Pantanal', 21.41720, -104.83820, 21.41700, -104.83930]

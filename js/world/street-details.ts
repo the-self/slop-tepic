@@ -15,6 +15,7 @@ import { parkTreeSites, sidewalkBlocks, parkLampSites, medianRuns, onPitch } fro
 import { liftAt } from './ground.ts';
 import { surfaceY } from './footways.ts';
 import { LA_LOMA, laLomaKeepsClear, laLomaWoods } from './la-loma-plan.ts';
+import { FORUM } from './forum-plan.ts';
 import { hashPos } from './hash.ts';
 import { GEO } from './city-geodata.js';
 import type { PointXZ, Bounds, CityBlock } from './city-config.ts';
@@ -1073,7 +1074,9 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
 
   // Procedural trees (js/world/trees.ts): species skeletons with leaf-spray cards, one instanced mesh per species, variant &
   // level of detail, each tree's level following the camera
-  const planted = keepClear.length ? treePositions.filter((t) => !keepClear.some((r) => r.contains(t.x, t.z))) : treePositions;
+  // (and the palms on Forum Tepic's sidewalk, forum-plan.ts: inside the mall's lot, kept clear of the others)
+  const planted = [...(keepClear.length ? treePositions.filter((t) => !keepClear.some((r) => r.contains(t.x, t.z))) : treePositions),
+    ...FORUM.palms.map((t) => ({ ...t, y: liftAt(t.x, t.z) + surfaceY(t.x, t.z), tier: 0 }))];
   const treeField = createTreeField(scene, planted);
   group.add(treeField.group);
   // ...and their trunks stop the player, like the CFE poles (main.ts adds both to the player's colliders); those thin

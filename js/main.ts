@@ -135,7 +135,8 @@ async function initApp(): Promise<void> {
   // 3. The city: streets, hills, landmarks, blocks, street details & traffic
   loading.status('loading.city', { city: CITY.city || t('loading.cityFallback') });
   const city = buildCity(scene, { stream: params.get('stream') !== '0', mark: (label) => { loading.mark(label); } });
-  const { streamer, rivers, cityBlocks, stores, carParks, streetDetails, powerLines, traffic: trafficSystem, highwayTraffic, colliders } = city;
+  const { streamer, rivers, cityBlocks, forum, stores, carParks, streetDetails, powerLines, traffic: trafficSystem, highwayTraffic, colliders } = city;
+  rain.setRoofs(forum.roofs); // (no rain falls inside Forum Tepic)
 
   // 4. The player (on foot, car, bicycle, moto, helicopter), its cameras and its input
   const controllerManager = new ThirdPersonControllerManager(scene, colliders);
@@ -189,6 +190,9 @@ async function initApp(): Promise<void> {
   // What the game's systems tell each other (core/events.ts): crashes, someone come to rest
   const events = new EventBus<GameEvents>();
   ragdolls.onSettle = (h) => { events.emit('settle', h); };
+  // ...and in Forum Tepic the shoppers run into and the glass driven through (world/forum.ts)
+  forum.shoppers.ragdolls = ragdolls;
+  forum.glass.physics = physics;
   events.on('settle', (h) => {
     if (!(h.bleed > 0.05)) return;
     bloodPools.add(h.px, h.pz, h.py + 0.3, 0.9 + h.bleed * 1.7);
@@ -243,6 +247,14 @@ async function initApp(): Promise<void> {
     }
   });
   if (saved.money !== undefined && Number.isFinite(saved.money)) crimeSystem.money = Math.max(0, Math.round(saved.money));
+  // someone run over in Forum Tepic is a crime as on the street (sim/crime.ts's traffic knock listener), always seen
+  // (the mall is full of shoppers); its glass is heard breaking
+  forum.shoppers.onKnock = (x, z, speed) => {
+    crimeSystem.report('runOver', true);
+    crimeSystem.fx.splatter(x, crimeSystem.groundAt(x, z) + 0.9, z, speed);
+    controllerManager.bloodyCar(x, z, speed);
+  };
+  forum.glass.sound = audioSystem;
   // The city's eating & drinking places, off the real shop signs (world/venues.ts), and the night's street food stands
   // in front of them and at the parks (world/street-food.ts)
   const venues = findVenues(GEO.houses, GEO.signs, GEO.houseStride || 8);
@@ -765,7 +777,8 @@ async function initApp(): Promise<void> {
   // level of detail round the camera, the weather, the network, the map & the audio, and the streamed tiles.
   const weather = new WeatherEffects({
     lighting: lightingSystem, roadWater, rain, floods, controllers: controllerManager, cameras: cameraSystem,
-    traffic: trafficSystem, crime: crimeSystem, audio: audioSystem, interiors: rooms, bearingDeg: CITY.bearingDeg || 0
+    traffic: trafficSystem, crime: crimeSystem, audio: audioSystem, interiors: rooms, bearingDeg: CITY.bearingDeg || 0,
+    sheltered: (x, y, z) => forum.covers(x, y, z)
   });
   const ambience: AmbientSource[] = [];
   let weekday = new Date().getDay();
@@ -826,6 +839,7 @@ async function initApp(): Promise<void> {
       streetFood.update(dt, lightingSystem.hourOfDay, cameraSystem.camera);
       nightlife.update(dt, lightingSystem.hourOfDay, weekday, cameraSystem.camera);
       rooms.update(dt, lightingSystem.hourOfDay);
+      forum.update(dt, cameraSystem.camera, controllerManager.getActiveEntity(), controllerManager.activeMode); // (Forum Tepic)
       if (!rooms.active) fires.update(dt, cityUniforms.uDryness.value, cameraSystem.camera);
       // the sounds that stay put (audio/audio-ambience.ts): the planchas, the antros' & parties' music, the fires
       ambience.length = 0;
@@ -878,7 +892,7 @@ async function initApp(): Promise<void> {
   if (debug) {
     // Debugging handle for the console, only with ?debug in the URL
     Object.assign(window, { __slop: {
-      scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, emergency, gasStations, controllerManager, trafficSystem,
+      scene, renderer, streamer, streetFood, venues, forum, floods, nightlife, interiors: rooms, fires, emergency, gasStations, controllerManager, trafficSystem,
       cameraSystem, streetDetails, cityGrid: city.cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl,
       weaponWheel, weaponIcons, scheduler, boarding, quality, multiplayer: () => multiplayer
     } });
