@@ -4,6 +4,7 @@ import { isTypingInField } from '../world/city-config.ts';
 import { keyBindings } from '../input/keybindings.ts';
 import { PLAYER_PERSON } from '../player/controllers/constants.ts';
 import { RemoteCarFleet } from './remote-cars.ts';
+import { extrapolate } from './motion.ts';
 import {
   SEND_HZ,
   MAX_UPDATE_EVERY,
@@ -46,13 +47,12 @@ import { onLocaleChange, setLabel, setText, t } from '../i18n/i18n.ts';
 const DEFAULT_REGION = 'nayarit'; // the map this checkout builds (Tepic); each city's map will name its own region
 const DEFAULT_PORT = 8787;
 const INTERP_DELAY_MS = 200; // two server ticks: a late packet still has a pose to blend toward
-// A far player's poses come every second or third tick (protocol.ts updateEvery): past its last one it goes on along
-// its heading at its speed, this long at most (then it is held, as before: it stopped, or the next pose is late)
+// A far player's poses come every second or third tick (protocol.ts updateEvery): past its last one it goes on as its
+// last poses moved (net/motion.ts), this long at most (then it is held, as before: it stopped, or the next pose is late)
 const EXTRAPOLATE_MS = MAX_UPDATE_EVERY * 120;
 const SNAP_DISTANCE = 60; // m between updates beyond which a player teleported instead of moving
 const KEEPALIVE_MS = 2000; // resend an unchanged pose this often
 const MAX_REMOTE_PEOPLE = 96; // walkers + cyclists' riders drawn by the shared crowd
-const MAX_REMOTE_CARS = 64; // cars drawn (net/remote-cars.ts): the server's view holds 64 players (VIEW_MAX)
 const LABEL_DISTANCE = 140; // m within which name tags show
 const RETRY_MAX_MS = 10000;
 const RIDE_REACH = 3.2; // m from a friend's car to get in
@@ -124,6 +124,8 @@ export interface MultiplayerOptions {
   /** the room's sky changed (or, on joining, is what it is): the time of day & weather to show */
   onSky?: ((time: SkyTime, weather: SkyWeather) => void) | null;
   entry?: RoomEntry; // the room to go into (default: the region's public rooms)
+  /** the others' cars, made before the shaders compiled (main.ts: their pipelines among them); else its own */
+  cars?: RemoteCarFleet | null;
 }
 
 export type MultiplayerStatus = 'connecting' | 'online' | 'offline' | 'error';
@@ -177,6 +179,7 @@ class RemotePlayer {
   label: HTMLDivElement | null;
   pedalPhase: number; // rad
   pose: RemotePose;
+  tickMs: number; // ms between the server's ticks, as its poses come
   // the parts of `visual` that move, found by counterpart() in the local player's mesh
   leanPivot?: THREE.Object3D;
   mainRotor?: THREE.Object3D;
@@ -192,9 +195,11 @@ class RemotePlayer {
     this.label = null;
     this.pedalPhase = 0;
     this.pose = { x: 0, y: 0, z: 0, heading: 0, speed: 0 };
+    this.tickMs = 100;
   }
 
   push(t: number, s: MovedPlayer, tickMs: number): void {
+    this.tickMs = tickMs;
     const last = this.samples.at(-1);
     if (last && Math.hypot(s.x - last.x, s.z - last.z) > SNAP_DISTANCE) this.samples.length = 0;
     else if (last && t - last.t > tickMs * (MAX_UPDATE_EVERY + 0.5)) {
@@ -205,8 +210,8 @@ class RemotePlayer {
     if (this.samples.length > 6) this.samples.shift();
   }
 
-  // Pose at renderTime: between the two samples around it; past the last one, on along its heading at its speed for
-  // EXTRAPOLATE_MS (a far player's next pose is a tick or two later); else held at the nearest end
+  // Pose at renderTime: between the two samples around it; past the last one, on as its last ones moved for
+  // EXTRAPOLATE_MS (a far player's next pose is a tick or two later: net/motion.ts); else held at the nearest end
   sample(renderTime: number): RemotePose {
     const s = this.samples;
     const p = this.pose;
@@ -215,10 +220,9 @@ class RemotePlayer {
     let b = s[0];
     const last = s[s.length - 1];
     if (renderTime >= last.t) {
-      const ahead = Math.min(renderTime - last.t, EXTRAPOLATE_MS) / 1000;
-      p.x = last.x + Math.sin(last.heading) * last.speed * ahead;
+      const vehicle = this.mode === 'car' || this.mode === 'cyclist' || this.mode === 'moto';
+      extrapolate(s.at(-2), last, Math.min(renderTime - last.t, EXTRAPOLATE_MS) / 1000, this.tickMs, vehicle, p);
       p.y = last.y;
-      p.z = last.z + Math.cos(last.heading) * last.speed * ahead;
       p.heading = last.heading;
       p.speed = last.speed;
       return p;
@@ -288,7 +292,7 @@ class Multiplayer {
   /** the HUD's Rooms button: main.ts opens the lobby */
   onLobby: (() => void) | null;
 
-  constructor({ scene, controllers, camera, crime = null, cameras = null, url, region = DEFAULT_REGION, name = '', onSky = null, entry = { kind: 'public' } }: MultiplayerOptions) {
+  constructor({ scene, controllers, camera, crime = null, cameras = null, url, region = DEFAULT_REGION, name = '', onSky = null, entry = { kind: 'public' }, cars = null }: MultiplayerOptions) {
     this.scene = scene;
     this.controllers = controllers;
     this.camera = camera;
@@ -326,7 +330,7 @@ class Multiplayer {
     this.crowd = new PersonCrowd(MAX_REMOTE_PEOPLE, { farDistance: 40, model: PLAYER_PERSON });
     this._tilt = { pitch: 0, roll: 0 };
     this.crowd.meshes.forEach((m) => scene.add(m));
-    this.cars = new RemoteCarFleet(scene, controllers.entities.car.mesh, MAX_REMOTE_CARS);
+    this.cars = cars ?? new RemoteCarFleet(scene, controllers.entities.car.mesh);
 
     this.badge = document.createElement('div');
     this.badge.className = 'mp-badge';

@@ -675,6 +675,12 @@ async function initApp(): Promise<void> {
   showSkyNote();
   // Multiplayer (?multiplayer=1, see net/multiplayer.ts) loads only when asked for, so single-player pays nothing
   let multiplayer: Multiplayer | null = null;
+  // ...and its others' cars (net/remote-cars.ts) made now, one drawn out of sight till the first frame is through, so
+  // the shader precompile and the warm-up frame below build their instanced pipelines, not the first car into view
+  const remoteCars = params.has('multiplayer')
+    ? new (await import('./net/remote-cars.ts')).RemoteCarFleet(scene, controllerManager.entities.car.mesh)
+    : null;
+  remoteCars?.prime();
   if (params.has('multiplayer')) {
     Promise.all([import('./net/multiplayer.ts'), import('./net/lobby.ts')])
       .then(async ([{ Multiplayer, multiplayerOptions }, { openLobby }]) => {
@@ -693,7 +699,7 @@ async function initApp(): Promise<void> {
         if (!first) return;
         const mp = new Multiplayer({
           scene, controllers: controllerManager, camera: cameraSystem.camera, crime: crimeSystem, cameras: cameraSystem,
-          ...connection, name: first.name, entry: first.entry,
+          ...connection, name: first.name, entry: first.entry, cars: remoteCars,
           // (the room's sky, everyone's: on joining, and whenever someone in the room changes it)
           onSky: (time, weather) => {
             showSky(time, weather);
@@ -971,6 +977,8 @@ async function initApp(): Promise<void> {
     const device = 'device' in backend && backend.device instanceof GPUDevice ? backend.device : undefined;
     Promise.resolve(device?.queue.onSubmittedWorkDone()).catch(() => { /* the city shows anyway */ }).then(() => {
       loading.mark('gpu');
+      // (the remote cars' pipelines are built: the car drawn out of sight for them goes)
+      remoteCars?.clear();
       // What the warm-up drew of the static city is on the GPU now: its CPU-side copies go, and the rest's as it gets
       // drawn (in the loop)
       if (streamWarmup) {

@@ -7,6 +7,7 @@
 import * as THREE from 'three/webgpu';
 
 const CHECK_EVERY = 0.5; // s between the looks at whether the local car changed its parts
+const MAX_REMOTE_CARS = 64; // instances at first: the server's view holds 64 players (VIEW_MAX); more double them
 const _root = new THREE.Matrix4();
 const _car = new THREE.Matrix4();
 const _m = new THREE.Matrix4();
@@ -38,7 +39,7 @@ class RemoteCarFleet {
   private count = 0;
 
   /** `template`: the local player's car (its mesh); `capacity`: the remote cars drawn at first (it grows with them) */
-  constructor(scene: THREE.Object3D, template: THREE.Object3D, capacity: number) {
+  constructor(scene: THREE.Object3D, template: THREE.Object3D, capacity = MAX_REMOTE_CARS) {
     this.scene = scene;
     this.template = template;
     this.capacity = capacity;
@@ -66,6 +67,29 @@ class RemoteCarFleet {
     _car.compose(_p.set(x, y, z), _q, _one);
     for (const part of this.parts) part.mesh.setMatrixAt(this.count, _m.multiplyMatrices(_car, part.local));
     this.count++;
+  }
+
+  /**
+   * Takes the template's parts now and draws one car out of sight (at no size) until clear(): made before the shader
+   * precompile (main.ts), the precompile and the warm-up frame build the parts' instanced pipelines, for the view and
+   * the shadows, instead of the first remote car to drive into view stalling a frame for them
+   */
+  prime(): void {
+    this.lookChanged();
+    this.rebuild();
+    this.sinceCheck = 0;
+    _m.makeScale(0, 0, 0);
+    for (const part of this.parts) {
+      part.mesh.setMatrixAt(0, _m);
+      part.mesh.count = 1;
+      part.mesh.visible = true;
+    }
+  }
+
+  /** No car drawn (the primed one gone, with no remote players to draw yet) */
+  clear(): void {
+    this.count = 0;
+    this.end();
   }
 
   /** After the frame's cars: as many instances drawn as were added */
