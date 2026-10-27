@@ -42,6 +42,12 @@
 const PROTOCOL_VERSION = 5;
 const SEND_HZ = 10; // client pose updates per second
 const TICK_HZ = 10; // server ticks per second (OSRS runs 600 ms ticks; driving needs 100 ms)
+// How often a client hears another player's pose by how far off it is: every tick within NEAR_UPDATE, every other one
+// within MID_UPDATE, every third beyond (staggered by the player's id), so a crowd's traffic is mostly the few nearby.
+// The client extrapolates between the sparser ones (net/multiplayer.ts)
+const NEAR_UPDATE = 150; // m
+const MID_UPDATE = 400; // m
+const MAX_UPDATE_EVERY = 3; // ticks between a far player's poses
 // (new modes go at the end: older clients' indices hold). A passenger travels at its driver's pose, inside its car
 const MODES = ['person', 'car', 'cyclist', 'helicopter', 'moto', 'passenger'] as const;
 // The room's sky: the time of day (render/lighting.ts's presets, 'live' the real clock) and the weather ('live' the
@@ -582,6 +588,68 @@ function encodeRoom(host: number, rules: RoomRules): Uint8Array<ArrayBuffer> {
   return w.done();
 }
 
+/** Ticks between the poses a client is sent of a player `d2` cm² off (its squared distance in wire units) */
+function updateEvery(d2: number): number {
+  return d2 < (NEAR_UPDATE * 100) ** 2 ? 1 : d2 < (MID_UPDATE * 100) ** 2 ? 2 : MAX_UPDATE_EVERY;
+}
+
+/**
+ * A TICK frame written as it is found, in one buffer reused frame after frame (the server writes one a client a tick:
+ * no arrays of entries in between). Call begin(), then gone() for each, info() for each, moved() for each, in that
+ * order, then done() for the frame's own copy of the bytes.
+ */
+class TickFrame {
+  private readonly w = new Writer(1024);
+  private countAt = 0; // where the open section's count goes
+  private count = 0;
+  private section = 0; // 0 gone, 1 info, 2 moved
+
+  begin(roomPlayers: number): void {
+    this.w.at = 0;
+    this.w.u8(OP.TICK);
+    this.w.u16(Math.min(roomPlayers, 0xffff));
+    this.section = 0;
+    this.open();
+  }
+  gone(id: number): void {
+    this.w.u16(id);
+    this.count++;
+  }
+  info(id: number, name: string): void {
+    this.upTo(1);
+    this.w.u16(id);
+    this.w.str(name);
+    this.count++;
+  }
+  moved(id: number, st: WirePose): void {
+    this.upTo(2);
+    this.w.u16(id);
+    this.w.pose(st);
+    this.count++;
+  }
+  done(): Uint8Array<ArrayBuffer> {
+    this.upTo(2);
+    this.close();
+    return this.w.done();
+  }
+  private open(): void {
+    this.countAt = this.w.at;
+    this.w.u16(0);
+    this.count = 0;
+  }
+  private close(): void {
+    this.w.view.setUint16(this.countAt, this.count, true);
+  }
+  // (the sections before `section` closed, empty if nothing was written in them)
+  private upTo(section: number): void {
+    while (this.section < section) {
+      this.close();
+      this.open();
+      this.section++;
+    }
+  }
+}
+
 // gone: [id], info: [[id, name]], moved: [[id, state]] with states in wire units (cm, 1/65536 turn, dm/s)
 function encodeTick(
   roomPlayers: number,
@@ -589,22 +657,12 @@ function encodeTick(
   info: readonly (readonly [id: number, name: string])[],
   moved: readonly (readonly [id: number, state: WirePose])[]
 ): Uint8Array<ArrayBuffer> {
-  const w = new Writer(9 + gone.length * 2 + info.length * 20 + moved.length * ROW_BYTES);
-  w.u8(OP.TICK);
-  w.u16(Math.min(roomPlayers, 0xffff));
-  w.u16(gone.length);
-  for (const id of gone) w.u16(id);
-  w.u16(info.length);
-  for (const [id, name] of info) {
-    w.u16(id);
-    w.str(name);
-  }
-  w.u16(moved.length);
-  for (const [id, st] of moved) {
-    w.u16(id);
-    w.pose(st);
-  }
-  return w.done();
+  const f = new TickFrame();
+  f.begin(roomPlayers);
+  for (const id of gone) f.gone(id);
+  for (const [id, name] of info) f.info(id, name);
+  for (const [id, st] of moved) f.moved(id, st);
+  return f.done();
 }
 
 function encodeError(code: string): Uint8Array<ArrayBuffer> {
@@ -696,6 +754,9 @@ export {
   PROTOCOL_VERSION,
   SEND_HZ,
   TICK_HZ,
+  NEAR_UPDATE,
+  MID_UPDATE,
+  MAX_UPDATE_EVERY,
   MODES,
   SKY_TIMES,
   SKY_WEATHERS,
@@ -725,6 +786,8 @@ export {
   decodeClient,
   encodeWelcome,
   encodeTick,
+  updateEvery,
+  TickFrame,
   encodeError,
   encodeChatLine,
   encodeShotSeen,

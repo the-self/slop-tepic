@@ -19,6 +19,11 @@ import {
   decodeClient,
   encodeWelcome,
   encodeTick,
+  TickFrame,
+  updateEvery,
+  NEAR_UPDATE,
+  MID_UPDATE,
+  MAX_UPDATE_EVERY,
   encodeError,
   encodeChatLine,
   encodeShotSeen,
@@ -31,7 +36,7 @@ import {
   decodeServer
 } from '../shared/protocol.ts';
 import { RoomManager } from '../server/rooms.ts';
-import { SpatialGrid, nearestInView } from '../server/aoi.ts';
+import { SpatialGrid } from '../server/aoi.ts';
 
 const entity = (x, y, z, heading, speed) => ({ position: { x, y, z }, heading, speed });
 
@@ -129,19 +134,65 @@ test('the area of interest returns the nearest players within the radius, capped
     positions.set(id, { x, z });
     grid.update(id, x, z);
   };
+  const near = (self, radius, max) => grid.nearest(self, positions, radius, max, []);
   put(1, 0, 0);
   put(2, 50, 0);
   put(3, -250, 10);
   put(4, 0, 799);
   put(5, 900, 0);
   put(6, 30, 30);
-  assert.deepEqual(nearestInView(grid, positions, 1, 800, 10), [6, 2, 3, 4]);
-  assert.deepEqual(nearestInView(grid, positions, 1, 800, 2), [6, 2], 'capped to the nearest');
+  assert.deepEqual(near(1, 800, 10), [6, 2, 3, 4]);
+  assert.deepEqual(near(1, 800, 2), [6, 2], 'capped to the nearest');
   put(2, 5000, 5000); // moved across cells
-  assert.deepEqual(nearestInView(grid, positions, 1, 800, 10), [6, 3, 4]);
+  assert.deepEqual(near(1, 800, 10), [6, 3, 4]);
   grid.remove(6);
-  assert.deepEqual(nearestInView(grid, positions, 1, 800, 10), [3, 4]);
+  assert.deepEqual(near(1, 800, 10), [3, 4]);
   assert.equal(grid.cells.size, 5, 'emptied cells are dropped (one per remaining occupied cell)');
+});
+
+test('the rings outward find the same nearest players as looking at everyone, in a crowd or spread out', () => {
+  // (positions in centimetres, 250 m cells, as the server keeps them)
+  let seed = 7;
+  const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (const [players, spread] of [[400, 300000], [400, 3000000], [60, 100000]]) {
+    const grid = new SpatialGrid(25000, 100);
+    const positions = new Map();
+    for (let id = 1; id <= players; id++) {
+      const p = { x: Math.round((random() - 0.5) * spread), z: Math.round((random() - 0.5) * spread) };
+      positions.set(id, p);
+      grid.update(id, p.x, p.z);
+    }
+    const out = [];
+    for (const self of [1, 2, 3, players]) {
+      const me = positions.get(self);
+      const brute = [...positions].filter(([id, p]) => id !== self && (p.x - me.x) ** 2 + (p.z - me.z) ** 2 <= 80000 ** 2)
+        .map(([id, p]) => [id, Math.floor(((p.x - me.x) ** 2 + (p.z - me.z) ** 2) / 10000)])
+        .sort((a, b) => a[1] - b[1] || a[0] - b[0]).slice(0, 64).map(([id]) => id);
+      assert.deepEqual(grid.nearest(self, positions, 80000, 64, out), brute, `${players} players over ${spread / 100} m, #${self}`);
+    }
+  }
+});
+
+test('the farther a player, the sparser its poses: every tick near, every other one, then every third', () => {
+  const at = (m) => updateEvery((m * 100) ** 2);
+  assert.equal(at(0), 1);
+  assert.equal(at(NEAR_UPDATE - 1), 1);
+  assert.equal(at(NEAR_UPDATE + 1), 2);
+  assert.equal(at(MID_UPDATE + 1), MAX_UPDATE_EVERY);
+  assert.equal(at(5000), MAX_UPDATE_EVERY);
+});
+
+test('a TICK written as it is found is the same frame, its buffer reused frame after frame', () => {
+  const st = { x: 100, y: 2, z: -300, h: 4000, m: 1, s: 55 };
+  const f = new TickFrame();
+  const cases = [[3, [9], [[4, 'Ana']], [[4, st]]], [7, [], [], [[2, st], [5, st]]], [1, [1, 2], [], []], [0, [], [], []]];
+  for (const [n, gone, info, moved] of cases) {
+    f.begin(n);
+    for (const id of gone) f.gone(id);
+    for (const [id, name] of info) f.info(id, name);
+    for (const [id, pose] of moved) f.moved(id, pose);
+    assert.deepEqual(f.done(), encodeTick(n, gone, info, moved));
+  }
 });
 
 test('a passenger travels as its own mode, at the end of the list (the older modes keep their indices)', () => {

@@ -121,6 +121,40 @@ void test('players far apart or in other regions are out of view', async () => {
   }
 });
 
+void test('a near player\'s poses come every tick, a far one\'s every third (by updateEvery), however it moves', async () => {
+  // (ticked by hand: the timer's 100 s apart)
+  const server = await createServer({ port: 0, tickHz: 0.01, log: quiet });
+  try {
+    const [a, near, far] = [connect(server.port), connect(server.port), connect(server.port)];
+    await Promise.all([a.opened, near.opened, far.opened]);
+    a.ws.send(encodeHello('nayarit', 'A'));
+    near.ws.send(encodeHello('nayarit', 'Near'));
+    far.ws.send(encodeHello('nayarit', 'Far'));
+    const [, wn, wf] = await Promise.all([a, near, far].map((c) => c.next(OP.WELCOME)));
+    const settle = () => new Promise((r) => setTimeout(r, 40));
+    let seenNear = 0, seenFar = 0;
+    for (let i = 0; i < 12; i++) {
+      a.ws.send(pose(0, 0));
+      near.ws.send(pose(50 + i, 0)); // 50 m off
+      far.ws.send(pose(600 + i, 0)); // 600 m off
+      await settle();
+      const before = a.frames.length;
+      server.tick();
+      await settle();
+      for (const m of a.frames.slice(before)) {
+        if (m.op !== OP.TICK) continue;
+        if (m.moved.some((p) => p.id === wn.id)) seenNear++;
+        if (m.moved.some((p) => p.id === wf.id)) seenFar++;
+      }
+    }
+    assert.equal(seenNear, 12, 'every tick');
+    assert.ok(seenFar >= 4 && seenFar <= 5, `about a third: ${String(seenFar)} (its first pose at once, then every third)`);
+    for (const c of [a, near, far]) c.ws.close();
+  } finally {
+    await server.close();
+  }
+});
+
 void test('a full room opens a mirror; a wrong protocol version or region is refused', async () => {
   const server = await createServer({ port: 0, capacity: 1, log: quiet });
   try {

@@ -17,8 +17,9 @@ Whoever opens a room hosts it: only the host changes its sky (a guest's `SKY` is
 The wire protocol ([`shared/protocol.ts`](../shared/protocol.ts)) is binary, in the spirit of RuneScape's. Every frame starts with a 1-byte opcode, and positions travel as integer centimetres.
 
 - **One frame per tick:** each server tick (10 Hz) sends every client a single `TICK` frame.
-- **Area of interest:** that frame covers only the `VIEW_MAX` nearest players within `VIEW_RADIUS`, using a 250 m grid ([`aoi.ts`](aoi.ts)).
+- **Area of interest:** that frame covers only the `VIEW_MAX` nearest players within `VIEW_RADIUS`, using a 250 m grid ([`aoi.ts`](aoi.ts)). They are found by rings of cells outward from the player's own, stopping once nothing further out can be nearer, and found again every third tick (staggered by player): the nearest change slowly.
 - **Only changes:** within the frame, only the poses that changed since that client last heard them are sent. Parked players cost nothing.
+- **Fewer for the far ones:** a player within 150 m is sent every tick, within 400 m every other one, beyond that every third (`updateEvery` in the protocol). The client carries the far ones on along their heading at their speed in between.
 
 | Message | Size |
 |---|---|
@@ -87,11 +88,12 @@ BOTS=1000 SPREAD=20000 node bench.ts
 
 `bench.ts` drives simulated players against an in-process server. Bots and server share one Node process, so real numbers are better. On an Apple-silicon laptop:
 
-| Bots | Area | Tick (budget 100 ms) | Per client |
+| Bots | Area | Tick (budget 100 ms) | Out per tick |
 |---|---|---|---|
-| 200 | 2 km | 6 ms | 10 KB/s |
-| 1000 | 2 km, everyone in view | 62 ms | 11.5 KB/s |
-| 1000 | 20 km | 14 ms | 1 KB/s |
+| 2000 | 3 km, a crowd | 43-58 ms (192 ms before the rings, the view every third tick and the sparser far poses) | 1.5 MB (2.2 MB before) |
+| 2000 | 10 km, the city | 41 ms (85 ms before) | 0.6 MB (1.2 MB before) |
+
+(Measured 2026-10-27 on an M3 MacBook already loaded with other work: the bots share the process too.)
 
 ## Scope
 
