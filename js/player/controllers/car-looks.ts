@@ -107,7 +107,7 @@ export function showCarFile(ctl: ThirdPersonControllerManager, c: CarEntity, id:
   }
   // (one material per model, its paint a uniform: any paint, one shader; leaveCarBehind lets a car left behind keep it)
   const mats = (ctl._modelMats ??= new Map<string, THREE.Material>());
-  const bodyMat = mats.get(id) ?? createModelCarMaterial(file.map, file.paintMap, paint);
+  const bodyMat = mats.get(id) ?? createModelCarMaterial(file.map, file.paintMap, paint, file.glowMap);
   mats.set(id, bodyMat);
   (bodyMat.userData.paint as { value: THREE.Color } | undefined)?.value.setHex(paint); // (createModelCarMaterial's uniform)
   const wheelMat = mats.get(`${id}_wheel`) ?? createModelWheelMaterial(file.map, file.paintMap);

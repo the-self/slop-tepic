@@ -83,7 +83,7 @@ function createVehicleMeshes(group: THREE.Group, transit: Transit, policeCount: 
     // each level (the file's own, then its lighter ones for further off): its body with the per-instance paint & lamp
     // state the material reads, and its wheels (two per car on each side: render.ts placeModelWheels), all in the one
     // material pair
-    const mat = createModelCarMaterial(file.map, file.paintMap);
+    const mat = createModelCarMaterial(file.map, file.paintMap, null, file.glowMap);
     const wheelMat = file.wheels ? createModelWheelMaterial(file.map, file.paintMap) : null;
     const instanced = (g: THREE.BufferGeometry, m: THREE.Material, count: number) => {
       const inst = new THREE.InstancedMesh(g, m, count);
