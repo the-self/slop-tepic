@@ -53,6 +53,7 @@ function eventTarget() {
 }
 
 function keyboardHarness(nyc = {}) {
+  const keybindings = realModule('../js/input/keybindings.ts'); // (its own bindings each time: the defaults)
   const window = eventTarget();
   const document = { ...eventTarget(), hidden: false };
   const config = {
@@ -80,7 +81,8 @@ function keyboardHarness(nyc = {}) {
     'js/player/car-physics.ts': loadModule(readFileSync(join(__dirname, '../js/player/car-physics.ts'), 'utf8'), {
       imports: { './car-physics/aids.ts': realModule('../js/player/car-physics/aids.ts') }
     }),
-    'js/sim/ragdolls.ts': realModule('../js/sim/ragdolls.ts')
+    'js/sim/ragdolls.ts': realModule('../js/sim/ragdolls.ts'),
+    'js/input/keybindings.ts': keybindings
   }, { window, document });
   // Exercise the production event handlers without constructing the scene's 3D models.
   const controller = Object.create(ThirdPersonControllerManager.prototype);
@@ -92,6 +94,7 @@ function keyboardHarness(nyc = {}) {
     controller,
     window,
     document,
+    keyBindings: keybindings.keyBindings,
     key(type, code, tagName = 'BODY') {
       window.dispatch(type, { code, target: { tagName } });
     }
@@ -117,6 +120,20 @@ test('releasing one movement binding preserves another held binding', () => {
   assert.equal(controller.keys.forward, true);
   key('keyup', 'KeyW');
   assert.equal(controller.keys.forward, false);
+});
+
+test('a key changed in the menu drives at once, and a key held through the change lets go', () => {
+  const { controller, key, keyBindings } = keyboardHarness();
+  key('keydown', 'KeyW');
+  keyBindings.set('forward', 0, 'KeyI');
+  assert.equal(controller.keys.forward, false, 'nothing held stays held under its old meaning');
+  key('keydown', 'KeyW');
+  assert.equal(controller.keys.forward, false, 'W no longer goes forward');
+  key('keydown', 'KeyI');
+  assert.equal(controller.keys.forward, true);
+  key('keyup', 'KeyI');
+  key('keydown', 'ArrowUp');
+  assert.equal(controller.keys.forward, true, 'the other key it kept still works');
 });
 
 test('either Shift key keeps boost active until both are released', () => {

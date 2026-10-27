@@ -5,7 +5,8 @@
 // (server/aoi.ts): who left the view, who entered it, and only the poses that changed since that client last heard
 // them, so traffic per client stays flat however many players share the room and parked players cost nothing. It
 // relays poses as sent (no physics), only checking their shape. It passes on what players do to each other: chat lines
-// to the room, shots to those who see the shooter, and the hits a shooter's client found to the player struck.
+// to the room, shots to those who see the shooter, and the hits a shooter's client found to the player struck. It
+// keeps each room's sky (time of day & weather): a player who changes it changes it for the whole room.
 // With STATIC_DIR it also serves the game's page (index.html, css/, dist/, assets/ under it), so one address, behind
 // one tunnel (tools/play.ts), is the game and its server.
 //
@@ -36,7 +37,8 @@ import {
   encodeError,
   encodeChatLine,
   encodeShotSeen,
-  encodeHurt
+  encodeHurt,
+  encodeSkySet
 } from '../shared/protocol.ts';
 import type { WirePose } from '../shared/protocol.ts';
 
@@ -191,6 +193,7 @@ function createServer({
         p.name = sanitizeName(msg.name, p.id);
         p.room = rooms.join(msg.region, p);
         send(p, encodeWelcome(p.id, rooms.capacity, tickHz, p.room.id));
+        send(p, encodeSkySet(0, p.room.sky)); // (the sky everyone in the room already sees)
         log(`[mp] ${p.name} (#${p.id}) joined ${p.room.id} (${p.room.players.size}/${rooms.capacity})`);
       } else if (msg.op === OP.STATE && p.room) {
         const st = msg.state; // centimetres: the grid works in the same units
@@ -215,6 +218,20 @@ function createServer({
         if (!target || target === p || !target.state) return;
         const reach = Math.hypot(target.state.x - p.state.x, target.state.y - p.state.y, target.state.z - p.state.z) / 100;
         if (reach <= HIT_REACH) send(target, encodeHurt(p.id, msg.damage));
+      } else if (msg.op === OP.SKY && p.room) {
+        // the chat's bucket: a sky a second, after a burst, so nobody strobes the room's weather
+        p.chatBudget = Math.min(CHAT_BURST, p.chatBudget + ((now - p.chatAt) / 1000) * CHAT_PER_SEC);
+        p.chatAt = now;
+        const room = p.room;
+        if (p.chatBudget < 1 || (msg.sky.time === room.sky.time && msg.sky.weather === room.sky.weather)) return;
+        p.chatBudget -= 1;
+        room.sky = msg.sky;
+        const frame = encodeSkySet(p.id, room.sky);
+        const line = encodeChatLine(0, '', `${p.name ?? ''} cambió el clima`);
+        for (const other of room.players.values()) {
+          send(other, frame);
+          send(other, line);
+        }
       } else if (msg.op === OP.DOWN && p.room) {
         // the room hears who killed whom, as a line from the server
         const killer = msg.killer && msg.killer !== p.id ? p.room.players.get(msg.killer) : undefined;

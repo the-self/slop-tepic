@@ -13,6 +13,7 @@ import type { Bounds, CityLandmark, CityRoad, PointXZ } from '../world/city-conf
 import type { Footprint } from '../world/buildings.ts';
 import type { Blips, SightCones } from '../sim/crime.ts';
 import { SIGHT } from '../sim/crime-rules.ts';
+import { keyBindings } from '../input/keybindings.ts';
 import type { Vector3 } from 'three/webgpu';
 import { onLocaleChange, t } from '../i18n/i18n.ts';
 
@@ -792,7 +793,7 @@ class CityMapSystem {
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Escape' && this.isFullMapOpen) {
         this.toggleFullMap(false);
-      } else if (e.code === 'KeyM' && !isTypingInField(e)) {
+      } else if (keyBindings.is('map', e.code) && !isTypingInField(e)) {
         this.toggleFullMap(!this.isFullMapOpen);
       }
     });
@@ -940,10 +941,6 @@ class CityMapSystem {
     if (!this.modal) return;
     this.modal.classList.toggle('hidden', !this.isFullMapOpen);
     if (this.isFullMapOpen) {
-      // the HUD's popovers live in the top layer, above the map
-      for (const pop of document.querySelectorAll<HTMLElement>('.popover[popover]')) {
-        if (typeof pop.hidePopover === 'function' && pop.matches(':popover-open')) pop.hidePopover();
-      }
       const ent = this.controllerManager.getActiveEntity();
       this.viewCenterX = ent.position.x;
       this.viewCenterZ = ent.position.z;

@@ -4,7 +4,7 @@
 import { LOOKAHEAD } from './constants.ts';
 import type { DrivenVehicle, TrafficEdge, Vehicle } from './types.ts';
 import type { TrafficState } from './state.ts';
-import { phaseOf } from './signals.ts';
+import { phaseOf, runsRed } from './signals.ts';
 import { ahead, boxBusy, claim, laneCoord } from './occupancy.ts';
 import { canStopBefore, stopAt, timeTo } from './idm.ts';
 import { chooseMove } from './routing.ts';
@@ -14,7 +14,7 @@ import {
 
 // Braking for a red (or an amber with room to stop) at the end of edge f, `d` metres ahead
 function signalAhead(ts: TrafficState, v: Vehicle, f: TrafficEdge, d: number): number {
-  if (v.isPolice || !f.to.signal || d > LOOKAHEAD) return 0;
+  if (runsRed(v) || !f.to.signal || d > LOOKAHEAD) return 0;
   const phase = phaseOf(ts, f);
   if (phase === 'green' || (phase === 'amber' && !canStopBefore(ts, v, d))) return 0;
   return stopAt(ts, v, d);
@@ -45,7 +45,8 @@ function mayEnter(ts: TrafficState, v: DrivenVehicle, d: number): boolean {
     }
     return false;
   }
-  if (!v.isPolice && (phase === 'red' || (phase === 'amber' && stoppable))) return false;
+  const runs = runsRed(v);
+  if (!runs && (phase === 'red' || (phase === 'amber' && stoppable))) return false;
   if (boxBusy(n, e.axisIndex)) return false; // crossing traffic inside
   const lead = ahead(e.occ[v.lane], v.s, v);
   if (lead?.v.yielding) return false; // the vehicle ahead waits inside to turn: wait behind the line
@@ -54,13 +55,13 @@ function mayEnter(ts: TrafficState, v: DrivenVehicle, d: number): boolean {
   // road it turns into (they walk on the same green): short of their crosswalk or, turning left across oncoming
   // traffic, short of the oncoming lanes until there is a gap. The light changing stops both for it at the latest.
   const c = ts.connector(e, v.lane, f, j);
-  const first = n.signal && (!v.isPolice || phase === 'green') && m.turn !== 'S' && !lead;
+  const first = n.signal && (!runs || phase === 'green') && m.turn !== 'S' && !lead;
   const across = m.turn === 'L' && !!e.opposite;
   const wait = first ? (across ? yieldPoint(ts, v, c, e) : c.len - 3 - v.half) : -1; // < 0: no room inside to wait
   if (m.turn === 'L' ? across && wait < 0 && yieldOncoming(ts, e.opposite, v.wait > 8, v) : e.opposite && e.opposite.lefts > 0) return false;
   // Give way: at unsignalised corners to the main road; at a signal, police running it, and the third road of a
   // junction and on, sharing the street phase with the second
-  if ((n.signal ? (v.isPolice && phase !== 'green') || e.axisIndex > 1 : e.axisIndex !== 0) && yieldToCrossTraffic(ts, v, n)) return false;
+  if ((n.signal ? (runs && phase !== 'green') || e.axisIndex > 1 : e.axisIndex !== 0) && yieldToCrossTraffic(ts, v, n)) return false;
   // nobody on the crosswalks while it passes over them, on the way in and on the way out, and a free place to
   // clear the intersection to, taking turns with lanes merging into it
   if (pedestrianOn(n, e.inSide, laneCoord(e, v.lane), 0, timeTo(v, d + 2.5 + 2 * v.half))) return false;

@@ -488,6 +488,14 @@ class LightingSystem {
     this.applyParams(p, p.sunDir, p.sunDir);
   }
 
+  // Pins the Live weather to `conditions` (world/weather.ts's WEATHER_SAMPLES), or with null goes back to the real
+  // conditions; the scene eases into them on the next live tick
+  setWeather(conditions: Readonly<Weather> | null): void {
+    if (conditions) this.weather.hold(conditions);
+    else this.weather.release();
+    this.nextLiveTick = 0;
+  }
+
   // Real sun over the weather location, blended presets & live conditions; re-fetches the weather when it is due
   updateLive(force = false): void {
     const now = performance.now();

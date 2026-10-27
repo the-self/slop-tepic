@@ -99,6 +99,31 @@ test('live weather fetches once, caches, and backs off after a failure', async (
   }
 });
 
+test('held conditions stay put until released, then the real ones come back', async () => {
+  let calls = 0;
+  const ok = async () => {
+    calls++;
+    return { ok: true, json: async () => SAMPLE };
+  };
+  const weather = new LiveWeather(WEATHER_LOCATION, { fetchImpl: ok, storage: memoryStorage() });
+  weather.hold({ code: 95, rainRate: 12 });
+  weather.hold({ code: 45, visibility: 600 }); // (a second hold keeps the real fetch set aside)
+  assert.equal(weather.current.code, 45);
+  assert.equal(await weather.refresh(), false, 'nothing is fetched while held');
+  assert.equal(calls, 0);
+  weather.release();
+  assert.equal(weather.held, false);
+  assert.equal(weather.live, false, 'nothing real cached yet');
+  assert.equal(await weather.refresh(), true);
+  assert.equal(weather.current.code, 63, 'the real conditions');
+  // a request still out when the conditions are pinned doesn't overwrite them
+  const slow = new LiveWeather(WEATHER_LOCATION, { fetchImpl: ok, storage: memoryStorage() });
+  const pending = slow.refresh();
+  slow.hold({ code: 3 });
+  assert.equal(await pending, false);
+  assert.equal(slow.current.code, 3);
+});
+
 test('blocked site storage does not stop live weather from starting', () => {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   Object.defineProperty(globalThis, 'localStorage', {

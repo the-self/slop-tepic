@@ -15,6 +15,7 @@ import type { CrimeSystem } from '../crime.ts';
 import { t } from '../../i18n/i18n.ts';
 
 const TYRE_HIT = 0.08; // share of the rounds hitting the player's car that burst a tyre
+const REVIVED_HP = 35; // what someone the paramédicos brought round has left of their health
 
 // (a soldier, `army`, is one of the police: kind 'cop', in fatigues, with a rifle and more to them)
 export function spawnAgent(
@@ -112,6 +113,13 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
     const f = a.fallen;
     a.x = f.px;
     a.z = f.pz;
+    // brought round by the paramédicos (sim/emergency.ts): alive again, weak, and unarmed (what they had was dropped
+    // when they died: kill)
+    if (a.dead && f.revived) {
+      a.dead = false;
+      a.hp = REVIVED_HP;
+      a.weapon = null;
+    }
     if (!a.dead && f.rest > DOWN_TIME) {
       // back on their feet, and angry
       crime.ragdolls?.release(f);

@@ -179,8 +179,10 @@ function tumblePed(ts: TrafficState, p: Ped, _dt: number): void {
     f.down = true;
     if (ts.mayhemListener) ts.mayhemListener('down', f.px, f.py - 0.15, f.pz, 0, MASS.person);
   }
+  // brought round by the paramédicos (sim/emergency.ts): they get up and walk off
+  if (p.dead && f.revived) p.dead = false;
   if (!p.dead && f.rest > GET_UP) {
-    getUp(ts, p, f.px, f.pz);
+    getUp(ts, p, f.px, f.pz, !f.revived);
     return;
   }
   const seen = ts.hasView && visible(ts, f.px, f.pz, 4);
@@ -197,15 +199,16 @@ function tumblePed(ts: TrafficState, p: Ped, _dt: number): void {
   ts.pedCrowd.add(p.rig, Math.hypot(p.x - ts.focusX, p.z - ts.focusZ));
 }
 
-// Back on their feet where they lay, shaken: they look round at whoever hit them, then run from them (bailWalk)
-function getUp(ts: TrafficState, p: Ped, x: number, z: number): void {
+// Back on their feet where they lay, shaken: they look round at whoever hit them, then run from them (bailWalk); or,
+// brought round by the paramédicos (not `shaken`), walk back to the sidewalk
+function getUp(ts: TrafficState, p: Ped, x: number, z: number, shaken = true): void {
   ts.ragdolls?.release(p.fallen);
   p.fallen = null;
   Object.assign(p, { x, z, node: null, route: null, nextRoute: null, nextLeg: 0, waiting: false, v: 0, pause: 0, la: 0, lb: 0 });
   p.rig.placed = false; // (stood up where they lay: rig.update resets it there)
   const fromX = ts.player.x, fromZ = ts.player.z;
   p.bail = {
-    time: 0, heading: Math.atan2(fromX - x, fromZ - z), flee: true, runFor: 4 + Math.random() * 4, goal: null, nextSearch: 0,
+    time: 0, heading: Math.atan2(fromX - x, fromZ - z), flee: shaken, runFor: 4 + Math.random() * 4, goal: null, nextSearch: 0,
     best: Infinity, since: 0, fromX, fromZ
   };
 }

@@ -28,7 +28,7 @@ export function createTeleport({ controllers, touch, gamepad, cameras, room, sel
   };
 }
 
-/** The teleport buttons (data-teleport="<spot>"): each takes the player to its spot and closes the popover */
+/** The teleport buttons (data-teleport="<spot>"): each takes the player to its spot and closes the menu */
 export function wireTeleportButtons(buttons: Iterable<Element>, spots: Readonly<Record<string, { x: number; z: number; heading: number }>>,
   teleport: Teleport, closePopovers: () => void): void {
   for (const button of buttons) {
