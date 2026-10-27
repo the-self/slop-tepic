@@ -196,7 +196,7 @@ function populationContext() {
     focusX: 0, focusZ: 0, player: { active: false },
     clock: 0, hour: 14,
     nearEdges: [], nearTransitEdges: [], nearSignals: [], track: {},
-    transit: { paths: [] }, vehicles: [], wallAt: null,
+    transit: { paths: [] }, vehicles: [], wallAt: null, parkAt: () => false,
     // (the hour's weighing, traffic-demand.js: uniform here, unless a test sets carDensity)
     nearCarWeights: [], nearBikeWeights: [], nearPedWeights: [], carDensity: 0,
     sidewalkTrack: () => false, crosswalkTrack: () => false

@@ -1,5 +1,5 @@
 // js/sim/crime-rules.ts
-// The rules of the street, GTA-style: the wanted level (heat from crimes, one to five stars, lost by staying out of the
+// The rules of the street: the wanted level (heat from crimes, one to five stars, lost by staying out of the
 // police's sight), the gangs' turf across the town, and how many police each star sends. No three.js, so node --test
 // imports it directly (tests/crime-rules.test.mjs). crime.ts plays them out.
 

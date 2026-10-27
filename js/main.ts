@@ -4,6 +4,7 @@
 // steps them every frame through the Scheduler (core/scheduler.ts) in the order written down at "The frame loop" below.
 import * as THREE from 'three/webgpu';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
+import { cycleLocale, onLocaleChange, t, tName, translatePage, setText } from './i18n/i18n.ts';
 import { CITY, getLocationLabel, isTypingInField, ROADS, CITY_LANDMARKS, TELEPORT_LOCATIONS, HOSPITALS } from './world/city-config.ts';
 import { ThirdPersonControllerManager } from './player/controllers.ts';
 import { Stamina, struckDamage, hardness, crashDamage, walletAmount, nearest, CRASH_GRACE } from './player/stats.ts';
@@ -84,8 +85,9 @@ async function initApp(): Promise<void> {
   if (debug) THREE.Node.captureStackTrace = true;
   const container = document.getElementById('canvas-container');
   if (!container) throw new Error('The page has no #canvas-container');
+  translatePage(document); // (the page's static text, in the player's language)
   const loading = new LoadingScreen();
-  loading.status(`Initializing Three.js r${THREE.REVISION} WebGPURenderer & TSL Shaders...`);
+  loading.status('loading.renderer', { revision: THREE.REVISION });
 
   // 1. The WebGPURenderer, with a 32-bit float reversed depth buffer
   const renderer = new THREE.WebGPURenderer({
@@ -117,7 +119,7 @@ async function initApp(): Promise<void> {
   loading.mark('lighting');
 
   // 3. The city: streets, hills, landmarks, blocks, street details & traffic
-  loading.status(`Construyendo ${CITY.city || 'la ciudad'}: calles, manzanas y colonias...`);
+  loading.status('loading.city', { city: CITY.city || t('loading.cityFallback') });
   const city = buildCity(scene, { stream: params.get('stream') !== '0', mark: (label) => { loading.mark(label); } });
   const { streamer, rivers, cityBlocks, stores, carParks, streetDetails, powerLines, traffic: trafficSystem, highwayTraffic, colliders } = city;
 
@@ -157,7 +159,7 @@ async function initApp(): Promise<void> {
     });
     controllerManager.setCarPhysics(physics);
   } catch (err) {
-    loading.status('The car physics (Jolt Physics) could not load: check the connection and reload');
+    loading.status('loading.physicsFailed');
     throw err;
   }
   // Who is hit, shot or thrown falls as a body (sim/ragdolls.ts), in the car's world; a pool of blood spreads under
@@ -255,7 +257,7 @@ async function initApp(): Promise<void> {
     addColliders: (list) => { controllerManager.addColliders(list); },
     ignite: (kind, x, z, size) => fires.ignite(kind, x, z, size)
   });
-  controllerManager.onFuelOut = () => { crimeSystem.toast('Out of gas: fill up at a gas station'); };
+  controllerManager.onFuelOut = () => { crimeSystem.toast(t('toast.outOfGas')); };
   crimeSystem.onExplosion = (x, y, z, radius) => {
     fires.onExplosion(x, y, z, radius);
     gasStations.onExplosion(x, y, z, radius);
@@ -284,7 +286,7 @@ async function initApp(): Promise<void> {
   };
   const crimeHud = new CrimeHud();
   // The weapon wheel, held open with Tab (ui/weapon-wheel.ts): the game runs slowed meanwhile. On foot the mouse wheel
-  // switches weapons, GTA-style (Alt + the wheel, or a pinch, still zooms the camera); in a vehicle it zooms.
+  // switches weapons (Alt + the wheel, or a pinch, still zooms the camera); in a vehicle it zooms.
   const scrollSwitches = (e: WheelEvent) => !e.altKey && !e.ctrlKey && controllerManager.activeMode === 'person' && crimeSystem.state === 'play';
   const weaponWheel = new WeaponWheel(crimeSystem, { aim: aimControl, canvas: renderer.domElement, canScroll: scrollSwitches });
   cameraSystem.wheelZooms = (e) => !scrollSwitches(e);
@@ -378,19 +380,30 @@ async function initApp(): Promise<void> {
   }
   const heldWeather = params.get('live-weather');
   if (isWeatherSample(heldWeather)) lightingSystem.weather.hold(WEATHER_SAMPLES[heldWeather]);
-  lightingSystem.onLiveChange = (state) => {
-    colorGrade.applyMix(state.blend.a, state.blend.b, state.blend.t, state.block);
+  // the Live button: the place & its temperature, and in its title the time there and the weather (in the player's
+  // language: shown again when it changes)
+  let liveShown: Parameters<NonNullable<typeof lightingSystem.onLiveChange>>[0] | null = null;
+  const showLive = (state: NonNullable<typeof liveShown>) => {
+    liveShown = state;
     if (!liveButton) return;
     const w = state.weather;
-    const t = w.temperature;
-    const temp = state.live && t !== null && Number.isFinite(t) ? ` ${Math.round(t)}°` : '';
-    if (liveLabel) liveLabel.textContent = `${state.location.name}${temp}`;
+    const temperature = w.temperature;
+    const temp = state.live && temperature !== null && Number.isFinite(temperature) ? ` ${Math.round(temperature)}°` : '';
+    if (liveLabel instanceof HTMLElement) {
+      delete liveLabel.dataset.i18n; // (its text is the place's now, not the page's)
+      liveLabel.textContent = `${state.location.name}${temp}`;
+    }
     let clock = '';
     try {
       clock = lightingSystem.liveClock().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: state.location.timeZone });
     } catch { /* unknown time zone */ }
-    const sky = state.live ? weatherLabel(w) : state.loading ? 'Loading weather…' : 'Weather unavailable, clear sky';
-    liveButton.title = `Live · ${state.location.name} ${clock} · ${sky} · Weather data by Open-Meteo.com`;
+    const sky = t(state.live ? weatherLabel(w) : state.loading ? 'time.liveLoading' : 'time.liveUnavailable');
+    delete liveButton.dataset.i18nTitle;
+    liveButton.title = t('time.liveTitleNow', { place: state.location.name, clock, sky });
+  };
+  lightingSystem.onLiveChange = (state) => {
+    colorGrade.applyMix(state.blend.a, state.blend.b, state.blend.t, state.block);
+    showLive(state);
   };
   const gamepadControls = new GamepadControls(controllerManager, cameraSystem, {
     onBoard: () => { boarding.board(); },
@@ -407,12 +420,16 @@ async function initApp(): Promise<void> {
   });
 
   // The HUD follows whatever the player is in now (on foot, or the vehicle it got into)
+  // the mode's name (the vehicle's) and its keys guide
+  function showMode() {
+    const ent = controllerManager.getActiveEntity();
+    hud.showMode(controllerManager.activeMode, tName(ent.label), 'spec' in ent && ent.spec.nitro);
+  }
   function syncMode() {
     const mode = controllerManager.activeMode;
     touchControls.setMode(mode);
     gamepadControls.reset();
-    const ent = controllerManager.getActiveEntity();
-    hud.showMode(mode, ent.label, 'spec' in ent && ent.spec.nitro);
+    showMode();
     // If currently on a static scenic camera, switch to 3rd-Person Chase so user sees their selected character/vehicle
     if (cameraSystem.getActivePreset().category !== 'follow') selectCamera('chase', false);
   }
@@ -432,7 +449,7 @@ async function initApp(): Promise<void> {
     cameraButtons.forEach((btn) => {
       btn.classList.toggle('active', btn.getAttribute('data-camera') === camId);
     });
-    hud.showCamera(cameraSystem.getActivePreset().name);
+    hud.showCamera(tName(cameraSystem.getActivePreset().name));
   }
 
   // Steps through CAMERA_PRESETS (V / Shift+V, and the arrows either side of the camera name)
@@ -488,14 +505,14 @@ async function initApp(): Promise<void> {
     controllerManager,
     cameraSystem,
     trafficSystem,
-    allBlocks: cityBlocks.allBlocks,
+    allBlocks: [...cityBlocks.allBlocks, city.uan.map], // (the UAN's buildings are uan.ts's, not among the blocks')
     onToggle: (open) => {
       controllerManager.resetInput();
       touchControls.setEnabled(!open);
       gamepadControls.setEnabled(!open);
       const mapHint = document.getElementById('fullmap-hover-info');
       if (open && touchControls.available && mapHint) {
-        mapHint.textContent = 'Tap to teleport · Drag to pan · Use + / − to zoom';
+        setText(mapHint, 'map.hintTouch');
       }
     },
     onTeleport: teleportTo
@@ -506,13 +523,28 @@ async function initApp(): Promise<void> {
   mapSystem.setPolice(crimeSystem); // (where the police can see the player, on both maps)
   document.getElementById('btn-open-map')?.addEventListener('click', () => { mapSystem.toggleFullMap(true); });
 
-  hudToggleBtn?.addEventListener('click', () => {
-    document.body.classList.toggle('hud-minimized');
+  const showHudToggle = () => {
+    if (!hudToggleBtn) return;
     const isMin = document.body.classList.contains('hud-minimized');
     hudToggleBtn.setAttribute('aria-pressed', String(isMin));
-    hudToggleBtn.setAttribute('aria-label', isMin ? 'Show HUD' : 'Hide HUD');
-    hudToggleBtn.title = isMin ? 'Show the HUD [H]' : 'Clean view: hide the HUD [H]';
-    if (isMin) closePopovers();
+    hudToggleBtn.setAttribute('aria-label', t(isMin ? 'hud.show' : 'hud.hide'));
+    hudToggleBtn.title = t(isMin ? 'hud.showTitle' : 'hud.hideTitle');
+  };
+  showHudToggle();
+  hudToggleBtn?.addEventListener('click', () => {
+    document.body.classList.toggle('hud-minimized');
+    showHudToggle();
+    if (document.body.classList.contains('hud-minimized')) closePopovers();
+  });
+
+  // The language button (and the loading screen's): every text the HUD keeps is shown again in the new language
+  document.getElementById('btn-lang')?.addEventListener('click', cycleLocale);
+  onLocaleChange(() => {
+    showMode();
+    hud.showCamera(tName(cameraSystem.getActivePreset().name));
+    hud.showSound(audioSystem);
+    showHudToggle();
+    if (liveShown) showLive(liveShown);
   });
 
   // Global keyboard shortcuts for getting in & out (F), cameras (V / 5-0), and HUD (H)
@@ -572,7 +604,7 @@ async function initApp(): Promise<void> {
   let streamWarmup: THREE.Group | null = null;
   let warmupMeshes: THREE.Mesh[] = [];
   if (streamer) {
-    loading.status('Laying the streets around you...');
+    loading.status('loading.tiles');
     const here = controllerManager.getActiveEntity().position;
     await streamer.preload(here.x, here.z);
     streamWarmup = new THREE.Group();
@@ -584,14 +616,13 @@ async function initApp(): Promise<void> {
 
   // The player's body (actors/person-body.ts) in before the shaders compile, so its pipelines are among them
   // rather than built in play the frame it comes in; a slow connection waits PERSON_WAIT at most (it then comes in late)
-  loading.status('Dressing the player...');
+  loading.status('loading.player');
   await Promise.race([loadPersonBody(PLAYER_BODY).catch(() => null), new Promise((resolve) => setTimeout(resolve, PERSON_WAIT))]);
   loading.mark('person');
 
   // The loading screen stays up while the shaders compile and until the first frame is on screen
-  loading.status('Compiling Shaders & Render Pipelines...');
+  loading.status('loading.shaders');
   await precompileShaders(renderer, scene, cameraSystem.camera, render, (done) => {
-    loading.status(`Compiling Shaders & Render Pipelines... ${Math.round(done * 100)}%`);
     loading.progress(done);
   }, () => { loading.mark('postFX'); });
   loading.mark('compile');
@@ -804,7 +835,7 @@ async function initApp(): Promise<void> {
       // The street corner of the player on the follow cameras, of the camera itself on the scenic ones
       const where = cameraSystem.getActivePreset().category === 'follow' ? entity.position : cameraSystem.currentPos;
       hud.showLocation(getLocationLabel(where.x, where.z));
-      hud.showPrompt(boarding.prompt(), controllerManager.activeMode === 'person');
+      hud.showPrompt(boarding.prompt(), boarding.promptAction);
     }
   });
 

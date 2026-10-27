@@ -140,10 +140,16 @@ export function createCurbMaterial() {
     const joints = max(gridLine(wx, 1.5, 0.038), gridLine(wz, 1.5, 0.038)).mul(detail);
     const topFace = smoothstep(0.5, 0.85, normalWorldGeometry.y);
     const wetFilm = smoothstep(0.2, 0.8, cityUniforms.uRoadWetness); // rain-darkened granite, like the roadway's film
-    // the centro's curbs are painted traffic yellow (within ~620 m of the Plaza Principal), worn through in patches
-    const centro = smoothstep(700.0, 580.0, length(positionWorld.xz));
+    // the centro's curbs are painted traffic yellow (within ~620 m of the Plaza Principal), and La Loma's (the park's
+    // and the streets round it, ISSSTE's side of Paseo de la Loma too: within ~400 m of the park's middle,
+    // la-loma-plan.ts), worn through in patches
+    const centro = max(smoothstep(700.0, 580.0, length(positionWorld.xz)), smoothstep(440.0, 400.0, length(positionWorld.xz.sub(vec2(-209.0, 1161.0)))));
     const paintLeft = smoothstep(0.28, 0.4, noise2D(vec2(wx.mul(0.9), wz.mul(0.9)).add(3.7)));
-    const painted = mix(stone, mix(color(0xd9a92a), color(0xe8c04a), tone), paintLeft.mul(centro));
+    const yellow = mix(stone, mix(color(0xd9a92a), color(0xe8c04a), tone), paintLeft.mul(centro));
+    // and the glorieta of the Hermana Agua's island (world/hermana-agua.ts, its middle at 128.6, 1117.4: ~13 m to its
+    // curb, the nearest across the street ~23 m) in pink, fresh
+    const glorieta = smoothstep(17.0, 16.0, length(positionWorld.xz.sub(vec2(128.6, 1117.4))));
+    const painted = mix(yellow, mix(color(0xb9548f), color(0xd677ab), tone), glorieta);
     return mix(painted.mul(0.68), painted, topFace).mul(float(1.0).sub(joints.mul(0.42))).mul(mix(float(1.0), float(0.78), wetFilm));
   })();
 

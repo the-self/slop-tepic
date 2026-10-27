@@ -274,9 +274,18 @@ function deckIndex(segments: readonly DeckSegment[]): Decks['deckLift'] {
 const decks = createDecks(GEO);
 const { deckLift } = decks;
 const footDecks = createFootDecks(GEO);
-/** deckLift for someone on foot: the roads' decks and the footbridges' */
-const walkDeckLift = (x: number, z: number, over = Infinity, step = 1.2) =>
-  Math.max(deckLift(x, z, over, step), footDecks.deckLift(x, z, over, step));
+// the walkable decks the city adds as it is built: a landmark's steps up to its doors (la-loma.ts, the ISSSTE's)
+const builtFootDecks: Decks['deckLift'][] = [];
+/** Steps or a terrace those on foot climb onto, as segments of deck (their lifts over the ground at either end) */
+function addFootDecks(segments: readonly DeckSegment[]): void {
+  if (segments.length) builtFootDecks.push(deckIndex(segments));
+}
+/** deckLift for someone on foot: the roads' decks, the footbridges' and the steps the city added */
+const walkDeckLift = (x: number, z: number, over = Infinity, step = 1.2) => {
+  let lift = Math.max(deckLift(x, z, over, step), footDecks.deckLift(x, z, over, step));
+  for (const built of builtFootDecks) lift = Math.max(lift, built(x, z, over, step));
+  return lift;
+};
 /**
  * The surface under a body at (x, z) whose feet (or wheels) are at height y: the ground, or a bridge's deck it is on or
  * reaches up a ramp; with y left out the ground alone
@@ -289,5 +298,5 @@ const surfaceHeight = (x: number, z: number, y?: number): number => {
 export {
   SINK, SLOPES, LATTICE, createGround, clipToLattice, liftAt, townGrid,
   hillHeights, terrainHeight, hillGround, townHeight, bareLand, landHeight, hillPaths, waterways, lakes, underpasses, deckHoles, gradeHeight, groundHeight, groundSlope,
-  createDecks, createFootDecks, decks, footDecks, deckLift, walkDeckLift, surfaceHeight
+  createDecks, createFootDecks, addFootDecks, decks, footDecks, deckLift, walkDeckLift, surfaceHeight
 };

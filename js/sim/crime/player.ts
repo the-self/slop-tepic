@@ -13,6 +13,7 @@ import type { DownKind, Agent, LockTarget } from './types.ts';
 import { PARKED_Y, DRAW_TIME, RESPAWN_TIME, clamp } from './constants.ts';
 import { isResponder } from './cruisers.ts';
 import type { CrimeSystem } from '../crime.ts';
+import { t } from '../../i18n/i18n.ts';
 
 const _qHand = new THREE.Quaternion();
 const _qDown = new THREE.Quaternion();
@@ -307,13 +308,13 @@ export function updateDown(crime: CrimeSystem, dt: number): void {
   if (kind === 'wasted') {
     const fee = Math.min(crime.money, 100);
     crime.money -= fee;
-    crime.toast(fee ? `Hospital bill: $${fee}` : 'Back on your feet');
+    crime.toast(fee ? t('toast.hospital', { fee }) : t('toast.backUp'));
   } else {
     // arrested: the guns are taken, and a bribe
     const fee = Math.min(crime.money, 150);
     crime.money -= fee;
     crime.arsenal = new Arsenal({ pistol: 17, smg: 0, bazooka: 0 });
-    crime.toast(`Your guns were taken${fee ? `, and $${fee}` : ''}`);
+    crime.toast(fee ? t('toast.gunsTakenFee', { fee }) : t('toast.gunsTaken'));
   }
   crime.wanted.clear();
   // a fresh start: the police and the gangs forget the player (no cartel trucks after it from the hospital)

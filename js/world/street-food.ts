@@ -6,6 +6,7 @@ import type { ThirdPersonControllerManager } from '../player/controllers.ts';
 import type { CrimeSystem } from '../sim/crime.ts';
 import type { Poi } from './city-geodata.js';
 import type { AmbientSource } from '../audio/audio-ambience.ts';
+import { t } from '../i18n/i18n.ts';
 
 // js/world/street-food.ts
 // The night's street food: as the sun goes down the taquerías put their stand out on the sidewalk in front (a table
@@ -380,7 +381,7 @@ class StreetFood {
   // What F would do here (main.ts updatePrompt): "Comprar tacos al pastor ($45)"
   prompt() {
     const s = this.nearest;
-    return s ? `Comprar ${s.spec.item} ($${s.spec.price})` : '';
+    return s ? t('prompt.buy', { item: s.spec.item, price: s.spec.price }) : '';
   }
 
   // F at a stand: pay & eat
@@ -389,12 +390,12 @@ class StreetFood {
     const crime = this.crime;
     if (!s || crime.state !== 'play') return false;
     if (crime.money < s.spec.price) {
-      crime.toast('No te alcanza');
+      crime.toast(t('toast.noMoney'));
       return true;
     }
     crime.money -= s.spec.price;
     crime.health = Math.min(100, crime.health + s.spec.heal);
-    crime.toast(`¡Provecho! ${s.spec.item}, +${s.spec.heal} de salud`);
+    crime.toast(t('toast.eat', { item: s.spec.item, heal: s.spec.heal }));
     return true;
   }
 

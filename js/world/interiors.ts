@@ -7,6 +7,7 @@ import { isOpen } from './venues.ts';
 import { hash } from './hash.ts';
 import { Bystanders, BYSTANDER_STYLES } from '../sim/bystanders.ts';
 import type { Collider } from './buildings.ts';
+import { t } from '../i18n/i18n.ts';
 
 // js/world/interiors.ts
 // Going into a restaurant, a cantina or an antro (F at its door: "Entrar a ..."): the room the street front opens on,
@@ -491,7 +492,7 @@ class Interiors {
     c.settle(c.entities.person);
     this.cameras.setInterior({ minX: room.ox - room.w / 2 + 0.35, maxX: room.ox + room.w / 2 - 0.35, minZ: room.oz - room.d / 2 + 0.35, maxZ: room.oz + room.d / 2 - 0.35, maxY: room.y0 + room.h - 0.3 });
     this.cameras.resetForTeleport();
-    this.crime.toast(venue.tapanco ? `${venue.name}: sube al tapanco por la escalera` : venue.name);
+    this.crime.toast(venue.tapanco ? t('toast.loft', { name: venue.name }) : venue.name);
   }
 
   // Out of the room without going back through its door (main.ts: a teleport from the map, a respawn), and the room's
@@ -565,14 +566,14 @@ class Interiors {
   // What F would do here (main.ts updatePrompt)
   prompt() {
     if (this.inside) {
-      if (this.exitNear) return 'Salir a la calle';
+      if (this.exitNear) return t('prompt.leave');
       if (this.counterNear) {
         const K = this.inside.room.K;
-        return `Pedir ${K.item} ($${K.price})`;
+        return t('prompt.order', { item: K.item, price: K.price });
       }
       return '';
     }
-    return this.doorNear ? `Entrar a ${this.doorNear.name}` : '';
+    return this.doorNear ? t('prompt.enter', { name: this.doorNear.name }) : '';
   }
 
   // F: in or out of the door, or an order at the counter; true if it did something
@@ -585,11 +586,11 @@ class Interiors {
       if (this.counterNear) {
         const K = this.inside.room.K;
         const crime = this.crime;
-        if (crime.money < K.price) crime.toast('No te alcanza');
+        if (crime.money < K.price) crime.toast(t('toast.noMoney'));
         else {
           crime.money -= K.price;
           crime.health = Math.min(100, crime.health + K.heal);
-          crime.toast(`¡Salud! ${K.item}, +${K.heal} de salud`);
+          crime.toast(t('toast.drink', { item: K.item, heal: K.heal }));
         }
         return true;
       }

@@ -16,6 +16,7 @@ import type { TrafficSystem } from '../sim/traffic.ts';
 import type { CrimeSystem } from '../sim/crime.ts';
 import type { CityAudioSystem } from '../audio/audio-system.ts';
 import type { Interiors } from '../world/interiors.ts';
+import { t } from '../i18n/i18n.ts';
 
 const SPEED_OF_SOUND = 343; // m/s
 const FLOOD_WORD = 0.3; // flood level the city hears of (and forgets again below half that)
@@ -53,12 +54,12 @@ export class WeatherEffects implements System {
     roadWater.update(dt, w);
     floods.update(dt, w, cameras.camera);
     // word of a flood once it is deep
-    if (floods.level > FLOOD_WORD && !this.floodWarned) crime.toast('¡Se inunda la ciudad! Cuidado con los bajos y el Mololoa');
+    if (floods.level > FLOOD_WORD && !this.floodWarned) crime.toast(t('toast.flood'));
     this.floodWarned = floods.level > FLOOD_WORD || (this.floodWarned && floods.level > FLOOD_WORD / 2);
     // ...and of the places that flood every year as the player comes into one (flood-model.ts FLOOD_SPOTS)
     const here = controllers.getActiveEntity().position;
     const spot = floods.spotAt(here.x, here.z);
-    if (spot && spot !== this.floodSpot) crime.toast(`Se inunda: ${spot.name}`);
+    if (spot && spot !== this.floodSpot) crime.toast(t('toast.floodAt', { place: spot.name }));
     this.floodSpot = spot;
     // wind blows from windDirection (° clockwise from true north): toward the opposite bearing, in the grid frame
     const toward = (w.windDirection + 180 - this.s.bearingDeg) * Math.PI / 180;

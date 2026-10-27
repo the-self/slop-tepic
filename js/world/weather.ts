@@ -3,6 +3,7 @@
 // from the clock, no network) and the current conditions there from Open-Meteo (free, keyless, CORS-enabled; weather
 // data by Open-Meteo.com, CC BY 4.0). One point covers the whole map: the forecast models behind it resolve ~10 km
 // cells, larger than the city. Kept free of three.js imports so it runs under node:test.
+import type { MessageKey } from '../i18n/i18n.ts';
 
 /** The conditions: °C (null unknown), WMO code, cloud fractions 0..1, rain mm/h and mm over the past three hours,
  *  visibility m, wind km/h from `windDirection` degrees (clockwise from true north), fetched at (ms since the epoch). */
@@ -64,14 +65,14 @@ const CURRENT_FIELDS = [
 const CACHE_KEY = 'live-weather-v1';
 const REFRESH_MS = 10 * 60 * 1000; // Open-Meteo's "current" block updates every 15 min
 
-// WMO weather interpretation codes (the subset Open-Meteo reports) → short English labels for the HUD
-const WMO_LABELS: Partial<Record<number, string>> = {
-  0: 'Clear', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Fog', 48: 'Rime fog',
-  51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle', 56: 'Freezing drizzle', 57: 'Freezing drizzle',
-  61: 'Light rain', 63: 'Rain', 65: 'Heavy rain', 66: 'Freezing rain', 67: 'Freezing rain',
-  71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 77: 'Snow grains',
-  80: 'Showers', 81: 'Heavy showers', 82: 'Violent showers', 85: 'Snow showers', 86: 'Snow showers',
-  95: 'Thunderstorm', 96: 'Thunderstorm, hail', 99: 'Thunderstorm, hail'
+// WMO weather interpretation codes (the subset Open-Meteo reports) → the HUD's short labels, as message keys (i18n/)
+const WMO_LABELS: Partial<Record<number, MessageKey>> = {
+  0: 'weather.clear', 1: 'weather.mostlyClear', 2: 'weather.partlyCloudy', 3: 'weather.overcast', 45: 'weather.fog', 48: 'weather.rimeFog',
+  51: 'weather.lightDrizzle', 53: 'weather.drizzle', 55: 'weather.heavyDrizzle', 56: 'weather.freezingDrizzle', 57: 'weather.freezingDrizzle',
+  61: 'weather.lightRain', 63: 'weather.rain', 65: 'weather.heavyRain', 66: 'weather.freezingRain', 67: 'weather.freezingRain',
+  71: 'weather.lightSnow', 73: 'weather.snow', 75: 'weather.heavySnow', 77: 'weather.snowGrains',
+  80: 'weather.showers', 81: 'weather.heavyShowers', 82: 'weather.violentShowers', 85: 'weather.snowShowers', 86: 'weather.snowShowers',
+  95: 'weather.thunderstorm', 96: 'weather.thunderHail', 99: 'weather.thunderHail'
 };
 
 // Clear, dry, unlimited visibility: what Live mode shows until (or unless) the first fetch lands
@@ -143,8 +144,9 @@ function parseOpenMeteo(json: OpenMeteoResponse | null | undefined, now = Date.n
   };
 }
 
-function weatherLabel(w: Readonly<Weather>): string {
-  return WMO_LABELS[w.code] || (w.cloudCover > 0.7 ? 'Overcast' : w.cloudCover > 0.3 ? 'Partly cloudy' : 'Clear');
+/** The conditions' label, a message key (i18n/ t() gives its text) */
+function weatherLabel(w: Readonly<Weather>): MessageKey {
+  return WMO_LABELS[w.code] ?? (w.cloudCover > 0.7 ? 'weather.overcast' : w.cloudCover > 0.3 ? 'weather.partlyCloudy' : 'weather.clear');
 }
 
 // Is it raining (drizzle, rain, showers, thunderstorm), by the rate or the WMO code?

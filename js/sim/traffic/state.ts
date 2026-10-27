@@ -14,6 +14,7 @@ import type { PersonCrowd, PersonGround } from '../pedestrians.ts';
 import { createTransit } from '../transit.ts';
 import type { Transit } from '../transit.ts';
 import { GEO } from '../../world/city-geodata.js';
+import { LA_LOMA, laLomaSetBack } from '../../world/la-loma-plan.ts';
 import type { Ragdolls } from '../ragdolls.ts';
 import type { CarPhysics } from '../../player/car-physics.ts';
 import { MASS, MISHAP_FIRST, NUM_CARS, NUM_PEDS, STOP_CELL } from './constants.ts';
@@ -75,6 +76,8 @@ interface TrafficState extends VehicleMeshes {
   solidAt: SolidQuery | null;
   /** where a building's wall stands (main.ts: solidAt without the poles & bollards), for the people walking */
   wallAt: SolidQuery | null;
+  /** whether (x, z) is in a park (city-config.ts blockAt), where some of the people placed go jogging */
+  parkAt: (x: number, z: number) => boolean;
   /** height of the hills over the flat city (terrain.ts) */
   hillQuery: HillQuery | null;
   /** the surface under something at height y: the ground, or a bridge's deck it is on (ground.ts surfaceHeight) */
@@ -348,8 +351,10 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
   const pedRoutes = createPedestrianRoutes<TrafficNode, TrafficEdge, CityBlock, StreetCrossing>(network, blockAt, {
     nodes: network.nodes,
     streetCrossings,
-    // (the footways, paths, pedestrian streets & steps: walked as well)
-    footways: GEO.footways.map(([, , flat]) => ({ pts: Array.from({ length: flat.length / 2 }, (_, i) => ({ x: flat[i * 2], z: flat[i * 2 + 1] })) })),
+    // (the footways, paths, pedestrian streets & steps, and La Loma's andador: walked as well)
+    footways: [...GEO.footways, ...(LA_LOMA?.walks ?? [])].map(([, , flat]) => ({ pts: Array.from({ length: flat.length / 2 }, (_, i) => ({ x: flat[i * 2], z: flat[i * 2 + 1] })) })),
+    // (along La Loma, no sidewalk: the verge with the laureles' row, then the andador its walkers keep to)
+    setBack: laLomaSetBack,
     bridges: GEO.footbridges.map(([flat, lifts]) => ({
       pts: Array.from({ length: flat.length / 2 }, (_, i) => ({ x: flat[i * 2], z: flat[i * 2 + 1] })),
       lifts: lifts.map((v) => v / 10)
@@ -376,6 +381,10 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     ragdolls: null,
     solidAt: null,
     wallAt: null,
+    parkAt: (x: number, z: number) => {
+      const b = blockAt(x, z);
+      return !!b && b.park > 0.6 && !b.median;
+    },
     hillQuery: null,
     surfaceQuery: null,
     dummy,

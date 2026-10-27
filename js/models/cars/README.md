@@ -11,7 +11,7 @@ every entry):
 | Field | Meaning |
 |---|---|
 | `id` | unique, `make-model` |
-| `name` | what the HUD shows |
+| `name` | what the HUD shows: a joke on the real make and model ("Nisán Tsurito", "Vochowagen Yeta"), never the brand itself; a message key (`vehicle.police`) where it is a role, not a model |
 | `body` | one of the body shapes |
 | `size` | `[length, width, height]` in metres |
 | `mass` | kg with a driver |

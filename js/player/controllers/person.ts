@@ -81,7 +81,7 @@ export function updatePerson(ctl: ThirdPersonControllerManager, dt: number): voi
     targetSpeed = ahead * k;
     targetStrafe = side * k;
   } else if (ctl.viewHeading !== null) {
-    // GTA-style, steered from the camera (cameras.ts): W walks away from it, S towards it, A / D across it; the player
+    // Steered from the camera (cameras.ts): W walks away from it, S towards it, A / D across it; the player
     // turns round to face the way it goes, and only gets going once it roughly faces it
     const ahead = (Number(ctl.keys.forward) || 0) - (Number(ctl.keys.backward) || 0);
     const side = (Number(ctl.keys.right) || 0) - (Number(ctl.keys.left) || 0);

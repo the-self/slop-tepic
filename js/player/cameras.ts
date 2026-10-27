@@ -12,7 +12,7 @@ export type CameraPresetId = 'chase' | 'action' | 'pov' | 'centralPark' | 'fifth
 /** A camera: its id, its names (the menu's, the HUD's short one), whether it follows the player, its fov (degrees) */
 export interface CameraPreset {
   id: CameraPresetId;
-  name: string;
+  name: string; // a message key ('camera.chase') or a place's name: shown through i18n's tName
   short: string;
   category: 'follow' | 'scenic';
   fov: number;
@@ -42,22 +42,22 @@ interface DragPointer {
 }
 
 const CAMERA_PRESETS: CameraPreset[] = [
-  { id: 'chase',       name: '3rd-Person Chase',         short: 'Chase',       category: 'follow', fov: 56 },
-  { id: 'action',      name: 'Low-Angle Action',         short: 'Action',      category: 'follow', fov: 60 },
-  { id: 'pov',         name: 'First-Person / Cockpit',   short: 'POV / Dash',  category: 'follow', fov: 68 },
+  { id: 'chase',       name: 'camera.chase',               short: 'camera.chase.short',  category: 'follow', fov: 56 },
+  { id: 'action',      name: 'camera.action',              short: 'camera.action.short', category: 'follow', fov: 60 },
+  { id: 'pov',         name: 'camera.pov',                 short: 'camera.pov.short',    category: 'follow', fov: 68 },
   { id: 'centralPark', name: 'Parque La Loma',             short: 'La Loma',     category: 'scenic', fov: 52 },
   { id: 'fifthAve',    name: 'Plaza Principal y Catedral', short: 'Plaza',       category: 'scenic', fov: 48 },
   { id: 'timesSquare', name: 'La Alameda',                 short: 'Alameda',     category: 'scenic', fov: 58 },
   { id: 'chryslerGCT', name: 'Estadio UAN',                short: 'UAN',         category: 'scenic', fov: 50 },
-  { id: 'observatory', name: 'Mirador sobre el centro',    short: 'Mirador',     category: 'scenic', fov: 52 },
+  { id: 'observatory', name: 'camera.observatory',         short: 'camera.observatory.short', category: 'scenic', fov: 52 },
   { id: 'bryantPark',  name: 'Mercado Morelos',            short: 'Mercado',     category: 'scenic', fov: 52 },
   { id: 'waterfront',  name: 'Antigua estación',           short: 'Estación',    category: 'scenic', fov: 46 },
-  { id: 'drone',       name: 'Auto-Director Aerial',     short: 'Director',    category: 'scenic', fov: 50 }
+  { id: 'drone',       name: 'camera.drone',               short: 'camera.drone.short',  category: 'scenic', fov: 50 }
 ];
 
 const SCENIC_ORIGIN: ScenicAnchor = { x: 0, z: 0, heading: Math.PI };
 const MOUSE_LOOK = 0.0024; // rad per pixel of mouse movement under the pointer lock (as aim.ts's)
-// On foot, GTA-style: the chase camera orbits the player's head (cameraTargetOffset) at its chaseDistance, a little
+// On foot: the chase camera orbits the player's head (cameraTargetOffset) at its chaseDistance, a little
 // above it, and looks straight at it, so the whole body stands in the lower middle of the view
 const FOOT_PITCH = 0.08; // rad, added to the orbit's tilt on foot
 const FOOT_CLEARANCE = 0.45; // m: how low over the ground it may come, looking up from the street
@@ -393,7 +393,7 @@ class CameraSystem {
       this.userOrbitTimer = Math.max(0, this.userOrbitTimer - dt);
     }
 
-    // (a vehicle's camera swings back behind it as it drives; on foot it stays where it was turned, as in GTA)
+    // (a vehicle's camera swings back behind it as it drives; on foot it stays where it was turned)
     if (!freeLook && !this.isDragging && this.userOrbitTimer <= 0 && Math.abs(entity.speed) > 0.5) {
       this.orbitYawOffset -= Math.round(this.orbitYawOffset / (Math.PI * 2)) * (Math.PI * 2);
       this.orbitYawOffset += (0.0 - this.orbitYawOffset) * (1 - Math.exp(-dt * 2.2));
@@ -570,7 +570,7 @@ class CameraSystem {
     }
   }
 
-  // Speed, GTA-style, in a car or on a moto on the follow cameras: the view widens as it goes faster (more of the road
+  // Speed, in a car or on a moto on the follow cameras: the view widens as it goes faster (more of the road
   // rushing past at the edges; the nitro's push widens it further) and shakes from ~90 km/h, harder the faster, as the
   // wind and the road's roughness do to a fast car; a crash jolts it (entity.cameraKick, 0..1, controllers.ts). Returns
   // the widening (0..1, eased); leaves the shake's offset in this._shake
@@ -669,7 +669,7 @@ class CameraSystem {
   }
 
   // A wall between the followed entity's (x, y, z) and the chase camera: the camera comes in in front of it at once,
-  // as in GTA, so the player is never hidden behind a building, and eases back out once past it
+  // so the player is never hidden behind a building, and eases back out once past it
   keepInSight(x: number, y: number, z: number, dt: number): void {
     const cam = this.currentPos;
     const dx = cam.x - x, dy = cam.y - y, dz = cam.z - z;

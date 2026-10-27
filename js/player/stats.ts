@@ -1,5 +1,5 @@
 // js/player/stats.ts
-// What the player's body adds to the crime system's health & money (sim/crime.ts), GTA-style: stamina, which sprinting
+// What the player's body adds to the crime system's health & money (sim/crime.ts): stamina, which sprinting
 // on foot or on a bicycle runs down; the health lost in the player's own crashes and when traffic drives into them on
 // foot; the cash in the wallet of someone the player knocks over; the hospital a wasted player wakes up at. No three.js
 // here, so node --test imports it directly (tests/stats.test.mjs).
