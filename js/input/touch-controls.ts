@@ -13,6 +13,8 @@ interface HeldButton {
 
 const DEAD_ZONE = 0.15;
 const MAX_RADIUS = 44;
+/** The media query of a touch screen: what shows these controls, and what gets the phone's graphics tier (main.ts) */
+const TOUCH_SCREEN = '(any-pointer: coarse)';
 
 class TouchControls {
   controller: TouchTarget;
@@ -43,7 +45,7 @@ class TouchControls {
     this.available = false;
     this.touchSeen = false;
     this.onAvailabilityChange = null;
-    this.media = window.matchMedia('(any-pointer: coarse)');
+    this.media = window.matchMedia(TOUCH_SCREEN);
 
     const { stick } = this;
     if (!this.root || !stick || !this.knob) return;
@@ -203,4 +205,4 @@ class TouchControls {
   }
 }
 
-export { TouchControls };
+export { TouchControls, TOUCH_SCREEN };

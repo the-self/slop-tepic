@@ -7,7 +7,7 @@ import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
 import { CITY, getLocationLabel, isTypingInField, ROADS, CITY_LANDMARKS, TELEPORT_LOCATIONS, HOSPITALS } from './world/city-config.ts';
 import { ThirdPersonControllerManager } from './player/controllers.ts';
 import { Stamina, struckDamage, hardness, crashDamage, walletAmount, nearest, CRASH_GRACE } from './player/stats.ts';
-import { TouchControls } from './input/touch-controls.ts';
+import { TouchControls, TOUCH_SCREEN } from './input/touch-controls.ts';
 import { GamepadControls } from './input/gamepad-controls.ts';
 import { CameraSystem, CAMERA_PRESETS } from './player/cameras.ts';
 import { LightingSystem } from './render/lighting.ts';
@@ -48,6 +48,7 @@ import { LoadingScreen } from './app/loading.ts';
 import { buildCity } from './app/city.ts';
 import { playerStateKey, restorePlayer, savePlayer } from './app/player-state.ts';
 import { createRenderPipeline } from './app/render-pipeline.ts';
+import { pickQuality } from './app/quality.ts';
 import { precompileShaders, warmUpFrame } from './app/shaders.ts';
 import { loadPersonBody } from './actors/person-body.ts';
 import { PLAYER_BODY } from './player/controllers/constants.ts';
@@ -85,6 +86,9 @@ async function initApp(): Promise<void> {
   const container = document.getElementById('canvas-container');
   if (!container) throw new Error('The page has no #canvas-container');
   const loading = new LoadingScreen();
+  // The graphics tier: 'low' on a touch screen (the same the touch controls show on), or as ?quality=low|high asks
+  // (app/quality.ts)
+  const quality = pickQuality(params.get('quality'), window.matchMedia(TOUCH_SCREEN).matches);
   loading.status(`Initializing Three.js r${THREE.REVISION} WebGPURenderer & TSL Shaders...`);
 
   // 1. The WebGPURenderer, with a 32-bit float reversed depth buffer
@@ -109,7 +113,7 @@ async function initApp(): Promise<void> {
 
   // 2. The scene: the physical sky, PMREM IBL and the 4096² shadow cascades (render/lighting.ts)
   const scene = new THREE.Scene();
-  const lightingSystem = new LightingSystem(scene, renderer);
+  const lightingSystem = new LightingSystem(scene, renderer, quality.shadowMapSize);
   // Rain falling round the camera, and the water it leaves on the roads (Live weather only: the fixed times of day
   // stay dry)
   const rain = createRain(scene, lightingSystem.uNightFactor);
@@ -337,8 +341,9 @@ async function initApp(): Promise<void> {
   // City-wide static geometry: chunk & distance-cull the small props, shadow stand-ins for the big casters
   // (render/scene-culling.ts)
   const named = (names: readonly string[]) => names.map((name) => scene.getObjectByName(name)).filter((o) => o !== undefined);
-  const cullingRoots = named(['CityGrid', 'CityBlocks', 'StreetDetails', 'Hills', 'Rivers', 'Bridges', 'Bardas']);
-  setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
+  // (the high-voltage towers too: 884 of them, 960 triangles each, were drawn whole in the view and both cascades)
+  const cullingRoots = named(['CityGrid', 'CityBlocks', 'StreetDetails', 'Hills', 'Rivers', 'Bridges', 'Bardas', 'PowerLines']);
+  setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow, quality.propDistance);
   // ...whose world matrices never change again: rendering stops walking them (the loop updates the rest of the scene)
   const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Airport', 'RoadMarkings', 'Pavements', 'Footways', 'Topes', 'StreamedTiles', 'BusStops', 'PowerLines', 'Pools', 'Furniture'])
     .filter((o) => o.parent === scene)];
@@ -357,7 +362,7 @@ async function initApp(): Promise<void> {
   }
 
   // 5. The render pipeline: the scene pass, half-res screen-space reflections, bloom & the colour grade
-  const render = createRenderPipeline(renderer, scene, cameraSystem.camera);
+  const render = createRenderPipeline(renderer, scene, cameraSystem.camera, quality.ssr);
   const { colorGrade } = render;
 
   // 6. The HUD's controls (safe DOM APIs only: textContent, classList, addEventListener)
@@ -718,7 +723,7 @@ async function initApp(): Promise<void> {
     Object.assign(window, { __slop: {
       scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, emergency, gasStations, controllerManager, trafficSystem,
       cameraSystem, streetDetails, cityGrid: city.cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl,
-      weaponWheel, weaponIcons, scheduler, boarding, multiplayer: () => multiplayer
+      weaponWheel, weaponIcons, scheduler, boarding, quality, multiplayer: () => multiplayer
     } });
   }
 

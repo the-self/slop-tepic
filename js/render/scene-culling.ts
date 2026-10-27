@@ -11,7 +11,8 @@ import * as THREE from 'three/webgpu';
 //    a layer only the shadow cascade cameras render (they cull the cells outside the ~300 m the cascades cover); the
 //    originals stop casting. The stand-ins share one material per face side, so a cell costs one draw.
 // 3. Splits the remaining large batches into cells for view-frustum culling, keeping their full draw distance: the
-//    instanced ones by instance, the plain merged ones (the city's curbs, sidewalks & meadows) by triangle.
+//    glowing props seen across the valley at night by instance, the plain merged ones (the city's curbs, sidewalks &
+//    meadows) by triangle.
 // 4. Trims what the two cascades walk and draw (each re-renders the scene: ~6.5 ms of CPU a frame at street level,
 //    half of it spent walking & culling objects, not drawing): the stand-ins in regions culled whole against each
 //    cascade, the static meshes that cast nothing out of their walk, and the small props out of the far cascade,
@@ -21,16 +22,25 @@ const SHADOW_PROXY_LAYER = 3;
 // Distance at which an instance of typical size s (m) is culled: about s / d * 1100 px tall on a 1300 px viewport
 const CULL_PER_METRE = 1100;
 const CULL_MIN = 300; // never closer: the shadow cascades reach ~300 m at street level
-const CULL_MAX = 2000; // beyond this the props are kept at any distance
+// Every prop hides at its own distance, however big: the high-voltage towers ~21 km out, the far massing's boxes ~6 km.
+// Only the glowing ones drawn further than this are kept at any distance: at night the valley's streetlights read from
+// across it, a fraction of a pixel each. (Everything past a fixed 2 km was once kept so: the CFE's poles & crossarms,
+// the faroles, the bardas were drawn out to the horizon, ~350 of the view's ~1150 draws at street level.)
+const GLOW_MAX = 2000;
 const PROXY_CELL = 500; // the far cascade spans ~400 m at street level: a cascade sees a few cells
 const PROXY_TRIANGLES = 600; // ...but a sparse caster's cells grow to hold about as many triangles (the hills' 75 m cells)
 const STATIC_CELL = 1000;
+// The glowing props kept at any distance, in squares this big: every square in view is a draw, and the CPU's ~12 µs a
+// draw costs more than the lenses beside the frustum
+const GLOW_CELL = 2000;
 // The stand-ins are culled against each cascade's frustum a region at a time (~2200 cells, of which a cascade draws a
 // few dozen): a region holds the cells whose centres fall in it
 const PROXY_REGION = 2000;
 // Props smaller than this (typical size, instanceSize) cast into the near cascade only: in the far one a texel is
-// ~22 cm at street level (690 m over 3072 px), so a lamp post's or a bin's shadow there is a texel or two wide
+// ~22 cm at street level (690 m over 3072 px), so a lamp post's or a bin's shadow there is a texel or two wide. A
+// smaller shadow map (a phone's, app/quality.ts) has coarser texels: the bar rises with them.
 const FAR_SHADOW_MIN = 1.5;
+const FAR_SHADOW_MAP = 3072; // px, the shadow map FAR_SHADOW_MIN is for
 
 const _m = new THREE.Matrix4();
 const _wm = new THREE.Matrix4();
@@ -61,6 +71,37 @@ function emptyLike<T extends THREE.TypedArray>(array: T, length: number): T {
 
 const triangleCount = (geo: THREE.BufferGeometry) => (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
 
+/**
+ * How far props of typical size `size` (m) are drawn (m; Infinity: at any distance), unlit `glow` ones further, with
+ * `scale` the graphics tier's (app/quality.ts); and the side of the squares (m) they are chunked into, half the
+ * distance at full scale so a frustum holds about as many of them, whatever the prop (the tier's nearer distance draws
+ * fewer of the same squares, not more smaller ones)
+ */
+function cullDistance(size: number, glow: number, scale = 1): { distance: number; cell: number } {
+  const d = Math.max(CULL_MIN, size * CULL_PER_METRE * glow);
+  if (glow > 1 && d > GLOW_MAX) return { distance: Infinity, cell: GLOW_CELL };
+  return { distance: Math.max(CULL_MIN, d * scale), cell: Math.max(250, d * 0.5) };
+}
+
+/**
+ * How much of its bounding box's surface a geometry's triangles cover, at most 1: ~1 for a box, 0.5 for a card, ~0.1
+ * for a CFE pole's crossarm (a few 5-10 cm bars spread over a 2.3 x 3.1 m box). `position` and `index` are the
+ * geometry's arrays (positions xyz), `box` its bounding box's extents (m).
+ */
+function surfaceFill(position: ArrayLike<number>, index: ArrayLike<number> | null, box: { x: number; y: number; z: number }): number {
+  const shell = 2 * (box.x * box.y + box.y * box.z + box.z * box.x);
+  if (!(shell > 0)) return 1;
+  const n = index ? index.length : position.length / 3;
+  let area = 0;
+  for (let t = 0; t + 2 < n; t += 3) {
+    const i = (index ? index[t] : t) * 3, j = (index ? index[t + 1] : t + 1) * 3, k = (index ? index[t + 2] : t + 2) * 3;
+    const ux = position[j] - position[i], uy = position[j + 1] - position[i + 1], uz = position[j + 2] - position[i + 2];
+    const vx = position[k] - position[i], vy = position[k + 1] - position[i + 1], vz = position[k + 2] - position[i + 2];
+    area += Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2;
+  }
+  return Math.min(1, area / shell);
+}
+
 // Typical size of an instance: sqrt(middle x largest of its extents), so thin poles count by their length and flat
 // decals by their area. The 90th percentile, so the larger instances of a mesh set its cull distance.
 function instanceSize(mesh: THREE.InstancedMesh) {
@@ -82,6 +123,18 @@ function instanceSize(mesh: THREE.InstancedMesh) {
   }
   sizes.sort((p, q) => p - q);
   return sizes[Math.floor(sizes.length * 0.9)] || 0;
+}
+
+// How big an instance looks for its size: a box mostly of air (the crossarm's bars) much smaller than its extents say,
+// a card (0.5 of its box) or anything solider as big. Plain arrays only (no interleaved positions: those count as full).
+function seenSize(mesh: THREE.InstancedMesh, size: number) {
+  const geo = mesh.geometry;
+  const pos = geo.attributes.position;
+  if (!(pos instanceof THREE.BufferAttribute) || pos.itemSize !== 3) return size;
+  if (!geo.boundingBox) geo.computeBoundingBox();
+  if (!geo.boundingBox) return size;
+  geo.boundingBox.getSize(_size);
+  return size * Math.sqrt(Math.min(1, 2 * surfaceFill(pos.array, geo.index ? geo.index.array : null, _size)));
 }
 
 function isStaticMesh(o: THREE.Object3D): o is THREE.Mesh {
@@ -253,6 +306,8 @@ function replaceWithChunks(mesh: THREE.InstancedMesh, cell: number) {
 export interface ShadowCascades {
   getCamera?(viewportIndex: number): THREE.Camera | null | undefined;
   getViewportCount?(): number;
+  /** its shadow map per cascade (px) */
+  mapSize?: { x: number };
 }
 
 /** A chunk culled by distance: its bounding sphere in the world (m) and the distance past which it hides (m) */
@@ -378,13 +433,13 @@ function cullForCascades(
  * Sets up the culling of the static city under `roots` (Object3Ds). `shadow` is the SunLightShadow whose cascade
  * cameras render the shadow stand-ins (none are made without it). Per-frame culling runs in updateSceneCulling().
  */
-function setupSceneCulling(scene: THREE.Scene, roots: THREE.Object3D[], shadow: ShadowCascades | null = null): void {
+function setupSceneCulling(scene: THREE.Scene, roots: THREE.Object3D[], shadow: ShadowCascades | null = null, propDistance = 1): void {
   scene.updateMatrixWorld(true);
   const culled: CulledChunk[] = [];
 
   // 1. Small props: chunked & distance culled
   const chunkable: THREE.InstancedMesh[] = [];
-  const largeMeshes: THREE.InstancedMesh[] = [];
+  const largeMeshes: { mesh: THREE.InstancedMesh; cell: number }[] = [];
   for (const root of roots) {
     root.traverse((o) => {
       if (!isInstancedMesh(o) || !isStaticMesh(o) || o.count < 64 || o.count !== o.instanceMatrix.count) return;
@@ -398,17 +453,17 @@ function setupSceneCulling(scene: THREE.Scene, roots: THREE.Object3D[], shadow: 
     // unlit (glowing) props, like signal lenses & lamp bulbs, read from much further away at night
     const mat = mesh.material;
     const glow = !Array.isArray(mat) && (mat instanceof THREE.MeshBasicNodeMaterial || mat.type === 'MeshBasicNodeMaterial') ? 3 : 1;
+    // (drawn as far as it looks big; cast into the far cascade by its extents, a crossarm's shadow being its box's)
     const size = instanceSize(mesh);
-    const cullDist = Math.max(CULL_MIN, size * CULL_PER_METRE * glow);
-    if (cullDist > CULL_MAX) {
-      largeMeshes.push(mesh);
+    const { distance, cell } = cullDistance(seenSize(mesh, size), glow, propDistance);
+    if (distance === Infinity) {
+      largeMeshes.push({ mesh, cell });
       continue;
     }
-    const cell = Math.min(600, Math.max(250, cullDist * 0.5));
     for (const chunk of replaceWithChunks(mesh, cell)) {
       if (!chunk.boundingSphere) continue;
       const sphere = chunk.boundingSphere.clone().applyMatrix4(chunk.matrixWorld);
-      culled.push({ mesh: chunk, x: sphere.center.x, y: sphere.center.y, z: sphere.center.z, r: sphere.radius, d: cullDist, size });
+      culled.push({ mesh: chunk, x: sphere.center.x, y: sphere.center.y, z: sphere.center.z, r: sphere.radius, d: distance, size });
     }
   }
 
@@ -580,10 +635,9 @@ function setupSceneCulling(scene: THREE.Scene, roots: THREE.Object3D[], shadow: 
     regions.push(...byRegion.values());
   }
 
-  // After the shadow stand-ins above, split the large props into cells. They stay visible at any distance and need no
-  // per-frame distance checks; those still casting their own shadows (the knock-over ones, like the plazas' faroles:
-  // ~3000 of them, 1.2M triangles in one batch) are then drawn into each cascade only where it reaches.
-  for (const mesh of largeMeshes) replaceWithChunks(mesh, STATIC_CELL);
+  // After the shadow stand-ins above, split the glowing props kept at any distance into cells. They need no per-frame
+  // distance checks; those casting their own shadows are then drawn into each cascade only where it reaches.
+  for (const { mesh, cell } of largeMeshes) replaceWithChunks(mesh, cell);
   const largePlain: THREE.Mesh[] = [];
   for (const root of roots) {
     root.traverse((o) => {
@@ -608,7 +662,8 @@ function setupSceneCulling(scene: THREE.Scene, roots: THREE.Object3D[], shadow: 
       const group = root.parent === scene ? gatherQuietChildren(root) : null;
       if (group) quiet.push(group);
     }
-    const nearOnly = culled.filter((c) => c.mesh.castShadow && c.size < FAR_SHADOW_MIN).map((c) => c.mesh);
+    const farMin = FAR_SHADOW_MIN * Math.max(1, FAR_SHADOW_MAP / (shadow?.mapSize?.x ?? FAR_SHADOW_MAP));
+    const nearOnly = culled.filter((c) => c.mesh.castShadow && c.size < farMin).map((c) => c.mesh);
     cullForCascades(scene, cams, regions, quiet, nearOnly, () => state.live);
   }
 
