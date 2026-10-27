@@ -5,7 +5,8 @@ import * as THREE from 'three/webgpu';
 import { PersonCrowd, PersonRig } from '../../sim/pedestrians.ts';
 import { ISLAND_BOUNDS } from '../../world/city-config.ts';
 import { createContactShadowMaterial } from '../../render/tsl-materials.ts';
-import { SPAWN, LABELS, AIM_WALK, GET_UP, PLAYER_PERSON, personGround } from './constants.ts';
+import { loadPersonBody } from '../../actors/person-body.ts';
+import { SPAWN, LABELS, AIM_WALK, GET_UP, PLAYER_BODY, personGround } from './constants.ts';
 import type { ThrowOptions } from '../../sim/ragdolls.ts';
 import type { PersonEntity } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
@@ -19,9 +20,9 @@ export function createPersonEntity(ctl: ThirdPersonControllerManager): PersonEnt
   const root = new THREE.Group();
   root.name = 'PlayerPerson';
 
-  // One skinned person, posed in world space every frame by its rig (walk, run, turn, jump), drawn as the player's model
-  // once it loads
-  const crowd = new PersonCrowd(1, { farDistance: Infinity, model: PLAYER_PERSON });
+  // One skinned person, posed in world space every frame by its rig (walk, run, turn, jump); the player's body (Meshy's,
+  // moved by its clips) is drawn instead once it loads (frame.ts)
+  const crowd = new PersonCrowd(1, { farDistance: Infinity });
   crowd.meshes.forEach((m) => ctl.scene.add(m));
   const rig = new PersonRig({ seed: 4.2, scale: 1.0, girth: 1.02, hair: 0.18, armSwing: 1.0 });
 
@@ -35,13 +36,14 @@ export function createPersonEntity(ctl: ThirdPersonControllerManager): PersonEnt
 
   ctl.scene.add(root);
 
-  return {
+  const person: PersonEntity = {
     type: 'person',
     label: LABELS.person,
     mesh: root,
     shadow: pedShadow,
     crowd,
     rig,
+    body: null,
     position: new THREE.Vector3(SPAWN.person.x, ISLAND_BOUNDS.sidewalkHeight, SPAWN.person.z),
     heading: SPAWN.person.heading,
     speed: 0,
@@ -50,6 +52,13 @@ export function createPersonEntity(ctl: ThirdPersonControllerManager): PersonEnt
     chaseDistance: 4.0,
     chaseHeight: 1.95
   };
+  loadPersonBody(PLAYER_BODY).then((body) => {
+    ctl.scene.add(body.root); // (shown, or not, as it is posed: frame.ts)
+    person.body = body;
+  }, (err: unknown) => {
+    console.warn(`[people] could not load ${PLAYER_BODY}`, err);
+  });
+  return person;
 }
 
 export function updatePerson(ctl: ThirdPersonControllerManager, dt: number): void {

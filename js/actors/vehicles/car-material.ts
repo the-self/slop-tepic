@@ -36,6 +36,11 @@ import type { Node } from 'three/webgpu';
 // position & normal, with the traffic's crumple damage and the player's car's blood (one material per body type).
 
 const _carMaterialCache = new Map<string, THREE.MeshStandardNodeMaterial>();
+// The car models' paint (createModelCarMaterial): its brightest (linear albedo; fresh white paint reflects ~0.75),
+// the roughness of the paint under the coat, and how much clear coat
+const PAINT_ALBEDO = 0.72;
+const PAINT_ROUGHNESS = 0.4;
+const CLEAR_COAT = 0.55;
 let _carPlateTexture: THREE.CanvasTexture | undefined;
 
 // One small generated atlas serves every rear plate, with mipmaps for distant traffic.
@@ -75,7 +80,8 @@ export function createModelCarMaterial(map: THREE.Texture, paintMap: THREE.Textu
   if (paintMap) {
     const mask = texture(paintMap);
     body = mask.r;
-    mat.roughnessNode = mask.g;
+    // (the paint under its clear coat is never glossier than ~0.4: the coat is what mirrors the sky)
+    mat.roughnessNode = mix(mask.g, max(mask.g, float(PAINT_ROUGHNESS)), body);
     mat.metalnessNode = mask.b;
   } else {
     const sat = max(rgb.r, max(rgb.g, rgb.b)).sub(min(rgb.r, min(rgb.g, rgb.b)));
@@ -88,18 +94,24 @@ export function createModelCarMaterial(map: THREE.Texture, paintMap: THREE.Textu
   if (paintUniform) mat.userData.paint = paintUniform;
   const paint = paintUniform ?? attribute('paintColor', 'vec3');
   const state = stateUniform ?? attribute('carState', 'vec4');
-  mat.colorNode = mix(rgb, paint.mul(lum).mul(1.12), body);
-  mat.clearcoatNode = body;
-  mat.clearcoatRoughnessNode = float(0.06);
+  // the paint as a pigment: shaded as the texture's brightness, and no brighter than fresh white paint (~75% of the
+  // light, linear), or white and silver cars glare in the sun with no shape to them
+  const shaded = paint.mul(lum).mul(1.12);
+  const brightest = max(shaded.r, max(shaded.g, shaded.b));
+  mat.colorNode = mix(rgb, shaded.mul(min(float(1), float(PAINT_ALBEDO).div(max(brightest, 1e-3)))), body);
+  // a clear coat that shows the sky in it, softened, rather than a mirror of it all over the car
+  mat.clearcoatNode = body.mul(CLEAR_COAT);
+  mat.clearcoatRoughnessNode = float(0.12);
   const lamp = smoothstep(0.2, 0.4, rgb.r.sub(max(rgb.g, rgb.b))).mul(step(positionLocal.z, 0.0));
   mat.emissiveNode = color(0xff2a1a).mul(lamp).mul(state.x.mul(2.2));
   return mat;
 }
 
 /** The material of a car model's wheel (its file's, actors/vehicles/car-files.ts): its texture, and its rim's
- * roughness & metal from the paint mask's G & B (tools/models/prepare.mjs) */
+ * roughness & metal from the paint mask's G & B (tools/models/prepare.mjs); the texture toned down to an alloy's
+ * grey (~60%), as a metal it otherwise shines white in the sun on every car */
 export function createModelWheelMaterial(map: THREE.Texture, paintMap: THREE.Texture | null): THREE.MeshStandardNodeMaterial {
-  return new THREE.MeshStandardNodeMaterial({ map, roughnessMap: paintMap, metalnessMap: paintMap, metalness: paintMap ? 1 : 0 });
+  return new THREE.MeshStandardNodeMaterial({ map, color: 0xcbcbcb, roughnessMap: paintMap, metalnessMap: paintMap, metalness: paintMap ? 1 : 0 });
 }
 
 /**

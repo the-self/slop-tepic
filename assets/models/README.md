@@ -69,6 +69,9 @@ crop the neighbours, scale it to a known height, and simplify it.
 - `people/player.glb`: the player, made with Meshy (Meshy 7.1, multi-image-to-3d) from a front and a back view that
   Meshy (Nano Banana Pro) drew from the prompts in `tools/models/jobs/people/player.json`; reposed into the crowd's bind
   pose and skinned to its 15 bones by `tools/models/prepare-person.mjs`.
+- `people/player-rigged.glb`: the same model as Meshy rigged it (meshy_rig) with clips from Meshy's animation library
+  (walking, running, Idle 3, Walk Backward, Regular Jump, Walk Left with Gun, Walk Backward with Gun 1), made one
+  file by `tools/models/prepare-rigged-person.mjs`.
 
 Models taken from Google Maps, Street View or Google's 3D tiles can't be used: their licence
 doesn't allow copying them.
