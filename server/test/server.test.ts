@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import WebSocket from 'ws';
 import { createServer } from '../index.ts';
-import type { Health } from '../index.ts';
+import type { Health, RoomList } from '../index.ts';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { OP, PROTOCOL_VERSION, encodeHello, encodeState, encodeChat, encodeShot, encodeHit, encodeDown, decodeServer } from '../../shared/protocol.ts';
+import { OP, PROTOCOL_VERSION, DEFAULT_SETTINGS, encodeHello, encodeCreate, encodeSettings, encodeState, encodeChat, encodeShot, encodeHit, encodeDown, decodeServer } from '../../shared/protocol.ts';
 import type { ServerMessage } from '../../shared/protocol.ts';
 
 const quiet = () => { /* the tests don't print the joins & leaves */ };
@@ -228,6 +228,58 @@ void test('a shot goes to those who see the shooter; a hit reaches its target wi
     assert.ok(!far.frames.some((m) => m.op === OP.SHOT_SEEN || m.op === OP.HURT), 'Far neither saw the shot nor was hit');
     assert.ok(!a.frames.some((m) => m.op === OP.SHOT_SEEN || m.op === OP.HURT), 'the shooter hears nothing back');
     for (const c of [a, b, far]) c.ws.close();
+  } finally {
+    await server.close();
+  }
+});
+
+void test('a player opens a room of their own: friends join by its code and password, the host sets the weather, PvP off stops hits', async () => {
+  const server = await createServer({ port: 0, tickHz: 20, log: quiet });
+  try {
+    const [ana, beto, intruso, carla] = [connect(server.port), connect(server.port), connect(server.port), connect(server.port)];
+    await Promise.all([ana.opened, beto.opened, intruso.opened, carla.opened]);
+    const settings = { ...DEFAULT_SETTINGS, weather: 'rain' as const, pvp: false };
+    ana.ws.send(encodeCreate('nayarit', 'Ana', { title: '  La banda ', password: 'tacos', settings }));
+    const made = await ana.next(OP.WELCOME);
+    assert.equal(made.title, 'La banda');
+    assert.equal(made.locked, true);
+    assert.equal(made.host, made.id, 'whoever opens it hosts it');
+    assert.deepEqual(made.settings, settings);
+
+    intruso.ws.send(encodeHello('nayarit', 'Intruso', made.code, 'nachos'));
+    assert.equal((await intruso.next(OP.ERROR)).code, 'password');
+    beto.ws.send(encodeHello('nayarit', 'Beto', made.code.toLowerCase(), 'tacos'));
+    const joined = await beto.next(OP.WELCOME);
+    assert.equal(joined.room, made.room);
+    assert.deepEqual(joined.settings, settings, 'the room\'s settings, to whoever comes in');
+    carla.ws.send(encodeHello('nayarit', 'Carla', 'ZZZZZ'));
+    assert.equal((await carla.next(OP.ERROR)).code, 'room');
+
+    // listed (after the public rooms: none open yet), its password never
+    const list = (await (await fetch(`http://127.0.0.1:${server.port}/rooms?region=nayarit`)).json()) as RoomList;
+    assert.deepEqual(list.rooms.map((r) => [r.title, r.code, r.players, r.locked]), [['La banda', made.code, 2, true]]);
+    assert.ok(!JSON.stringify(list).includes('tacos'));
+    assert.equal((await fetch(`http://127.0.0.1:${server.port}/rooms?region=../x`)).status, 400);
+
+    // only the host changes the settings; everyone hears them
+    beto.ws.send(encodeSettings({ ...settings, weather: 'fog' }));
+    ana.ws.send(encodeSettings({ ...settings, weather: 'storm', time: 'night' }));
+    const changed = await beto.next(OP.ROOM);
+    assert.deepEqual(changed, { op: OP.ROOM, host: made.id, settings: { ...settings, weather: 'storm', time: 'night' } });
+
+    // PvP off: a hit reaches nobody
+    ana.ws.send(pose(0, 0, 'person'));
+    beto.ws.send(pose(5, 0, 'person'));
+    await ana.next(OP.TICK, (m) => m.moved.some((p) => p.id === joined.id));
+    ana.ws.send(encodeHit(joined.id, 30));
+    await new Promise((r) => setTimeout(r, 100));
+    assert.ok(!beto.frames.some((m) => m.op === OP.HURT), 'no PvP in this room');
+
+    // the host leaves: Beto hosts it now
+    ana.ws.close();
+    const handed = await beto.next(OP.ROOM, (m) => m.host === joined.id);
+    assert.equal(handed.host, joined.id);
+    beto.ws.close();
   } finally {
     await server.close();
   }

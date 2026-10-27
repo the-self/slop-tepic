@@ -202,6 +202,8 @@ class LiveWeather {
   location: WeatherLocation;
   fetchImpl: FetchLike | null;
   storage: StorageLike | null;
+  /** what fetches the real conditions, kept while hold() pins others (release() goes back to it) */
+  readonly ownFetch: FetchLike | null;
   current: Weather;
   /** true once real conditions (fresh or cached) are in */
   live: boolean;
@@ -213,6 +215,7 @@ class LiveWeather {
     { fetchImpl = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null, storage }: { fetchImpl?: FetchLike | null; storage?: StorageLike | null } = {}) {
     this.location = location;
     this.fetchImpl = fetchImpl;
+    this.ownFetch = fetchImpl;
     if (storage === undefined) {
       try {
         storage = globalThis.localStorage; // reading it throws a SecurityError where site data is blocked
@@ -282,6 +285,16 @@ class LiveWeather {
     this.fetchImpl = null;
     this.current = { ...CLEAR_WEATHER, ...conditions, fetchedAt: Date.now() };
     this.live = true;
+  }
+
+  // Back to the real conditions after a hold(): the cached ones, else clear until the next fetch (right away)
+  release(): void {
+    if (this.fetchImpl === this.ownFetch) return;
+    this.fetchImpl = this.ownFetch;
+    this.current = { ...CLEAR_WEATHER };
+    this.live = false;
+    this.nextAttempt = 0;
+    this.restoreCache();
   }
 
   sun(date = new Date()): SunPosition {

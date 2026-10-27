@@ -6,6 +6,8 @@
 // them, so traffic per client stays flat however many players share the room and parked players cost nothing. It
 // relays poses as sent (no physics), only checking their shape. It passes on what players do to each other: chat lines
 // to the room, shots to those who see the shooter, and the hits a shooter's client found to the player struck.
+// A player can open a room of its own (CREATE: a title, a code to share, an optional password, the weather, hour,
+// police and PvP it is played with) that friends join by its code, and GET /rooms lists a region's rooms.
 // With STATIC_DIR it also serves the game's page (index.html, css/, dist/, assets/ under it), so one address, behind
 // one tunnel (tools/play.ts), is the game and its server.
 //
@@ -20,7 +22,8 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
 import { RoomManager } from './rooms.ts';
-import type { Room, RoomStats } from './rooms.ts';
+import type { Room, RoomStats, RoomSummary } from './rooms.ts';
+import { hashPassword, checkPassword } from './passwords.ts';
 import { nearestInView } from './aoi.ts';
 import {
   PROTOCOL_VERSION,
@@ -29,9 +32,11 @@ import {
   HIT_REACH,
   sanitizeName,
   sanitizeChat,
+  sanitizeTitle,
   isRegion,
   decodeClient,
   encodeWelcome,
+  encodeRoom,
   encodeTick,
   encodeError,
   encodeChatLine,
@@ -46,6 +51,9 @@ const MAX_MSGS_PER_SEC = 40; // a client sends ~10 poses/s; far more is a bug or
 const MAX_BUFFERED = 256 * 1024; // skip snapshots to a client whose socket is this far behind
 const CHAT_PER_SEC = 1; // chat lines a player may say a second, sustained...
 const CHAT_BURST = 5; // ...after a burst of this many
+const PASSWORD_FAILS = 10; // wrong passwords a room takes a minute (from everyone) before it refuses the rest
+const PASSWORD_WINDOW_MS = 60000;
+const ROOM_GRACE_MS = 120000; // a player's own room left empty waits this long for them to come back (a dropped connection)
 
 export interface ServerOptions {
   port?: number; // 0 picks a free one
@@ -66,6 +74,7 @@ export interface Player {
   ws: WebSocket;
   name: string | null; // set by its HELLO
   room: Room<Player> | null;
+  joining: boolean; // its HELLO or CREATE is being checked (a password hashing): it says no other
   state: WirePose | null; // its latest pose, in wire units (cm)
   sent: Map<number, WirePose>; // id → the pose this client last received for that player (its local player list)
   alive: boolean; // answered the last ping
@@ -73,6 +82,12 @@ export interface Player {
   budgetAt: number; // ms (Date.now()) the bucket was last refilled
   chatBudget: number; // chat lines left in its own bucket
   chatAt: number; // ms (Date.now()) that one was last refilled
+}
+
+/** GET /rooms?region=<region>: the region's rooms to pick from */
+export interface RoomList {
+  region: string;
+  rooms: RoomSummary[];
 }
 
 /** GET /health: the rooms, plus moving averages of the tick's cost (ms) and of the bytes it sends */
@@ -119,6 +134,18 @@ function createServer({
       res.end(JSON.stringify(health));
       return;
     }
+    if (req.url?.startsWith('/rooms')) {
+      const region = new URL(req.url, 'http://x').searchParams.get('region') ?? '';
+      if (!isRegion(region)) {
+        res.writeHead(400, { 'content-type': 'text/plain', 'access-control-allow-origin': '*' });
+        res.end('region?\n');
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+      const list: RoomList = { region, rooms: rooms.list(region) };
+      res.end(JSON.stringify(list));
+      return;
+    }
     if (staticDir && serveStatic(staticDir, req, res)) return;
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('slop multiplayer server: connect over WebSocket, or GET /health\n');
@@ -137,6 +164,51 @@ function createServer({
     send(p, encodeError(code));
     p.ws.close(1008, code);
   };
+  const welcome = (p: Player, room: Room<Player>) => {
+    p.room = room;
+    send(p, encodeWelcome(p.id, rooms.capacity, tickHz, { id: room.id, title: room.title, code: room.code, locked: room.password !== null, host: room.host, settings: room.settings }));
+    log(`[mp] ${p.name ?? ''} (#${p.id}) joined ${room.id} (${room.players.size}/${rooms.capacity})`);
+  };
+  const toRoom = (room: Room<Player>, frame: Uint8Array) => {
+    for (const other of room.players.values()) send(other, frame);
+  };
+  // A player's own room by its code: the password checked (with a brake on guessing), then a seat taken
+  const enter = async (p: Player, region: string, key: string, password: string) => {
+    const room = rooms.find(region, key);
+    if (!room) {
+      fail(p, 'room');
+      return;
+    }
+    if (room.password) {
+      const now = Date.now();
+      if (now - room.failsAt > PASSWORD_WINDOW_MS) {
+        room.fails = 0;
+        room.failsAt = now;
+      }
+      if (room.fails >= PASSWORD_FAILS) {
+        fail(p, 'wait');
+        return;
+      }
+      // counted before it is checked, so a burst of guesses on many sockets at once meets the brake too
+      room.fails++;
+      const right = await checkPassword(password, room.password);
+      if (right) room.fails--;
+      if (p.ws.readyState !== p.ws.OPEN) return; // (it hung up while the password was checked)
+      if (!right) {
+        fail(p, 'password');
+        return;
+      }
+    }
+    if (!rooms.rooms.has(room.id)) {
+      fail(p, 'room'); // (its last player left while the password was checked)
+      return;
+    }
+    if (!rooms.enter(room, p)) {
+      fail(p, 'roomfull');
+      return;
+    }
+    welcome(p, room);
+  };
 
   wss.on('connection', (ws) => {
     const p: Player = {
@@ -144,6 +216,7 @@ function createServer({
       ws,
       name: null,
       room: null,
+      joining: false,
       state: null,
       sent: new Map(), // id → the pose this client last received for that player (its local player list)
       alive: true,
@@ -178,7 +251,7 @@ function createServer({
       const msg = isBinary && !Array.isArray(data) ? decodeClient(data) : null;
       if (!msg) return;
 
-      if (msg.op === OP.HELLO && !p.room) {
+      if ((msg.op === OP.HELLO || msg.op === OP.CREATE) && !p.room && !p.joining) {
         if (msg.version !== PROTOCOL_VERSION) {
           fail(p, 'version');
           return;
@@ -189,9 +262,37 @@ function createServer({
         }
         clearTimeout(helloTimer);
         p.name = sanitizeName(msg.name, p.id);
-        p.room = rooms.join(msg.region, p);
-        send(p, encodeWelcome(p.id, rooms.capacity, tickHz, p.room.id));
-        log(`[mp] ${p.name} (#${p.id}) joined ${p.room.id} (${p.room.players.size}/${rooms.capacity})`);
+        const region = msg.region;
+        if (msg.op === OP.HELLO && !msg.room) {
+          welcome(p, rooms.join(region, p));
+          return;
+        }
+        p.joining = true;
+        const done = () => { p.joining = false; };
+        // (a password that can't be hashed or checked turns this player away, never the whole server down)
+        const broke = (err: unknown) => {
+          log(`[mp] ${p.name ?? ''} (#${p.id}) could not join: ${err instanceof Error ? err.message : String(err)}`);
+          fail(p, 'error');
+        };
+        if (msg.op === OP.HELLO) {
+          void enter(p, region, msg.room, msg.password).catch(broke).finally(done);
+          return;
+        }
+        // a room of its own: its title (else its host's name), the password kept hashed
+        const { settings, password } = msg;
+        const title = sanitizeTitle(msg.title) || p.name;
+        void (password ? hashPassword(password) : Promise.resolve(null))
+          .then((hash) => {
+            if (p.ws.readyState !== p.ws.OPEN) return;
+            welcome(p, rooms.create(region, p, { title, password: hash, settings }));
+          })
+          .catch(broke)
+          .finally(done);
+      } else if (msg.op === OP.SETTINGS && p.room) {
+        // only its host changes a room's settings (a public room has none); everyone in it hears them
+        if (p.room.host !== p.id) return;
+        p.room.settings = { ...msg.settings };
+        toRoom(p.room, encodeRoom(p.room.host, p.room.settings));
       } else if (msg.op === OP.STATE && p.room) {
         const st = msg.state; // centimetres: the grid works in the same units
         // Keep the old object for an unchanged pose, so ticks can tell "moved" by identity and skip parked players
@@ -211,6 +312,7 @@ function createServer({
         const frame = encodeShotSeen(p.id, msg.shot);
         for (const other of p.room.players.values()) if (other !== p && other.sent.has(p.id)) send(other, frame);
       } else if (msg.op === OP.HIT && p.room && p.state) {
+        if (!p.room.settings.pvp) return; // (a room without PvP: nobody hurts anybody)
         const target = p.room.players.get(msg.target);
         if (!target || target === p || !target.state) return;
         const reach = Math.hypot(target.state.x - p.state.x, target.state.y - p.state.y, target.state.z - p.state.z) / 100;
@@ -229,7 +331,8 @@ function createServer({
       players.delete(p.id);
       if (p.room) {
         const room = p.room;
-        rooms.leave(room, p.id);
+        // someone else hosts the room now: everyone hears who
+        if (rooms.leave(room, p.id)) toRoom(room, encodeRoom(room.host, room.settings));
         // everyone who had this player in view drops it now rather than waiting for the next tick
         for (const other of room.players.values()) {
           if (other.sent.delete(p.id)) send(other, encodeTick(room.players.size, [p.id], [], []));
@@ -279,6 +382,7 @@ function createServer({
 
   // Drop sockets that stopped answering pings (closed laptops, lost mobile signal)
   const pingTimer = setInterval(() => {
+    rooms.sweep(Date.now(), ROOM_GRACE_MS); // (the players' own rooms nobody came back to)
     for (const p of players.values()) {
       if (!p.alive) {
         p.ws.terminate();

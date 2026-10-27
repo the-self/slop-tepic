@@ -4,6 +4,7 @@
 // steps them every frame through the Scheduler (core/scheduler.ts) in the order written down at "The frame loop" below.
 import * as THREE from 'three/webgpu';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
+import { applyRoomSettings } from './app/room-settings.ts';
 import { cycleLocale, onLocaleChange, t, tName, translatePage, setText } from './i18n/i18n.ts';
 import { CITY, getLocationLabel, isTypingInField, ROADS, CITY_LANDMARKS, TELEPORT_LOCATIONS, HOSPITALS } from './world/city-config.ts';
 import { ThirdPersonControllerManager } from './player/controllers.ts';
@@ -378,6 +379,7 @@ async function initApp(): Promise<void> {
     const t0 = performance.now();
     lightingSystem.liveClock = () => new Date(liveStart + performance.now() - t0);
   }
+  const ownClock = lightingSystem.liveClock; // (a multiplayer room may fix the hour, and give this one back)
   const heldWeather = params.get('live-weather');
   if (isWeatherSample(heldWeather)) lightingSystem.weather.hold(WEATHER_SAMPLES[heldWeather]);
   // the Live button: the place & its temperature, and in its title the time there and the weather (in the player's
@@ -457,6 +459,11 @@ async function initApp(): Promise<void> {
     const n = CAMERA_PRESETS.length;
     const idx = CAMERA_PRESETS.findIndex((p) => p.id === cameraSystem.activePresetId);
     selectCamera(CAMERA_PRESETS[(idx + step + n) % n].id, true);
+  }
+
+  // lights the Live button (a multiplayer room's fixed hour or weather: shown, not saved as the player's own choice)
+  function showLiveButton() {
+    timeButtons.forEach((btn) => { btn.classList.toggle('active', btn.getAttribute('data-time') === 'live'); });
   }
 
   function selectTime(timeId: string) {
@@ -583,17 +590,39 @@ async function initApp(): Promise<void> {
   // Multiplayer (?multiplayer=1, see net/multiplayer.ts) loads only when asked for, so single-player pays nothing
   let multiplayer: Multiplayer | null = null;
   if (params.has('multiplayer')) {
-    import('./net/multiplayer.ts')
-      .then(({ Multiplayer, multiplayerOptions }) => {
+    Promise.all([import('./net/multiplayer.ts'), import('./net/lobby.ts')])
+      .then(async ([{ Multiplayer, multiplayerOptions }, { openLobby }]) => {
         const options = multiplayerOptions();
         if (!options) {
           console.info('[mp] no server to connect to: add &mp-server=wss://… (or serve from localhost)');
           return;
         }
-        multiplayer = new Multiplayer({
-          scene, controllers: controllerManager, camera: cameraSystem.camera, crime: crimeSystem, cameras: cameraSystem, ...options
+        // the lobby first: the player's name and the room to play in (net/lobby.ts)
+        const { roomsUrl, ...connection } = options;
+        const lobby = (more: Partial<Parameters<typeof openLobby>[0]> = {}) => {
+          controllerManager.resetInput(); // (whatever key was held stays held otherwise)
+          return openLobby({ roomsUrl, name: multiplayer?.name ?? connection.name ?? '', ...more });
+        };
+        const first = await lobby();
+        if (!first) return;
+        const mp = new Multiplayer({
+          scene, controllers: controllerManager, camera: cameraSystem.camera, crime: crimeSystem, cameras: cameraSystem,
+          ...connection, name: first.name, entry: first.entry
         });
-        boarding.ride = multiplayer; // (F by a friend's car: in with them)
+        multiplayer = mp;
+        boarding.ride = mp; // (F by a friend's car: in with them)
+        // the room's weather, hour & police on this game (app/room-settings.ts)
+        mp.onSettings = (settings) => {
+          applyRoomSettings(settings, { lighting: lightingSystem, crime: crimeSystem, ownClock, showLive: showLiveButton });
+        };
+        mp.onRejected = (code) => {
+          void lobby({ error: code }).then((choice) => { if (choice) mp.rejoin(choice.entry, choice.name); });
+        };
+        mp.onLobby = () => {
+          const room = mp.current;
+          void lobby({ current: room, onSettings: (settings) => { mp.sendSettings(settings); } })
+            .then((choice) => { if (choice) mp.rejoin(choice.entry, choice.name); });
+        };
       })
       .catch((err: unknown) => { console.warn('[mp] could not start multiplayer:', err); });
   }
