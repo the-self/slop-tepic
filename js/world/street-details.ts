@@ -849,6 +849,11 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
       }
     }
   }
+  // (and the bins OpenStreetMap maps, where they stand)
+  for (let k = 0; k + 1 < GEO.bins.length; k += 2) {
+    binPositions.push([GEO.bins[k], GEO.bins[k + 1]]);
+    placedPoles.push({ x: GEO.bins[k], z: GEO.bins[k + 1] });
+  }
   const binMat = new THREE.MeshStandardNodeMaterial({ color: 0x2c5a37, roughness: 0.55, metalness: 0.35 });
   const binLidMat = new THREE.MeshStandardNodeMaterial({ color: 0x23262a, roughness: 0.6, metalness: 0.3 });
   const binGeo = new THREE.CylinderGeometry(0.23, 0.2, 0.86, 12, 1, true).translate(0, 0.43, 0);

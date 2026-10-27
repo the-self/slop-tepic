@@ -1982,7 +1982,11 @@ const signs = [];
     [/flor|flowers/i, 'FLORERÍA'], [/celular|electronics/i, 'CELULARES'], [/caf[eé]|cafe/i, 'CAFÉ'], [/bar\b|cantina/i, 'CANTINA'],
     [/hamburgues|fast_food/i, 'HAMBURGUESAS'], [/lonch|casual_eatery|food_truck/i, 'LONCHERÍA'], [/restaurant/i, 'RESTAURANTE'],
     [/gym|gimnas/i, 'GIMNASIO'], [/hotel|motel/i, 'HOTEL'], [/lavander/i, 'LAVANDERÍA'], [/cerrajer/i, 'CERRAJERÍA'],
-    [/veterinari|pet/i, 'VETERINARIA'], [/optic/i, 'ÓPTICA'], [/muebler/i, 'MUEBLERÍA'], [/dulcer/i, 'DULCERÍA'], [/nieve|helad/i, 'NEVERÍA']
+    [/veterinari|pet/i, 'VETERINARIA'], [/optic/i, 'ÓPTICA'], [/muebler/i, 'MUEBLERÍA'], [/dulcer/i, 'DULCERÍA'], [/nieve|helad/i, 'NEVERÍA'],
+    // (the trades of OpenStreetMap's services: amenity=bank, police, fire_station...)
+    [/\bbank\b|\bbanco\b/i, 'BANCO'], [/\bpolice\b|polic[ií]a/i, 'POLICÍA'], [/fire_station|bomberos/i, 'BOMBEROS'],
+    [/\bclinic\b|\bdoctors\b|cl[ií]nica/i, 'CLÍNICA'], [/post_office|correos/i, 'CORREOS'], [/\blibrary\b|biblioteca/i, 'BIBLIOTECA'],
+    [/townhall|presidencia municipal|ayuntamiento/i, 'PRESIDENCIA MUNICIPAL'], [/ice_cream/i, 'NEVERÍA'], [/\bfuel\b|gasoliner/i, 'GASOLINERA']
   ];
   const STREET_TRADES = ['ABARROTES', 'TORTILLERÍA', 'PAPELERÍA', 'MISCELÁNEA', 'FARMACIA', 'ESTÉTICA', 'TACOS', 'LONCHERÍA', 'CARNICERÍA',
     'FERRETERÍA', 'CELULARES', 'REFACCIONARIA', 'DULCERÍA', 'NEVERÍA', 'BIRRIA', 'MARISCOS', 'PANADERÍA', 'POLLOS ASADOS'];
@@ -2054,6 +2058,11 @@ const signs = [];
   const chainPlaces = [];
   const file = path.join(DATA, 'overture', 'places.geojsonl');
   const locals = [];
+  // (every Overture business, by the words of its name: OpenStreetMap's own that Overture has too are left to it)
+  const seen = [];
+  const SAME_WORDS = new Set(['farmacia', 'farmacias', 'tienda', 'abarrotes', 'super', 'restaurante', 'taqueria', 'tacos', 'cafe',
+    'banco', 'plaza', 'centro', 'tepic', 'nayarit', 'nayar', 'mexico', 'casa', 'grupo', 'servicio', 'servicios', 'taller']);
+  const words = (n) => n.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !SAME_WORDS.has(w));
   let chains = 0, named = 0, generic = 0, plazas = 0;
   if (fs.existsSync(file)) {
     for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
@@ -2067,6 +2076,7 @@ const signs = [];
       if (/school|place_of_learning|government|worship|college|university|real_estate|attorney|professional_service|home_service|event_or_party|manufacturer|park|public_plaza/.test(cat)) continue;
       const [x, z] = toWorld(f.geometry.coordinates[0], f.geometry.coordinates[1]);
       if (!inBox(x, z)) continue;
+      seen.push({ x, z, words: words(name) });
       // a shopping centre (Plaza Cigarrera, Plaza del Valle...; not a public square): the building it stands in is a row
       // of locales, unless it's a hall already
       if (cat === 'shopping_mall' || /^plaza\b|centro comercial/i.test(name)) {
@@ -2083,6 +2093,53 @@ const signs = [];
       const i = houseAt(x, z, 8);
       if (i < 0 || houses[i + 7] || houses[i + 6] & KIND.coto) continue; // (no shops inside a coto)
       locals.push({ i, name, cat, conf: p.confidence || 0, d: Math.hypot(x, z) });
+    }
+  }
+  // OpenStreetMap's businesses (osm_tepic_details.json: shop=*, and the services: a pharmacy, bank, clinic, police or
+  // fire station, a restaurant, a café...) that Overture doesn't have (no place of hers within OSM_SAME m with a word
+  // of its name): local businesses too, sure of their names (OSM's are people's), their trade by their tags; a chain's
+  // a store of it (unless Overture has one of that chain within OSM_SAME_CHAIN m)
+  const OSM_SAME = 40, OSM_SAME_CHAIN = 150;
+  const SERVICE = /^(fuel|pharmacy|bank|atm|police|fire_station|clinic|doctors|dentist|townhall|library|post_office|marketplace|restaurant|fast_food|cafe|bar|ice_cream)$/;
+  const osmTally = { added: 0, chains: 0, known: 0, noHouse: 0 };
+  {
+    const seenCells = new Map();
+    for (const p of seen) {
+      const k = Math.floor(p.x / OSM_SAME) * 100003 + Math.floor(p.z / OSM_SAME);
+      if (!seenCells.has(k)) seenCells.set(k, []);
+      seenCells.get(k).push(p);
+    }
+    const known = (name, x, z) => {
+      const w = words(name);
+      if (!w.length) return false;
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+        for (const p of seenCells.get((Math.floor(x / OSM_SAME) + a) * 100003 + Math.floor(z / OSM_SAME) + b) || []) {
+          if (Math.hypot(p.x - x, p.z - z) < OSM_SAME && p.words.some((v) => w.includes(v))) return true;
+        }
+      }
+      return false;
+    };
+    for (const e of detailsOSM.elements) {
+      const t = e.tags || {};
+      if (!t.shop && !SERVICE.test(t.amenity || '')) continue;
+      if (t.amenity === 'atm' || t.amenity === 'marketplace') continue; // (a cash machine in a wall; the markets are landmarks)
+      const g = e.type === 'node' ? [e] : e.geometry || [];
+      if (!g.length) continue;
+      const [x, z] = toWorld(g.reduce((s2, n) => s2 + n.lon, 0) / g.length, g.reduce((s2, n) => s2 + n.lat, 0) / g.length);
+      if (!inBox(x, z)) continue;
+      const name = (t.name || t.brand || '').trim();
+      if (name && known(name, x, z)) { osmTally.known++; continue; }
+      const chain = name ? CHAINS.find((sf) => sf.match.test(name) || sf.match.test(t.brand || '')) : null;
+      if (chain) {
+        if (chainPlaces.some((c) => c.chain === chain && Math.hypot(c.x - x, c.z - z) < OSM_SAME_CHAIN)) { osmTally.known++; continue; }
+        chainPlaces.push({ chain, x, z, conf: 0.85 });
+        osmTally.chains++;
+        continue;
+      }
+      const i = houseAt(x, z, 8);
+      if (i < 0 || houses[i + 6] & KIND.coto) { osmTally.noHouse++; continue; }
+      locals.push({ i, name, cat: t.shop ? `shop ${t.shop}` : t.amenity, conf: name ? 0.9 : 0, d: Math.hypot(x, z) });
+      osmTally.added++;
     }
   }
   // The chains' stores, the surest first. Overture often has a big store twice (a second, older pin: "Liverpool" 430 m
@@ -2155,6 +2212,7 @@ const signs = [];
     houses[i + 7] = signIndex.get(`trade:${t}`);
   }
   log(`shop signs: ${plazas} shopping centres, ${chains} chain stores (${duplicates} pinned twice), ${named + generic} shops from ${locals.length} local businesses (${named} named, ${generic} by trade), ${signs.length} sign faces`);
+  log(`shop signs: OpenStreetMap's businesses: ${osmTally.added} that Overture hasn't (and ${osmTally.chains} chain stores), ${osmTally.known} Overture has, ${osmTally.noHouse} in no building`);
 }
 
 // =====================================================================================================================
@@ -2768,6 +2826,62 @@ const footways = [];
 }
 
 // =====================================================================================================================
+// 6F. STREET FURNITURE & THE GAS STATIONS (osm_tepic_details.json): the benches & the bins where OpenStreetMap has them,
+//     each square to the street nearest it; the gas stations' canopies over their pumps, from each station's outline
+//     (or, mapped as a point, a canopy of the usual size square to the street by it)
+// =====================================================================================================================
+// the direction (unit, the way it is drawn) of the roadway nearest (x, z) within a cell or so, or null
+const roadDirAt = (x, z) => {
+  let best = null, bd = Infinity;
+  const ci = Math.floor(x / DRIVE_CELL), cj = Math.floor(z / DRIVE_CELL);
+  for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+    for (const r of driveCells.get((ci + a) * 100003 + cj + b) || []) {
+      const ux = r.x1 - r.x0, uz = r.z1 - r.z0, M = Math.hypot(ux, uz);
+      if (M < 0.5) continue;
+      const t = Math.max(0, Math.min(1, ((x - r.x0) * ux + (z - r.z0) * uz) / (M * M)));
+      const d = Math.hypot(r.x0 + ux * t - x, r.z0 + uz * t - z);
+      if (d < bd) { bd = d; best = [ux / M, uz / M]; }
+    }
+  }
+  return best;
+};
+// a turn θ (mrad) whose local x runs along (ux, uz): R_y(θ) takes x to (cos θ, -sin θ)
+const turnAlong = ([ux, uz]) => Math.round(Math.atan2(-uz, ux) * 1000);
+const benches = [], bins = [], fuel = [];
+{
+  const tally = { benches: 0, bins: 0, fuelWays: 0, fuelNodes: 0, fuelSame: 0 };
+  const FUEL_SAME = 45; // m: a station's point by its own outline is the same station
+  const fuelWays = [];
+  for (const e of detailsOSM.elements) {
+    const t = e.tags || {};
+    if (e.type === 'node' && (t.amenity === 'bench' || t.amenity === 'waste_basket')) {
+      const [x, z] = toWorld(e.lon, e.lat);
+      if (!inBox(x, z)) continue;
+      if (t.amenity === 'bench') { benches.push(q(x), q(z), turnAlong(roadDirAt(x, z) || [1, 0])); tally.benches++; }
+      else { bins.push(q(x), q(z)); tally.bins++; }
+    } else if (e.type === 'way' && t.amenity === 'fuel' && e.geometry) {
+      const ring = e.geometry.map((g) => toWorld(g.lon, g.lat));
+      const r = minAreaRect(ring);
+      if (!r || !inBox(r.cx, r.cz)) continue;
+      // the canopy over the forecourt: about half the lot's length and width, within a canopy's sizes
+      const L = Math.min(30, Math.max(12, r.w * 0.55)), Wd = Math.min(16, Math.max(8, r.d * 0.5));
+      fuel.push([q(r.cx), q(r.cz), Math.round(r.th * 1000), Math.round(L * 10), Math.round(Wd * 10)]);
+      fuelWays.push([r.cx, r.cz]);
+      tally.fuelWays++;
+    }
+  }
+  for (const e of detailsOSM.elements) {
+    if (e.type !== 'node' || e.tags?.amenity !== 'fuel') continue;
+    const [x, z] = toWorld(e.lon, e.lat);
+    if (!inBox(x, z)) continue;
+    if (fuelWays.some(([cx, cz]) => Math.hypot(cx - x, cz - z) < FUEL_SAME)) { tally.fuelSame++; continue; }
+    fuel.push([q(x), q(z), turnAlong(roadDirAt(x, z) || [1, 0]), 180, 100]);
+    tally.fuelNodes++;
+  }
+  log(`street furniture: ${tally.benches} benches, ${tally.bins} bins; gas stations: ${tally.fuelWays} by their outline, ${tally.fuelNodes} by their point (${tally.fuelSame} points of the same)`);
+}
+
+// =====================================================================================================================
 // 7. ASSEMBLE
 // =====================================================================================================================
 const GEO = {
@@ -2863,7 +2977,12 @@ const GEO = {
   // The minor ways' surfaces where not asphalt (2): [kind (2 earth, 3 concrete), width (m), flat centreline]
   minorSurfaces,
   // Footways (6E): [kind (0 footway, 1 path, 2 pedestrian street, 3 steps), width (m), flat points]
-  footways
+  footways,
+  // Street furniture (6F): benches [x, z, turn (mrad, the seat along the street)], bins [x, z], flat
+  benches,
+  bins,
+  // Gas stations' canopies (6F): [x, z (m), turn (mrad: its length along (cos θ, -sin θ)), length, width (dm)]
+  fuel
 };
 
 const json = JSON.stringify(GEO);

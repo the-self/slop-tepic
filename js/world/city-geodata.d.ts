@@ -318,6 +318,12 @@ export interface CityGeodata {
   /** Footways, paths, pedestrian streets & steps: [kind (0 footway, 1 path, 2 pedestrian street, 3 steps), width (m),
    *  flat points]. */
   footways: Footway[];
+  /** Benches OpenStreetMap maps, 3 numbers each: x, z (m), turn (mrad: the seat along (cos θ, -sin θ), the street). */
+  benches: number[];
+  /** Bins OpenStreetMap maps, 2 numbers each: x, z (m). */
+  bins: number[];
+  /** Gas stations' canopies: [x, z (m), turn (mrad: its length along (cos θ, -sin θ)), length, width (dm)]. */
+  fuel: [x: number, z: number, turn: number, length: number, width: number][];
 }
 
 export declare const GEO: CityGeodata;

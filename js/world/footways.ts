@@ -17,6 +17,8 @@ const ROAD_Y = 0.007, FIELD_Y = 0.036, PARK_Y = 0.416, LOT_Y = 0.24;
 // the pavement material's kinds (createPavementMaterial: 0 empedrado, 1 adoquín, 2 tierra, 3 concreto) by footway kind
 const PAVE = [3, 2, 1, 3];
 
+/** The height (m over the town's floor) of the ground a footway, a bench or a gas station's forecourt stands on at
+ *  (x, z): a park's lawn, a yard's open ground, the open country, the road deck */
 const groundY = (x: number, z: number) => {
   const b = blockAt(x, z);
   return !b ? ROAD_Y : b.rural ? FIELD_Y : b.park > 0.6 && !b.median ? PARK_Y : LOT_Y;
@@ -63,4 +65,4 @@ function buildFootways(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   return mesh;
 }
 
-export { buildFootways };
+export { buildFootways, groundY as surfaceY };

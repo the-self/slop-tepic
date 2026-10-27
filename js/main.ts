@@ -310,7 +310,7 @@ async function initApp(): Promise<void> {
   const cullingRoots = named(['CityGrid', 'CityBlocks', 'StreetDetails', 'Hills', 'Rivers', 'Bridges']);
   setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
   // ...whose world matrices never change again: rendering stops walking them (the loop updates the rest of the scene)
-  const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Airport', 'RoadMarkings', 'Pavements', 'Footways', 'Topes', 'StreamedTiles', 'BusStops', 'PowerLines', 'Pools'])
+  const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Airport', 'RoadMarkings', 'Pavements', 'Footways', 'Topes', 'StreamedTiles', 'BusStops', 'PowerLines', 'Pools', 'Furniture'])
     .filter((o) => o.parent === scene)];
   freezeStaticMatrices(scene, staticRoots);
   loading.mark('culling');
