@@ -26,6 +26,7 @@ import { paintFarGround, farGroundColor } from '../world/far-ground.ts';
 import { buildTepicLandmarks } from '../world/tepic-landmarks.ts';
 import { buildCotos } from '../world/cotos.ts';
 import { buildCarParks } from '../world/car-parks.ts';
+import { buildBusShelters } from '../world/bus-shelters.ts';
 import { GEO } from '../world/city-geodata.js';
 import type { Collider } from '../world/buildings.ts';
 
@@ -91,6 +92,8 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   mark('traffic');
   // Mast-arm traffic signals at the signalised junctions of a city off the grid (the grid's are built with the streets)
   streetDetails.addJunctionSignals(traffic.network, colliders); // (their poles stop the player)
+  // The paradas on the sidewalks, by the curb the camiones & combis pull in to (their backs & benches stop the player)
+  for (const c of buildBusShelters(scene, traffic.network.edges).colliders) colliders.push(c);
   const highwayTraffic = createHighwayTraffic(scene, cityGrid.highwayLanes);
   buildRoadPaint(scene, traffic.network, streamer);
   buildPavements(scene, streamer); // (the empedrado, adoquín, earth & concrete streets, under the paint)

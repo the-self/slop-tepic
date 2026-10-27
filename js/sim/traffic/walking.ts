@@ -8,6 +8,7 @@ import { walkOn } from './signals.ts';
 import { stepBlocked } from './bodies.ts';
 import { KERB, QUEUE_GAP, atCurb, curbProgress, mayCross } from './sidewalks.ts';
 import { mayCrossStreet } from './crossings.ts';
+import { stopNear } from './pickups.ts';
 
 // Continue through validated sidewalk corners. Crossing tracks retain their curb queues and right of way;
 // only a dead end needs a turnaround. Goals guide local choices without a city-wide path search.
@@ -15,6 +16,7 @@ const PED_ACCEL = 1.3; // m/s^2 setting off
 const PED_BRAKE = 1.6; // m/s^2 easing to a stop
 const TURN_TIME = 0.85; // s turning round at the end of the track
 const WALL_CHECK = 0.08; // s between a walker's looks for a wall ahead (~0.11 m at a walk)
+const WAIT_AT_STOP = 3; // m from a bus stop someone stops to wait at it
 function walk(ts: TrafficState, p: Ped, dt: number): void {
   if (p.pause > 0) p.pause = Math.max(0, p.pause - dt);
   const ahead = p.dir > 0 ? p.len - p.t : p.t;
@@ -28,6 +30,12 @@ function walk(ts: TrafficState, p: Ped, dt: number): void {
     p.nextRoute = ts.pedRoutes.next(p.route, p.dir, p.goalX, p.goalZ);
     p.nextLeg = 0;
     if (!p.node && p.nextRoute) atCurb(ts, p);
+  }
+  // at a bus stop, someone now and then stands waiting for their camión or combi (pickups.ts: the ones they want stop
+  // for them there)
+  if (!p.node && !p.cross && p.route?.edge && p.pause <= 0 && ts.clock >= p.restTime && stopNear(ts, p.x, p.z, WAIT_AT_STOP)) {
+    p.pause = 20 + Math.random() * 40;
+    p.restTime = ts.clock + 90 + Math.random() * 90;
   }
   if (!p.node && p.route?.edge && p.t > 6 && p.t < p.len - 6 && ts.clock >= p.restTime && ts.rainNow < 0.3) {
     p.pause = 1.5 + Math.random() * 3;

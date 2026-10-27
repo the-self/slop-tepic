@@ -1,9 +1,12 @@
 // js/sim/traffic/pickups.ts
-// Camiones, combis and taxis at the curb. In Tepic they stop wherever someone on the sidewalk hails them, not only at
-// stops: the vehicle works over to the curb lane, pulls in beside them and stands while they step to its door and get
-// on (and others get off), then pulls out again. A taxi takes its fare a while and lets them off at a curb.
-import { clamp } from './constants.ts';
-import type { DrivenVehicle, Ped, PedTrack, Vehicle } from './types.ts';
+// Camiones, combis and taxis at the curb. Where OpenStreetMap maps the paradas (world/bus-stops.ts), a camión or
+// combi on its route pulls in at them, for whoever waits there and whoever gets off; elsewhere in Tepic they stop
+// wherever someone on the sidewalk hails them: the vehicle works over to the curb lane, pulls in beside them and
+// stands while they step to its door and get on (and others get off), then pulls out again. A taxi takes its fare a
+// while and lets them off at a curb, anywhere.
+import { STOP_CELL, clamp } from './constants.ts';
+import type { DrivenVehicle, Ped, PedTrack, TrafficEdge, Vehicle } from './types.ts';
+import type { BusStop } from '../../world/bus-stops.ts';
 import type { TrafficState } from './state.ts';
 import { canStopBefore, stopAt } from './idm.ts';
 import { retirePed } from './population.ts';
@@ -12,6 +15,25 @@ const LOOK = 1.5; // s between a vehicle's looks along the curb ahead
 const STEP = 1.3; // m/s stepping to the door and off it
 const PULL_IN = 35; // m before its stop it starts pulling over
 const GIVE_UP = 25; // s a vehicle stands for someone who doesn't come
+const STOP_COVER = 250; // m from a mapped stop within which a camión or combi stops at the stops only
+const AT_STOP = 7; // m from a stop someone waiting there hails from
+const LET_OFF = 0.4; // the share of stops a camión or combi lets someone off at
+
+// The nearest bus stop to (x, z) within `reach` m, or null
+function stopNear(ts: TrafficState, x: number, z: number, reach: number): BusStop<TrafficEdge> | null {
+  let best: BusStop<TrafficEdge> | null = null, bestD = reach;
+  const n = Math.ceil(reach / STOP_CELL);
+  const ci = Math.floor(x / STOP_CELL), cj = Math.floor(z / STOP_CELL);
+  for (let i = ci - n; i <= ci + n; i++) {
+    for (let j = cj - n; j <= cj + n; j++) {
+      for (const st of ts.stopCells.get(i * 100003 + j) ?? []) {
+        const d = Math.hypot(st.x - x, st.z - z);
+        if (d < bestD) { bestD = d; best = st; }
+      }
+    }
+  }
+  return best;
+}
 
 // Does v take people on? The camiones and combis on their routes, and the taxis
 const serves = (v: DrivenVehicle) => v.fleet !== null || v.isTaxi === true;
@@ -30,6 +52,20 @@ const curbRoom = (v: DrivenVehicle) => clamp(v.edge.half - v.edge.lanes[v.lane] 
 // Where v stops for p: its door level with them, m along its road
 const stopFor = (v: DrivenVehicle, p: Ped, door: number) => (p.x - v.edge.sx) * v.edge.dx + (p.z - v.edge.sz) * v.edge.dz - door;
 
+// Can p hail v? Out on its own, standing or walking along a sidewalk, and wanting it
+const free = (p: Ped, v: DrivenVehicle) => p.placed && !p.fallen && !p.bail && !p.ride && !p.node && !p.cross && !p.conversation && wants(p, v);
+
+// Someone waiting at stop st for v: the nearest that wants it
+function waitingAt(ts: TrafficState, v: DrivenVehicle, st: BusStop<TrafficEdge>): Ped | null {
+  let best: Ped | null = null, bestD = AT_STOP;
+  for (const p of ts.peds) {
+    if (!free(p, v)) continue;
+    const d = Math.hypot(p.x - st.x, p.z - st.z);
+    if (d < bestD) { bestD = d; best = p; }
+  }
+  return best;
+}
+
 // Someone on the curb ahead of v, on its right, hailing it: the nearest that wants it, far enough ahead to pull in
 // for and short of the end of the road
 function hailer(ts: TrafficState, v: DrivenVehicle, door: number): Ped | null {
@@ -37,7 +73,7 @@ function hailer(ts: TrafficState, v: DrivenVehicle, door: number): Ped | null {
   const far = Math.min(v.s + 70, e.len - v.half - 8);
   let best: Ped | null = null, bestS = Infinity;
   for (const p of ts.peds) {
-    if (!p.placed || p.fallen || p.bail || p.ride || p.node || p.conversation || !wants(p, v)) continue;
+    if (!free(p, v)) continue;
     const right = (p.x - e.sx) * e.rx + (p.z - e.sz) * e.rz;
     if (right < e.half - 0.3 || right > e.half + 5) continue;
     const s = stopFor(v, p, door);
@@ -82,6 +118,21 @@ function look(ts: TrafficState, v: DrivenVehicle): void {
   if (v.isTaxi && v.fare > 0) {
     if (ts.clock >= v.fare && dropAt < e.len - v.half - 8) plan(ts, v, null, 1, door, dropAt);
     return;
+  }
+  if (v.fleet !== null) {
+    // a camión or combi on its route: at the next stop ahead on its road, if anyone waits there for it or is to get
+    // off there (whether they are, the same for this vehicle at this stop each time it looks); and in a part of town
+    // whose stops are mapped, nowhere else
+    for (const st of e.stops) {
+      const s = st.s - door;
+      if (s < v.s + 15) continue;
+      if (s > e.len - v.half - 8) break;
+      const p = waitingAt(ts, v, st);
+      const off = (v.react * 97.13 + st.x * 0.37 + st.z * 0.11) % 1 < LET_OFF ? 1 + Math.floor(Math.random() * 2) : 0;
+      if (p || off) plan(ts, v, p, off, door, s);
+      return;
+    }
+    if (stopNear(ts, v.x, v.z, STOP_COVER)) return;
   }
   const p = hailer(ts, v, door);
   if (p) {
@@ -228,4 +279,4 @@ function rideStep(ts: TrafficState, p: Ped, dt: number): boolean {
   return false;
 }
 
-export { curbside, curbBrake, rideStep };
+export { curbside, curbBrake, rideStep, stopNear };

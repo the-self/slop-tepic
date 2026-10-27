@@ -16,7 +16,7 @@ import type { Transit } from '../transit.ts';
 import { GEO } from '../../world/city-geodata.js';
 import type { Ragdolls } from '../ragdolls.ts';
 import type { CarPhysics } from '../../player/car-physics.ts';
-import { MASS, MISHAP_FIRST, NUM_CARS, NUM_PEDS } from './constants.ts';
+import { MASS, MISHAP_FIRST, NUM_CARS, NUM_PEDS, STOP_CELL } from './constants.ts';
 import type {
   Car, Bus, Bike, Moto, Vehicle, VehicleKind, Ped, PedTrack, Spark, TwoWheelKit, TrafficNode, TrafficEdge, TrafficNetwork, StreetCrossing,
   LaneEntry, TrafficPlayer, ParkedVehicle, SirenSource, CrashedCar, TrafficCollision, MayhemListener, KnockListener, SmokeEmitter,
@@ -31,6 +31,8 @@ import { createPeds, pedGround } from './peds.ts';
 import { createLightPools } from './render.ts';
 import { kindOf } from './population.ts';
 import { placeStreetCrossings } from './crossings.ts';
+import { placeBusStops } from '../../world/bus-stops.ts';
+import type { BusStop } from '../../world/bus-stops.ts';
 
 /** Where spawnPed places someone: a track's fields, copied onto them */
 interface TrackPick {
@@ -90,6 +92,8 @@ interface TrafficState extends VehicleMeshes {
   pedRoutes: PedestrianRoutes<TrafficNode, TrafficEdge, CityBlock, StreetCrossing>;
   /** the street crossings along the roads (crossings.ts) */
   streetCrossings: StreetCrossing[];
+  /** the bus stops on the streets (world/bus-stops.ts), in STOP_CELL m cells (pickups.ts) */
+  stopCells: Map<number, BusStop<TrafficEdge>[]>;
 
   // ---- who there is (fleet.ts, peds.ts) and how they are drawn ----
   cars: Car[];
@@ -281,7 +285,18 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     e.through = 0; // vehicles from e crossing e.to straight on or to the right
     e.lefts = 0; // and to the left
     e.crossings = []; // the street crossings along it (crossings.ts)
+    e.stops = []; // the bus stops by its right curb (pickups.ts)
   }
+  // The bus stops (world/bus-stops.ts): the camiones & combis on their routes pull in to them (pickups.ts)
+  const stopCells = new Map<number, BusStop<TrafficEdge>[]>();
+  for (const st of placeBusStops(GEO.busStops, edges)) {
+    st.edge.stops.push(st);
+    const key = Math.floor(st.x / STOP_CELL) * 100003 + Math.floor(st.z / STOP_CELL);
+    let list = stopCells.get(key);
+    if (!list) stopCells.set(key, (list = []));
+    list.push(st);
+  }
+  for (const e of edges) e.stops.sort((a, b) => a.s - b.s);
   // The street crossings along the roads, OpenStreetMap's (crossings.ts): the sidewalks split at them, people cross
   // there and the traffic stops for them
   const streetCrossings = placeStreetCrossings(GEO.crossings, edges);
@@ -365,6 +380,7 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     transit,
     pedRoutes,
     streetCrossings,
+    stopCells,
     cars,
     buses,
     bikes,

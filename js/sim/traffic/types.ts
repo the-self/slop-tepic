@@ -5,6 +5,7 @@ import type * as THREE from 'three/webgpu';
 import type { LaneCurve, RoadEdge, RoadMove, RoadNetwork, RoadNode } from '../../world/road-network.ts';
 import type { WalkCrossing, WalkLeg, WalkTrack } from '../pedestrian-routes.ts';
 import type { CrossingKind } from '../../world/crossings.ts';
+import type { BusStop } from '../../world/bus-stops.ts';
 import type { CityBlock } from '../../world/city-config.ts';
 import type { PersonRig } from '../pedestrians.ts';
 import type { RideFrame } from '../pedestrians.ts';
@@ -78,6 +79,8 @@ interface TrafficEdge extends RoadEdge {
   roadClass?: RoadClass;
   /** the street crossings along it (crossings.ts), by s: m from its start stop line */
   crossings: { c: StreetCrossing; s: number }[];
+  /** the bus stops by its right curb (world/bus-stops.ts), by s */
+  stops: BusStop<TrafficEdge>[];
 }
 
 /** A street crossing along a road (crossings.ts): where it is taken, its kind, the edges it crosses (pedestrian-

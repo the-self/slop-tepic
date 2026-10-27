@@ -11,6 +11,7 @@
 //   osm_tepic_land.json       parks, pitches, schools, water, rail, land use
 //   osm_tepic_pois.json       neighbourhoods, monuments, signals, lamps
 //   osm_tepic_buildings.json  building footprints (sparse in Tepic; only notable ones are kept)
+//   osm_tepic_details.json    stops, speed bumps, trees, power lines, street furniture, businesses, fences
 //   semovi_routes.json        the bus & combi routes (Secretaría de Movilidad de Nayarit, tools/data/tepic/fetch-routes.sh)
 //
 // usage: node --max-old-space-size=8192 tools/build-tepic-geodata.mjs [outFile]
@@ -633,6 +634,43 @@ const pedCrossings = [];
     }
   }
   log(`pedestrian crossings: ${pedCrossings.length / 3} on the streets (${tally.kinds[0]} unmarked, ${tally.kinds[1]} marked, ${tally.kinds[2]} with lights, ${tally.lights} of those made signals), ${tally.off} off them`);
+}
+// The bus stops (OSM highway=bus_stop, public_transport=platform: the camiones' & combis' paradas on the sidewalk;
+// the stop positions on the roadway only where no stop is mapped beside them): [x, z, flags] each, flat; flags 1 a
+// shelter (shelter=yes, or not said: Tepic's paradas mostly have their parabús), 2 a bench (bench=yes, or not said
+// under a shelter). Two within STOP_SAME m are one stop
+const detailsOSM = load('osm_tepic_details.json');
+const busStops = [];
+{
+  const STOP_SAME = 12;
+  const tally = { stops: 0, merged: 0, off: 0 };
+  const isStop = (t) => t.highway === 'bus_stop' || t.public_transport === 'platform';
+  const at = (e) => (e.type === 'node' ? [e.lon, e.lat] : e.geometry?.length
+    ? [e.geometry.reduce((s, g) => s + g.lon, 0) / e.geometry.length, e.geometry.reduce((s, g) => s + g.lat, 0) / e.geometry.length] : null);
+  const stops = [];
+  for (const pass of [0, 1]) {
+    for (const e of detailsOSM.elements) {
+      const t = e.tags || {};
+      if (pass === 0 ? !isStop(t) : t.public_transport !== 'stop_position' || isStop(t)) continue;
+      const ll = at(e);
+      if (!ll) continue;
+      const [x, z] = toWorld(...ll);
+      if (!inBox(x, z)) { tally.off++; continue; }
+      const same = stops.find((s) => Math.hypot(s.x - x, s.z - z) < STOP_SAME);
+      const shelter = t.shelter === 'yes' || (t.shelter !== 'no' && pass === 0);
+      const bench = t.bench === 'yes' || (t.bench !== 'no' && shelter);
+      if (same) {
+        // (a stop's node and its platform's: what either says of it)
+        same.shelter = (same.shelter || t.shelter === 'yes') && t.shelter !== 'no';
+        same.bench = same.bench || t.bench === 'yes';
+        tally.merged++;
+        continue;
+      }
+      stops.push({ x, z, shelter, bench });
+    }
+  }
+  for (const s of stops) busStops.push(q(s.x), q(s.z), (s.shelter ? 1 : 0) | (s.bench ? 2 : 0));
+  log(`bus stops: ${stops.length} (${stops.filter((s) => s.shelter).length} with a shelter, ${stops.filter((s) => s.bench).length} with a bench), ${tally.merged} more points of the same stops, ${tally.off} off the box`);
 }
 
 // =====================================================================================================================
@@ -2597,7 +2635,9 @@ const GEO = {
   // beyond the box, 4 up the hills: laid on the hillside, no basin), outline (flat ring, its shore)]
   lakes: lakes.map((l) => [l.kind, l.name, l.flags, flat(l.shore)]),
   // Pedestrian crossings on the streets (3): x, z (m), kind (0 unmarked, 1 marked, 2 with lights), flat
-  crossings: pedCrossings
+  crossings: pedCrossings,
+  // Bus stops on the sidewalks (3): x, z (m), flags (1 a shelter, 2 a bench), flat
+  busStops
 };
 
 const json = JSON.stringify(GEO);

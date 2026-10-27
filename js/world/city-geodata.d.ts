@@ -293,6 +293,8 @@ export interface CityGeodata {
   /** Pedestrian crossings on the streets, 3 numbers each: x, z (m), kind (0 unmarked, 1 marked: a zebra, 2 with
    *  lights). */
   crossings: number[];
+  /** Bus stops on the sidewalks, 3 numbers each: x, z (m), flags (1 a shelter, 2 a bench). */
+  busStops: number[];
 }
 
 export declare const GEO: CityGeodata;

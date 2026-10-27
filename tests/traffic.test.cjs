@@ -517,7 +517,7 @@ function roadHarness({ pickups, lanes = [1.8], lane = 0, half = 4.55 } = {}) {
     './pickups.ts': curb ?? { curbBrake: () => 0, curbside() {} },
     './crossings.ts': { crossingBrake: () => 0 }
   });
-  const edge = { len: 600, lanes, half, occ: lanes.map(() => []), to: {}, sx: 0, sz: 0, dx: 0, dz: 1, rx: -1, rz: 0 };
+  const edge = { len: 600, lanes, half, occ: lanes.map(() => []), to: {}, sx: 0, sz: 0, dx: 0, dz: 1, rx: -1, rz: 0, stops: [] };
   const v = {
     bus: false, half: 2.25, halfWidth: 0.86, axle: 1.38, driver: constants.CAR_DRIVER, v0: 13, edge, lane, s: 50,
     speed: 12, acc: 0, gap: Infinity, leaderSpeed: 0, move: { to: edge, out: lanes.map(() => 0), turn: 'S' }, conn: null, cs: 0,
@@ -527,7 +527,7 @@ function roadHarness({ pickups, lanes = [1.8], lane = 0, half = 4.55 } = {}) {
     stop: null, pullOver: 0, nextStop: 0, fare: 0
   };
   const ts = {
-    clock: 0, caution: 1, headway: 1, roadGrip: 1, parked: [], sirens: [], peds: [], pedRoutes: { along: () => [] },
+    clock: 0, caution: 1, headway: 1, roadGrip: 1, parked: [], sirens: [], peds: [], pedRoutes: { along: () => [] }, stopCells: new Map(),
     player: { active: false, x: 0, z: 0, vx: 0, vz: 0, halfW: 0.86, halfL: 2.18 }
   };
   const step = (dt = 1 / 60) => {
@@ -626,6 +626,32 @@ test('a combi pulls in for someone hailing it, waits while they get on, and driv
   for (let i = 0; i < 60 * 12; i++) step();
   assert.equal(v.stop, null);
   assert.ok(v.speed > 5 && v.dl < 0.3, 'back in its lane and on its way');
+});
+
+test('where the stops are mapped, a combi passes someone hailing it mid-block and pulls in at the stop for whoever waits', () => {
+  const { ts, v, step, curb } = roadHarness({ pickups: true });
+  v.fleet = 'combi';
+  v.react = 0.4;
+  const person = (z) => {
+    const p = { placed: true, fallen: null, bail: null, ride: null, node: null, cross: null, conversation: null, wish: 0, x: -5.6, z, v: 1 };
+    while ((p.wish * 9.7 + v.react * 31.3) % 1 >= 0.2) p.wish += 0.01;
+    ts.peds.push(p);
+    return p;
+  };
+  const hailing = person(110), waiting = person(201);
+  const stop = { x: -5.9, z: 200, s: 200, edge: v.edge, shelter: true, bench: true, dx: 0, dz: 1 };
+  v.edge.stops.push(stop);
+  ts.stopCells.set(Math.floor(stop.x / 100) * 100003 + Math.floor(stop.z / 100), [stop]);
+  let stoppedAt = null;
+  for (let i = 0; i < 60 * 40 && waiting.placed; i++) {
+    step();
+    for (const p of ts.peds) if (p.ride) curb.rideStep(ts, p, 1 / 60);
+    if (!stoppedAt && v.stop?.stopped) stoppedAt = v.z;
+  }
+  assert.ok(stoppedAt !== null, 'it stopped');
+  assert.ok(Math.abs(stoppedAt + 0.1 - 200) < 1.5, `at the stop (${stoppedAt.toFixed(2)})`);
+  assert.equal(waiting.placed, false, 'whoever waited there got on');
+  assert.equal(hailing.placed, true, 'the one hailing it mid-block didn\'t');
 });
 
 // The closest the player and v come side by side (m, centre to centre) as the player drives past it head on
