@@ -74,7 +74,7 @@ interface TrafficState extends VehicleMeshes {
   ragdolls: Ragdolls | null;
   /** where walls stand (install/player.ts: the player's building colliders): knocked bodies bounce off them */
   solidAt: SolidQuery | null;
-  /** where a building's wall stands (install/player.ts: solidAt but the poles & bollards), for the people walking */
+  /** where a building's wall stands (install/player.ts: solidAt without the poles & bollards), for the people walking */
   wallAt: SolidQuery | null;
   /** whether (x, z) is in a park (city-config.ts blockAt), where some of the people placed go jogging */
   parkAt: (x: number, z: number) => boolean;

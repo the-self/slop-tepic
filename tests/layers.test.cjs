@@ -95,8 +95,10 @@ function walk(dir, out = []) {
 const topOf = (path) => relative(js, path).split('/')[0];
 const layerOf = (path) => LAYERS.findIndex((layer) => layer.includes(topOf(path)));
 
+const goesUp = (file, target) => topOf(file) !== topOf(target) && layerOf(target) >= layerOf(file);
+
 // Every relative import and re-export, static or dynamic, type-only or not, of every module of js/
-function imports() {
+function readImports() {
   const found = [];
   for (const file of walk(js)) {
     const source = readFileSync(file, 'utf8');
@@ -108,6 +110,7 @@ function imports() {
   }
   return found;
 }
+const imports = readImports();
 
 test('every folder of js/ is in a layer, and every layer names folders that exist', () => {
   const tops = new Set(walk(js).map(topOf));
@@ -116,17 +119,21 @@ test('every folder of js/ is in a layer, and every layer names folders that exis
 });
 
 test('modules import only from the layers below their own', () => {
-  const up = imports()
-    .filter(({ file, target }) => topOf(file) !== topOf(target) && layerOf(target) >= layerOf(file))
-    .map(({ edge }) => edge);
+  const up = imports.filter(({ file, target }) => goesUp(file, target)).map(({ edge }) => edge);
   const allowed = new Set(EXCEPTIONS);
   const added = [...new Set(up)].filter((edge) => !allowed.has(edge));
   assert.deepEqual(added, [], 'these imports go up the layers (LAYERS): hand the lower module what it needs, or move it');
 });
 
 test('the exceptions are all still there (one fixed leaves the list)', () => {
-  const edges = new Set(imports().map(({ edge }) => edge));
+  const edges = new Set(imports.map(({ edge }) => edge));
   assert.equal(new Set(EXCEPTIONS).size, EXCEPTIONS.length, 'an exception listed twice');
   const gone = EXCEPTIONS.filter((edge) => !edges.has(edge));
   assert.deepEqual(gone, [], "these imports are gone: take them off EXCEPTIONS, so they can't come back");
+  // ...and still going up: one a change of LAYERS made legal leaves the list too
+  const legal = EXCEPTIONS.filter((edge) => {
+    const [file, target] = edge.split(' -> ').map((path) => join(root, path));
+    return !goesUp(file, target);
+  });
+  assert.deepEqual(legal, [], 'these imports no longer go up the layers: take them off EXCEPTIONS');
 });
