@@ -23,6 +23,11 @@ import {
   encodeChatLine,
   encodeShotSeen,
   encodeHurt,
+  encodeCreate,
+  encodeRules,
+  encodeRoom,
+  sanitizeTitle,
+  DEFAULT_RULES,
   decodeServer
 } from '../shared/protocol.ts';
 import { RoomManager } from '../server/rooms.ts';
@@ -41,7 +46,7 @@ test('a pose round-trips through the 18-byte STATE frame at centimetre precision
 
 test('hello carries version, region and the raw name; the server-side sanitizer cleans it', () => {
   const msg = decodeClient(encodeHello('nayarit', '  Lalo\u200b   el\nTaxista  '));
-  assert.deepEqual(msg, { op: OP.HELLO, version: PROTOCOL_VERSION, region: 'nayarit', name: '  Lalo\u200b   el\nTaxista  ' });
+  assert.deepEqual(msg, { op: OP.HELLO, version: PROTOCOL_VERSION, region: 'nayarit', name: '  Lalo\u200b   el\nTaxista  ', room: '', password: '' });
   assert.equal(sanitizeName(msg.name), 'Lalo el Taxista');
   assert.equal(sanitizeName('', 42), 'Player-0042');
   assert.equal(sanitizeName('ñandú '.repeat(10)).length <= 24, true);
@@ -76,7 +81,10 @@ test('a TICK frame carries departures, newcomers and only the moved poses', () =
   assert.deepEqual([m.x, m.y, m.z, m.mode, m.speed], [1, 2, -3, 'car', -5.5]);
   assert.ok(Math.abs(m.heading - Math.PI / 2) < 1e-9);
 
-  assert.deepEqual(decodeServer(encodeWelcome(65535, 200, 10, 'nayarit#2')), { op: OP.WELCOME, id: 65535, capacity: 200, tickHz: 10, room: 'nayarit#2' });
+  const room = { id: 'nayarit#2', title: '', code: '', locked: false, host: 0, rules: DEFAULT_RULES };
+  assert.deepEqual(decodeServer(encodeWelcome(65535, 200, 10, room)), {
+    op: OP.WELCOME, id: 65535, capacity: 200, tickHz: 10, room: 'nayarit#2', title: '', code: '', locked: false, host: 0, rules: { ...DEFAULT_RULES }
+  });
   assert.deepEqual(decodeServer(encodeError('version')), { op: OP.ERROR, code: 'version' });
   assert.equal(decodeServer(frame.subarray(0, frame.length - 3)), null, 'truncated tick');
 });
@@ -170,4 +178,50 @@ test('hits carry their target and capped damage; a death names its killer', () =
   assert.equal(decodeClient(encodeHit(0, 10)), null, 'nobody is player 0');
   assert.deepEqual(decodeClient(encodeDown(12)), { op: OP.DOWN, killer: 12 });
   assert.deepEqual(decodeServer(encodeHurt(4, 22)), { op: OP.HURT, from: 4, damage: 22 });
+});
+
+test('a room of one\'s own: CREATE carries its title, password, sky and rules; RULES and ROOM carry the changes', () => {
+  const rules = { police: false, pvp: true };
+  assert.deepEqual(decodeClient(encodeCreate('nayarit', 'Ana', { title: 'La banda', password: 'secreto', time: 'midnight', weather: 'storm', rules })), {
+    op: OP.CREATE, version: PROTOCOL_VERSION, region: 'nayarit', name: 'Ana', title: 'La banda', password: 'secreto', sky: { time: 4, weather: 5 }, rules
+  });
+  assert.deepEqual(decodeClient(encodeHello('nayarit', 'Beto', 'K7Q2M', 'secreto')).room, 'K7Q2M');
+  assert.deepEqual(decodeClient(encodeRules(rules)), { op: OP.RULES, rules });
+  assert.deepEqual(decodeServer(encodeRoom(7, rules)), { op: OP.ROOM, host: 7, rules });
+  const room = { id: 'nayarit~K7Q2M', title: 'La banda', code: 'K7Q2M', locked: true, host: 7, rules };
+  const welcome = decodeServer(encodeWelcome(9, 200, 10, room));
+  assert.equal(welcome.code, 'K7Q2M');
+  assert.equal(welcome.locked, true);
+  assert.deepEqual(welcome.rules, rules);
+  const bad = encodeCreate('nayarit', 'Ana', { title: '', password: '', time: 'live', weather: 'live', rules });
+  bad[bad.length - 3] = 99; // (a time of day nobody knows)
+  assert.equal(decodeClient(bad), null);
+  assert.equal(sanitizeTitle('  La\nbanda\u200b de la Loma, la mejor de todo Tepic  '), 'La banda de la Loma, la mejor de');
+});
+
+test('a player\'s own room: a code to find it by, its host passed on when it leaves, listed after the public ones', () => {
+  const rooms = new RoomManager({ capacity: 2 });
+  const pub = rooms.join('nayarit', { id: 1 });
+  const own = rooms.create('nayarit', { id: 2 }, { title: 'La banda', password: null, sky: { time: 4, weather: 4 }, rules: { ...DEFAULT_RULES, police: false } });
+  assert.match(own.code, /^[A-HJ-NP-Z2-9]{5}$/, 'five letters and digits, none to misread');
+  assert.equal(own.id, `nayarit~${own.code}`);
+  assert.equal(own.host, 2);
+  assert.equal(rooms.find('nayarit', own.code.toLowerCase()), own, 'codes ignore case');
+  assert.equal(rooms.find('nayarit', pub.id), pub, 'a public room by its id');
+  assert.equal(rooms.find('jalisco', own.code), undefined, 'not from another region');
+  assert.equal(rooms.join('nayarit', { id: 3 }), pub, 'the public seats never go to a player\'s own room');
+  assert.equal(rooms.enter(own, { id: 4 }), true);
+  assert.equal(rooms.enter(own, { id: 5 }), false, 'full');
+  assert.deepEqual(rooms.list('nayarit').map((r) => [r.id, r.players, r.locked]), [[pub.id, 2], [own.id, 2]].map(([id, n]) => [id, n, false]));
+  assert.equal(rooms.leave(own, 2), true, 'the host leaving hands it on...');
+  assert.equal(own.host, 4, '...to the oldest player left');
+  assert.equal(rooms.leave(own, 4), false);
+  assert.equal(rooms.rooms.has(own.id), true, 'left empty, it waits for its players to come back...');
+  assert.equal(rooms.enter(own, { id: 4 }), true);
+  assert.equal(own.host, 4, '...the first one back hosting it');
+  rooms.leave(own, 4);
+  rooms.sweep(own.emptyAt + 1000, 5000);
+  assert.equal(rooms.rooms.has(own.id), true);
+  rooms.sweep(own.emptyAt + 6000, 5000);
+  assert.equal(rooms.rooms.has(own.id), false, 'nobody came back in time: it closes');
 });

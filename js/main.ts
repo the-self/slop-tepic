@@ -671,15 +671,24 @@ async function initApp(): Promise<void> {
   // Multiplayer (?multiplayer=1, see net/multiplayer.ts) loads only when asked for, so single-player pays nothing
   let multiplayer: Multiplayer | null = null;
   if (params.has('multiplayer')) {
-    import('./net/multiplayer.ts')
-      .then(({ Multiplayer, multiplayerOptions }) => {
+    Promise.all([import('./net/multiplayer.ts'), import('./net/lobby.ts')])
+      .then(async ([{ Multiplayer, multiplayerOptions }, { openLobby }]) => {
         const options = multiplayerOptions();
         if (!options) {
           console.info('[mp] no server to connect to: add &mp-server=wss://… (or serve from localhost)');
           return;
         }
-        multiplayer = new Multiplayer({
-          scene, controllers: controllerManager, camera: cameraSystem.camera, crime: crimeSystem, cameras: cameraSystem, ...options,
+        // the lobby first: the player's name and the room to play in (net/lobby.ts)
+        const { roomsUrl, ...connection } = options;
+        const lobby = (more: Partial<Parameters<typeof openLobby>[0]> = {}) => {
+          controllerManager.resetInput(); // (whatever key was held stays held otherwise)
+          return openLobby({ roomsUrl, name: multiplayer?.name ?? connection.name ?? '', ...more });
+        };
+        const first = await lobby();
+        if (!first) return;
+        const mp = new Multiplayer({
+          scene, controllers: controllerManager, camera: cameraSystem.camera, crime: crimeSystem, cameras: cameraSystem,
+          ...connection, name: first.name, entry: first.entry,
           // (the room's sky, everyone's: on joining, and whenever someone in the room changes it)
           onSky: (time, weather) => {
             showSky(time, weather);
@@ -687,7 +696,24 @@ async function initApp(): Promise<void> {
             showSkyNote();
           }
         });
-        boarding.ride = multiplayer; // (F by a friend's car: in with them)
+        multiplayer = mp;
+        boarding.ride = mp; // (F by a friend's car: in with them)
+        // a room without police: crimes raise no wanted level (PvP is net/multiplayer.ts's own)
+        mp.onRules = (rules) => {
+          crimeSystem.policeOff = !rules.police;
+          if (!rules.police) crimeSystem.wanted.clear();
+        };
+        const go = (choice: Awaited<ReturnType<typeof openLobby>>) => { if (choice) mp.rejoin(choice.entry, choice.name); };
+        mp.onRejected = (code) => { void lobby({ error: code }).then(go); };
+        mp.onLobby = () => {
+          void lobby({
+            current: mp.current,
+            onSave: ({ time, weather, rules }) => {
+              mp.setSky(time, weather);
+              mp.sendRules(rules);
+            }
+          }).then(go);
+        };
       })
       .catch((err: unknown) => { console.warn('[mp] could not start multiplayer:', err); });
   }

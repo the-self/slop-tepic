@@ -1,5 +1,5 @@
 // js/app/menu.ts
-// The game menu, as GTA's pause menu: Esc opens it (or letting go of the mouse with Esc, the touch button, the pad's
+// The game menu, a pause menu: Esc opens it (or letting go of the mouse with Esc, the touch button, the pad's
 // Back), Esc or Resume closes it. Its tabs (Q / E step through them) hold what used to crowd the screen's corners:
 // the time of day and the weather (the room's in multiplayer, main.ts), the camera, the teleports, the settings (sound,
 // the clean view, the map) and the keys for what the player is in. The city keeps running behind it; while it is open
