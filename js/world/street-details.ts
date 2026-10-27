@@ -1,15 +1,16 @@
 import * as THREE from 'three/webgpu';
 import { Fn, float, color, positionGeometry, uniform, mod, step, smoothstep, mix, attribute, texture } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { SIGNAL_TIMING, blockAt, BLOCKS, nearestRoads } from './city-config.ts';
+import { SIGNAL_TIMING, blockAt, BLOCKS, nearestRoads, onRoadway } from './city-config.ts';
 import { cityUniforms, createTreeGrateMaterial, atlasSlotUV, createWireMaterial, WIRE_FADE } from '../render/tsl-materials.ts';
 import { PropBreaker } from '../sim/mayhem.ts';
 import { createTreeField, treeTrunkColliders } from './trees.ts';
 import { mappedTreeSites, clearOfMapped } from './mapped-trees.ts';
 import { lampFinder } from './mapped-lamps.ts';
 import { lotTrees } from './lot-greenery.ts';
+import { campusTrees, inCampus, inCampusBuilding } from './uan-campus.ts';
 import { medianTrees } from './medians.ts';
-import { parkTreeSites, sidewalkBlocks, parkLampSites, medianRuns } from './city-grid.ts';
+import { parkTreeSites, sidewalkBlocks, parkLampSites, medianRuns, onPitch } from './city-grid.ts';
 import { liftAt } from './ground.ts';
 import { GEO } from './city-geodata.js';
 import type { PointXZ, Bounds, CityBlock } from './city-config.ts';
@@ -262,7 +263,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
 
   // True only when (x, z) is on a non-park, non-median, non-plaza sidewalk with `pad` clearance from all curbs
   const isOnSidewalk = (x: number, z: number, pad = 0.55) => {
-    if (!isOnCurbIsland(x, z, pad)) return false;
+    if (!isOnCurbIsland(x, z, pad) || inCampusBuilding(x, z, pad + 0.3)) return false; // (the UAN's run to their curbs)
     const b = blockAt(x, z);
     return !(b && b.park > 0.6) && !inPlaza(x, z, 1.0); // (b: on a curb island)
   };
@@ -880,7 +881,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
         const ex = along >= 0 ? bx / lb : ax / la, ez = along >= 0 ? bz / lb : az / la;
         const ox = ax / la + bx / lb, oz = az / la + bz / lb, ol = Math.hypot(ox, oz) || 1;
         const px = v.x + (ox / ol) * t + ex * Math.abs(along), pz = v.z + (oz / ol) * t + ez * Math.abs(along);
-        if (blockAt(px, pz) !== b || !isClearOfPoles(px, pz, 0.8)) continue;
+        if (blockAt(px, pz) !== b || !isClearOfPoles(px, pz, 0.8) || inCampusBuilding(px, pz, 0.5)) continue;
         bollardPositions.push([px, pz]);
       }
     }
@@ -1011,15 +1012,20 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
     t.y = SIDEWALK_Y + 0.012 + liftAt(t.x, t.z);
     treePositions.push(t);
   }
-  const yardTrees: TreeSite[] = lotTrees(allBlocks, GEO.houses, { stride: GEO.houseStride || 8, sidewalk: GEO.frame.sidewalk || 2.2, skip: medianBlocks });
+  // (the UAN's campus planted as its own: uan-campus.ts)
+  const yardTrees: TreeSite[] = lotTrees(allBlocks, GEO.houses, { stride: GEO.houseStride || 8, sidewalk: GEO.frame.sidewalk || 2.2, skip: medianBlocks })
+    .filter((t) => !inCampus(t.x, t.z))
+    .concat(campusTrees());
   for (const t of yardTrees) {
     t.y = SIDEWALK_Y + 0.012 + liftAt(t.x, t.z);
     treePositions.push(t);
   }
-  // E. The trees OpenStreetMap maps (mapped-trees.ts), where they are; the ones planted above keep clear of them
+  // E. The trees OpenStreetMap maps (mapped-trees.ts), where they are; the ones planted above keep clear of them, and
+  //    off the mapped pitches (city-grid.ts onPitch: the yards' & the street rows' guesses know nothing of a field) and
+  //    off every roadway the traffic drives (city-config.ts onRoadway: the unnamed drives & alleys among them)
   const mappedTrees = mappedTreeSites(GEO.trees, blockAt, liftAt);
   {
-    const kept = new Set(clearOfMapped(treePositions, mappedTrees));
+    const kept = new Set(clearOfMapped(treePositions, mappedTrees).filter((t) => !onPitch(t.x, t.z) && !onRoadway(t.x, t.z) && !inCampusBuilding(t.x, t.z, 1.5)));
     const before = treePositions.length;
     const all = treePositions.filter((t) => kept.has(t));
     treePositions.length = 0;

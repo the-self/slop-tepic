@@ -892,6 +892,32 @@ for (const r of drivePieces) {
     }
   }
 }
+// The drains OpenStreetMap draws along a street that run open beside it all the same, a lined channel between the curb
+// and the walls (José María Mercado's, along the Preparatoria No. 1 and the UAN, from street photographs): way id → the
+// box of the stretch [x0, z0, x1, z1] (m). OpenStreetMap draws it within the street's edge: there it is moved off the
+// roadway, its near bank a metre and a half past the curb (js/world/waterways.ts bridges any closer)
+const OPEN_BESIDE = new Map([[385514026, [670, 1500, 1095, 1595]]]);
+const inOpenBeside = (id, x, z) => {
+  const box = OPEN_BESIDE.get(id);
+  return !!box && x > box[0] && x < box[2] && z > box[1] && z < box[3];
+};
+const openBeside = (id, a, b) => inOpenBeside(id, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+const pushOffStreet = (id, pts, half) => pts.map(([x, z], i) => {
+  if (!inOpenBeside(id, x, z)) return [x, z];
+  const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L;
+  let best = null;
+  for (const r of driveCells.get(Math.floor(x / DRIVE_CELL) * 100003 + Math.floor(z / DRIVE_CELL)) || []) {
+    const dx = r.x1 - r.x0, dz = r.z1 - r.z0, M = Math.hypot(dx, dz) || 1;
+    if (Math.abs((ux * dx + uz * dz) / M) < 0.85) continue;
+    const t = Math.max(0, Math.min(1, ((x - r.x0) * dx + (z - r.z0) * dz) / (M * M)));
+    const px = r.x0 + dx * t, pz = r.z0 + dz * t, d = Math.hypot(x - px, z - pz);
+    if (d < 12 && (!best || d < best.d)) best = { px, pz, d, need: r.r - 0.3 + 1.5 + half };
+  }
+  if (!best || best.d >= best.need || best.d < 0.01) return [x, z];
+  const k = best.need / best.d;
+  return [best.px + (x - best.px) * k, best.pz + (z - best.pz) * k];
+});
 const alongStreet = (a, b, half) => {
   const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
   const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
@@ -910,7 +936,8 @@ for (const e of landOSM.elements) {
   // (the canals, drenes & ditches open to the sky: OSM's width where it gives one, else as the kind usually runs)
   const lined = !underground && LINED_HALF[t.waterway] ? Math.min(8, Math.max(LINED_HALF[t.waterway], (num(t.width) ?? 0) / 2 + 0.6)) : 0;
   const r = t.railway === 'rail' ? 5 : t.waterway === 'river' ? 6 : t.waterway === 'stream' ? 2.5 : lined;
-  const pts = e.geometry.map((g) => toWorld(g.lon, g.lat));
+  const pts = OPEN_BESIDE.has(e.id) ? pushOffStreet(e.id, e.geometry.map((g) => toWorld(g.lon, g.lat)), lined)
+    : e.geometry.map((g) => toWorld(g.lon, g.lat));
   const flags = (t.intermittent === 'yes' || t.seasonal === 'yes' ? 1 : 0) | (underground ? 2 : 0);
   if (lined) {
     // in runs open (a gap and a channel) and along a street (neither)
@@ -918,7 +945,7 @@ for (const e of landOSM.elements) {
       let run = [piece[0]], side = null;
       const flush = () => { if (run.length > 1) waterways.push([t.waterway, side ? 0 : r, t.name || '', flags, flat(rdp(run, 0.5))]); };
       for (let i = 0; i + 1 < piece.length; i++) {
-        const along = alongStreet(piece[i], piece[i + 1], r);
+        const along = alongStreet(piece[i], piece[i + 1], r) && !openBeside(e.id, piece[i], piece[i + 1]);
         if (side !== null && along !== side) { flush(); run = [piece[i]]; }
         side = along;
         run.push(piece[i + 1]);
