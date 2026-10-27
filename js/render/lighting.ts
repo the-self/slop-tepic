@@ -314,7 +314,8 @@ class LightingSystem {
   flashStrength = 0;
   flashFlicker = 0; // s
 
-  constructor(scene: THREE.Scene, renderer: THREE.WebGPURenderer | null = null) {
+  /** maxShadowMap: the graphics tier's shadow map per cascade (px, app/quality.ts) */
+  constructor(scene: THREE.Scene, renderer: THREE.WebGPURenderer | null = null, maxShadowMap = 3072) {
     this.scene = scene;
     this.renderer = renderer;
     this.activePresetId = 'golden';
@@ -390,12 +391,13 @@ class LightingSystem {
     this.sunLight.position.copy(TIME_PRESETS.golden.sunDir);
     this.sunLight.castShadow = true;
     // 3072x3072 per cascade = 6144x3072 2-cascade shadow atlas (an 8192x4096 one cost ~20% fps and caused hitches),
-    // 2048 where the device allows less. The near cascade spans ~0.35-80 m of the view at street level (see update)
+    // 2048 where the device allows less, and the tier's own on a phone (app/quality.ts). The near cascade spans
+    // ~0.35-80 m of the view at street level (see update)
     const backend = renderer?.backend;
     // (the WebGPU backend's device, which @types/three doesn't declare: the WebGL fallback has none)
     const device = backend instanceof THREE.WebGPUBackend && 'device' in backend ? backend.device : null;
     const maxTex = (device instanceof GPUDevice && device.limits.maxTextureDimension2D) || 4096;
-    const tile = maxTex >= 6144 ? 3072 : 2048;
+    const tile = Math.min(maxShadowMap, maxTex >= 6144 ? 3072 : 2048);
     this.sunLight.shadow.mapSize.set(tile, tile);
     this.sunLight.shadow.camera.near = 0.5;
     this.sunLight.shadow.camera.far = 300;

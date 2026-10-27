@@ -279,3 +279,42 @@ test('the cascades skip the quiet groups, the stand-in regions off their frustum
   assert.equal(state(), '111110', 'everything as it was, the culled prop still hidden');
   assert.equal(calls.length, 8, 'the hooks set before are still called');
 });
+
+test('props hide at their own distance, scaled by the tier; only the glowing ones are kept at any distance', () => {
+  const constant = (name) => Number(source.match(new RegExp(`^const ${name} = (\\d+);`, 'm'))[1]);
+  const ctx = { Math, Infinity };
+  for (const name of ['CULL_PER_METRE', 'CULL_MIN', 'GLOW_MAX', 'GLOW_CELL']) ctx[name] = constant(name);
+  const cullDistance = vm.runInNewContext(`(${topLevel('cullDistance')})`, ctx);
+  assert.equal(cullDistance(0.1, 1).distance, ctx.CULL_MIN, 'never closer than the shadow cascades reach');
+  // no size is kept at any distance unless it glows: no cliff where a slightly bigger prop is drawn to the horizon
+  for (const size of [2.67, 3.6, 3.7, 5.3, 19]) {
+    const { distance } = cullDistance(size, 1);
+    assert.ok(Number.isFinite(distance) && Math.abs(distance - size * ctx.CULL_PER_METRE) < 1e-6, `${size} m`);
+  }
+  assert.equal(cullDistance(0.77, 3).distance, Infinity, 'a lamp\'s glowing lens reads from across the valley at night');
+  assert.equal(cullDistance(0.77, 3).cell, ctx.GLOW_CELL);
+  assert.ok(cullDistance(0.3, 3).distance < Infinity, 'a small glow still hides');
+  assert.equal(cullDistance(1, 1, 0.5).distance, 550, 'the low tier halves the distance');
+  // ...over the same squares, not more smaller ones (every square in view is a draw)
+  assert.equal(cullDistance(0.9, 1, 0.6).cell, cullDistance(0.9, 1).cell);
+  assert.ok(cullDistance(0.9, 1).cell >= 0.5 * cullDistance(0.9, 1).distance, 'squares half the distance across');
+  // the squares grow with the distance (a frustum holds about as many)
+  const cells = [0.1, 1, 2, 19].map((s) => cullDistance(s, 1).cell);
+  assert.deepEqual(cells, cells.slice().sort((a, b) => a - b));
+  assert.ok(cells[0] >= 250);
+});
+
+test('a box mostly of air counts as smaller than its extents; a box, a card and a solid as big', () => {
+  const surfaceFill = vm.runInNewContext(`(${topLevel('surfaceFill')})`, { Math });
+  // a unit square as two triangles, one-sided (a card): half its flat box's shell
+  const card = [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0];
+  assert.ok(Math.abs(surfaceFill(card, null, { x: 1, y: 1, z: 0 }) - 0.5) < 1e-9);
+  // the same card indexed
+  assert.ok(Math.abs(surfaceFill([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0], [0, 1, 2, 0, 2, 3], { x: 1, y: 1, z: 0 }) - 0.5) < 1e-9);
+  // a thin bar 2.3 m long, 10 cm square, inside a 2.3 x 3.1 x 0.1 m box (the CFE crossarm's): a few hundredths
+  const bar = 4 * 2.3 * 0.1;
+  const tri = [0, 0, 0, Math.sqrt(2 * bar), 0, 0, 0, Math.sqrt(2 * bar), 0]; // (one triangle of the bar's area)
+  const fill = surfaceFill(tri, null, { x: 2.3, y: 3.1, z: 0.1 });
+  assert.ok(fill > 0.04 && fill < 0.1, `${fill}`);
+  assert.equal(surfaceFill(card, null, { x: 0, y: 0, z: 0 }), 1, 'no box, no shrinking');
+});

@@ -21,6 +21,7 @@ npm run play       # play with someone over the internet: the game + its server 
   - `?multiplayer=1` joins the room server (see `server/README.md`).
   - `?slopes=0` builds the flat city of before, everything at y = 0 (the default lays the town on its real slopes, `world/ground.ts`).
   - `?stream=0` lays all the ground layers at start-up, as before streaming (the default lays them tile by tile around the camera, `world/streaming.ts`).
+  - `?quality=<high|low>` picks the graphics tier (`app/quality.ts`); a touch screen gets `low` by default: a smaller shadow map, no SSR, the small props drawn nearer.
   - `?debug` adds `window.__slop` (the scene and every system) and times each system of the frame loop: `__slop.scheduler.report()`.
 
 ## Layout
