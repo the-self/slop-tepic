@@ -120,8 +120,8 @@ Use `--keep-width` for props that stand alone.
 
 ## Cars and people
 
-- **Only the cars modelled in Blender are files** (2026-10-27): `cars/tesla-cybertruck.glb` and `cars/tesla-model-y.glb`,
-  modelled by script (`tools/models/blender/`, below). Every other car is drawn with its procedural body shape (`js/actors/actor-models.ts`,
+- **Only the cars modelled in Blender are files** (2026-10-27): `cars/tesla-cybertruck.glb`, `cars/tesla-model-y.glb` and the Tsuru's two
+  (`nissan-tsuru.glb`, the taxi with its roof sign, and `nissan-tsuru-particular.glb`), modelled by script (`tools/models/blender/`, below). Every other car is drawn with its procedural body shape (`js/actors/actor-models.ts`,
   `models/bodies.ts`). The ten Meshy cars and the four from Sketchfab below were taken out, files and jobs: they
   looked worse than the body shapes, and the heavy ones cost the game too much (the Onix 111k triangles, 13 MB). What
   was learnt making them stays here; their files and jobs are in git's history (before 2026-10-27).
@@ -277,7 +277,13 @@ Use `--keep-width` for props that stand alone.
     sinks between the fenders' crests (`fender_rise`), which from ahead rise at its corners with the light bar's
     ends; the side windows' top is a point of its own on the section, so the quarter window can close in a point
     under the C pillar. Judge the front from straight ahead and close up (`face`, `lamp` views) against a photograph
-    from ahead: the 3/4 view hid all of this. No bevel on the body: the arches' rounded edges bent the
+    from ahead: the 3/4 view hid all of this.
+  - **An old boxy car** (the Tsuru): the same tools, but its faces are steps of the top profile (the lamps' face
+    under the hood's edge, the tail's panel), its corners in plan a softer superellipse, and its bumpers rounded in
+    profile too, so the end caps are slivers (cap rings on a cap thinner than them tore it). Squared off, it read as
+    a box: the real one is soft everywhere. Lamps are filled shapes (a chrome reflector, a lens, a round lamp's bowl,
+    `carlib.disc`), never outlines: drawn rings and lines read as a child's drawing. One script, two files: `--taxi`
+    adds the roof sign; the player's taxi draws its file too (car-looks.ts), its door badges hidden. No bevel on the body: the arches' rounded edges bent the
     paint's normals into dark streaks up the fenders, and weighted normals (`tidy(..., weighted=False)`) smeared a
     body curved all over. Lamps, slots, intakes and bumpers are drawn flat in a plane before the car (`decal`,
     `panel`) and laid onto the skin (`onto`: a shrinkwrap, projected along y, or to the nearest point round a corner,
