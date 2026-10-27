@@ -1415,7 +1415,10 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
   // waits on it stands in the way of the traffic crossing there (of other roads, which share the junction with it).
   // Where the link comes off a bend (a shape node: nothing crosses there), its stop line goes back as far as that
   // takes, as long as a car waiting there still stands on the link (not around the bend, in the way of the next);
-  // a link that can't keep clear even so is dropped.
+  // a link that can't keep clear even so is dropped, unless it is the only way on from a road into it: that road would
+  // be left a dead end, and 7. would prune every road leading only to it (a whole carriageway of Av. Tecnológico, the
+  // way out of a glorieta onto Av. México). Off a bend (one road in) it always is: in Tepic every such link is kept,
+  // and a car waiting on one may stand in the crossing traffic's way.
   const inOf = new Map<RoadNode, RoadEdge[]>();
   for (const e of edges) {
     let ins = inOf.get(e.to);
@@ -1458,10 +1461,12 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     return false;
   }
   const inTheWayOut = new Set<RoadEdge>();
+  const onlyWayOn = (e: RoadEdge) => (inOf.get(e.from) ?? []).some((o) => o.moves.some((m) => m.to === e) &&
+    o.moves.every((m) => m.to === e || inTheWayOut.has(m.to)));
   for (const e of edges) {
     if (!e.squeezed || !e.from.shape || !inTheWay(e)) continue;
     while (e.len > 6 && inTheWay(e)) e.len = Math.max(5.5, e.len - 1);
-    if (inTheWay(e)) inTheWayOut.add(e); // even so
+    if (inTheWay(e) && !onlyWayOn(e)) inTheWayOut.add(e); // even so
   }
   if (inTheWayOut.size) {
     edges = edges.filter((e) => !inTheWayOut.has(e));

@@ -2853,8 +2853,13 @@ log(`teleports: ${Object.keys(teleports).join(', ')}`);
 // =====================================================================================================================
 // Tepic's routes are run by camiones (midibuses painted in their route's colours, its name across the windshield)
 // and combis (white Urvan & Hiace vans with the route's sign on the roof). The map doesn't say which serves which;
-// photos of the streets do for some, and the game puts both on the rest.
-const ROUTE_FLEET = [[/^Progreso/, 'bus'], [/^Mololoa/, 'bus'], [/^Cantera Hospitales/, 'combi'], [/^Allende$/, 'combi']];
+// the Ayuntamiento's mobility plan does (2019: 28 routes of camiones or minibuses, 18 of combis, as Meganoticias lists
+// them, "Reordenamiento de transporte público busca agilizar movilidad en centro histórico"), by its own names:
+// Hospitales is Cantera Hospitales, Suchiate - Zapopan Río Suchiate, Pedregal - Matatipac Pedregal, Agrónomos 1 & 2
+// Agrónomos Universidad, Universidad Amado Nervo - Universidad, Morelos - Independencia Morelos. The game puts both on
+// the routes it doesn't name (Aguacate Huachines, Senderos, La Yerba).
+const COMBI_ROUTES = /^(INDECO|Progreso 6-2|Sauces [12]|UNINAY|Amado Nervo - Universidad|Agrónomos Universidad|Allende|Insurgentes|México|Pedregal|Río Suchiate|Cantera Hospitales [12])$/;
+const BUS_ROUTES = /^(Aguacate (Consorcio|Directo)|Centro Seguro por Morelos|CUAUHTEMOC|(Villas )?Jazmines|Laguna|Llanitos .+|Lo de Lamedo|Mololoa .+|Morelos|Ojo de Agua|Peñitas|Progreso [1-5]|Ruta 15-1|Venceremos)$/;
 const transit = { groups: [], routes: [] };
 {
   const file = path.join(DATA, 'semovi_routes.json');
@@ -2873,7 +2878,7 @@ const transit = { groups: [], routes: [] };
       drawn += r.samples;
       on += r.matched;
       if (!r.pieces.length) { log(`route ${name}: not on the map`); continue; }
-      const fleet = (ROUTE_FLEET.find(([re]) => re.test(name)) || [null, ''])[1];
+      const fleet = COMBI_ROUTES.test(name) ? 'combi' : BUS_ROUTES.test(name) ? 'bus' : '';
       // [name, group index, the map's line colour, 'bus' | 'combi' | '' (both), loops 1 | 0, pieces: signed link refs]
       transit.routes.push([name, Math.max(0, groups.findIndex((g) => g.id === f.properties.group)), f.properties.stroke || '#5a5a5a',
         fleet, r.loop ? 1 : 0, r.pieces]);
