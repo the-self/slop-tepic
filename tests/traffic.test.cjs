@@ -615,6 +615,33 @@ test('a short link off a bend that stands in the way at its junction is kept whe
   assert.ok(link.moves.length > 0, 'and from it onto Av. México');
 });
 
+test('two divided avenues crossing, a light at each crossing of their carriageways, make one junction', () => {
+  // A (east-west): west-bound carriageway at z = -10, east-bound at z = 10; B (north-south): south-bound at x = -10,
+  // north-bound at x = 10. They cross at four nodes 20 m apart, each with its lights, as OpenStreetMap draws Av.
+  // Tecnológico across Lagos del Country; each carriageway turns into the other 200 m out (so every road has a way on)
+  const nodes = [-10, -10, 10, -10, 10, 10, -10, 10, -200, -10, 200, -10, 200, 10, -200, 10, -10, -200, -10, 200, 10, 200, 10, -200];
+  const one = (a, b) => [a, b, 0, 7, 2, 1, [], 0, 0];
+  const links = [
+    one(5, 1), one(1, 0), one(0, 4), // A west-bound
+    one(7, 3), one(3, 2), one(2, 6), // A east-bound
+    one(8, 0), one(0, 3), one(3, 9), // B south-bound
+    one(10, 2), one(2, 1), one(1, 11), // B north-bound
+    one(4, 7), one(6, 5), one(9, 10), one(11, 8) // the turns 200 m out
+  ];
+  const net = networkOf({ nodes, links, signals: [-10, -10, 10, -10, 10, 10, -10, 10] });
+  const lit = net.nodes.filter((n) => n.signal);
+  assert.equal(lit.length, 1, 'one signalised junction');
+  const [n] = lit;
+  assert.ok(Math.hypot(n.x, n.z) < 1, 'in the middle of the four');
+  assert.ok(!net.edges.some((e) => e.from.signal && e.to.signal), 'no link left between two lights');
+  // each avenue's two carriageways run as one road there: one group (one phase, sharing the box), the other avenue another
+  const groupOf = (dx, dz) => new Set(n.in.filter((e) => Math.abs(e.dx * dx + e.dz * dz) > 0.9).map((e) => e.axisIndex));
+  const a = groupOf(1, 0), b = groupOf(0, 1);
+  assert.equal(a.size, 1, 'A in one group');
+  assert.equal(b.size, 1, 'B in one group');
+  assert.notDeepEqual([...a], [...b]);
+});
+
 // A driver on a long straight road (lane 1.8 m right of the centreline, curb 4.55 m), driven by the real IDM, lane
 // keeping, dodging and curb stops (pickups real or stubbed), with the player as the traffic sees it. Its pose is set by
 // hand (heading +z, the right to -x) as locate() would.
