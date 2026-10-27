@@ -27,6 +27,7 @@ import { AimControl } from './player/aim.ts';
 import { createCarPhysics } from './player/car-physics.ts';
 import { createRagdolls } from './sim/ragdolls.ts';
 import type { RagdollHandle } from './sim/ragdolls.ts';
+import type { PowerFault } from './world/cfe-sparks.ts';
 import { BloodPools } from './sim/blood.ts';
 import { cityUniforms } from './render/tsl-materials.ts';
 import { grassDryness } from './world/lot-greenery.ts';
@@ -67,8 +68,11 @@ interface GameEvents {
   collision: CollisionImpact & { kind: string };
   /** someone thrown, shot or knocked down come to rest (sim/ragdolls.ts onSettle): blood under them, an ambulance */
   settle: RagdollHandle;
+  /** a CFE line down (world/cfe-network.ts): an arc's crackle, a transformer's bang, a shock to the player */
+  power: PowerFault;
 }
 const HARD_CRASH = 9; // m/s (~32 km/h) a crash is struck at for an ambulance to be called
+const SHOCK_DAMAGE = 22; // health a fallen line's shock takes at its worst (a few and you are down)
 
 const isWeatherSample = (name: string | null): name is WeatherSampleName => name !== null && name in WEATHER_SAMPLES;
 const PERSON_WAIT = 8000; // ms the loading screen waits for the player's body (3 MB) before the shaders compile
@@ -294,6 +298,13 @@ async function initApp(): Promise<void> {
   for (const system of [controllerManager, trafficSystem, streetDetails.breaker]) {
     system.setCollisionListener((impact) => { events.emit('collision', impact); });
   }
+  // A CFE pole knocked down: its lines arcing in the street, its transformer going up, a shock for who walks into them
+  streetDetails.cfe.listener = (e) => { events.emit('power', e); };
+  events.on('power', (e) => {
+    if (e.type === 'bang') audioSystem.gunfire('explosion', e.x, e.y, e.z);
+    else audioSystem.arc(e.x, e.y, e.z, e.strength);
+    if (e.type === 'shock') crimeSystem.hurt(SHOCK_DAMAGE * e.strength, e.x, e.z);
+  });
   events.on('collision', (impact) => { audioSystem.onCollision(impact); });
   // a hard crash (~32 km/h and up: the player's, or two of the traffic's): an ambulance (sim/emergency.ts)
   events.on('collision', (impact) => { if (impact.speed >= HARD_CRASH) emergency.callAmbulance(impact.x, impact.z); });
@@ -586,7 +597,8 @@ async function initApp(): Promise<void> {
   loading.mark('compile');
 
   // The frame loop. Each system steps once a frame, in this order: input & the player first (what everything else
-  // follows), then the cameras, the world's clock & the traffic, the crime, the city's life and the emergency services
+  // follows), then the cameras, the world's clock & the traffic (and the props it knocks down), the CFE's lines down,
+  // the crime, the city's life and the emergency services
   // (the fires there call the bomberos), the HUD, the city's
   // level of detail round the camera, the weather, the network, the map & the audio, and the streamed tiles.
   const weather = new WeatherEffects({
@@ -636,8 +648,12 @@ async function initApp(): Promise<void> {
       const entity = controllerManager.getActiveEntity();
       trafficSystem.update(dt, elapsed, cameraSystem.currentPos, entity, controllerManager.activeMode, cameraSystem.camera);
       highwayTraffic.update(dt, cameraSystem.camera, entity, controllerManager.activeMode);
-      // lamp posts, sign posts, hydrants & bins the player's vehicle runs into (sim/mayhem.ts)
+      // lamp posts, sign posts, hydrants & bins, CFE poles & trees the player's vehicle runs into (sim/mayhem.ts)
       streetDetails.breaker.update(dt, entity, controllerManager.activeMode);
+    })
+    // the CFE's lines: those down arcing, the runs without power going dark (world/cfe-network.ts)
+    .run('power', ({ dt }) => {
+      streetDetails.cfe.update(dt, cameraSystem.camera, controllerManager.getActiveEntity().position, controllerManager.activeMode === 'person');
     })
     .run('crime', ({ dt, elapsed }) => {
       // gunfire, the police, gangs & thieves, and a blast's shake of the camera

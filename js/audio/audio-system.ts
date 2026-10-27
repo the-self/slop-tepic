@@ -268,6 +268,8 @@ class CityAudioSystem {
   rainVoice?: RainVoice;
   /** The record gunfire() plays its shots at, reused */
   gunSource?: { id: unknown; x: number; y: number; z: number; seed: number };
+  /** ...and arc() its crackles */
+  arcSource?: { id: unknown; x: number; y: number; z: number; seed: number };
 
   constructor(simulation: AudioSimulation, { onStateChange = () => { /* nobody to tell */ } }: { onStateChange?: () => void } = {}) {
     this.sources = new CityAudioSources(simulation);
@@ -513,9 +515,10 @@ class CityAudioSystem {
     const crash = kind === 'crash';
     const loud = kind === 'gun' || kind === 'explosion'; // (gunfire & blasts take their voices like crashes do)
     const severity = clamp(options.severity ?? options.intensity ?? 1, 0, 1);
-    const ref = crash ? 4 + severity * 8 : kind === 'explosion' ? 30 : kind === 'gun' ? 10 : kind === 'horn' ? 8 : kind === 'talk' ? 2 : 1.8;
+    const ref = crash ? 4 + severity * 8 : kind === 'explosion' ? 30 : kind === 'gun' ? 10 : kind === 'horn' ? 8 : kind === 'arc' ? 5
+      : kind === 'talk' ? 2 : 1.8;
     const range = crash ? 50 + severity * 110 : kind === 'explosion' ? 600 : kind === 'gun' ? 300 : kind === 'horn' ? 140
-      : kind === 'talk' ? 30 : kind === 'footstep' ? 22 : 35;
+      : kind === 'arc' ? 90 : kind === 'talk' ? 30 : kind === 'footstep' ? 22 : 35;
     if (Math.hypot(source.x - this.listener.x, source.y - this.listener.y, source.z - this.listener.z) > range) return false;
     if (crash || loud) {
       // Impacts are immediate, between the 10 Hz ambience updates. Reclaim finished events first, then let
@@ -592,6 +595,14 @@ class CityAudioSystem {
     if (kind === 'pickup') return this.emit('pickup', source, { intensity: 1 });
     if (kind === 'draw') return this.emit('draw', source, { intensity: 1 });
     return this.emit('gun', source, { weapon: kind, severity: kind === 'bazooka' ? 1 : kind === 'smg' ? 0.5 : 0.7, intensity: 1 });
+  }
+
+  // A fallen line arcing at (x, y, z) (world/cfe-sparks.ts), `strength` 0..1 as it dies down
+  arc(x: number, y: number, z: number, strength: number) {
+    if (!this.ready || !this.enabled || !this.haveListener || this.context?.state !== 'running' || document.hidden) return false;
+    const source = this.arcSource ??= { id: null, x: 0, y: 0, z: 0, seed: 0 };
+    source.id = this.arcSource; source.x = x; source.y = y; source.z = z; source.seed = ++this.collisionSequence;
+    return this.emit('arc', source, { intensity: Math.max(0.2, Math.min(1, strength)) });
   }
 
   honk(entity: AudioEntity | null | undefined) {

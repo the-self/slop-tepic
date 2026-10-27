@@ -22,7 +22,10 @@ import {
   fwidth,
   texture,
   mrt,
-  select
+  select,
+  uniformArray,
+  Loop,
+  length
 } from 'three/tsl';
 import { townGrid } from '../../world/ground.ts';
 import type { Node } from 'three/webgpu';
@@ -50,6 +53,28 @@ export const cityUniforms = {
   uClock: uniform(0)
 };
 export type CityUniforms = typeof cityUniforms;
+
+// The streets without power (world/cfe-network.ts: a CFE pole knocked down takes its transformer's run with it): up to
+// BLACKOUT_MAX stretches of street [ax, az, bx, bz] (m), the first uBlackouts of them in use. The windows within
+// BLACKOUT_REACH m of one stay dark at night (blackoutLit)
+export const BLACKOUT_MAX = 64;
+export const BLACKOUT_REACH = 30; // m either side of the poles' line: the houses on both sides of the street
+export const blackoutSpans = uniformArray<'vec4'>(Array.from({ length: BLACKOUT_MAX }, () => new THREE.Vector4()), 'vec4');
+export const uBlackouts = uniform(0, 'int');
+
+/** 1 lit .. 0 dark: how much power reaches world point `xz` (a window's glow is multiplied by it) */
+export const blackoutLit = Fn(([xz]: [Node<'vec2'>]) => {
+  const lit = float(1.0).toVar();
+  // (an empty loop when the town has power: the facades pay for the stretches in use only)
+  Loop(uBlackouts, ({ i }) => {
+    const s = blackoutSpans.element(i);
+    const ab = s.zw.sub(s.xy);
+    const t = clamp(dot(xz.sub(s.xy), ab).div(max(dot(ab, ab), 0.0001)), 0.0, 1.0);
+    const d = length(xz.sub(s.xy.add(ab.mul(t))));
+    lit.mulAssign(smoothstep(BLACKOUT_REACH - 6, BLACKOUT_REACH, d));
+  });
+  return lit;
+});
 
 // Fast deterministic 2D -> 1D hash in TSL
 export const hash2D = Fn(([p]: [Node<'vec2'>]) => {

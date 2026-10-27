@@ -8,4 +8,11 @@ function hash(x: number, z: number, k = 0): number {
   return s - Math.floor(s);
 }
 
-export { hash };
+// The street furniture's (street-details.ts, the CFE's poles, trees.ts' per-tree variation): for (x, k, z), the same
+// numbers they were planted by before this module, so every lamp, transformer and tree stays where it was
+function hashPos(x: number, y: number, z: number): number {
+  const s = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+export { hash, hashPos };

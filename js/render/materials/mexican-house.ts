@@ -28,7 +28,7 @@ import {
   uniformArray,
   int
 } from 'three/tsl';
-import { cityUniforms, hash2D, noise2D, lineAA, townFloorNode, canyonSkyAONode } from './shared.ts';
+import { cityUniforms, hash2D, noise2D, lineAA, townFloorNode, canyonSkyAONode, blackoutLit } from './shared.ts';
 import type { Node } from 'three/webgpu';
 
 // js/render/materials/mexican-house.ts
@@ -314,7 +314,9 @@ export function createMexicanHouseMaterial({ floorHeight = 3.0, chains = [] }: M
 
   mat.colorNode = wall.color;
   mat.roughnessNode = mix(float(0.86), float(0.3), wall.shiny);
-  mat.emissiveNode = wall.glow.mul(0.55).add(color(0xeef4ff).mul(wall.store).mul(0.35)).mul(smoothstep(0.35, 1.2, cityUniforms.uInteriorGlow));
+  // (the rooms and the shops dark where the street's power is out: world/cfe-network.ts)
+  mat.emissiveNode = wall.glow.mul(0.55).add(color(0xeef4ff).mul(wall.store).mul(0.35)).mul(smoothstep(0.35, 1.2, cityUniforms.uInteriorGlow))
+    .mul(blackoutLit(positionWorld.xz));
   mat.aoNode = canyonSkyAONode();
   _mexicanHouseMat = mat;
   return mat;
