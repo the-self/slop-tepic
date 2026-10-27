@@ -71,6 +71,22 @@ test("Tepic's ground: the datum is the town's lowest point and its streets climb
   }
 });
 
+test("Tepic's hills stand at their real height: Cerro de San Juan's summit at 2,240 m, a peak and not a crater", () => {
+  const g = createGround(GEO, { slopes: true });
+  const at = (x, z) => g.landHeight(x, z) + GEO.ground.datum;
+  // the summit, with its masts (21.4486, -104.9742): the highest point round it, at about its real 2,240 m (once
+  // its masts made it town, and the cerro stood on a floor raised to the summit: 3,400 m, a crater on top)
+  let top = -Infinity, tx = 0, tz = 0;
+  for (let x = -5300; x <= -4100; x += 25) for (let z = 9350; z <= 10550; z += 25) {
+    if (at(x, z) > top) { top = at(x, z); tx = x; tz = z; }
+  }
+  assert.ok(top > 2200 && top < 2290, `summit ${top.toFixed(0)} m a.s.l.`);
+  assert.ok(Math.hypot(tx + 4700, tz - 9950) < 300, `summit at ${tx}, ${tz}`);
+  for (let a = 0; a < 2 * Math.PI; a += 0.25) {
+    assert.ok(at(tx + 300 * Math.cos(a), tz + 300 * Math.sin(a)) < top - 30, 'the cerro falls away from its summit');
+  }
+});
+
 test('triangles cut along the lattice keep their area & winding, each piece on one ground triangle', async () => {
   const { clipToLattice } = await import('../js/world/ground.ts');
   const lattice = { x0: -5, z0: 3, cell: 10 };
