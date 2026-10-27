@@ -388,8 +388,8 @@ class TileStreamer {
   }
 
   /**
-   * A mesh per layer for the start-up's shader warm-up (main.ts), so no layer's pipelines are first built in play when
-   * its first tile comes in: one triangle of no size each, under the city, every attribute in place
+   * A mesh per layer for the start-up's shader warm-up (app/frame-loop.ts), so no layer's pipelines are first built in
+   * play when its first tile comes in: one triangle of no size each, under the city, every attribute in place
    */
   warmupMeshes(): THREE.Mesh[] {
     return this.layers.map((layer) => {

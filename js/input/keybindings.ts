@@ -2,8 +2,8 @@
 // The keyboard's bindings: which keys (KeyboardEvent.code, so they stay put whatever the layout) do what, the
 // defaults, and the player's own from the menu's Keys tab (ui/key-config.ts), remembered in localStorage. Every part of
 // the game that listens to a key asks here (controllers/input.ts, aim.ts, crime/player.ts, the weapon wheel, the map,
-// the chat, main.ts), so a key changed in the menu changes everywhere at once. Free of three.js and of imports (but
-// the type of its labels' message keys, i18n/en.ts), so node --test runs it as it is.
+// the chat, app/install/controls.ts), so a key changed in the menu changes everywhere at once. Free of three.js and of
+// imports (but the type of its labels' message keys, i18n/en.ts), so node --test runs it as it is.
 //
 // Some keys stay fixed: Esc (the menu), 1-4 (weapons), 5-0 (cameras) and the mouse.
 import type { MessageKey } from '../i18n/en.ts';

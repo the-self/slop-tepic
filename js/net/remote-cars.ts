@@ -71,8 +71,8 @@ class RemoteCarFleet {
 
   /**
    * Takes the template's parts now and draws one car out of sight (at no size) until clear(): made before the shader
-   * precompile (main.ts), the precompile and the warm-up frame build the parts' instanced pipelines, for the view and
-   * the shadows, instead of the first remote car to drive into view stalling a frame for them
+   * precompile (app/frame-loop.ts), the precompile and the warm-up frame build the parts' instanced pipelines, for the
+   * view and the shadows, instead of the first remote car to drive into view stalling a frame for them
    */
   prime(): void {
     this.lookChanged();

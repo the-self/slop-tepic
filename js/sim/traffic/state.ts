@@ -66,15 +66,15 @@ interface TrafficState extends VehicleMeshes {
   mayhemListener: MayhemListener | null;
   /** told when the player runs someone over */
   knockListener: KnockListener | null;
-  /** smoke from a damaged engine, through the player's smoke (main.ts) */
+  /** smoke from a damaged engine, through the player's smoke (app/install/player.ts) */
   smokeEmitter: SmokeEmitter | null;
   /** Jolt's world, the player's car's (player/car-physics.ts), for the cars thrown about in a crash */
   physics: CarPhysics | null;
-  /** the people thrown about (sim/ragdolls.ts, main.ts) */
+  /** the people thrown about (sim/ragdolls.ts, app/install/player.ts) */
   ragdolls: Ragdolls | null;
-  /** where walls stand (main.ts hands over the player's building colliders): knocked bodies bounce off them */
+  /** where walls stand (install/player.ts: the player's building colliders): knocked bodies bounce off them */
   solidAt: SolidQuery | null;
-  /** where a building's wall stands (main.ts: solidAt without the poles & bollards), for the people walking */
+  /** where a building's wall stands (install/player.ts: solidAt but the poles & bollards), for the people walking */
   wallAt: SolidQuery | null;
   /** whether (x, z) is in a park (city-config.ts blockAt), where some of the people placed go jogging */
   parkAt: (x: number, z: number) => boolean;
@@ -136,7 +136,8 @@ interface TrafficState extends VehicleMeshes {
   focusZ: number;
   /** (mode, heading, speed, knocks & jolt: set every update, before anything reads them) */
   player: TrafficPlayer;
-  /** what stands in the road that isn't the traffic's (main.ts: the player's vehicles left there, the patrol cars),
+  /** what stands in the road that isn't the traffic's (app/frame-loop.ts: the player's vehicles left there, the patrol
+   * cars),
    *  and the cars thrown about in a crash (crashedStep): all of it steered round, as `parked` */
   parkedOutside: ParkedVehicle[];
   /** the fire trucks & ambulances on their way (hooks.ts setSirens): the traffic pulls over for them */
@@ -175,7 +176,7 @@ interface TrafficState extends VehicleMeshes {
   nearSignals: TrafficNode[];
   nearX: number;
   nearZ: number;
-  /** the hour of the day (local, 0-24; main.ts setHour), and the one the near edges were last weighed for */
+  /** the hour of the day (local, 0-24; app/frame-loop.ts setHour), and the one the near edges were last weighed for */
   hour: number;
   weighedHour: number;
   nearCarWeights: number[];

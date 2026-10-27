@@ -54,7 +54,7 @@ import { t } from '../i18n/i18n.ts';
 // - Two gangs on their turf, who shoot back (Los Rojos at anyone who comes close), and thieves who snatch the player's
 //   money and run.
 // - The player's health, armour and money, pickups, and being WASTED (killed) or BUSTED (arrested): back at the
-//   nearest teleport spot (main.ts onRespawn).
+//   nearest teleport spot (onRespawn: `respawn` on the bus, app/install/controls.ts).
 // - Out on the town's edges a (made-up) cartel with rifles: shooting on sight, at war with the police wherever they
 //   meet, sending black trucks of reinforcements after whoever takes them on.
 // The people it adds are PersonRigs drawn in one crowd, dressed in their outfits (pedestrians.ts OUTFIT).
@@ -86,7 +86,7 @@ class CrimeSystem {
   fireBlocked = false;
   policeOff = false; // a multiplayer room without police (net/lobby.ts): crimes raise no wanted level
   personGround: (owner: unknown, x: number, z: number) => number;
-  // (a burning wreck where a blast went off: fires.ts, from main.ts)
+  // (a burning wreck where a blast went off: fires.ts, from app/install/city-life.ts)
   onExplosion?: (x: number, y: number, z: number, radius: number) => void;
   ragdolls: Ragdolls | null;
   physics: CarPhysics | null;
@@ -226,8 +226,8 @@ class CrimeSystem {
       this.fx.splatter(x, this.groundAt(x, z) + 0.9, z, speed);
       controllers.bloodyCar?.(x, z, speed); // (on the player's car, if it was the car)
     });
-    this.ragdolls = null; // (sim/ragdolls.ts, from main.ts: who falls, falls as a body)
-    this.physics = null; // (player/car-physics.ts, from main.ts: the patrol cars near the player are cars in it)
+    this.ragdolls = null; // (sim/ragdolls.ts, from app/install/crime.ts: who falls, falls as a body)
+    this.physics = null; // (player/car-physics.ts, install/crime.ts: the patrol cars near the player are cars in it)
   }
 
   // =========================================================================

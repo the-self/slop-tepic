@@ -8,8 +8,8 @@ import type { TrafficState } from './state.ts';
 import { ahead } from './occupancy.ts';
 
 // Where the player is relative to v: metres ahead, metres to the right, how fast it moves v's way (negative: at v)
-// and across, and how big it is. A vehicle the player left standing in the road (main.ts: setParked) counts instead
-// when it is nearer ahead in v's own lane
+// and across, and how big it is. A vehicle the player left standing in the road (app/frame-loop.ts: setParked) counts
+// instead when it is nearer ahead in v's own lane
 function relateToPlayer(ts: TrafficState, v: Vehicle): void {
   v.pAhead = Infinity;
   v.pParked = false;

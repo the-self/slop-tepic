@@ -109,8 +109,8 @@ interface Prop extends BreakableProp {
   /** the car that snapped it (snap), which it lies through till it is clear of it (unghost), parked or driven */
   snappedBy?: KnockingEntity | null;
 }
-// The collision told to the listener (main.ts: the audio and the crash damage); one object, reused. A heavy prop's is
-// between the vehicle that struck it (a) and the prop (b), so it hurts whoever drives it
+// The collision told to the listener (on the bus, app/game.ts: the audio and the crash damage); one object, reused. A
+// heavy prop's is between the vehicle that struck it (a) and the prop (b), so it hurts whoever drives it
 interface PropImpact {
   a: BreakableProp | KnockingEntity | null;
   b: THREE.InstancedMesh | BreakableProp | null;

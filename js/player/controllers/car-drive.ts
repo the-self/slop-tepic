@@ -21,9 +21,9 @@ const FLAT_PULL = 0.03;
 const FLAT_SINK = 0.18;
 const FLAT_DRAG = 0.9;
 
-// The car: a rigid body on its sprung wheels in Jolt Physics (car-physics.ts, set up by main.ts before the first
-// frame). Before the world's step (stepVehicles): what the traffic did to it since the last one carried over, and
-// drivetrain.ts's drive for its tyres. Not `driving`, it stands (or rolls on, its driver thrown out) on its own
+// The car: a rigid body on its sprung wheels in Jolt Physics (car-physics.ts, set up by app/install/player.ts before
+// the first frame). Before the world's step (stepVehicles): what the traffic did to it since the last one carried over,
+// and drivetrain.ts's drive for its tyres. Not `driving`, it stands (or rolls on, its driver thrown out) on its own
 export function driveCar(ctl: ThirdPersonControllerManager, dt: number, driving: boolean): void {
   const c = ctl.entities.car;
   const P = ctl.carPhysics;
@@ -225,7 +225,7 @@ export function carMoved(ctl: ThirdPersonControllerManager, dt: number, driving:
     if (wheel.isFront) wheel.steerPivot.rotation.y = steer;
   });
   ctl.carEffects(c, c.drive, c.damage, throttle, c.speed, slip, water, dt);
-  // heavy rain washing its stains off (ctl.rain: main.ts, the rain falling, 0..1)
+  // heavy rain washing its stains off (ctl.rain: app/weather-effects.ts, the rain falling, 0..1)
   if (c.bloody && c.blood && (ctl.rain || 0) > 0.35) {
     c.bloody = wash(c.stains, dt, ctl.rain);
     ctl.showBlood(c);
@@ -259,7 +259,7 @@ export function carEffects(ctl: ThirdPersonControllerManager, c: CarEntity, d: D
   }
 }
 
-// Jolt's vehicles (car-physics.ts), from main.ts before the game starts
+// Jolt's vehicles (car-physics.ts), from app/install/player.ts before the game starts
 export function setCarPhysics(ctl: ThirdPersonControllerManager, physics: CarPhysics | null | undefined): void {
   ctl.carPhysics = physics ?? null;
   ctl.entities.car.vehicle = null;

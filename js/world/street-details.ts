@@ -185,7 +185,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
   const footprints: Bounds[] = [];
   const addFootprint = (x: number, z: number, w: number, d: number) => footprints.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
 
-  // Signal clock (seconds), set every frame by main.ts
+  // Signal clock (seconds), set every frame by app/frame-loop.ts
   const signalClock = uniform(0);
 
   // Shared materials
@@ -724,7 +724,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
         transformerOf.set(p.i, transformers.length);
         transformers.push(dummy.matrix.clone());
       }
-      // concrete stops a car (main.ts adds these to the player's colliders), till one strikes it hard enough
+      // concrete stops a car (app/city.ts adds these to the player's colliders), till one strikes it hard enough
       const collider: PropCollider = { minX: p.x - 0.17, maxX: p.x + 0.17, minZ: p.z - 0.17, maxZ: p.z + 0.17, minY: p.g, maxY: p.g + CFE_H };
       poleColliders.push(collider);
       cfeColliders.push(collider);
@@ -1076,8 +1076,8 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
   const planted = keepClear.length ? treePositions.filter((t) => !keepClear.some((r) => r.contains(t.x, t.z))) : treePositions;
   const treeField = createTreeField(scene, planted);
   group.add(treeField.group);
-  // ...and their trunks stop the player, like the CFE poles (main.ts adds both to the player's colliders); those thin
-  // enough to give, till a car strikes them hard enough (trees.ts treeFall: a body a size, shared)
+  // ...and their trunks stop the player, like the CFE poles (app/city.ts adds both to the player's colliders); those
+  // thin enough to give, till a car strikes them hard enough (trees.ts treeFall: a body a size, shared)
   const treeProps: BreakableProp[] = [];
   {
     const bodies = new Map<string, PropBody>();
@@ -1398,7 +1398,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
 
   /**
    * Mexican mast-arm traffic signals at the road network's signalised junctions (built once the network exists, see
-   * main.ts): on each approach a black pole at the right-hand curb, an arm over the lanes, a black three-light head
+   * app/city.ts): on each approach a black pole at the right-hand curb, an arm over the lanes, a black three-light head
    * over them facing the traffic (lit with that road's phase, like the grid's heads at the same height) and a green
    * blade with the name of the street crossing it. Each pole's collider goes into `colliders` (the player's).
    */

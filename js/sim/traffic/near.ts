@@ -5,7 +5,7 @@ import { NEAR_RADIUS, NUM_CARS, NUM_PEDS, clamp } from './constants.ts';
 import type { TrafficEdge } from './types.ts';
 import type { TrafficState } from './state.ts';
 
-// The hour of the day (local, 0-24; main.ts setHour) sets how much traffic and how many people are out
+// The hour of the day (local, 0-24; app/frame-loop.ts setHour) sets how much traffic and how many people are out
 // (traffic-demand.ts). Each near edge is weighed by the metres of it within NEAR_RADIUS: a car is placed on one by
 // its lane-km × its class's density (the avenues, not the colonias' streets), a cyclist likewise but never on an
 // avenue, a pedestrian by its sidewalk-km × its crowd (cumulative, for pickWeighted); their totals are how many cars
