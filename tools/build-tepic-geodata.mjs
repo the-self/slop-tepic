@@ -691,6 +691,36 @@ const topes = [];
   }
   log(`speed bumps: ${topes.length / 3} mapped in the box, ${tally.off} off it, ${tally.other} of other kinds`);
 }
+// The trees OpenStreetMap maps one by one (natural=tree) and the rows of them (natural=tree_row, a tree every
+// TREE_ROW_STEP m along): [x, z, kind] each, flat; kind 0 a lone tree, 1 one of a row. (Tepic's say no species)
+const mappedTrees = [];
+{
+  const TREE_ROW_STEP = 7;
+  const tally = { lone: 0, rows: 0, inRows: 0, off: 0 };
+  for (const e of detailsOSM.elements) {
+    if (e.type !== 'node' || e.tags?.natural !== 'tree') continue;
+    const [x, z] = toWorld(e.lon, e.lat);
+    if (!inBox(x, z)) { tally.off++; continue; }
+    mappedTrees.push(q(x), q(z), 0);
+    tally.lone++;
+  }
+  for (const e of landOSM.elements) {
+    if (e.type !== 'way' || e.tags?.natural !== 'tree_row' || !e.geometry) continue;
+    const pts = e.geometry.map((g) => toWorld(g.lon, g.lat));
+    tally.rows++;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const L = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(L / TREE_ROW_STEP));
+      for (let k = i ? 1 : 0; k <= n; k++) {
+        const x = ax + ((bx - ax) * k) / n, z = az + ((bz - az) * k) / n;
+        if (!inBox(x, z)) continue;
+        mappedTrees.push(q(x), q(z), 1);
+        tally.inRows++;
+      }
+    }
+  }
+  log(`trees: ${tally.lone} mapped one by one, ${tally.inRows} along ${tally.rows} rows, ${tally.off} off the box`);
+}
 
 // =====================================================================================================================
 // 4. BLOCKS: the box minus every roadway (and the things that cut blocks without carrying traffic)
@@ -2658,7 +2688,9 @@ const GEO = {
   // Bus stops on the sidewalks (3): x, z (m), flags (1 a shelter, 2 a bench), flat
   busStops,
   // Speed bumps (3): x, z (m), kind (0 a bump or hump, 1 a table, 2 a cushion, 3 a rumble strip), flat
-  topes
+  topes,
+  // Trees OpenStreetMap maps (3): x, z (m), kind (0 a lone tree, 1 one of a row), flat
+  trees: mappedTrees
 };
 
 const json = JSON.stringify(GEO);

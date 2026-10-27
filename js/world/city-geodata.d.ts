@@ -298,6 +298,8 @@ export interface CityGeodata {
   /** Speed bumps mapped on the streets, 3 numbers each: x, z (m), kind (0 a bump or hump, 1 a table, 2 a cushion, 3 a
    *  rumble strip). */
   topes: number[];
+  /** Trees OpenStreetMap maps, 3 numbers each: x, z (m), kind (0 a lone tree, 1 one of a row). */
+  trees: number[];
 }
 
 export declare const GEO: CityGeodata;

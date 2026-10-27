@@ -5,6 +5,7 @@ import { SIGNAL_TIMING, blockAt, BLOCKS, nearestRoads } from './city-config.ts';
 import { cityUniforms, createTreeGrateMaterial, atlasSlotUV, createWireMaterial, WIRE_FADE } from '../render/tsl-materials.ts';
 import { PropBreaker } from '../sim/mayhem.ts';
 import { createTreeField, treeTrunkColliders } from './trees.ts';
+import { mappedTreeSites, clearOfMapped } from './mapped-trees.ts';
 import { lotTrees } from './lot-greenery.ts';
 import { medianTrees } from './medians.ts';
 import { parkTreeSites, sidewalkBlocks, parkLampSites, medianRuns } from './city-grid.ts';
@@ -980,6 +981,19 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
   for (const t of yardTrees) {
     t.y = SIDEWALK_Y + 0.012 + liftAt(t.x, t.z);
     treePositions.push(t);
+  }
+  // E. The trees OpenStreetMap maps (mapped-trees.ts), where they are; the ones planted above keep clear of them
+  const mappedTrees = mappedTreeSites(GEO.trees, blockAt, liftAt);
+  {
+    const kept = new Set(clearOfMapped(treePositions, mappedTrees));
+    const before = treePositions.length;
+    const all = treePositions.filter((t) => kept.has(t));
+    treePositions.length = 0;
+    treePositions.push(...all, ...mappedTrees);
+    const streets = sidewalkTreePositions.filter((t) => kept.has(t));
+    sidewalkTreePositions.length = 0;
+    sidewalkTreePositions.push(...streets);
+    console.info(`[streetDetails] ${mappedTrees.length} of ${GEO.trees.length / 3} mapped trees planted (the rest in a roadway), ${before - all.length} of the game's own kept clear of them`);
   }
   console.info(`[streetDetails] ${treePositions.length} trees (${sidewalkTreePositions.length} street trees, ${yardTrees.length} in the yards & lots)`);
 
