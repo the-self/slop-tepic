@@ -143,7 +143,11 @@ export function createCurbMaterial() {
     // the centro's curbs are painted traffic yellow (within ~620 m of the Plaza Principal), worn through in patches
     const centro = smoothstep(700.0, 580.0, length(positionWorld.xz));
     const paintLeft = smoothstep(0.28, 0.4, noise2D(vec2(wx.mul(0.9), wz.mul(0.9)).add(3.7)));
-    const painted = mix(stone, mix(color(0xd9a92a), color(0xe8c04a), tone), paintLeft.mul(centro));
+    const yellow = mix(stone, mix(color(0xd9a92a), color(0xe8c04a), tone), paintLeft.mul(centro));
+    // and the glorieta of the Hermana Agua's island (world/hermana-agua.ts, its middle at 128.6, 1117.4: ~13 m to its
+    // curb, the nearest across the street ~23 m) in pink, fresh
+    const glorieta = smoothstep(17.0, 16.0, length(positionWorld.xz.sub(vec2(128.6, 1117.4))));
+    const painted = mix(yellow, mix(color(0xb9548f), color(0xd677ab), tone), glorieta);
     return mix(painted.mul(0.68), painted, topFace).mul(float(1.0).sub(joints.mul(0.42))).mul(mix(float(1.0), float(0.78), wetFilm));
   })();
 

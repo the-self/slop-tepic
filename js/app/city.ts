@@ -24,6 +24,7 @@ import { liftAt, SLOPES, LATTICE, deckHoles } from '../world/ground.ts';
 import { TileStreamer } from '../world/streaming.ts';
 import { paintFarGround, farGroundColor } from '../world/far-ground.ts';
 import { buildTepicLandmarks } from '../world/tepic-landmarks.ts';
+import { buildHermanaAgua, GLORIETA_CLEAR } from '../world/hermana-agua.ts';
 import { buildCotos } from '../world/cotos.ts';
 import { buildCarParks } from '../world/car-parks.ts';
 import { buildBusShelters } from '../world/bus-shelters.ts';
@@ -68,6 +69,8 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   const rivers = buildRiverChannels(scene);
   mark('rivers');
   const { colliders: landmarkColliders } = buildTepicLandmarks(scene);
+  // (and the glorieta of the Hermana Agua by the Parque La Loma, world/hermana-agua.ts)
+  const { colliders: glorietaColliders } = buildHermanaAgua(scene);
   // (and the landmarks made as 3D models, world/landmark-models.ts: their lots now, the models as they load)
   const { colliders: modelColliders } = buildLandmarkModels(scene);
   mark('landmarks');
@@ -82,7 +85,7 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   // (and the swimming pools in the lots)
   buildPools(scene);
   mark('carParks');
-  const colliders: Collider[] = [...landmarkColliders, ...modelColliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...cityGrid.colliders];
+  const colliders: Collider[] = [...landmarkColliders, ...glorietaColliders, ...modelColliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...cityGrid.colliders];
   // The bardas round the big open plots (the canchas, the ranchos, the vacant lots), not across a car park
   const bardas = buildBardas(scene, carParks.keepsOpen);
   mark('bardas');
@@ -91,7 +94,7 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   for (const c of bardas.colliders) colliders.push(c);
 
   // (no yard tree in a store's hall or a car park)
-  const streetDetails = buildStreetDetails(scene, [...stores.reserves, carParks]);
+  const streetDetails = buildStreetDetails(scene, [...stores.reserves, carParks, GLORIETA_CLEAR]);
   mark('streetDetails');
   // Buildings turned along non-grid streets have oriented colliders whose world bounds reach past their lots: they stay
   // inside the property line anyway, so the road network (lanes & sidewalks) doesn't need them.

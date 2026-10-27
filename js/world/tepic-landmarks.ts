@@ -5,7 +5,7 @@ import { GEO } from './city-geodata.js';
 import { blockAt } from './city-config.ts';
 import { cityUniforms } from '../render/tsl-materials.ts';
 import { liftAt, landHeight } from './ground.ts';
-import { MODEL_RESERVES, geoToWorld } from './landmark-models.ts';
+import { MODEL_RESERVES } from './landmark-models.ts';
 import type { LotReserve } from './landmark-models.ts';
 import type { Collider } from './buildings.ts';
 
@@ -849,15 +849,6 @@ function buildMonuments(group: THREE.Group, colliders: Collider[]) {
     place('Fuente Los 3 Delfines', [[f.stone, stone], [f.water, water], [f.jet, jetMat]], { half: 0 });
   }
   {
-    // La Hermana Agua: a woman in bronze high over a round fountain, in the glorieta where the Paseo de la Loma meets
-    // the Calzada de la Cruz & Av. México by the Parque La Loma (not mapped in OpenStreetMap: its roundabout is, way
-    // 1313667127, whose ring is centred here; the island ~13 m across)
-    const [x, z] = geoToWorld(21.502578, -104.896108);
-    const f = fountain(7.5);
-    place('Hermana Agua', [[f.stone, stone], [f.water, water], [pedestal(1.8, 4.6), stone], [figure(3.6, false).translate(0, 4.6, 0), bronze]],
-      { half: 2, height: 9, at: { x, z } });
-  }
-  {
     const f = fountain(7);
     place('Rey Nayar', [[f.stone, stone], [f.water, water], [pedestal(2.0, 4.5), darkStone], [figure(3.6, true).translate(0, 4.5, 0), bronze]], { half: 2.2, height: 9 });
   }
@@ -897,4 +888,4 @@ function buildTepicLandmarks(scene: THREE.Object3D) {
   return { group, colliders };
 }
 
-export { buildTepicLandmarks, LANDMARK_RESERVES, CATEDRAL, PLAN, curbFront, frontRuns };
+export { buildTepicLandmarks, LANDMARK_RESERVES, CATEDRAL, PLAN, curbFront, frontRuns, figure };
