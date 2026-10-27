@@ -7,6 +7,8 @@
 // stand-in further out, nothing past CAR_RADIUS. Each one stops the player like a wall (a collider of the city's), and
 // can be stolen (carNear, take: app/boarding.ts), the player's own car then taking its place; one with another vehicle
 // standing in it is taken away too (clearAt: the player's car put back in the stall on a reload, a friend's who stole it).
+// The cars parked at the curb at the foot of the Cerro de la Cruz, where its road up is closed to them (car-free.ts),
+// are drawn, stop the player and can be stolen the same way.
 import * as THREE from 'three/webgpu';
 import { GEO } from './city-geodata.js';
 import { blockAt } from './city-config.ts';
@@ -16,6 +18,7 @@ import { indexHouses } from './lot-greenery.ts';
 import { hash } from './hash.ts';
 import { PARK_WALK_Y as PARK_Y } from './park-floor.ts';
 import { carParks, inCarPark, inMouth, layStalls, parkCars, STALL_D, STALL_W } from './parking.ts';
+import { cerroParking } from './car-free.ts';
 import { createPavementMaterial, createRoadPaintMaterial, createRoadSurfaceMaterial } from '../render/tsl-materials.ts';
 import { BODY_SPECS, bodyDims, buildCarGeometry, buildCarProxyGeometry, createLoftedCarMaterial } from '../actors/actor-models.ts';
 import { paintsOf, pickBody, pickModel } from '../models/cars/index.ts';
@@ -27,6 +30,7 @@ import type { TileStreamer } from './streaming.ts';
 // (PARK_Y: park-floor.ts), the open country's meadow; the lot a hair over each, its paint a hair over that
 const SW_TOP = 0.22;
 const PAINT = 0.012;
+const CURB_Y = 0.01; // m a car parked on the road stands over the ground: the road deck's
 // The driveways: at an entrance the curb drops in a ramp from the gutter, RAMP_OUT m out on the roadway, up to the lot's
 // level RAMP_IN m in past the curb's edge (over the curb's 0.18 m and the sidewalk's 0.22 m all the way), then a paved
 // way runs along the entrance's path to the lot
@@ -191,7 +195,8 @@ interface BodyMeshes {
   far: THREE.InstancedMesh;
 }
 
-function placeCar(car: ParkedCar, y0: number): PlacedCar | null {
+// (a car at the curb has no stall: where it stands is all placeCar reads of one)
+function placeCar(car: Omit<ParkedCar, 'stall'> & { stall: Pick<ParkedCar['stall'], 'x' | 'z'> }, y0: number): PlacedCar | null {
   const body = pickBody(car.model);
   const model = pickModel(body, (car.model * 7.31) % 1);
   if (!model) return null;
@@ -277,6 +282,11 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
       const p = placeCar(car, y);
       if (p) placed.push(p);
     }
+  }
+  // the cars parked at the foot of the Cerro de la Cruz, on the road (its deck: the traffic's surface)
+  for (const c of cerroParking()) {
+    const p = placeCar({ stall: c, heading: c.heading, shift: 0, model: c.seed, paint: hash(c.z, c.x, 26) }, CURB_Y);
+    if (p) placed.push(p);
   }
 
   const group = new THREE.Group();

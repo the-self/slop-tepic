@@ -396,7 +396,7 @@ test('a vehicle on a ramp pitches with the deck as well as the ground', () => {
 
 test('an edge carries its lift profile: interpolated along it, held past its ends, 0 without one', () => {
   const { edgeLift } = loadModule(readFileSync(join(__dirname, '../js/world/road-network.ts'), 'utf8'), {
-    imports: { './city-config.ts': { ISLAND_BOUNDS: { minX: 0, maxX: 0, minZ: 0, maxZ: 0 } }, './city-geodata.js': { GEO: {} } }
+    imports: { './city-config.ts': { ISLAND_BOUNDS: { minX: 0, maxX: 0, minZ: 0, maxZ: 0 } }, './city-geodata.js': { GEO: {} }, './car-free.ts': { carFree: () => false } }
   });
   const e = { lift: [[0, 0], [40, 2.8], [60, 6], [100, 6]] };
   const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} should equal ${b}`);
@@ -456,7 +456,8 @@ function networkOf(roadGraph, obstacles = []) {
         ISLAND_BOUNDS: { minX: -5000, maxX: 5000, minZ: -5000, maxZ: 5000 },
         getIslandBoundsAtZ: () => ({ westX: -1e5, eastX: 1e5 })
       },
-      './city-geodata.js': { GEO: { roadGraph: { signals: [], names: ['Libramiento'], ...roadGraph } } }
+      './city-geodata.js': { GEO: { roadGraph: { signals: [], names: ['Libramiento'], ...roadGraph } } },
+      './car-free.ts': { carFree: () => false }
     }
   });
   const log = console.info;
