@@ -14,7 +14,7 @@ import { crash } from './crashes.ts';
 import { spawnCollisionSparks } from './sparks.ts';
 import { throwPed } from './peds.ts';
 import { throwRider } from './two-wheelers.ts';
-import { BAIL_STUN } from './carjacking.ts';
+import { BAIL_STUN, abandon } from './carjacking.ts';
 import { endConversation } from './walking.ts';
 
 // The first pedestrian or vehicle a shot from (ox, oz) along the unit direction (dx, dz) meets within `range`:
@@ -59,13 +59,24 @@ function shootPed(ts: TrafficState, p: Ped, dx: number, dz: number, power = 3): 
   throwPed(ts, p, dx * power, dz * power, dx, dz, false, 0.7);
 }
 
-// A vehicle shot at (x, y, z) along (dx, dz): sparks off its body; a cyclist is knocked off
+// A vehicle shot at (x, y, z) along (dx, dz): sparks off its body; a cyclist is knocked off. A round through the cab
+// may kill its driver (the car rolls to a stop, nobody in it but them); else they either floor it or stop and get out
+// and run (frighten)
 function shootVehicle(ts: TrafficState, v: Vehicle, x: number, y: number, z: number, dx: number, dz: number): void {
   if (v.bike || v.moto) {
     if (v.edge) throwRider(ts, v, dx, dz, dx * 4, dz * 4, MASS.person);
     return;
   }
   spawnCollisionSparks(ts, x, y - hillAt(ts, x, z), z, -dx, -dz, 5);
+  // (a patrol's officer doesn't run: the crime's dispatch sends it after whoever shot)
+  if (v.edge && !v.wrecked && !v.isPolice) {
+    const yaw = v.yaw + v.yawOffset;
+    // (the cab: the middle third of a car, a camión's nose where its driver sits)
+    const along = (x - v.x) * Math.sin(yaw) + (z - v.z) * Math.cos(yaw);
+    const cab = v.bus ? along > v.half - 2.5 : Math.abs(along) < v.half * 0.45;
+    if (cab && Math.random() < DRIVER_HIT) abandon(ts, v, false);
+    else frighten(v, x - dx * 15, z - dz * 15, 0, true);
+  }
   const m = massOf(v);
   v.vx += dx * 600 / m;
   v.vz += dz * 600 / m;
@@ -131,8 +142,41 @@ function blast(ts: TrafficState, x: number, z: number, radius: number, power: nu
   return thrown;
 }
 
-// Gunfire or a blast at (x, z): the people within `radius` m run from it
-function panic(ts: TrafficState, x: number, z: number, radius: number): void {
+const DRIVER_HIT = 0.3; // the share of the rounds into a car's cab that hit its driver
+
+// What a driver does about gunfire from (x, z) (`near`: how close, 0 at it .. 1 at the edge of earshot; `shot`: a round
+// into their own car): on a bicycle or a moto, or rolling along, most floor it out of there; some freeze where they
+// are, heads down; close by, stopped, or shot at, many stop and get out and run. A camión's driver stays with it. Those
+// already frightened stay so, for longer
+function frighten(v: Vehicle, x: number, z: number, near: number, shot = false): void {
+  v.frightX = x;
+  v.frightZ = z;
+  if (v.fright) {
+    if (v.fright !== 'bail') v.frightT = Math.max(v.frightT, 4 + Math.random() * 3);
+    return;
+  }
+  const r = Math.random();
+  if (v.bike || v.moto) v.fright = 'flee';
+  else if (v.bus) v.fright = r < 0.6 ? 'flee' : 'freeze';
+  else {
+    const out = shot ? 0.5 : (v.speed < 6 ? 0.4 : 0.15) * (1.4 - near);
+    const freeze = shot ? 0 : 0.3;
+    v.fright = r < out ? 'bail' : r < out + freeze ? 'freeze' : 'flee';
+  }
+  v.frightT = v.fright === 'freeze' ? 4 + Math.random() * 6 : 8 + Math.random() * 7;
+  v.blink = 0;
+}
+
+// Gunfire or a blast at (x, z): the people within `radius` m run from it, and the drivers (unless `drivers` is false:
+// a scream, not a shot) are frightened by it
+function panic(ts: TrafficState, x: number, z: number, radius: number, drivers = true): void {
+  if (drivers) {
+    for (const v of ts.vehicles) {
+      if (!v.edge || v.wrecked || v.isPolice) continue;
+      const dx = v.x - x, dz = v.z - z, d2 = dx * dx + dz * dz;
+      if (d2 <= radius * radius) frighten(v, x, z, Math.sqrt(d2) / radius);
+    }
+  }
   for (const p of ts.peds) {
     if (!p.placed || p.fallen) continue;
     const dx = p.x - x, dz = p.z - z;

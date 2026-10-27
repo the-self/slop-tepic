@@ -11,7 +11,7 @@ import type { LotReserve } from './landmark-models.ts';
 // Rey, Chedrauy, Samy's...): a door in the middle of the glazed front; inside, a lobby, a row of checkouts, aisles of
 // gondola shelving run from the lobby to the back, and the fridges along the back wall, under a white ceiling of light
 // panels. The walls, shelves & counters collide from the start (STORE colliders replace the hall's one box); what you
-// see inside is built when you come near a store and let go when you leave. The tills can be robbed (main.ts).
+// see inside is built when you come near a store and let go when you leave. The tills can be robbed (app/boarding.ts).
 //
 // Layout in each store's own frame: `a` metres along the front from its middle, `b` metres in from the front wall.
 
@@ -77,7 +77,7 @@ export interface StoreLayout {
   D: number;
 }
 
-/** A till to rob (main.ts), in the world: when it refills (s since the epoch; 0: full) */
+/** A till to rob (app/boarding.ts), in the world: when it refills (s since the epoch; 0: full) */
 export interface StoreTill {
   x: number;
   z: number;
@@ -256,7 +256,8 @@ const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vect
 function buildStores(scene: THREE.Object3D, stores: StoreHall[]) {
   const layouts = stores.map((s) => storeLayout(s));
   const colliders = stores.flatMap((s, i) => storeColliders(s, layouts[i]));
-  // the tills, world positions, for the robberies (main.ts): { x, z, store, refill (s since the epoch it refills) }
+  // the tills, world positions, for the robberies (app/boarding.ts): { x, z, store, refill (s since the epoch it
+  // refills) }
   const tills = stores.flatMap((s, i) => layouts[i].tills.map((t): StoreTill => {
     const [x, z] = toWorld(s, layouts[i].frame, t.a, t.b);
     return { x, z, store: s, refill: 0 };

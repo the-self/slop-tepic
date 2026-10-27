@@ -64,10 +64,10 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     spikeTraffic: (cx: number, cz: number, heading: number, halfLen: number, halfW: number): void => { spikeTraffic(ts, cx, cz, heading, halfLen, halfW); },
     sparks: (x: number, y: number, z: number, nx: number, nz: number, speed: number): void => { sparksAt(ts, x, y, z, nx, nz, speed); },
     blast: (x: number, z: number, radius: number, power: number): number => blast(ts, x, z, radius, power),
-    panic: (x: number, z: number, radius: number): void => { panic(ts, x, z, radius); },
+    panic: (x: number, z: number, radius: number, drivers?: boolean): void => { panic(ts, x, z, radius, drivers); },
     knockBox: (x: number, z: number, heading: number, hw: number, hl: number, vx: number, vz: number): number =>
       knockBox(ts, x, z, heading, hw, hl, vx, vz),
-    bumpBody: (b: BumpBody, ram?: boolean): void => { bumpBody(ts, b, ram); },
+    bumpBody: (b: BumpBody, ram?: boolean, inJolt?: boolean): void => { bumpBody(ts, b, ram, inJolt); },
     roadSpot: (x: number, z: number, rMin: number, rMax: number): RoadSpot | null => roadSpot(ts, x, z, rMin, rMax),
     sidewalkSpot: (x: number, z: number, rMin: number, rMax: number): RoadSpot | null => sidewalkSpot(ts, x, z, rMin, rMax),
     setSolidQuery: (fn: SolidQuery | null): void => { setSolidQuery(ts, fn); },

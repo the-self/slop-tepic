@@ -6,8 +6,8 @@ import type { CarEntity } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
 
 // The driver thrown out through the windscreen at the car's speed before the crash (`v`: vx, vy, vz), from over the
-// bonnet, as a ragdoll; on foot from here, the car going on without them. main.ts hears of it (onEject: the HUD, the
-// harm)
+// bonnet, as a ragdoll; on foot from here, the car going on without them. app/install/crime.ts hears of it (onEject:
+// the HUD, the harm)
 export function ejectDriver(ctl: ThirdPersonControllerManager, c: CarEntity, v: { vx: number; vy: number; vz: number }, impact: number): void {
   const p = ctl.entities.person;
   if (!ctl.ragdolls || p.ragdoll) return;

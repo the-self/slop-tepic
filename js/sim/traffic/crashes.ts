@@ -226,7 +226,8 @@ function placeCrashedWheels(ts: TrafficState, crash: CarCrash, i: number, radius
   }
 }
 
-// Smoke from a damaged engine (grey, then black once it is about to die), through the player's smoke (main.ts)
+// Smoke from a damaged engine (grey, then black once it is about to die), through the player's smoke
+// (app/install/player.ts)
 function setSmokeEmitter(ts: TrafficState, emit: SmokeEmitter | null): void {
   ts.smokeEmitter = typeof emit === 'function' ? emit : null;
 }

@@ -1,14 +1,14 @@
-// js/world/forum/glass.ts
-// Forum Tepic's breakable glass: the shops' windows downstairs and the entrances' (forum-plan.ts panes), each its own
+// js/sim/forum/glass.ts
+// Forum Tepic's breakable glass: the shops' windows downstairs and the entrances' (world/forum-plan.ts panes), each its own
 // quad in one mesh per kind. A car or a moto driven into one fast enough goes through it: its quad folds away, its
 // wall leaves the player's colliders and the car's world (car-physics.ts dropWall), and its glass falls in shards
 // that bounce on the floor and lie there a while. All of it is whole again once the camera is far from the mall.
 import * as THREE from 'three/webgpu';
-import { FORUM } from '../forum-plan.ts';
-import { ForumGeo, addMesh } from './kit.ts';
-import type { Collider } from '../buildings.ts';
+import { FORUM } from '../../world/forum-plan.ts';
+import { ForumGeo, addMesh } from '../../world/forum.ts';
+import type { Collider } from '../../world/buildings.ts';
 import type { Hitter } from './shoppers.ts';
-import type { ForumMaterials } from './materials.ts';
+import type { ForumMaterials } from '../../world/forum.ts';
 
 const BREAK_SPEED = 4; // m/s: slower, a vehicle just stops against the glass
 const SHARDS = 300; // the most shards falling or lying at once

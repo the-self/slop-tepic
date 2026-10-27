@@ -27,13 +27,15 @@ LOOKS = {
     'tyre': ((0.02, 0.02, 0.02), 0.85, 0.0),
     'rim': ((0.55, 0.56, 0.58), 0.3, 0.9),
     'aero': ((0.05, 0.05, 0.055), 0.4, 0.0),
+    'spoke': ((0.16, 0.165, 0.175), 0.35, 0.6),  # (graphite alloy spokes: 'wheel' in the game, this colour)
 }
 
 
 def args():
     """The script's own arguments (after Blender's --): the out .glb, and optionally a folder for review renders and a
     .blend to save the model in (to open and work on in Blender); '' skips one"""
-    a = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
+    a = [x for x in (sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []) if not x.startswith('--')]  # (a
+    # script's own switches, '--taxi', aside)
     pick = lambda i: (a[i] or None) if len(a) > i else None
     return pick(0), pick(1), pick(2)
 
@@ -80,7 +82,7 @@ def to_object(name, bm, mats):
     return ob
 
 
-def loft(name, stations, role_of, frame=0.035, recess=0.008, frame_role='paint', sharp=()):
+def loft(name, stations, role_of, frame=0.035, recess=0.008, frame_role='paint', sharp=(), cap_rings=()):
     """A closed body lofted through `stations`, [(y, half)...] nose to tail or tail to nose: `half` the right half of
     the cross-section at y, [(x, z)...] from the bottom's middle (x = 0) round the side to the top's middle (x = 0),
     every station with as many points. role_of(y, seg, side) names each face between two stations: `seg` the segment of
@@ -88,7 +90,9 @@ def loft(name, stations, role_of, frame=0.035, recess=0.008, frame_role='paint',
     window one pane, inset `frame` m in from its edge (or frame[<window>], a dict's default its None key) and `recess`
     m into the body, the ring the inset leaves its frame (`frame_role`). `sharp`: the half-section's points whose
     edges along the body are folds too shallow to bevel, kept sharp (smoothed, they bent the panels' shading).
-    The ends are capped flat: role_of(y, -1, 0) names them."""
+    The ends are capped flat: role_of(y, -1, 0) names them; `cap_rings` insets each cap in rings that far in (m), so
+    a broad cap's smoothed normals turn from its rim's to its own within them, not across the whole face (one n-gon
+    shaded as a lighter patch)."""
     bm = bmesh.new()
     m = len(stations[0][1])
     rings = []
@@ -124,14 +128,22 @@ def loft(name, stations, role_of, frame=0.035, recess=0.008, frame_role='paint',
                 e = bm.edges.get((rings[i][j], rings[i + 1][j]))
                 if e:
                     e.smooth = False
+    cap = bm.faces.layers.int.new('cap')
     for ring, y in ((rings[0], stations[0][0]), (rings[-1], stations[-1][0])):
         f = bm.faces.new(ring)
         f.material_index = index(role_of(y, -1, 0))
+        f[cap] = 1
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     # the points that fall together merged first (a window closing in a point, a section's zero-length side): an inset
     # of a face with a zero-length edge bent its frame out of line
     bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=1e-4)
     bmesh.ops.dissolve_degenerate(bm, edges=bm.edges[:], dist=1e-4)
+    # (the caps' rings only now: inset across a zero-length edge, a ring shot off the face)
+    for f in [f for f in bm.faces if f[cap]]:
+        done = 0.0
+        for d in cap_rings:
+            bmesh.ops.inset_region(bm, faces=[f], thickness=d - done, depth=0, use_even_offset=True)
+            done = d
     # each window an inset pane; the ring the inset makes is its frame (`frame_role`: the body's paint, or black)
     rim = index(frame_role)
     for key, i in groups.items():
@@ -372,13 +384,14 @@ def wheel(name, x, y, radius, width, rim, cover='aero', segments=120, tread=0.01
             a = 2 * math.pi * k / spokes + math.pi / 2
             c, sn = math.cos(a), math.sin(a)
             slab((at, y + 0.07 * c, radius + 0.07 * sn), (at, y + (rim - 0.03) * c, radius + (rim - 0.03) * sn), axis, 0.07, 0.012, bm)
-        ring_n = 30
+        ring_n = 20
         for k in range(ring_n):
             a0, a1 = 2 * math.pi * k / ring_n, 2 * math.pi * (k + 1) / ring_n
             r = rim - 0.012
             slab((at, y + r * math.cos(a0), radius + r * math.sin(a0)), (at, y + r * math.cos(a1), radius + r * math.sin(a1)), axis, 0.03, 0.012, bm)
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-        bevelled(to_object(name + '_spokes', bm, [cover]), 0.004, 2)
+        bevelled(to_object(name + '_spokes', bm, [cover]), 0.004, 1)  # (one segment: a car's four wheels cost the game
+        # four times what one does)
     cap = disc_mesh(name + '_cap', (face - side * 0.022, y, radius), side, 0.075, 0.016, cover, n=6)
     bevelled(cap, 0.004, 2)
     smooth(tyre, 50)
@@ -401,19 +414,20 @@ def disc_mesh(name, centre, side, r, depth, role, n=32):
 
 def strip(name, points, normal, width, role, lift=0.0015):
     """A thin flat strip `width` m wide along the polyline `points` [(x, y, z)...] on a surface of `normal`, lifted
-    `lift` m off it: a panel's shut line, a seal, a wiper blade"""
-    nrm = Vector(normal).normalized()
+    `lift` m off it: a panel's shut line, a seal, a wiper blade. `normal` may be a list, one per point (a strip round a
+    corner: a lamp wrapping round the nose)"""
+    nrms = [Vector(n).normalized() for n in normal] if isinstance(normal, list) else [Vector(normal).normalized()] * len(points)
     bm = bmesh.new()
     rows = []
     for i, p in enumerate(points):
         a, b = Vector(points[max(0, i - 1)]), Vector(points[min(len(points) - 1, i + 1)])
-        across = (b - a).cross(nrm).normalized() * (width / 2)
-        c = Vector(p) + nrm * lift
+        across = (b - a).cross(nrms[i]).normalized() * (width / 2)
+        c = Vector(p) + nrms[i] * lift
         rows.append((bm.verts.new(c - across), bm.verts.new(c + across)))
-    for (a0, a1), (b0, b1) in zip(rows, rows[1:]):
+    for i, ((a0, a1), (b0, b1)) in enumerate(zip(rows, rows[1:])):
         f = bm.faces.new((a0, b0, b1, a1))
         f.normal_update()
-        if f.normal.dot(nrm) < 0:
+        if f.normal.dot(nrms[i] + nrms[i + 1]) < 0:
             f.normal_flip()
     return to_object(name, bm, [role])
 
@@ -439,7 +453,7 @@ def smooth(ob, angle=40):
     ob.select_set(False)
 
 
-def tidy(ob, angle=30):
+def tidy(ob, angle=30, weighted=True):
     """A body after its cuts: every face turned out again (a boolean leaves some turned in, which show the cabin's
     dark lining as smudges), smooth across its bevels but its panels flat: normals weighted by the faces' areas, so a
     big flat panel keeps its own and the bevels round off into it (plain smoothing bent the panels' normals at their
@@ -454,6 +468,8 @@ def tidy(ob, angle=30):
     bm.free()
     ob.data.validate()
     smooth(ob, angle)
+    if not weighted:  # (a body curved all over: its stations' spacing, not its panels, would weight the normals)
+        return ob
     mod = ob.modifiers.new('weighted', 'WEIGHTED_NORMAL')
     mod.mode = 'FACE_AREA'
     mod.weight = 100
@@ -536,12 +552,16 @@ HERO = {
     'under': dict(base=(0.01, 0.01, 0.01), rough=0.9, metal=0.0),
     'tyre': dict(base=(0.007, 0.007, 0.008), rough=0.92, metal=0.0, spec=0.15),
     'aero': dict(base=(0.03, 0.031, 0.034), rough=0.45, metal=0.2),
+    'spoke': dict(base=(0.16, 0.165, 0.175), rough=0.35, metal=0.6),
     'pocket': dict(base=(0.008, 0.008, 0.009), rough=0.6, metal=0.0),
     'light': dict(base=(1, 1, 1), rough=0.1, metal=0.0, glow=((1.0, 0.97, 0.92), 8.0)),
     'lamp': dict(base=(0.5, 0.0, 0.0), rough=0.1, metal=0.0, glow=((1.0, 0.03, 0.02), 3.0)),
     'lampbright': dict(base=(0.6, 0.0, 0.0), rough=0.1, metal=0.0, glow=((1.0, 0.05, 0.03), 14.0)),
     'amber': dict(base=(0.6, 0.25, 0.02), rough=0.1, metal=0.0, glow=((1.0, 0.45, 0.08), 3.0)),
     'plate': dict(base=(0.85, 0.86, 0.84), rough=0.4, metal=0.0),
+    'headlamp': dict(base=(0.85, 0.87, 0.9), rough=0.06, metal=0.7),  # (the head lamps' reflectors, unlit by day)
+    'beam': dict(base=(1, 1, 1), rough=0.05, metal=0.0, glow=((1.0, 0.98, 0.94), 6.0)),  # (a lit head lamp's lens)
+    'sign': dict(base=(0.95, 0.95, 0.9), rough=0.3, metal=0.0, glow=((1.0, 0.95, 0.8), 1.5)),  # (a taxi's lit roof sign)
 }
 
 
@@ -576,6 +596,9 @@ def hero(folder, name, paint=dict(base=(0.56, 0.57, 0.58), rough=0.26, metal=1.0
         bsdf.inputs['Metallic'].default_value = look['metal']
         if 'aniso' in look and 'Anisotropic' in bsdf.inputs:
             bsdf.inputs['Anisotropic'].default_value = look['aniso']
+        if 'coat' in look and 'Coat Weight' in bsdf.inputs:
+            bsdf.inputs['Coat Weight'].default_value = look['coat']  # (a paint's clear coat)
+            bsdf.inputs['Coat Roughness'].default_value = 0.03
         if 'spec' in look and 'Specular IOR Level' in bsdf.inputs:
             bsdf.inputs['Specular IOR Level'].default_value = look['spec']  # (rubber: hardly a sheen)
         if 'clear' in look:
@@ -584,7 +607,7 @@ def hero(folder, name, paint=dict(base=(0.56, 0.57, 0.58), rough=0.26, metal=1.0
         if 'glow' in look:
             bsdf.inputs['Emission Color'].default_value = (*look['glow'][0], 1)
             bsdf.inputs['Emission Strength'].default_value = look['glow'][1]
-    brushed(bpy.data.materials.get('paint'))
+    brushed(bpy.data.materials.get('paint'), streaks='aniso' in paint)
     world = bpy.data.worlds.new('sky')
     scene.world = world
     nodes, links = world.node_tree.nodes, world.node_tree.links
@@ -642,12 +665,29 @@ def hero(folder, name, paint=dict(base=(0.56, 0.57, 0.58), rough=0.26, metal=1.0
     bpy.data.objects.remove(ground)
 
 
-def brushed(m):
-    """Stainless steel's brushing in the hero renders: fine streaks along the car (y) in its roughness and bump"""
+def brushed(m, streaks=True):
+    """Stainless steel's brushing in the hero renders: fine streaks along the car (y) in its roughness and bump (not
+    for a painted car: `streaks` False), and the shell's inside the cabin's lining"""
     if not m or not m.node_tree:
         return
     nodes, links = m.node_tree.nodes, m.node_tree.links
     bsdf = nodes['Principled BSDF']
+    if streaks:
+        brush(nodes, links, bsdf)
+    # (the shell's inside, seen through the glass, is the cabin's dark lining, not steel)
+    geo = nodes.new('ShaderNodeNewGeometry')
+    lining = nodes.new('ShaderNodeBsdfDiffuse')
+    lining.inputs['Color'].default_value = (0.02, 0.02, 0.022, 1)
+    mix = nodes.new('ShaderNodeMixShader')
+    output = nodes['Material Output']
+    links.new(geo.outputs['Backfacing'], mix.inputs['Fac'])
+    links.new(bsdf.outputs['BSDF'], mix.inputs[1])
+    links.new(lining.outputs['BSDF'], mix.inputs[2])
+    links.new(mix.outputs['Shader'], output.inputs['Surface'])
+
+
+def brush(nodes, links, bsdf):
+    """The brushing's streaks: a stretched noise in the roughness and a faint bump"""
     coords = nodes.new('ShaderNodeTexCoord')
     stretch = nodes.new('ShaderNodeMapping')
     stretch.inputs['Scale'].default_value = (5000, 4, 5000)  # (hair-fine streaks along the car, no blotches)
@@ -666,16 +706,6 @@ def brushed(m):
     bump.inputs['Distance'].default_value = 0.0005
     links.new(noise.outputs['Fac'], bump.inputs['Height'])
     links.new(bump.outputs['Normal'], bsdf.inputs['Normal'])
-    # (the shell's inside, seen through the glass, is the cabin's dark lining, not steel)
-    geo = nodes.new('ShaderNodeNewGeometry')
-    lining = nodes.new('ShaderNodeBsdfDiffuse')
-    lining.inputs['Color'].default_value = (0.02, 0.02, 0.022, 1)
-    mix = nodes.new('ShaderNodeMixShader')
-    output = nodes['Material Output']
-    links.new(geo.outputs['Backfacing'], mix.inputs['Fac'])
-    links.new(bsdf.outputs['BSDF'], mix.inputs[1])
-    links.new(lining.outputs['BSDF'], mix.inputs[2])
-    links.new(mix.outputs['Shader'], output.inputs['Surface'])
 
 
 def glow(scene):
@@ -696,3 +726,83 @@ def glow(scene):
         tree.links.new(glare.outputs['Image'], out.inputs[0])
     except Exception as e:  # (an older Blender's compositor: the renders without the glow)
         print('no glow:', e)
+
+
+def decal(name, path, width, plane_y, role, facing, step=0.01):
+    """A flat ribbon `width` m wide (across its path, in the plane) along `path` [(x, z)...], in the plane y = plane_y
+    facing `facing` (1 ahead, -1 behind), its points every `step` m: laid onto the body by onto(). `width` may be a
+    function of the point (x, z): a lamp's bar swelling at its ends"""
+    pts = []
+    for (x0, z0), (x1, z1) in zip(path, path[1:]):
+        n = max(1, int(math.hypot(x1 - x0, z1 - z0) / step))
+        pts += [(x0 + (x1 - x0) * i / n, z0 + (z1 - z0) * i / n) for i in range(n)]
+    pts.append(path[-1])
+    bm = bmesh.new()
+    rows = []
+    for i, (x, z) in enumerate(pts):
+        a, b = pts[max(0, i - 1)], pts[min(len(pts) - 1, i + 1)]
+        d = Vector((b[0] - a[0], b[1] - a[1])).normalized()
+        w = width(x, z) if callable(width) else width
+        ox, oz = -d.y * w / 2, d.x * w / 2
+        rows.append((bm.verts.new((x - ox, plane_y, z - oz)), bm.verts.new((x + ox, plane_y, z + oz))))
+    for (a0, a1), (b0, b1) in zip(rows, rows[1:]):
+        f = bm.faces.new((a0, b0, b1, a1))
+        f.normal_update()
+        if f.normal.y * facing < 0:
+            f.normal_flip()
+    return to_object(name, bm, [role])
+
+
+def panel(name, corners, plane_y, role, facing, n=40, m=4):
+    """A flat quad [(x, z)] * 4 (round its edge) in the plane y = plane_y facing `facing`, cut n by m: an intake, a
+    lamp's slot, laid onto the body by onto()"""
+    (ax, az), (bx, bz), (cx, cz), (dx, dz) = corners
+    bm = bmesh.new()
+    grid = [[bm.verts.new((ax + (bx - ax) * u + ((dx + (cx - dx) * u) - (ax + (bx - ax) * u)) * v, plane_y,
+                           az + (bz - az) * u + ((dz + (cz - dz) * u) - (az + (bz - az) * u)) * v))
+             for u in (i / n for i in range(n + 1))] for v in (j / m for j in range(m + 1))]
+    for j in range(m):
+        for i in range(n):
+            f = bm.faces.new((grid[j][i], grid[j][i + 1], grid[j + 1][i + 1], grid[j + 1][i]))
+            f.normal_update()
+            if f.normal.y * facing < 0:
+                f.normal_flip()
+    return to_object(name, bm, [role])
+
+
+def onto(ob, target, offset=0.002, axis=None):
+    """`ob` laid onto `target`'s surface, `offset` m off it: projected along `axis` ('Y' toward +y, '-Y' toward -y), or
+    else each point to its nearest on the surface (a lamp drawn flat in front of the car, wrapped onto its curves)"""
+    mod = ob.modifiers.new('onto', 'SHRINKWRAP')
+    mod.target = target
+    mod.offset = offset
+    mod.wrap_mode = 'ABOVE_SURFACE'
+    if axis:
+        mod.wrap_method = 'PROJECT'
+        mod.use_project_x = mod.use_project_z = False
+        mod.use_project_y = True
+        mod.use_negative_direction = axis.startswith('-')
+        mod.use_positive_direction = not axis.startswith('-')
+        mod.cull_face = 'OFF'
+    else:
+        mod.wrap_method = 'NEAREST_SURFACEPOINT'
+    apply(ob)
+    return ob
+
+
+def disc(name, centre, r, plane_y, role, facing, n=32, rings=3):
+    """A flat filled disc `r` m across round `centre` (x, z), in the plane y = plane_y facing `facing`, in rings of
+    quads (a fan's long thin triangles bent badly laid onto a curve): a round lamp, a lens; laid on by onto()"""
+    cx, cz = centre
+    bm = bmesh.new()
+    mid = bm.verts.new((cx, plane_y, cz))
+    loops = [[bm.verts.new((cx + r * (j + 1) / rings * math.cos(2 * math.pi * i / n), plane_y,
+                            cz + r * (j + 1) / rings * math.sin(2 * math.pi * i / n))) for i in range(n)] for j in range(rings)]
+    faces = [bm.faces.new((mid, loops[0][i], loops[0][(i + 1) % n])) for i in range(n)]
+    for a, b in zip(loops, loops[1:]):
+        faces += [bm.faces.new((a[i], b[i], b[(i + 1) % n], a[(i + 1) % n])) for i in range(n)]
+    for f in faces:
+        f.normal_update()
+        if f.normal.y * facing < 0:
+            f.normal_flip()
+    return to_object(name, bm, [role])

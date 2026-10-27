@@ -178,14 +178,14 @@ function killedIfDead(ts: TrafficState, v: Car | Bus): void {
 // mass }) shoving the traffic it drives into, and shoved back: the vehicles' masses share the push. The cars already
 // thrown about in a crash near the player are shoved through their bodies in Jolt, so it never drives through one;
 // `ram` (a chase, not an ambulance on its way): one of the traffic it rams hard there is thrown about in Jolt too, as
-// one the player rams is
-function bumpBody(ts: TrafficState, b: BumpBody, ram = true): void {
+// one the player rams is. `inJolt`: b is a body in Jolt itself (crime/cruiser-bodies.ts), and meets those cars there
+function bumpBody(ts: TrafficState, b: BumpBody, ram = true, inJolt = false): void {
   const reach = b.halfL + 6;
   const bvx = Math.sin(b.heading) * b.speed + b.vx;
   const bvz = Math.cos(b.heading) * b.speed + b.vz;
   // (the cars in Jolt first: one it throws below is pushed out of it there, not struck a second time here)
   const physics = ts.physics;
-  if (physics) {
+  if (physics && !inJolt) {
     for (const v of ts.crashed) {
       const relX = b.x - v.x;
       const relZ = b.z - v.z;

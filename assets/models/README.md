@@ -52,23 +52,16 @@ crop the neighbours, scale it to a known height, and simplify it.
   model is shared under the same licence. Scaled to 40 m at the crosses of the towers, and cut
   9.5 m behind the facade: the rest of the church, the casona and the portales are drawn.
 
-- `cars/*.glb`, eight of them: the commonest traffic cars, made with Meshy from images Meshy (Nano Banana) drew from
-  the prompts in `tools/models/jobs/cars/`: seven with Meshy T2.5 smart topology from one image, the Versa with Meshy
-  7.1 from four views.
-- `cars/*.glb`, four of them, made by hand, from Sketchfab under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
-  (changed: rescaled to the real car, the interior and the lamps' lenses dropped, each part a new colour, the normals
-  smoothed, simplified: `tools/models/prepare-made.mjs`, each one's `tools/models/jobs/cars/<id>.made.json`):
-  - `nissan-tsuru.glb`: ["Nissan Tsuru"](https://sketchfab.com/3d-models/nissan-tsuru-59d6b88fbdc24041a2652b12eab7ceb6)
-    by Meet The Colors the User TAD (@kotris666);
-  - `chevrolet-onix.glb`: ["chevrolet onix"](https://sketchfab.com/3d-models/chevrolet-onix-bfd798c2695847b28ab681d42abc7056)
-    by uzb_rx7;
-  - `nissan-np300.glb`: ["Nissan Navara 2021 Calibre E"](https://sketchfab.com/3d-models/nissan-navara-2021-calibre-e-2a877fdf866b4dbb8b0aa4dd9ef2319d)
-    by Asadawut.Kaewma;
-  - `volkswagen-virtus.glb`: ["2022 Volkswagen Virtus GT"](https://sketchfab.com/3d-models/2022-volkswagen-virtus-gt-3955e5c050f843398b49b2b21ab2f232)
-    by BHP3D.
 - `cars/tesla-cybertruck.glb`: modelled by script in Blender (`tools/models/blender/tesla-cybertruck.py`, on
   `carlib.py`) from its real sizes and photographs, then prepared with `tools/models/prepare-made.mjs`
   (`tools/models/jobs/cars/tesla-cybertruck.made.json`). Our own work, no third party's.
+- `cars/tesla-model-y.glb`: the 2025 Model Y ("Juniper"), modelled by script in Blender
+  (`tools/models/blender/tesla-model-y.py`, on `carlib.py`) from its real sizes and photographs, then prepared with
+  `tools/models/prepare-made.mjs` (`tools/models/jobs/cars/tesla-model-y.made.json`). Our own work, no third party's.
+- `cars/nissan-tsuru.glb` (the taxi, its roof sign) and `cars/nissan-tsuru-particular.glb`: the Tsuru (the B13 Sentra as
+  Mexico built it), modelled by script in Blender (`tools/models/blender/nissan-tsuru.py`, `--taxi` for the sign) from
+  its real sizes and photographs, then prepared with `tools/models/prepare-made.mjs`
+  (`tools/models/jobs/cars/nissan-tsuru*.made.json`). Our own work, no third party's.
 - `people/player.glb`: the player, made with Meshy (Meshy 7.1, multi-image-to-3d) from a front and a back view that
   Meshy (Nano Banana Pro) drew from the prompts in `tools/models/jobs/people/player.json`; reposed into the crowd's bind
   pose and skinned to its 15 bones by `tools/models/prepare-person.mjs`.

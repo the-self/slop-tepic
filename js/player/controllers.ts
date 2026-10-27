@@ -98,13 +98,13 @@ class ThirdPersonControllerManager {
   _modelMats?: Map<string, THREE.Material>; // a car model's 3D model's materials (showCarFile), keyed id & id_wheel
   _twoWheelers?: (CyclistEntity | MotoEntity)[];
   _bodied?: (CarEntity | CyclistEntity | MotoEntity)[];
-  rain: number; // the rain falling, 0..1 (main.ts: washing the blood off the car)
+  rain: number; // the rain falling, 0..1 (app/weather-effects.ts: washing the blood off the car)
   carPhysics?: CarPhysics | null;
-  ragdolls?: Ragdolls | null; // (sim/ragdolls.ts, main.ts)
-  // (main.ts: the driver or rider thrown out, impact in m/s (0: stepped off), at (x, z), off which vehicle; `bail`: they
-  // jumped out at that speed, boarding.ts leaveVehicle)
+  ragdolls?: Ragdolls | null; // (sim/ragdolls.ts, app/install/player.ts)
+  // (app/install/crime.ts: the driver or rider thrown out, impact in m/s (0: stepped off), at (x, z), off which
+  // vehicle; `bail`: they jumped out at that speed, boarding.ts leaveVehicle)
   onEject?: (impact: number, x: number, z: number, kind: VehicleMode, bail?: boolean) => void;
-  // (main.ts: the car's tank run dry)
+  // (app/install/city-life.ts: the car's tank run dry)
   onFuelOut?: () => void;
 
   constructor(scene: THREE.Scene, colliders: PlayerCollider[] = []) {
@@ -131,20 +131,20 @@ class ThirdPersonControllerManager {
     };
     // Out of breath (player/stats.ts), shift no longer sprints on foot nor on the bicycle; the motors don't tire
     this.canSprint = true;
-    // The road under the tyres (main.ts, from weather.ts RoadWater): the water on it 0..1 and what that leaves of
-    // the tyres' dry grip (wetGrip)
+    // The road under the tyres (app/weather-effects.ts, from weather.ts RoadWater): the water on it 0..1 and what that
+    // leaves of the tyres' dry grip (wetGrip)
     this.roadWet = 0;
     this.roadGrip = 1;
-    // The rain falling 0..1 (main.ts), washing the blood off the car
+    // The rain falling 0..1 (app/weather-effects.ts), washing the blood off the car
     this.rain = 0;
-    // A flood's water (m deep) at (x, z) (floods.ts, main.ts): wading slows the walk, a car pushes the water aside,
-    // and deep enough it drowns the engine
+    // A flood's water (m deep) at (x, z) (floods.ts, app/install/city-life.ts): wading slows the walk, a car pushes the
+    // water aside, and deep enough it drowns the engine
     this.waterAt = null;
     // Inside a restaurant, bar or antro (interiors.ts setInterior): its room's own floor & walls
     this.interior = null;
     // Taking aim on foot (player/aim.ts sets it every frame): the player walks and strafes instead of turning
     this.aiming = false;
-    // Which way the camera looks (cameras.ts viewHeading, main.ts sets it every frame): on foot WASD walk
+    // Which way the camera looks (cameras.ts viewHeading, app/frame-loop.ts sets it every frame): on foot WASD walk
     // away from it, across it and towards it. Null on the cameras that sit behind the player (the action cam)
     this.viewHeading = null;
 

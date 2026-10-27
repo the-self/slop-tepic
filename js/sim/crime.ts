@@ -4,6 +4,7 @@ import type { RagdollHandle, Ragdolls, Point3 } from './ragdolls.ts';
 import type { Weapon, WeaponId, GroundBox } from './weapons.ts';
 import type { CrimeKind, StreetGun } from './crime-rules.ts';
 import type { PlayerMode } from '../player/controllers.ts';
+import type { CarPhysics } from '../player/car-physics.ts';
 import type { Ped, Car } from './traffic.ts';
 import { WEAPONS, Arsenal } from './weapons.ts';
 import { Wanted, GANGS, SIGHT, inSight } from './crime-rules.ts';
@@ -28,7 +29,8 @@ import {
   spawnAgent, angerGang, removeAgent, damageAgent, knockAgent, kill, updateAgent, walkAgent, findFoe, npcShoot
 } from './crime/agents.ts';
 import {
-  spawnCruiser, takeOverPatrol, removeCruiser, damageCruiser, updateCruiser, pursue, blockerAhead, deployOfficers, moveCruiser, collideCruisers
+  spawnCruiser, takeOverPatrol, removeCruiser, damageCruiser, updateCruiser, pursue, blockerAhead, deployOfficers, moveCruiser, collideCruisers,
+  abandoned
 } from './crime/cruisers.ts';
 import { dispatch } from './crime/dispatch.ts';
 import { buildSpikes, updateSpikes } from './crime/spikes.ts';
@@ -52,7 +54,7 @@ import { t } from '../i18n/i18n.ts';
 // - Two gangs on their turf, who shoot back (Los Rojos at anyone who comes close), and thieves who snatch the player's
 //   money and run.
 // - The player's health, armour and money, pickups, and being WASTED (killed) or BUSTED (arrested): back at the
-//   nearest teleport spot (main.ts onRespawn).
+//   nearest teleport spot (onRespawn: `respawn` on the bus, app/install/controls.ts).
 // - Out on the town's edges a (made-up) cartel with rifles: shooting on sight, at war with the police wherever they
 //   meet, sending black trucks of reinforcements after whoever takes them on.
 // The people it adds are PersonRigs drawn in one crowd, dressed in their outfits (pedestrians.ts OUTFIT).
@@ -84,9 +86,10 @@ class CrimeSystem {
   fireBlocked = false;
   policeOff = false; // a multiplayer room without police (net/lobby.ts): crimes raise no wanted level
   personGround: (owner: unknown, x: number, z: number) => number;
-  // (a burning wreck where a blast went off: fires.ts, from main.ts)
+  // (a burning wreck where a blast went off: fires.ts, from app/install/city-life.ts)
   onExplosion?: (x: number, y: number, z: number, radius: number) => void;
   ragdolls: Ragdolls | null;
+  physics: CarPhysics | null;
   playerFall: RagdollHandle | null = null; // the player's body, killed on foot
 
   wanted: Wanted;
@@ -219,11 +222,12 @@ class CrimeSystem {
 
     traffic.setKnockListener((_kind, x, z, speed) => {
       this.report('runOver', this.witnessed(x, z));
-      traffic.panic(x, z, 25);
+      traffic.panic(x, z, 25, false);
       this.fx.splatter(x, this.groundAt(x, z) + 0.9, z, speed);
       controllers.bloodyCar?.(x, z, speed); // (on the player's car, if it was the car)
     });
-    this.ragdolls = null; // (sim/ragdolls.ts, from main.ts: who falls, falls as a body)
+    this.ragdolls = null; // (sim/ragdolls.ts, from app/install/crime.ts: who falls, falls as a body)
+    this.physics = null; // (player/car-physics.ts, install/crime.ts: the patrol cars near the player are cars in it)
   }
 
   // =========================================================================
@@ -332,7 +336,7 @@ class CrimeSystem {
         if (!seen && a.los && inSight(sight, sight.length - SIGHT, px, pz)) seen = true;
       }
       for (const cr of this.cruisers) {
-        if (!cr.active || cr.wreck || !cr.police) continue;
+        if (!cr.active || cr.wreck || !cr.police || abandoned(cr)) continue;
         sight.push(cr.x, cr.z, cr.faction === 'army' ? ARMY_TRUCK_SIGHT : CRUISER_SIGHT, cr.heading, CRUISER_FOV, NEAR_SIGHT);
         if (!seen && inSight(sight, sight.length - SIGHT, px, pz) && this.clearLine(cr.x, cr.z, px, pz)) seen = true;
       }
@@ -551,7 +555,7 @@ class CrimeSystem {
   }
 
   removeCruiser(cr: Cruiser): void {
-    removeCruiser(cr);
+    removeCruiser(this, cr);
   }
 
   damageCruiser(cr: Cruiser, damage: number, byPlayer: boolean): void {

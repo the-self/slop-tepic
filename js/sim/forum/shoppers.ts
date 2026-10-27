@@ -1,4 +1,4 @@
-// js/world/forum/shoppers.ts
+// js/sim/forum/shoppers.ts
 // The people in Forum Tepic: shoppers walking the corridors to and fro on both floors, through the rotunda, round the
 // food court and in & out of the entrances, and some at the food court's tables. Each walks its walk at its own pace
 // from its own start, so where everyone is is a function of the clock (nothing to keep but the people's rigs), and
@@ -6,12 +6,12 @@
 // driven into one downstairs fast enough throws them down (sim/ragdolls.ts), as the traffic's pedestrians are: they
 // lie there a while, then are back on their walk.
 import type * as THREE from 'three/webgpu';
-import { Bystanders } from '../../sim/bystanders.ts';
-import { boxHit } from '../../sim/mayhem.ts';
-import { bleedOf } from '../../sim/ragdolls.ts';
-import { FORUM, LEVEL } from '../forum-plan.ts';
-import type { BystanderStyle } from '../../sim/bystanders.ts';
-import type { RagdollHandle, Ragdolls } from '../../sim/ragdolls.ts';
+import { Bystanders } from '../bystanders.ts';
+import { boxHit } from '../mayhem.ts';
+import { bleedOf } from '../ragdolls.ts';
+import { FORUM, LEVEL } from '../../world/forum-plan.ts';
+import type { BystanderStyle } from '../bystanders.ts';
+import type { RagdollHandle, Ragdolls } from '../ragdolls.ts';
 
 type Vec2 = [number, number];
 

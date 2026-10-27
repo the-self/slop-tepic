@@ -1,9 +1,6 @@
 {
-  "note": "A model made by hand, downloaded from Sketchfab (GLB, with the user's login) and prepared with tools/models/prepare-made.mjs <the downloaded file> assets/models/cars/nissan-tsuru.glb --length 4.32 --plates 0.42,0.55",
-  "license": "CC BY 4.0",
-  "source": "https://sketchfab.com/3d-models/nissan-tsuru-59d6b88fbdc24041a2652b12eab7ceb6",
-  "title": "Nissan Tsuru",
-  "author": "Meet The Colors the User TAD (@kotris666)",
-  "file": "nissan_tsuru.glb",
-  "args": "--length 4.32 --plates 0.42,0.55"
+  "note": "Modelled by script in Blender (blender -b --factory-startup -P tools/models/blender/nissan-tsuru.py -- <nissan-tsuru.made.glb> --taxi), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/nissan-tsuru.glb --length 4.325 --roles tools/models/jobs/cars/nissan-tsuru.roles.json --plates 0.43,0.79 (its real length, so it is not rescaled; light enough for no levels of detail)",
+  "license": "our own work",
+  "source": "tools/models/blender/nissan-tsuru.py",
+  "args": "--length 4.325 --roles tools/models/jobs/cars/nissan-tsuru.roles.json --plates 0.43,0.79"
 }

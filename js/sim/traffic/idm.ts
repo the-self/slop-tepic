@@ -8,8 +8,8 @@ import type { TrafficState } from './state.ts';
 import { ahead } from './occupancy.ts';
 
 // Where the player is relative to v: metres ahead, metres to the right, how fast it moves v's way (negative: at v)
-// and across, and how big it is. A vehicle the player left standing in the road (main.ts: setParked) counts instead
-// when it is nearer ahead in v's own lane
+// and across, and how big it is. A vehicle the player left standing in the road (app/frame-loop.ts: setParked) counts
+// instead when it is nearer ahead in v's own lane
 function relateToPlayer(ts: TrafficState, v: Vehicle): void {
   v.pAhead = Infinity;
   v.pParked = false;
@@ -64,8 +64,11 @@ function playerGap(v: Vehicle, off: number): number {
 }
 
 // Intelligent Driver Model: acceleration on a free road, and the braking term for an obstacle `gap` metres
-// (bumper to bumper) ahead moving at `speed`
-const freeAcc = (ts: TrafficState, v: Vehicle) => v.driver.a * (1 - (v.speed / (v.v0 * ts.caution)) ** 4);
+// (bumper to bumper) ahead moving at `speed`. A driver fleeing gunfire (gunfire.ts frighten) floors it: FLEE times
+// the pull and the speed they'd go at
+const FLEE = 1.6;
+const pace = (v: Vehicle) => (v.fright === 'flee' ? FLEE : 1);
+const freeAcc = (ts: TrafficState, v: Vehicle) => v.driver.a * pace(v) * (1 - (v.speed / (v.v0 * ts.caution * pace(v))) ** 4);
 function brake(ts: TrafficState, v: Vehicle, gap: number, speed: number, s0 = v.driver.s0, T = v.driver.T): number {
   const { a, b } = v.driver;
   const desired = s0 + Math.max(0, v.speed * T * ts.headway + (v.speed * (v.speed - speed)) / (2 * Math.sqrt(a * b)));
@@ -96,4 +99,4 @@ const timeTo = (v: Vehicle, dist: number) => dist / Math.max(v.speed, Math.sqrt(
 // Fastest v can take curve c at without exceeding the sideways acceleration its driver accepts
 const bendSpeed = (ts: TrafficState, v: Vehicle, c: LaneCurve) => Math.sqrt(v.driver.aLat * ts.roadGrip / Math.max(c.curv, 1e-3));
 
-export { relateToPlayer, playerGap, freeAcc, brake, stopAt, follow, canStopBefore, timeTo, bendSpeed };
+export { pace, relateToPlayer, playerGap, freeAcc, brake, stopAt, follow, canStopBefore, timeTo, bendSpeed };

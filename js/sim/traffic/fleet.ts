@@ -31,6 +31,8 @@ function createVehicle<B extends boolean>(bus: B, half: number, halfWidth: numbe
     stop: null, pullOver: 0, nextStop: 0, fare: 0,
     // crash damage (vehicle-damage.ts createDamage, made on its first hit), and stopped for good once its engine is dead
     damage: null, wrecked: false, smokeCarry: 0,
+    // a frightened driver (gunfire.ts frighten), and a car left in the road
+    fright: null, frightT: 0, frightX: 0, frightZ: 0, abandoned: false,
     // a car thrown about in a crash, a body in Jolt (crash)
     crash: null,
     // its headlights this frame (renderCar, renderBus)

@@ -5,7 +5,7 @@ import type { AimControl } from './aim.ts';
 // js/player/cameras.ts
 // Multi-camera system supporting Third-Person Chase (with mouse look under the pointer lock, touch orbit + zoom),
 // Low-Angle Action Cam, POV/Cockpit Cam, the scenic cameras over Tepic's landmarks, and Auto-Director Drone.
-// (The scenic preset ids are the New York game's; main.ts anchors each one on a spot of the city.)
+// (The scenic preset ids are the New York game's; app/install/player.ts anchors each one on a spot of the city.)
 
 export type CameraPresetId = 'chase' | 'action' | 'pov' | 'centralPark' | 'fifthAve' | 'timesSquare' | 'chryslerGCT'
   | 'observatory' | 'bryantPark' | 'waterfront' | 'drone';
@@ -135,7 +135,7 @@ class CameraSystem {
     this.orbitYawOffset = 0.0;
     this.orbitPitchOffset = 0.09;
     this.zoomMultiplier = 1.0;
-    this.wheelZooms = null; // (event) => whether the mouse wheel zooms (main.ts: not while it switches weapons)
+    this.wheelZooms = null; // (event) => whether the mouse wheel zooms (install/crime.ts: not while switching weapons)
     this.isDragging = false;
     this.userOrbitTimer = 0;
 
@@ -159,9 +159,10 @@ class CameraSystem {
     this.smoothedSpeed = 0;
     this._desiredPos = new THREE.Vector3();
     this._desiredLook = new THREE.Vector3();
-    // Scenic anchors { presetId: { x, z, heading } }: the spots the scenic cameras frame (main.ts sets them)
+    // Scenic anchors { presetId: { x, z, heading } }: the spots the scenic cameras frame (install/player.ts sets them)
     this.scenicAnchors = null;
-    // Free aim on foot (player/aim.ts, main.ts sets it): the follow cameras ease in over the right shoulder
+    // Free aim on foot (player/aim.ts, app/install/player.ts sets it): the follow cameras ease in over the right
+    // shoulder
     this.aim = null;
     this.aimWas = false;
     this._aimPos = new THREE.Vector3();

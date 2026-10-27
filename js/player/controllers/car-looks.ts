@@ -85,7 +85,7 @@ export function setCarLook(ctl: ThirdPersonControllerManager, bodyType = 'taxi',
     c.kit = kit;
     c.label = kit.label;
   }
-  showCarFile(ctl, c, model.id, spec.name === 'taxi' || police || kit ? undefined : carFile(model.id), paint);
+  showCarFile(ctl, c, model.id, police || kit ? undefined : carFile(model.id), paint);
   c.zFront = spec.zFront * sz;
   c.bodyHeight = model.size[2];
   c.spec = buildSpec(model);
@@ -96,7 +96,8 @@ export function setCarLook(ctl: ThirdPersonControllerManager, bodyType = 'taxi',
 // The car as its model's 3D model (actors/vehicles/car-files.ts), the one the traffic draws, when its file has
 // loaded and has its wheels apart: its body in the chassis (undoing the body shape's stretch), its own wheels where
 // its file puts them, its paint & brake lamps from its own material's uniforms. No dents or blood show on it yet.
-// Without a file (or for a taxi, a patrol car, a combi), the body shape as before.
+// A taxi's file has its roof sign, so the body shape's door badges go. Without a file (or for a patrol car, a combi),
+// the body shape as before.
 export function showCarFile(ctl: ThirdPersonControllerManager, c: CarEntity, id: string, file: CarFile | undefined, paint: number): void {
   const w = file?.wheels, wheel = file?.wheel;
   if (!file || !w || !wheel) {
@@ -125,6 +126,7 @@ export function showCarFile(ctl: ThirdPersonControllerManager, c: CarEntity, id:
   body.visible = true;
   c.bodyMesh.visible = false;
   for (const plate of c.plates) plate.visible = false;
+  for (const decal of c.taxiDecals) decal.visible = false;
   for (const wh of c.wheels) {
     wh.tire.geometry = wh.side < 0 ? wheel.left : wheel.right;
     wh.tire.material = wheelMat;
@@ -141,7 +143,7 @@ export function showCarFile(ctl: ThirdPersonControllerManager, c: CarEntity, id:
 // (not setCarLook again, which repairs it and resets its gearbox)
 export function refreshCarFile(ctl: ThirdPersonControllerManager, id: string): void {
   const c = ctl.entities.car, look = c.look;
-  if (look.model !== id || c.kit || look.bodyType === 'taxi' || look.police) return;
+  if (look.model !== id || c.kit || look.police) return;
   showCarFile(ctl, c, id, carFile(id), look.paint);
 }
 

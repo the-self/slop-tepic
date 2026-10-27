@@ -5,7 +5,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 // Spatial culling for the city-wide static geometry. Most of the street furniture and building massing is built as a
 // handful of instanced meshes spanning the whole city (bounding spheres several km across), which three.js can never
 // cull: every frame the GPU transformed every lamp post, signal and facade box of the city three times (the
-// view and both sun shadow cascades). This module, run once after the city is built (main.ts):
+// view and both sun shadow cascades). This module, run once after the city is built (app/install/rendering.ts):
 // 1. Splits the instanced meshes of small props into spatial chunks, each culled by the view frustum and hidden beyond
 //    the distance where its props shrink below a pixel or two (updateSceneCulling, every frame).
 // 2. Gives the big static shadow casters (facade boxes, piers, viaducts...) position-only stand-ins cut into cells, on
@@ -301,7 +301,7 @@ function replaceWithChunks(mesh: THREE.InstancedMesh, cell: number) {
   parent.remove(mesh);
   chunks.forEach((chunk, k) => {
     parent.add(chunk);
-    // Shader precompile: every chunk shares the first chunk's pipeline (main.ts).
+    // Shader precompile: every chunk shares the first chunk's pipeline (app/frame-loop.ts).
     if (k > 0) chunk.userData.sharesPipelineWith = chunks[0];
     chunk.updateMatrixWorld(true);
   });
@@ -341,7 +341,8 @@ interface FaceSide {
 
 /**
  * Shows `group` only to the cameras that see `layers`, render by render (scene.onBeforeRender), and visible again
- * after each (onAfterRender), so whatever walks the scene between renders (main.ts's shader warm-up) still finds it
+ * after each (onAfterRender), so whatever walks the scene between renders (app/frame-loop.ts's shader warm-up) still
+ * finds it
  */
 function showOnlyTo(scene: THREE.Scene, group: THREE.Object3D, layers: THREE.Layers): void {
   // (three.js calls them on the scene: bound to it, as they were)
@@ -806,9 +807,10 @@ const RELEASE_MIN_VERTICES = 2048;
  * in memory, ~1 GB of it in the JS heap alone. Only the attributes the renderer has already uploaded go, and never the
  * instance matrices & colours (knocked-over props change theirs: mayhem.ts). The warm-up frame draws one object per
  * shader pipeline, so the first call (after it) frees what it drew and keeps the rest as pending: call it again now and
- * then (main.ts does, every few seconds) and each part of the city goes once it has been drawn. Each attribute keeps
- * its count and its array's type (the pipelines read both); its array becomes empty, and its geometry is marked
- * `userData.arraysReleased`: nothing may read, clone or change it afterwards. Returns the bytes released by this call.
+ * then (app/frame-loop.ts does, every few seconds) and each part of the city goes once it has been drawn. Each
+ * attribute keeps its count and its array's type (the pipelines read both); its array becomes empty, and its geometry
+ * is marked `userData.arraysReleased`: nothing may read, clone or change it afterwards. Returns the bytes released by
+ * this call.
  */
 // What releaseStaticArrays reads of the renderer's backend: the GPU data it keeps per attribute (three.js's Backend
 // has these, untyped)

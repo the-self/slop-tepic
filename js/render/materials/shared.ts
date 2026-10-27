@@ -45,10 +45,10 @@ export const cityUniforms = {
   uRoadWetness: uniform(0.38),
   uCanyonBounce: uniform(0.52),
   // How dry the grass is, 0 green (the rains, June-October) .. 1 straw (April-May): lot-greenery.ts grassDryness of
-  // the month shown, set by main.ts
+  // the month shown, set by app/frame-loop.ts
   uDryness: uniform(0.1),
-  // The town's hour (0-24) and a running clock (s), set by main.ts: who is home with the light on, which shops have
-  // their shutters up, the people moving about in the rooms (createMexicanHouseMaterial)
+  // The town's hour (0-24) and a running clock (s), set by app/frame-loop.ts: who is home with the light on, which
+  // shops have their shutters up, the people moving about in the rooms (createMexicanHouseMaterial)
   uHour: uniform(14),
   uClock: uniform(0)
 };

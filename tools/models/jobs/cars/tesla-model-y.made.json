@@ -1,0 +1,6 @@
+{
+  "note": "Modelled by script in Blender (blender -b --factory-startup -P tools/models/blender/tesla-model-y.py -- <tesla-model-y.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/tesla-model-y.glb --length 4.797 --roles tools/models/jobs/cars/tesla-model-y.roles.json --plates 0.45,0.75 (its real length, so it is not rescaled; light enough for no levels of detail: tools/models/add-lods.mjs leaves it)",
+  "license": "our own work",
+  "source": "tools/models/blender/tesla-model-y.py",
+  "args": "--length 4.797 --roles tools/models/jobs/cars/tesla-model-y.roles.json --plates 0.45,0.75"
+}
