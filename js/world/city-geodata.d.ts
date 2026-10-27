@@ -100,6 +100,9 @@ export type Waterway = [kind: WaterwayKind, halfWidth: number, name: string, fla
 /** A river's whole course where it runs on beyond the detailed box: [name, flat points downstream]. */
 export type FarRiver = [name: string, pts: FlatPoints];
 
+/** A high-voltage line: [kV (0 not said), flat points, a tower at each]. */
+export type PowerLine = [kv: number, pts: FlatPoints];
+
 /** The kinds of lake kept (OSM water=lake | pond | reservoir | wetland | basin, or none). */
 export type LakeKind = 'lake' | 'pond' | 'reservoir' | 'wetland';
 /** A lake, presa, pond or reservoir: [kind, name ('' none), flags (1 intermittent, 2 beyond the detailed box, 4 up the
@@ -300,6 +303,10 @@ export interface CityGeodata {
   topes: number[];
   /** Trees OpenStreetMap maps, 3 numbers each: x, z (m), kind (0 a lone tree, 1 one of a row). */
   trees: number[];
+  /** Street lamps OpenStreetMap maps, 2 numbers each: x, z (m). */
+  lamps: number[];
+  /** High-voltage lines: [kV (0 not said), flat points, a tower at each]. */
+  powerLines: PowerLine[];
 }
 
 export declare const GEO: CityGeodata;

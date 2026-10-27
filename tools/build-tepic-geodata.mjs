@@ -721,6 +721,44 @@ const mappedTrees = [];
   }
   log(`trees: ${tally.lone} mapped one by one, ${tally.inRows} along ${tally.rows} rows, ${tally.off} off the box`);
 }
+// The street lamps OpenStreetMap maps (highway=street_lamp): x, z each, flat
+const streetLamps = [];
+for (const e of poisOSM.elements) {
+  if (e.type !== 'node' || e.tags?.highway !== 'street_lamp') continue;
+  const [x, z] = toWorld(e.lon, e.lat);
+  if (inBox(x, z)) streetLamps.push(q(x), q(z));
+}
+log(`street lamps: ${streetLamps.length / 2} mapped`);
+// The high-voltage lines (OSM power=line: the CFE's 115, 230 & 400 kV lines over the valley and the hills; Tepic maps
+// no distribution lines or poles), their towers at the ways' points: [kV (0 not said), flat points], each run of a
+// way inside the hills' grid (5D: TX0..TX1, TZ0..TZ1) one line
+const powerLines = [];
+{
+  const GRID = { x0: -16900, x1: 20900, z0: -15900, z1: 20900 }; // (5D's grid, a cell in)
+  const inGrid = ([x, z]) => x >= GRID.x0 && x <= GRID.x1 && z >= GRID.z0 && z <= GRID.z1;
+  let km = 0, towers = 0;
+  for (const e of detailsOSM.elements) {
+    const t = e.tags || {};
+    if (e.type !== 'way' || t.power !== 'line' || !e.geometry) continue;
+    const kv = Math.round((num(String(t.voltage || '').split(';')[0]) ?? 0) / 1000);
+    let run = [];
+    const flush = () => {
+      if (run.length > 1) {
+        powerLines.push([kv, flat(run)]);
+        towers += run.length;
+        for (let i = 1; i < run.length; i++) km += Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]) / 1000;
+      }
+      run = [];
+    };
+    for (const g of e.geometry) {
+      const p = toWorld(g.lon, g.lat);
+      if (inGrid(p)) run.push(p);
+      else flush();
+    }
+    flush();
+  }
+  log(`power lines: ${powerLines.length} runs, ${km.toFixed(0)} km, ${towers} towers`);
+}
 
 // =====================================================================================================================
 // 4. BLOCKS: the box minus every roadway (and the things that cut blocks without carrying traffic)
@@ -2690,7 +2728,11 @@ const GEO = {
   // Speed bumps (3): x, z (m), kind (0 a bump or hump, 1 a table, 2 a cushion, 3 a rumble strip), flat
   topes,
   // Trees OpenStreetMap maps (3): x, z (m), kind (0 a lone tree, 1 one of a row), flat
-  trees: mappedTrees
+  trees: mappedTrees,
+  // Street lamps OpenStreetMap maps (3): x, z (m), flat
+  lamps: streetLamps,
+  // High-voltage lines (3): [kV (0 not said), flat points: a tower at each]
+  powerLines
 };
 
 const json = JSON.stringify(GEO);

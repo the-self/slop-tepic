@@ -27,6 +27,7 @@ import { buildTepicLandmarks } from '../world/tepic-landmarks.ts';
 import { buildCotos } from '../world/cotos.ts';
 import { buildCarParks } from '../world/car-parks.ts';
 import { buildBusShelters } from '../world/bus-shelters.ts';
+import { buildPowerLines } from '../world/power-lines.ts';
 import { GEO } from '../world/city-geodata.js';
 import type { Collider } from '../world/buildings.ts';
 
@@ -108,6 +109,8 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   for (const c of buildFootbridges(scene).colliders) colliders.push(c);
   // The CFE's concrete poles stop the player (not the traffic: they stand on the sidewalks' outer edge)
   for (const c of streetDetails.colliders) colliders.push(c);
+  // The high-voltage lines over the valley & the hills; their towers in the town stop the player
+  for (const c of buildPowerLines(scene).colliders) colliders.push(c);
   mark('bridges');
   return { streamer, cityGrid, farGround, rivers, cityBlocks, stores, carParks, streetDetails, traffic, highwayTraffic, bridges, colliders };
 }
