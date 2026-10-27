@@ -86,6 +86,80 @@ const nodeKey = (g) => `${g.lat.toFixed(7)},${g.lon.toFixed(7)}`;
   THETA = Math.atan2(sy, sx) / 4;
   log(`grid bearing ${((THETA * 180) / Math.PI).toFixed(2)}° east of true north`);
 }
+// The minor ways the traffic and the player drive as well: the alleys & service roads (OSM highway=service but the
+// driveways, the car parks' aisles, the drive-throughs and the emergency accesses, and the ways round inside a car
+// park: its lot stays whole, car-parks.ts), and the tracks (highway=track) of the built-up town (most of their points
+// in land OSM marks residential, commercial, industrial or retail, or within TRACK_TOWN m of a residential street);
+// none closed to the public (access=private | no). Narrow, one lane each way; the traffic takes one only where it leads
+// somewhere (js/world/road-network.ts keeps only the edges a vehicle can both reach and leave). The rest of the
+// service roads & tracks stay out of the road graph
+const MINOR_SURFACE = /^(dirt|ground|earth|unpaved|gravel|fine_gravel|compacted|mud|sand|rock|grass)$/;
+const minorDrive = new Set();
+{
+  const TOWN = /^(residential|commercial|industrial|retail)$/;
+  const town = [];
+  for (const e of landOSM.elements) {
+    if (e.type !== 'way' || !e.geometry || !TOWN.test(e.tags?.landuse || '')) continue;
+    const ring = e.geometry.map((g) => toWorld(g.lon, g.lat));
+    if (ring.length < 4) continue;
+    town.push({ ring, box: bbox(ring) });
+  }
+  // (the residential streets, sampled every 20 m in TRACK_TOWN m cells)
+  const TRACK_TOWN = 60;
+  const homes = new Set();
+  for (const w of ways) {
+    if (!/^(residential|living_street)$/.test(w.tags.highway)) continue;
+    const pts = w.geometry.map((g) => toWorld(g.lon, g.lat));
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 20));
+      for (let k = 0; k <= n; k++) homes.add(Math.floor((ax + ((bx - ax) * k) / n) / TRACK_TOWN) * 100003 + Math.floor((az + ((bz - az) * k) / n) / TRACK_TOWN));
+    }
+  }
+  const nearHomes = (x, z) => {
+    const i = Math.floor(x / TRACK_TOWN), j = Math.floor(z / TRACK_TOWN);
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if (homes.has((i + a) * 100003 + j + b)) return true;
+    return false;
+  };
+  const inTown = (x, z) => nearHomes(x, z) || town.some(({ ring, box }) => x >= box.x0 && x <= box.x1 && z >= box.z0 && z <= box.z1 && inRing(ring, x, z));
+  // (the car parks' outlines)
+  const lots = [];
+  for (const e of landOSM.elements) {
+    if (e.type !== 'way' || !e.geometry || e.tags?.amenity !== 'parking') continue;
+    const ring = e.geometry.map((g) => toWorld(g.lon, g.lat));
+    if (ring.length >= 4) lots.push({ ring, box: bbox(ring) });
+  }
+  const inLot = (x, z) => lots.some(({ ring, box }) => x >= box.x0 && x <= box.x1 && z >= box.z0 && z <= box.z1 && inRing(ring, x, z));
+  const tally = { service: 0, alley: 0, track: 0, lot: 0 };
+  for (const w of ways) {
+    const t = w.tags;
+    if (/^(private|no)$/.test(t.access || '')) continue;
+    if (t.highway === 'service') {
+      if (/^(driveway|parking_aisle|drive-through|emergency_access)$/.test(t.service || '')) continue;
+      const pts = w.geometry.map((g) => toWorld(g.lon, g.lat));
+      // (sampled every few metres: a way across a lot may have just its two ends, outside it)
+      const samples = [];
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const n = Math.max(1, Math.ceil(Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]) / 5));
+        for (let k = 0; k < n; k++) samples.push([pts[i][0] + ((pts[i + 1][0] - pts[i][0]) * k) / n, pts[i][1] + ((pts[i + 1][1] - pts[i][1]) * k) / n]);
+      }
+      if (samples.filter(([x, z]) => inLot(x, z)).length * 2 > samples.length) { tally.lot++; continue; }
+      minorDrive.add(w);
+      tally[t.service === 'alley' ? 'alley' : 'service']++;
+    } else if (t.highway === 'track') {
+      const pts = w.geometry.map((g) => toWorld(g.lon, g.lat));
+      if (pts.filter(([x, z]) => inTown(x, z)).length * 2 < pts.length) continue;
+      minorDrive.add(w);
+      tally.track++;
+    }
+  }
+  log(`minor ways driven: ${tally.service} service roads, ${tally.alley} alleys, ${tally.track} tracks in town; ${tally.lot} service roads round a car park left to it`);
+}
+// Is way w driven: a street, or one of the minor ways above
+const drives = (w) => DRIVE.has(w.tags.highway) || minorDrive.has(w);
+// ...their surfaces where not asphalt (js/world/street-surfaces.ts adds them to pavement-data.ts's): [kind (2 earth:
+// a track not said to be paved, or a way OSM says is unpaved; 3 concrete), width (m), flat centreline] each
+const minorSurfaces = [];
 
 // The detailed city: a box around the centro (metres in the grid frame). Everything the game builds lives in here.
 // From Lo de Lamedo & Las Brisas (west) to San Cayetano & Vistas de la Cantera (east), from El Tajo (north) to the south
@@ -109,7 +183,8 @@ function roadSpec(t) {
   const widths = {
     motorway: [11, 11], trunk: [10.5, 16], primary: [10, 14], secondary: [9, 12], tertiary: [8, 10],
     unclassified: [7.4, 7.4], residential: [7.4, 7.4], living_street: [6, 6],
-    motorway_link: [7, 7], trunk_link: [7, 7], primary_link: [7, 7], secondary_link: [7, 7], tertiary_link: [7, 7]
+    motorway_link: [7, 7], trunk_link: [7, 7], primary_link: [7, 7], secondary_link: [7, 7], tertiary_link: [7, 7],
+    service: t.service === 'alley' ? [3.6, 3.6] : [4.5, 4.5], track: [4, 4]
   }[hw] || [7.4, 7.4];
   let w = num(t.width);
   if (!(w >= 4 && w <= 30)) w = oneway ? widths[0] : widths[1];
@@ -128,7 +203,7 @@ const roadName = (t) => t.name || t['name:es'] || t.ref || '';
 // =====================================================================================================================
 const nodeUse = new Map();
 for (const w of ways) {
-  if (!DRIVE.has(w.tags.highway)) continue;
+  if (!drives(w)) continue;
   for (const g of w.geometry) { const k = nodeKey(g); nodeUse.set(k, (nodeUse.get(k) || 0) + 1); }
 }
 const MERGE = 1.0;
@@ -194,7 +269,7 @@ const roadLines = []; // for maps & labels
 const nodeWorld = new Map(); // node coordinate key -> world point (for signals)
 for (const w of ways) {
   const t = w.tags;
-  if (!DRIVE.has(t.highway)) continue;
+  if (!drives(w)) continue;
   const spec = roadSpec(t);
   const name = roadName(t);
   const pts = w.geometry.map((g) => toWorld(g.lon, g.lat));
@@ -224,6 +299,9 @@ for (const w of ways) {
   }
   for (const piece of clipChain(pts)) {
     roadLines.push({ name, w: spec.w, dir: spec.dir === 0 ? 'TW' : spec.dir > 0 ? 'FT' : 'TF', lanes: spec.lanes, hw: spec.major, pts: rdp(piece, 0.8) });
+    const surface = t.surface || '';
+    const kind = MINOR_SURFACE.test(surface) || (t.highway === 'track' && !/paved|asphalt|concrete|sett|cobble|paving/.test(surface)) ? 2 : /^concrete/.test(surface) ? 3 : -1;
+    if (minorDrive.has(w) && kind >= 0) minorSurfaces.push([kind, spec.w, flat(rdp(piece, 0.5))]);
   }
 }
 
@@ -2518,7 +2596,9 @@ const transit = { groups: [], routes: [] };
     const src = JSON.parse(fs.readFileSync(file, 'utf8'));
     const groups = src.geojson.groups || [];
     transit.groups = groups.map((g) => g.title.replace(/^Rutas? Tepic - /, ''));
-    const match = createRouteMatcher(linkPts.map(({ pts, dir }, i) => ({ a: links[i][0], b: links[i][1], pts, dir })));
+    // (the camiones & combis keep to the streets: never down an alley or a track, minorDrive)
+    const match = createRouteMatcher(linkPts.map(({ pts, dir }, i) => ({ a: links[i][0], b: links[i][1], pts, dir,
+      closed: /^(service|track)$/.test(linkDrafts[i].spec.hw) })));
     let drawn = 0, on = 0;
     for (const f of src.geojson.features) {
       if (!f.geometry || f.geometry.type !== 'LineString') continue;
@@ -2749,7 +2829,9 @@ const GEO = {
   // High-voltage lines (3): [kV (0 not said), flat points: a tower at each]
   powerLines,
   // Swimming pools (4): their outlines, flat rings
-  pools
+  pools,
+  // The minor ways' surfaces where not asphalt (2): [kind (2 earth, 3 concrete), width (m), flat centreline]
+  minorSurfaces
 };
 
 const json = JSON.stringify(GEO);

@@ -3,7 +3,7 @@ import { CROSSWALK, edgeLift } from './road-network.ts';
 import type { PaintEdge, RoadNetwork } from './road-network.ts';
 import { color, mix, step, fract, uv, float } from 'three/tsl';
 import { createRoadPaintMaterial } from '../render/tsl-materials.ts';
-import { PAVEMENTS } from './pavement-data.ts';
+import { SURFACES } from './street-surfaces.ts';
 import { drapeGeometry } from './drape.ts';
 import { placeCrossings } from './crossings.ts';
 import { planTopes } from './topes.ts';
@@ -25,6 +25,7 @@ const HEIGHT = 0.012; // above the asphalt
 const TOPE_LEN = 0.9; // along the street (m)
 const TOPE_H = 0.09;
 const TOPE_SEGS = 6;
+const NARROW = 2.8; // m: a road under twice this curb to curb is an alley's or a track's (city-geodata.js minor ways)
 const ZEBRA_CLEAR = 4; // m from a stop line a mapped crossing must be for a zebra of its own (nearer, the junction's)
 
 /** A point on the ground [x, z] (m) */
@@ -132,7 +133,7 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
   // The cobbled & earth streets' segments in 25 m cells: is (x, z) on one?
   const UNPAINTED = 25;
   const unpaintedCells = new Map<number, [number, number, number, number, number][]>();
-  for (const [kind, width, pts] of PAVEMENTS) {
+  for (const [kind, width, pts] of SURFACES) {
     if (kind !== 0 && kind !== 2) continue;
     for (let i = 0; i + 3 < pts.length; i += 2) {
       const seg: [number, number, number, number, number] = [pts[i], pts[i + 1], pts[i + 2], pts[i + 3], width * 0.5];
@@ -153,7 +154,8 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
   });
 
   for (const [e, back] of roads.values()) {
-    if (unpainted(...at(e, e.len / 2, 0))) continue;
+    // (no lines on the empedrado & the earth, nor down an alley or a service road: too narrow for lanes)
+    if (e.half < NARROW || unpainted(...at(e, e.len / 2, 0))) continue;
     const firstLine = lines.length;
     // Lanes of both directions, measured to the right of e, left to right
     const lanes = e.lanes.map((o) => ({ o, dir: 1 }));

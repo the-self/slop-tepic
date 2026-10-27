@@ -309,6 +309,9 @@ export interface CityGeodata {
   powerLines: PowerLine[];
   /** Swimming pools: their outlines (flat rings, m). */
   pools: FlatPoints[];
+  /** The surfaces of the minor ways (alleys, service roads, the town's tracks) where not asphalt: [kind (2 earth, 3
+   *  concrete), width (m), flat centreline]. */
+  minorSurfaces: [kind: number, width: number, pts: FlatPoints][];
 }
 
 export declare const GEO: CityGeodata;
