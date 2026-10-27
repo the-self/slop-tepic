@@ -1149,6 +1149,9 @@ class PersonRig {
   /** riding: the head's position and rotation (world space) */
   headPosition?: THREE.Vector3;
   headQuaternion?: THREE.Quaternion;
+  /** a body drawing this rig with clips of its own (actors/person-body.ts): its right hand's turn in the world, as the
+   * rig's right forearm would be turned to put the hand there (identity: hanging as in the bind pose) */
+  handTurn?: THREE.Quaternion;
 
   constructor({ seed = 0, scale = 1, female = false, girth = 1, hair = 0.2, armSwing = 1, stride = 1 }: PersonLooks = {}) {
     this.seed = seed;

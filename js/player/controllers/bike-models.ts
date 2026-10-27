@@ -6,7 +6,7 @@ import { createCarPaintMaterial, createContactShadowMaterial } from '../../rende
 import { buildSpec } from '../drivetrain.ts';
 import { paintsOf } from '../../models/cars/index.ts';
 import { PLAYER_MOTO, MOTO_MODEL_BY_ID } from '../../models/motos/index.ts';
-import { SPAWN, LABELS, PLAYER_PERSON } from './constants.ts';
+import { SPAWN, LABELS } from './constants.ts';
 import type { CyclistEntity, MotoEntity } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
 
@@ -148,8 +148,8 @@ export function createCyclistEntity(ctl: ThirdPersonControllerManager): CyclistE
   leanPivot.add(crankPivot);
 
   // Skinned rider (see pedestrians.ts), posed every frame with its hands on the grips and feet on the pedals; the
-  // helmet rides on its head
-  const riderCrowd = new PersonCrowd(1, { farDistance: Infinity, model: PLAYER_PERSON });
+  // helmet rides on its head (drawn as the player's body once it loads: frame.ts)
+  const riderCrowd = new PersonCrowd(1, { farDistance: Infinity });
   riderCrowd.meshes.forEach((m) => ctl.scene.add(m));
   const riderRig = new PersonRig({ seed: 12.8, scale: 1.0, girth: 0.97, hair: 0.1 });
   const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.125, 14, 12), helmetMat);
@@ -300,7 +300,7 @@ export function createMotoEntity(ctl: ThirdPersonControllerManager): MotoEntity 
     bracket: new THREE.Vector3(0, 0.36, -0.07),
     crankLength: 0.001
   };
-  const riderCrowd = new PersonCrowd(1, { farDistance: Infinity, model: PLAYER_PERSON });
+  const riderCrowd = new PersonCrowd(1, { farDistance: Infinity });
   riderCrowd.meshes.forEach((m) => ctl.scene.add(m));
   const riderRig = new PersonRig({ seed: 21.4, scale: 1.0, girth: 1.02, hair: 0.1 });
   const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 12), helmetMat);

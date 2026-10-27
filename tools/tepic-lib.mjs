@@ -696,7 +696,8 @@ export function decodePNG(buf, inflate) {
  * driven their way, so a line drawn against one goes round the block. Where no drive joins two samples (the line
  * leaves the map, or the streets don't connect) the route breaks into pieces.
  *
- * links: [{ a, b, pts: [[x, z], ...] from node a to node b, dir: 0 both ways, 1 a to b only, -1 b to a only }]
+ * links: [{ a, b, pts: [[x, z], ...] from node a to node b, dir: 0 both ways, 1 a to b only, -1 b to a only, closed:
+ * true never driven (optional) }]
  * Returns match(line) for polylines [[x, z], ...] in the same frame: { pieces, samples, matched, loop }, where each
  * piece is a list of refs, link index + 1 driven a to b and -(index + 1) b to a, `matched` counts the samples on a
  * street, and `loop` says the one piece drives on from its end back into its start.
@@ -708,7 +709,8 @@ export function createRouteMatcher(links, { step = 15, radius = 30, sigma = 8, b
     for (let i = 0; i + 1 < l.pts.length; i++) s += Math.hypot(l.pts[i + 1][0] - l.pts[i][0], l.pts[i + 1][1] - l.pts[i][1]);
     return s;
   });
-  const allowed = (st) => { const d = links[st >> 1].dir; return d === 0 || (d > 0) === ((st & 1) === 0); };
+  // (a link `closed` to the routes is driven neither way)
+  const allowed = (st) => { const l = links[st >> 1]; return !l.closed && (l.dir === 0 || (l.dir > 0) === ((st & 1) === 0)); };
   const startOf = (st) => (st & 1 ? links[st >> 1].b : links[st >> 1].a);
   const endOf = (st) => (st & 1 ? links[st >> 1].a : links[st >> 1].b);
   const out = new Map(); // node -> the states leaving it

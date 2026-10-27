@@ -209,8 +209,8 @@ Use `--keep-width` for props that stand alone.
 - **People**: pedestrians are one instanced, GPU-skinned crowd on a 15-bone skeleton (`sim/pedestrians.ts`), with
   outfits from a per-person seed. A crowd can be drawn as a person model instead (`PersonCrowd`'s `model`, loaded by
   `actors/person-files.ts`): each model is one fixed look, and the morphs (build, female proportions, hair) are lost.
-  The player is the first (`people/player.glb`, `tools/models/jobs/people/player.json`): on foot and riding, the same
-  walk, run, aim and ragdoll as everyone.
+  The player was the first (`people/player.glb`, `tools/models/jobs/people/player.json`); the others in multiplayer
+  still see it so. The player itself is now that model as Meshy rigged and animated it (below: **Rigged by Meshy**).
   - **Drawing it**: Nano Banana Pro in A-pose, a front view (text-to-image) and a back view (image-to-image with that
     task as the reference), then Meshy 7.1 multi-image-to-3d on the two (Ultra geometry, 4K texture: 35 credits).
     **No side profile**: an arm held out to the side hangs straight down in profile, and Meshy made one arm reach
@@ -228,5 +228,18 @@ Use `--keep-width` for props that stand alone.
     far level is simplified with its corners joined by place: Meshy's atlas seams stopped the simplifier at ~12k
     triangles. The skeleton and its weights are `js/sim/person-skeleton.ts`, shared with the drawn body: prepare the
     models again if they change.
-  - **Loading**: the loading screen waits (8 s at most) for the player's file before the shaders compile, so its
-    pipelines are built with the rest. Remote players (`net/multiplayer.ts`) are drawn as the same model.
+  - **Loading**: the loading screen waits (8 s at most) for the player's body before the shaders compile, so its
+    pipelines are built with the rest. Remote players (`net/multiplayer.ts`) are drawn as `people/player.glb`.
+  - **Rigged by Meshy** (`people/player-rigged.glb`, `actors/person-body.ts`): the crowd's procedural walk on a
+    scanned body looked like a puppet, so the player is Meshy's own rig (`meshy_rig` on the multi-image task, 5
+    credits: 24 bones, Hips to the toes, its walk and run free) moved by clips from its library (`meshy_animate`, 3
+    credits each; take the `_inplace` ones: the game moves the body). `node tools/models/prepare-rigged-person.mjs
+    rigged.glb assets/models/people/<name>.glb walk=walking.glb run=running.glb idle=idle.glb:<clip>...` makes one
+    file of the body (simplified to 30k triangles, a 2K JPEG) and the clips by the names the game plays them for.
+    One SkinnedMesh with an AnimationMixer: the clips blend by speed, kept in step with the ground (the strides in
+    `person-body.ts`, measured on the clips), and the jump plays only its flight. What no clip does comes from the
+    crowd's rig, its bones' turns copied over by name (`follow`): the arms raised to aim or punch (over the clips),
+    riding a bike or a moto, the ragdoll. Look at a library clip's GIF before buying it: Meshy's "Idle" fidgets and
+    turns round; "Idle 3" (243) stands still.
+    **Trap**: never `skeleton.pose()` on a Meshy rig: the hips' parent is the Armature (scale 0.01), not a bone, so
+    pose() gives the hips the armature's scale again and the body shrinks to a dot (only its shadow shows).

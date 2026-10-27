@@ -5,28 +5,35 @@ import { cityUniforms } from '../../render/tsl-materials.ts';
 import { HEADLIGHTS } from '../../actors/vehicle-lights.ts';
 import { personGround } from './constants.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
+import type { PersonCrowd, PersonRig } from '../../sim/pedestrians.ts';
+import type { PersonBody } from '../../actors/person-body.ts';
 
 // Pose the skinned characters once every entity has moved: the pedestrian's rig walks (or runs, turns, jumps) it to
 // where it now is, planting its feet on the ground; the cyclist sits on the bike, hands on the grips, feet on the
-// pedals, helmet on its head
+// pedals, helmet on its head. Once the player's body has loaded (actors/person-body.ts) it is drawn instead of the
+// crowds': on foot by its clips (the rig still aiming its arms and holding the gun), riding and as a ragdoll as the rig
+// lies
 export function poseCharacters(ctl: ThirdPersonControllerManager, dt: number): void {
   const p = ctl.entities.person;
+  const body = p.body;
+  let shown = false;
   if (ctl.activeMode === 'person') {
     const air = p.position.y - ctl.getGroundHeight(p.position.x, p.position.z, 'person', p.position.y);
     // (a ragdoll's pose is its own, sim/ragdolls.ts)
     if (!p.ragdoll) p.rig.update(dt, p.position.x, p.position.z, p.heading, personGround, ctl, air > 0.02 ? air : 0);
-    p.crowd.begin();
-    p.crowd.add(p.rig, 0);
-    p.crowd.end();
+    if (body && p.ragdoll) body.follow(p.rig);
+    else if (body) body.walk(dt, p.position.x, p.position.y, p.position.z, p.heading, p.speed, p.strafe ?? 0, Math.max(0, air), p.rig);
+    drawRider(p.crowd, p.rig, body);
+    shown = p.mesh.visible; // (not while riding in a friend's car, net/multiplayer.ts)
   }
 
   const m = ctl.entities.moto;
   if (ctl.activeMode === 'moto') {
     // the moto's rider: feet on the pegs (a crank of no length), hands on the bars
     m.riderRig.ride(m.leanPivot, 0, m.bikeFrame);
-    m.riderCrowd.begin();
-    m.riderCrowd.add(m.riderRig, 0);
-    m.riderCrowd.end();
+    drawRider(m.riderCrowd, m.riderRig, body);
+    if (body) body.follow(m.riderRig);
+    shown = true;
     const { headQuaternion, headPosition } = m.riderRig; // (ride() has just set them)
     if (headQuaternion && headPosition) {
       m.helmet.quaternion.copy(headQuaternion);
@@ -35,15 +42,25 @@ export function poseCharacters(ctl: ThirdPersonControllerManager, dt: number): v
   }
 
   const b = ctl.entities.cyclist;
-  if (ctl.activeMode !== 'cyclist') return;
-  b.riderRig.ride(b.leanPivot, b.pedalPhase, b.bikeFrame);
-  b.riderCrowd.begin();
-  b.riderCrowd.add(b.riderRig, 0);
-  b.riderCrowd.end();
-  const { headQuaternion, headPosition } = b.riderRig;
-  if (!headQuaternion || !headPosition) return;
-  b.helmet.quaternion.copy(headQuaternion);
-  b.helmet.position.set(0, 0.175, -0.012).applyQuaternion(b.helmet.quaternion).add(headPosition);
+  if (ctl.activeMode === 'cyclist') {
+    b.riderRig.ride(b.leanPivot, b.pedalPhase, b.bikeFrame);
+    drawRider(b.riderCrowd, b.riderRig, body);
+    if (body) body.follow(b.riderRig);
+    shown = true;
+    const { headQuaternion, headPosition } = b.riderRig;
+    if (headQuaternion && headPosition) {
+      b.helmet.quaternion.copy(headQuaternion);
+      b.helmet.position.set(0, 0.175, -0.012).applyQuaternion(b.helmet.quaternion).add(headPosition);
+    }
+  }
+  if (body) body.root.visible = shown;
+}
+
+// One of the player's crowds drawing `rig`, or nobody once the player's body is drawn in its place
+function drawRider(crowd: PersonCrowd, rig: PersonRig, body: PersonBody | null): void {
+  crowd.begin();
+  if (!body) crowd.add(rig, 0);
+  crowd.end();
 }
 
 export function update(ctl: ThirdPersonControllerManager, dt: number, elapsed: number): void {

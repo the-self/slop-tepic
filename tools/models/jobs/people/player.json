@@ -23,5 +23,16 @@
     "remove_lighting": true,
     "pose_mode": "a-pose"
   },
-  "prepare": "--faces 30000 --far 3000 --texture 2048"
+  "prepare": "--faces 30000 --far 3000 --texture 2048",
+  "rigged": {
+    "note": "assets/models/people/player-rigged.glb: meshy_rig on the multi-image task (5 credits; walking and running come with it), then meshy_animate with the library clips below (3 credits each). Idle (0), Punch Combo (198) and Gunshot Reaction (177) were bought too and are left out: Idle fidgets and turns round, and nothing plays the other two yet. Then: node tools/models/prepare-rigged-person.mjs Character_output.glb assets/models/people/player-rigged.glb walk=walking.glb run=running.glb idle=idle3.glb walk_back=clips.glb:Walk_Backward_inplace jump=clips.glb:Regular_Jump strafe=clips.glb:Walk_Left_with_Gun_inplace walk_back_gun=clips.glb:Walk_Backward_with_Gun_1_inplace",
+    "height_meters": 1.75,
+    "clips": {
+      "idle": 243,
+      "walk_back": 679,
+      "jump": 466,
+      "strafe": 694,
+      "walk_back_gun": 686
+    }
+  }
 }

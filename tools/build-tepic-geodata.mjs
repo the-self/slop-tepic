@@ -11,6 +11,7 @@
 //   osm_tepic_land.json       parks, pitches, schools, water, rail, land use
 //   osm_tepic_pois.json       neighbourhoods, monuments, signals, lamps
 //   osm_tepic_buildings.json  building footprints (sparse in Tepic; only notable ones are kept)
+//   osm_tepic_details.json    stops, speed bumps, trees, power lines, street furniture, businesses, fences
 //   semovi_routes.json        the bus & combi routes (Secretaría de Movilidad de Nayarit, tools/data/tepic/fetch-routes.sh)
 //
 // usage: node --max-old-space-size=8192 tools/build-tepic-geodata.mjs [outFile]
@@ -85,6 +86,82 @@ const nodeKey = (g) => `${g.lat.toFixed(7)},${g.lon.toFixed(7)}`;
   THETA = Math.atan2(sy, sx) / 4;
   log(`grid bearing ${((THETA * 180) / Math.PI).toFixed(2)}° east of true north`);
 }
+// The minor ways the traffic and the player drive as well: the alleys & service roads (OSM highway=service but the
+// driveways, the car parks' aisles, the drive-throughs and the emergency accesses, and the ways round inside a car
+// park: its lot stays whole, car-parks.ts), and the tracks (highway=track) of the built-up town (most of their points
+// in land OSM marks residential, commercial, industrial or retail, or within TRACK_TOWN m of a residential street);
+// none closed to the public (access=private | no). Narrow, one lane each way; the traffic takes one only where it leads
+// somewhere (js/world/road-network.ts keeps only the edges a vehicle can both reach and leave). The rest of the
+// service roads & tracks stay out of the road graph
+const MINOR_SURFACE = /^(dirt|ground|earth|unpaved|gravel|fine_gravel|compacted|mud|sand|rock|grass)$/;
+const minorDrive = new Set();
+{
+  const TOWN = /^(residential|commercial|industrial|retail)$/;
+  const town = [];
+  for (const e of landOSM.elements) {
+    if (e.type !== 'way' || !e.geometry || !TOWN.test(e.tags?.landuse || '')) continue;
+    const ring = e.geometry.map((g) => toWorld(g.lon, g.lat));
+    if (ring.length < 4) continue;
+    town.push({ ring, box: bbox(ring) });
+  }
+  // (the residential streets, sampled every 20 m in TRACK_TOWN m cells)
+  const TRACK_TOWN = 60;
+  const homes = new Set();
+  for (const w of ways) {
+    if (!/^(residential|living_street)$/.test(w.tags.highway)) continue;
+    const pts = w.geometry.map((g) => toWorld(g.lon, g.lat));
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 20));
+      for (let k = 0; k <= n; k++) homes.add(Math.floor((ax + ((bx - ax) * k) / n) / TRACK_TOWN) * 100003 + Math.floor((az + ((bz - az) * k) / n) / TRACK_TOWN));
+    }
+  }
+  const nearHomes = (x, z) => {
+    const i = Math.floor(x / TRACK_TOWN), j = Math.floor(z / TRACK_TOWN);
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if (homes.has((i + a) * 100003 + j + b)) return true;
+    return false;
+  };
+  const inTown = (x, z) => nearHomes(x, z) || town.some(({ ring, box }) => x >= box.x0 && x <= box.x1 && z >= box.z0 && z <= box.z1 && inRing(ring, x, z));
+  // (the car parks' outlines)
+  const lots = [];
+  for (const e of landOSM.elements) {
+    if (e.type !== 'way' || !e.geometry || e.tags?.amenity !== 'parking') continue;
+    const ring = e.geometry.map((g) => toWorld(g.lon, g.lat));
+    if (ring.length >= 4) lots.push({ ring, box: bbox(ring) });
+  }
+  const inLot = (x, z) => lots.some(({ ring, box }) => x >= box.x0 && x <= box.x1 && z >= box.z0 && z <= box.z1 && inRing(ring, x, z));
+  const tally = { service: 0, alley: 0, track: 0, lot: 0 };
+  for (const w of ways) {
+    const t = w.tags;
+    if (/^(private|no)$/.test(t.access || '')) continue;
+    if (t.highway === 'service') {
+      if (/^(driveway|parking_aisle|drive-through|emergency_access)$/.test(t.service || '')) continue;
+      const pts = w.geometry.map((g) => toWorld(g.lon, g.lat));
+      // (sampled every few metres: a way across a lot may have just its two ends, outside it)
+      const samples = [];
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const n = Math.max(1, Math.ceil(Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]) / 5));
+        for (let k = 0; k < n; k++) samples.push([pts[i][0] + ((pts[i + 1][0] - pts[i][0]) * k) / n, pts[i][1] + ((pts[i + 1][1] - pts[i][1]) * k) / n]);
+      }
+      if (samples.filter(([x, z]) => inLot(x, z)).length * 2 > samples.length) { tally.lot++; continue; }
+      minorDrive.add(w);
+      tally[t.service === 'alley' ? 'alley' : 'service']++;
+    } else if (t.highway === 'track') {
+      const pts = w.geometry.map((g) => toWorld(g.lon, g.lat));
+      if (pts.filter(([x, z]) => inTown(x, z)).length * 2 < pts.length) continue;
+      minorDrive.add(w);
+      tally.track++;
+    }
+  }
+  log(`minor ways driven: ${tally.service} service roads, ${tally.alley} alleys, ${tally.track} tracks in town; ${tally.lot} service roads round a car park left to it`);
+}
+// The ways up the hills drawn on the hillside (5D's `paths`): left out of the footways below
+const hillPathWays = new Set();
+// Is way w driven: a street, or one of the minor ways above
+const drives = (w) => DRIVE.has(w.tags.highway) || minorDrive.has(w);
+// ...their surfaces where not asphalt (js/world/street-surfaces.ts adds them to pavement-data.ts's): [kind (2 earth:
+// a track not said to be paved, or a way OSM says is unpaved; 3 concrete), width (m), flat centreline] each
+const minorSurfaces = [];
 
 // The detailed city: a box around the centro (metres in the grid frame). Everything the game builds lives in here.
 // From Lo de Lamedo & Las Brisas (west) to San Cayetano & Vistas de la Cantera (east), from El Tajo (north) to the south
@@ -108,7 +185,8 @@ function roadSpec(t) {
   const widths = {
     motorway: [11, 11], trunk: [10.5, 16], primary: [10, 14], secondary: [9, 12], tertiary: [8, 10],
     unclassified: [7.4, 7.4], residential: [7.4, 7.4], living_street: [6, 6],
-    motorway_link: [7, 7], trunk_link: [7, 7], primary_link: [7, 7], secondary_link: [7, 7], tertiary_link: [7, 7]
+    motorway_link: [7, 7], trunk_link: [7, 7], primary_link: [7, 7], secondary_link: [7, 7], tertiary_link: [7, 7],
+    service: t.service === 'alley' ? [3.6, 3.6] : [4.5, 4.5], track: [4, 4]
   }[hw] || [7.4, 7.4];
   let w = num(t.width);
   if (!(w >= 4 && w <= 30)) w = oneway ? widths[0] : widths[1];
@@ -127,7 +205,7 @@ const roadName = (t) => t.name || t['name:es'] || t.ref || '';
 // =====================================================================================================================
 const nodeUse = new Map();
 for (const w of ways) {
-  if (!DRIVE.has(w.tags.highway)) continue;
+  if (!drives(w)) continue;
   for (const g of w.geometry) { const k = nodeKey(g); nodeUse.set(k, (nodeUse.get(k) || 0) + 1); }
 }
 const MERGE = 1.0;
@@ -193,7 +271,7 @@ const roadLines = []; // for maps & labels
 const nodeWorld = new Map(); // node coordinate key -> world point (for signals)
 for (const w of ways) {
   const t = w.tags;
-  if (!DRIVE.has(t.highway)) continue;
+  if (!drives(w)) continue;
   const spec = roadSpec(t);
   const name = roadName(t);
   const pts = w.geometry.map((g) => toWorld(g.lon, g.lat));
@@ -223,6 +301,9 @@ for (const w of ways) {
   }
   for (const piece of clipChain(pts)) {
     roadLines.push({ name, w: spec.w, dir: spec.dir === 0 ? 'TW' : spec.dir > 0 ? 'FT' : 'TF', lanes: spec.lanes, hw: spec.major, pts: rdp(piece, 0.8) });
+    const surface = t.surface || '';
+    const kind = MINOR_SURFACE.test(surface) || (t.highway === 'track' && !/paved|asphalt|concrete|sett|cobble|paving/.test(surface)) ? 2 : /^concrete/.test(surface) ? 3 : -1;
+    if (minorDrive.has(w) && kind >= 0) minorSurfaces.push([kind, spec.w, flat(rdp(piece, 0.5))]);
   }
 }
 
@@ -490,8 +571,9 @@ for (const d of linkDrafts) {
     if (lifts[i] < 0 || lifts[i + 1] < 0) sunkLen += L;
   }
   // [a, b, name, width, lanes, dir, inner, lifts (dm over the ground at a, inner..., b; < 0 down in a cut) or 0,
-  //  way (1: a bridge way, 2: a tunnel way, 0 neither)]
-  links.push([d.a, d.b, d.ni, d.spec.w, d.spec.lanes, d.spec.dir, inner, any ? lifts : 0, d.bridge ? 1 : d.tunnel ? 2 : 0]);
+  //  way (1: a bridge way, 2: a tunnel way, 0 neither), minor (1: an alley, a service road or a track, minorDrive)]
+  links.push([d.a, d.b, d.ni, d.spec.w, d.spec.lanes, d.spec.dir, inner, any ? lifts : 0, d.bridge ? 1 : d.tunnel ? 2 : 0,
+    /^(service|track)$/.test(d.spec.hw) ? 1 : 0]);
 }
 const rails = railLines.map((r) => {
   const lifts = r.line.map((_, i) => Math.round(railLift(r.line, i) * 10));
@@ -609,6 +691,169 @@ for (const e of poisOSM.elements) {
   if (inBox(p[0], p[1])) signals.push(q(p[0]), q(p[1]));
 }
 log(`${signals.length / 2} traffic signals`);
+// The pedestrian crossings on the drivable streets (OSM highway=crossing, a node of the street's way): [x, z, kind]
+// each, flat; kind 0 unmarked, 1 marked (crossing=zebra | marked | uncontrolled, or its crossing:markings), 2 with
+// lights (crossing=traffic_signals, crossing:signals=yes). A crossing's lights not mapped as a signal of their own
+// stop the traffic as one (js/world/road-network.ts makes them a stop along the street)
+const pedCrossings = [];
+{
+  const tally = { kinds: [0, 0, 0], off: 0, lights: 0 };
+  for (const e of poisOSM.elements) {
+    const t = e.tags;
+    if (e.type !== 'node' || !t || t.highway !== 'crossing') continue;
+    const p = nodeWorld.get(nodeKey(e));
+    if (!p || !inBox(p[0], p[1])) { tally.off++; continue; } // (on a footway, a track, a service road; or off the box)
+    const markings = t['crossing:markings'];
+    const kind = t.crossing === 'traffic_signals' || t['crossing:signals'] === 'yes' ? 2
+      : /^(zebra|marked|uncontrolled)$/.test(t.crossing || '') || (markings && markings !== 'no') ? 1 : 0;
+    tally.kinds[kind]++;
+    pedCrossings.push(q(p[0]), q(p[1]), kind);
+    if (kind === 2) {
+      let near = false;
+      for (let i = 0; i < signals.length && !near; i += 2) near = Math.hypot(signals[i] - p[0], signals[i + 1] - p[1]) < 15;
+      if (!near) { signals.push(q(p[0]), q(p[1])); tally.lights++; }
+    }
+  }
+  log(`pedestrian crossings: ${pedCrossings.length / 3} on the streets (${tally.kinds[0]} unmarked, ${tally.kinds[1]} marked, ${tally.kinds[2]} with lights, ${tally.lights} of those made signals), ${tally.off} off them`);
+}
+// The bus stops (OSM highway=bus_stop, public_transport=platform: the camiones' & combis' paradas on the sidewalk;
+// the stop positions on the roadway only where no stop is mapped beside them): [x, z, flags] each, flat; flags 1 a
+// shelter (shelter=yes, or not said: Tepic's paradas mostly have their parabús), 2 a bench (bench=yes, or not said
+// under a shelter). Two within STOP_SAME m are one stop
+const detailsOSM = load('osm_tepic_details.json');
+const busStops = [];
+{
+  const STOP_SAME = 12;
+  const tally = { stops: 0, merged: 0, off: 0 };
+  const isStop = (t) => t.highway === 'bus_stop' || t.public_transport === 'platform';
+  const at = (e) => (e.type === 'node' ? [e.lon, e.lat] : e.geometry?.length
+    ? [e.geometry.reduce((s, g) => s + g.lon, 0) / e.geometry.length, e.geometry.reduce((s, g) => s + g.lat, 0) / e.geometry.length] : null);
+  const stops = [];
+  for (const pass of [0, 1]) {
+    for (const e of detailsOSM.elements) {
+      const t = e.tags || {};
+      if (pass === 0 ? !isStop(t) : t.public_transport !== 'stop_position' || isStop(t)) continue;
+      const ll = at(e);
+      if (!ll) continue;
+      const [x, z] = toWorld(...ll);
+      if (!inBox(x, z)) { tally.off++; continue; }
+      const same = stops.find((s) => Math.hypot(s.x - x, s.z - z) < STOP_SAME);
+      const shelter = t.shelter === 'yes' || (t.shelter !== 'no' && pass === 0);
+      const bench = t.bench === 'yes' || (t.bench !== 'no' && shelter);
+      if (same) {
+        // (a stop's node and its platform's: what either says of it)
+        same.shelter = (same.shelter || t.shelter === 'yes') && t.shelter !== 'no';
+        same.bench = same.bench || t.bench === 'yes';
+        tally.merged++;
+        continue;
+      }
+      stops.push({ x, z, shelter, bench });
+    }
+  }
+  for (const s of stops) busStops.push(q(s.x), q(s.z), (s.shelter ? 1 : 0) | (s.bench ? 2 : 0));
+  log(`bus stops: ${stops.length} (${stops.filter((s) => s.shelter).length} with a shelter, ${stops.filter((s) => s.bench).length} with a bench), ${tally.merged} more points of the same stops, ${tally.off} off the box`);
+}
+// The speed bumps (OSM traffic_calming=*: a node of the street's way, or a way across it, a raised crossing's table):
+// [x, z, kind] each, flat; kind 0 a bump or hump (the topes), 1 a table, 2 a cushion, 3 a rumble strip
+const topes = [];
+{
+  const KINDS = { bump: 0, hump: 0, yes: 0, table: 1, cushion: 2, rumble_strip: 3 };
+  const tally = { off: 0, other: 0 };
+  for (const e of detailsOSM.elements) {
+    const t = e.tags || {};
+    if (!t.traffic_calming) continue;
+    const kind = KINDS[t.traffic_calming];
+    if (kind === undefined) { tally.other++; continue; } // (chicanes, islands, choked lanes: no hump)
+    const g = e.type === 'node' ? [e] : e.geometry || [];
+    if (!g.length) continue;
+    const p = (e.type === 'node' && nodeWorld.get(nodeKey(e))) || toWorld(g.reduce((s, n) => s + n.lon, 0) / g.length, g.reduce((s, n) => s + n.lat, 0) / g.length);
+    if (!inBox(p[0], p[1])) { tally.off++; continue; }
+    topes.push(q(p[0]), q(p[1]), kind);
+  }
+  log(`speed bumps: ${topes.length / 3} mapped in the box, ${tally.off} off it, ${tally.other} of other kinds`);
+}
+// The trees OpenStreetMap maps one by one (natural=tree) and the rows of them (natural=tree_row, a tree every
+// TREE_ROW_STEP m along): [x, z, kind] each, flat; kind 0 a lone tree, 1 one of a row. (Tepic's say no species)
+const mappedTrees = [];
+{
+  const TREE_ROW_STEP = 7;
+  const tally = { lone: 0, rows: 0, inRows: 0, off: 0 };
+  for (const e of detailsOSM.elements) {
+    if (e.type !== 'node' || e.tags?.natural !== 'tree') continue;
+    const [x, z] = toWorld(e.lon, e.lat);
+    if (!inBox(x, z)) { tally.off++; continue; }
+    mappedTrees.push(q(x), q(z), 0);
+    tally.lone++;
+  }
+  for (const e of landOSM.elements) {
+    if (e.type !== 'way' || e.tags?.natural !== 'tree_row' || !e.geometry) continue;
+    const pts = e.geometry.map((g) => toWorld(g.lon, g.lat));
+    tally.rows++;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const L = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(L / TREE_ROW_STEP));
+      for (let k = i ? 1 : 0; k <= n; k++) {
+        const x = ax + ((bx - ax) * k) / n, z = az + ((bz - az) * k) / n;
+        if (!inBox(x, z)) continue;
+        mappedTrees.push(q(x), q(z), 1);
+        tally.inRows++;
+      }
+    }
+  }
+  log(`trees: ${tally.lone} mapped one by one, ${tally.inRows} along ${tally.rows} rows, ${tally.off} off the box`);
+}
+// The swimming pools (OSM leisure=swimming_pool: the balnearios', the sports centres', the houses' with a yard big
+// enough): each its outline, a flat ring
+const pools = [];
+{
+  let off = 0;
+  for (const e of landOSM.elements) {
+    if (e.tags?.leisure !== 'swimming_pool') continue;
+    for (const ring of elemRings(e)) {
+      if (!ring.every(([x, z]) => inBox(x, z)) || Math.abs(ringArea(ring)) < 12) { off++; continue; }
+      pools.push(flat(rdpRing(ring, 0.2)));
+    }
+  }
+  log(`swimming pools: ${pools.length}, ${off} off the box or too small`);
+}
+// The street lamps OpenStreetMap maps (highway=street_lamp): x, z each, flat
+const streetLamps = [];
+for (const e of poisOSM.elements) {
+  if (e.type !== 'node' || e.tags?.highway !== 'street_lamp') continue;
+  const [x, z] = toWorld(e.lon, e.lat);
+  if (inBox(x, z)) streetLamps.push(q(x), q(z));
+}
+log(`street lamps: ${streetLamps.length / 2} mapped`);
+// The high-voltage lines (OSM power=line: the CFE's 115, 230 & 400 kV lines over the valley and the hills; Tepic maps
+// no distribution lines or poles), their towers at the ways' points: [kV (0 not said), flat points], each run of a
+// way inside the hills' grid (5D: TX0..TX1, TZ0..TZ1) one line
+const powerLines = [];
+{
+  const GRID = { x0: -16900, x1: 20900, z0: -15900, z1: 20900 }; // (5D's grid, a cell in)
+  const inGrid = ([x, z]) => x >= GRID.x0 && x <= GRID.x1 && z >= GRID.z0 && z <= GRID.z1;
+  let km = 0, towers = 0;
+  for (const e of detailsOSM.elements) {
+    const t = e.tags || {};
+    if (e.type !== 'way' || t.power !== 'line' || !e.geometry) continue;
+    const kv = Math.round((num(String(t.voltage || '').split(';')[0]) ?? 0) / 1000);
+    let run = [];
+    const flush = () => {
+      if (run.length > 1) {
+        powerLines.push([kv, flat(run)]);
+        towers += run.length;
+        for (let i = 1; i < run.length; i++) km += Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]) / 1000;
+      }
+      run = [];
+    };
+    for (const g of e.geometry) {
+      const p = toWorld(g.lon, g.lat);
+      if (inGrid(p)) run.push(p);
+      else flush();
+    }
+    flush();
+  }
+  log(`power lines: ${powerLines.length} runs, ${km.toFixed(0)} km, ${towers} towers`);
+}
 
 // =====================================================================================================================
 // 4. BLOCKS: the box minus every roadway (and the things that cut blocks without carrying traffic)
@@ -727,10 +972,45 @@ for (const e of landOSM.elements) {
   }
 }
 log(`airport ${airport.name || '(none)'}: ${airport.runways.length} runway, ${airport.taxiways.length} taxiways, ${airport.aprons.length} aprons, ${airport.helipads.length} helipads`);
-for (const s of drivePieces) clearCapsule(land, W, H, X0, Z0, RES, s);
-for (const s of cutters) clearCapsule(land, W, H, X0, Z0, RES, s);
-// (the aprons too: the cells whose centres lie inside their rings)
-for (const ring of airportRings) {
+// The lakes, presas, ponds & reservoirs (OSM natural=water but for the rivers' own areas & the fountains, landuse=
+// reservoir | basin): La Presa, Lago de Mora, Presa El Salto, the ponds of the colonias, the Humedal Colosio. Inside
+// the box the blocks leave each a gap (its outline and LAKE_GAP m round it, as the rivers' channels), the ground is
+// levelled under it (5D) and js/world/lakes.ts sinks a basin into it with the water in it; beyond the box, or up on
+// the hills, the water is laid on the hillside (js/world/terrain.ts). [kind, name, flags (1 intermittent, 2 beyond
+// the box: no gap, no basin; 4 up the hills: the ground not levelled), outline LAKE_SHORE m out from OSM's]
+const LAKE_GAP = 1.5, LAKE_SHORE = 1.0;
+const LAKE_MIN = 150; // m²: a smaller pond is a garden's
+const lakeKind = (water, name, area) => {
+  if (/^(lake|lagoon|oxbow)$/.test(water)) return 'lake';
+  if (/^rese/.test(water)) return 'reservoir'; // (one is tagged 'rese{')
+  if (water === 'wetland') return 'wetland';
+  if (water === 'pond' || water === 'basin') return 'pond';
+  return /\bpresa\b/i.test(name) ? 'reservoir' : area > 15000 ? 'lake' : 'pond';
+};
+const lakes = []; // { kind, name, flags, ring (OSM's), shore (LAKE_SHORE m out) }
+const lakeDropped = { small: 0, open: 0 };
+for (const e of landOSM.elements) {
+  const t = e.tags || {};
+  const water = t.natural === 'water' ? t.water || '' : /^(reservoir|basin)$/.test(t.landuse || '') ? t.landuse : null;
+  if (water === null || /^(river|stream|canal|ditch|drain|fountain|moat|wastewater)$/.test(water)) continue;
+  const rings = elemRings(e);
+  if (!rings.length) { lakeDropped.open++; continue; }
+  for (const raw of rings) {
+    const area = Math.abs(ringArea(raw));
+    if (area < LAKE_MIN) { lakeDropped.small++; continue; }
+    const ring = rdpRing(raw, 0.5);
+    const kind = lakeKind(water, t.name || '', area);
+    const flags = (t.intermittent === 'yes' || t.seasonal === 'yes' ? 1 : 0) | (ring.every(([x, z]) => inBox(x, z)) ? 0 : 2);
+    lakes.push({ kind, name: t.name || '', flags, ring, shore: insetRing(ring, -LAKE_SHORE) });
+  }
+}
+{
+  const kinds = {};
+  for (const l of lakes) kinds[l.kind] = (kinds[l.kind] || 0) + 1;
+  log(`lakes: ${lakes.length} (${Object.entries(kinds).map(([k, n]) => `${n} ${k}`).join(', ')}), ${lakes.filter((l) => !(l.flags & 2)).length} in the box; dropped ${lakeDropped.small} under ${LAKE_MIN} m², ${lakeDropped.open} not closed`);
+}
+// the cells inside a ring (their centres), in turn
+function ringRows(ring, fn) {
   const bb = bbox(ring);
   for (let j = Math.max(0, Math.floor((bb.z0 - Z0) / RES)); j <= Math.min(H - 1, Math.ceil((bb.z1 - Z0) / RES)); j++) {
     const z = Z0 + (j + 0.5) * RES;
@@ -741,9 +1021,57 @@ for (const ring of airportRings) {
     }
     xs.sort((p, q) => p - q);
     for (let n = 0; n + 1 < xs.length; n += 2) {
-      for (let i = Math.max(0, Math.ceil((xs[n] - X0) / RES - 0.5)); i <= Math.min(W - 1, Math.floor((xs[n + 1] - X0) / RES - 0.5)); i++) land[j * W + i] = 0;
+      for (let i = Math.max(0, Math.ceil((xs[n] - X0) / RES - 0.5)); i <= Math.min(W - 1, Math.floor((xs[n + 1] - X0) / RES - 0.5)); i++) fn(j * W + i);
     }
   }
+}
+for (const s of drivePieces) clearCapsule(land, W, H, X0, Z0, RES, s);
+for (const s of cutters) clearCapsule(land, W, H, X0, Z0, RES, s);
+// (the aprons too: the cells whose centres lie inside their rings)
+for (const ring of airportRings) ringRows(ring, (k) => { land[k] = 0; });
+// (and the lakes in the box, with their gap; marked, as no roadway: 5D's town is its streets & houses)
+const lakeCell = new Uint8Array(W * H);
+for (const l of lakes) {
+  if (l.flags & 2) continue;
+  ringRows(insetRing(l.ring, -LAKE_GAP), (k) => { if (land[k]) { land[k] = 0; lakeCell[k] = 1; } });
+}
+// A lake enclosed by one block would be cut open by extractBlocks with a 1 m slot straight north, which the block's
+// simplified outline folds over (its fill then spans the lake): each such lake is opened instead along the shortest
+// straight way to a roadway, LAKE_OPENING m wide (a lane down to the water)
+const LAKE_OPENING = 5;
+{
+  let opened = 0;
+  const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  for (const l of lakes) {
+    if (l.flags & 2) continue;
+    const bb = bbox(insetRing(l.ring, -LAKE_GAP));
+    const i0 = Math.max(1, Math.floor((bb.x0 - X0) / RES) - 1), i1 = Math.min(W - 2, Math.ceil((bb.x1 - X0) / RES) + 1);
+    const j0 = Math.max(1, Math.floor((bb.z0 - Z0) / RES) - 1), j1 = Math.min(H - 2, Math.ceil((bb.z1 - Z0) / RES) + 1);
+    let touches = false;
+    let best = null;
+    for (let j = j0; j <= j1 && !touches; j++) for (let i = i0; i <= i1; i++) {
+      const k = j * W + i;
+      if (!lakeCell[k]) continue;
+      // (already open to a roadway beside it: nothing to cut)
+      for (const n of [k - 1, k + 1, k - W, k + W, k - W - 1, k - W + 1, k + W - 1, k + W + 1]) if (!land[n] && !lakeCell[n]) touches = true;
+      if (touches) break;
+      for (const [di, dj] of DIRS) {
+        if (!land[k + dj * W + di]) continue; // (the way out starts on land)
+        let n = 1;
+        for (let a = i + di, b = j + dj; a > 0 && b > 0 && a < W - 1 && b < H - 1 && land[b * W + a]; a += di, b += dj) n++;
+        if (!best || n < best.n) best = { i, j, di, dj, n };
+      }
+    }
+    if (touches || !best || best.n > 400) continue;
+    const { i, j, di, dj, n } = best;
+    const half = Math.floor(LAKE_OPENING / RES / 2);
+    for (let s = 0; s <= n; s++) for (let w = -half; w <= half; w++) {
+      const a = i + di * s + dj * w, b = j + dj * s + di * w;
+      if (a > 0 && b > 0 && a < W - 1 && b < H - 1) land[b * W + a] = 0;
+    }
+    opened++;
+  }
+  log(`lakes: ${opened} enclosed by a block opened onto the street`);
 }
 log(`${drivePieces.length} roadway pieces and ${cutters.length} other cuts stamped on a ${W} x ${H} raster`);
 // Urban or open country: the share of each island under built-up land use (OSM landuse=residential & co., schools,
@@ -765,6 +1093,31 @@ function classify(comps, labels) {
   }
   for (const e of bldOSM.elements) for (const ring of elemRings(e)) tally(urban, ring);
   const out = new Set();
+  // The islets in the lakes (the Humedal Colosio's: OSM's shore runs out round them and back): an island whose edge
+  // is mostly lake is open ground, never a block of houses or a paved plaza
+  const shoreEdge = new Map(), roadEdge = new Map();
+  const comp = new Map(comps.map((c) => [c.id, c]));
+  for (const l of lakes) {
+    if (l.flags & 2) continue;
+    const bb = bbox(l.ring);
+    const i0 = Math.max(1, Math.floor((bb.x0 - X0) / RES) - 8), i1 = Math.min(W - 2, Math.ceil((bb.x1 - X0) / RES) + 8);
+    const j0 = Math.max(1, Math.floor((bb.z0 - Z0) / RES) - 8), j1 = Math.min(H - 2, Math.ceil((bb.z1 - Z0) / RES) + 8);
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const k = j * W + i, L = labels[k];
+      if (L <= 0) continue;
+      // (only an island the window holds whole: its edge all counted)
+      const c = comp.get(L);
+      if (!c || c.i0 < i0 || c.i1 > i1 || c.j0 < j0 || c.j1 > j1) continue;
+      for (const n of [k - 1, k + 1, k - W, k + W]) {
+        if (labels[n] > 0) continue;
+        const m = lakeCell[n] ? shoreEdge : roadEdge;
+        m.set(L, (m.get(L) || 0) + 1);
+      }
+    }
+  }
+  let islets = 0;
+  for (const [L, n] of shoreEdge) if (n > 2 * (roadEdge.get(L) || 0)) { out.add(L); islets++; }
+  if (islets) log(`lakes: ${islets} islets left open`);
   for (const c of comps) {
     const ha = (c.n * RES * RES) / 10000;
     if (ha < 1.5) continue;
@@ -900,7 +1253,8 @@ for (const b of blocks) {
   log(`${rings.length} roundabouts, ${islands} islands planted`);
 }
 log(`${greens.length} green/water areas; ${blocks.filter((b) => b.park > 0.6).length} park blocks`);
-const parks = greens.filter((g) => g.name || g.rings.some((r) => Math.abs(ringArea(r)) > 2500)).map((g) => ({
+// (every pitch: the colonias' canchas are mostly unnamed and under 2500 m², city-grid.ts draws each)
+const parks = greens.filter((g) => g.name || g.cat === 'pitch' || g.rings.some((r) => Math.abs(ringArea(r)) > 2500)).map((g) => ({
   name: g.name, cat: g.cat, acres: Math.round((g.rings.reduce((t, r) => t + Math.abs(ringArea(r)), 0) / 4046.86) * 10) / 10,
   rings: g.rings.map((r) => flat(rdpRing(r, 0.8)))
 }));
@@ -1104,6 +1458,8 @@ const HS = 8; // integers per house (see `houses` below)
 const KIND = { shop: 4, big: 8, strip: 16, coto: 32 };
 const COTO_SHIFT = 6;
 const houses = [];
+const floorsMapped = []; // per house: 1 its storeys mapped (OpenStreetMap's, through Overture or matched), 0 guessed
+const storeyTally = { overture: 0, osm: 0, noHouse: 0 };
 {
   const file = path.join(DATA, 'overture', 'buildings.geojsonl');
   const hashf = (a, b) => { const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return v - Math.floor(v); };
@@ -1236,14 +1592,52 @@ const houses = [];
         hallsOnLots++;
       }
       if (big) {
-        floors = p.num_floors ? Math.min(3, Math.round(p.num_floors)) : area > 6000 ? 3 : 2; // (a hall 6-9 m high)
+        // (a hall 6-9 m high; one whose floors are mapped, as many as it has)
+        if (!p.num_floors && !p.height) floors = area > 6000 ? 3 : 2;
         bigBoxes++;
       }
       // Ground floor shops: tagged commercial buildings, most of the centro, a few on every street
       const shop = big || strip || /commercial|retail|office|supermarket|hotel/.test(cls) || (bestD < 6 && (centro ? hr > 0.25 : hashf(cz, cx) < 0.12));
       houses.push(Math.round(cx * 10), Math.round(cz * 10), Math.round(w * 10), Math.round(d * 10), Math.round(th * 1000), floors,
         front + (shop ? KIND.shop : 0) + (big ? KIND.big : 0) + (strip ? KIND.strip : 0), 0);
+      floorsMapped.push(p.num_floors || p.height ? 1 : 0);
     }
+  }
+  // The storeys OpenStreetMap maps (building:levels, or height at 3 m a storey) on a building whose footprint Overture
+  // took from elsewhere (Microsoft's or Google's, without them): the house its centroid stands in, if none mapped yet
+  {
+    const HCELL = 20;
+    const cells = new Map();
+    for (let k = 0; k < houses.length; k += HS) {
+      const key = Math.floor(houses[k] / 10 / HCELL) * 100003 + Math.floor(houses[k + 1] / 10 / HCELL);
+      if (!cells.has(key)) cells.set(key, []);
+      cells.get(key).push(k);
+    }
+    const inHouse = (x, z) => {
+      const ci = Math.floor(x / HCELL), cj = Math.floor(z / HCELL);
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+        for (const k of cells.get((ci + a) * 100003 + cj + b) || []) {
+          const dx = x - houses[k] / 10, dz = z - houses[k + 1] / 10, th = houses[k + 4] / 1000;
+          if (Math.abs(dx * Math.cos(th) - dz * Math.sin(th)) <= houses[k + 2] / 20 && Math.abs(dx * Math.sin(th) + dz * Math.cos(th)) <= houses[k + 3] / 20) return k;
+        }
+      }
+      return -1;
+    };
+    for (const e of bldOSM.elements) {
+      const t = e.tags || {};
+      const levels = num(t['building:levels']), height = num(t.height);
+      if (!(levels >= 1) && !(height >= 2)) continue;
+      const ring = elemRings(e)[0];
+      if (!ring) continue;
+      const [x, z] = centroid(ring);
+      const k = inHouse(x, z);
+      if (k < 0) { storeyTally.noHouse++; continue; }
+      if (floorsMapped[k / HS]) { storeyTally.overture++; continue; }
+      houses[k + 5] = Math.min(12, Math.max(1, levels >= 1 ? Math.round(levels) : Math.round(height / 3)));
+      floorsMapped[k / HS] = 1;
+      storeyTally.osm++;
+    }
+    log(`storeys: ${floorsMapped.reduce((s2, v) => s2 + v, 0)} houses as mapped (${storeyTally.overture} of OpenStreetMap's through Overture, ${storeyTally.osm} matched by their footprint), ${storeyTally.noHouse} mapped on no house, the rest guessed by size & place`);
   }
   log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets, ${onCanal} on a canal through green, ${onLot} in a car park), ${bigBoxes} big boxes (${hallsOnLots} on a mapped car park)`);
 }
@@ -1403,15 +1797,18 @@ const inHouse = (x, z, pad) => (houseCells.get(Math.floor(x / HC) * 100003 + Mat
 }
 
 // --- Walls: OpenStreetMap's barrier=wall & fence ways, the bardas round the ranchos, the schools, the lienzos ---------
-// As mapped, cut where they cross a roadway (a wall mapped across the street's mouth, a gate's gap) or a building (a
-// house built against it: its own walls stand there): [kind (0 a wall, 1 a fence), height (m, 0: unmapped), flat
-// points]. The game draws them (js/world/bardas.ts), and walls the big open plots OSM has none round
+// As mapped (the land download's and the details' (6G), each way once; a retaining wall as a wall), cut where they
+// cross a roadway (a wall mapped across the street's mouth, a gate's gap) or a building (a house built against it: its
+// own walls stand there): [kind (0 a wall, 1 a fence), height (m, 0: unmapped), flat points]. The game draws them
+// (js/world/bardas.ts), and walls the big open plots OSM has none round
 const osmWalls = [];
 {
   let cut = 0;
-  for (const e of landOSM.elements) {
+  const seen = new Set();
+  for (const e of [...landOSM.elements, ...detailsOSM.elements]) {
     const t = e.tags || {};
-    if (e.type !== 'way' || !/^(wall|fence)$/.test(t.barrier || '') || !e.geometry) continue;
+    if (e.type !== 'way' || !/^(wall|fence|retaining_wall)$/.test(t.barrier || '') || !e.geometry || seen.has(e.id)) continue;
+    seen.add(e.id);
     const kind = t.barrier === 'fence' ? 1 : 0;
     const height = Math.min(6, Math.max(0, num(t.height) || 0));
     const pts = e.geometry.map((g) => toWorld(g.lon, g.lat));
@@ -1689,7 +2086,11 @@ const signs = [];
     [/flor|flowers/i, 'FLORERÍA'], [/celular|electronics/i, 'CELULARES'], [/caf[eé]|cafe/i, 'CAFÉ'], [/bar\b|cantina/i, 'CANTINA'],
     [/hamburgues|fast_food/i, 'HAMBURGUESAS'], [/lonch|casual_eatery|food_truck/i, 'LONCHERÍA'], [/restaurant/i, 'RESTAURANTE'],
     [/gym|gimnas/i, 'GIMNASIO'], [/hotel|motel/i, 'HOTEL'], [/lavander/i, 'LAVANDERÍA'], [/cerrajer/i, 'CERRAJERÍA'],
-    [/veterinari|pet/i, 'VETERINARIA'], [/optic/i, 'ÓPTICA'], [/muebler/i, 'MUEBLERÍA'], [/dulcer/i, 'DULCERÍA'], [/nieve|helad/i, 'NEVERÍA']
+    [/veterinari|pet/i, 'VETERINARIA'], [/optic/i, 'ÓPTICA'], [/muebler/i, 'MUEBLERÍA'], [/dulcer/i, 'DULCERÍA'], [/nieve|helad/i, 'NEVERÍA'],
+    // (the trades of OpenStreetMap's services: amenity=bank, police, fire_station...)
+    [/\bbank\b|\bbanco\b/i, 'BANCO'], [/\bpolice\b|polic[ií]a/i, 'POLICÍA'], [/fire_station|bomberos/i, 'BOMBEROS'],
+    [/\bclinic\b|\bdoctors\b|cl[ií]nica/i, 'CLÍNICA'], [/post_office|correos/i, 'CORREOS'], [/\blibrary\b|biblioteca/i, 'BIBLIOTECA'],
+    [/townhall|presidencia municipal|ayuntamiento/i, 'PRESIDENCIA MUNICIPAL'], [/ice_cream/i, 'NEVERÍA'], [/\bfuel\b|gasoliner/i, 'GASOLINERA']
   ];
   const STREET_TRADES = ['ABARROTES', 'TORTILLERÍA', 'PAPELERÍA', 'MISCELÁNEA', 'FARMACIA', 'ESTÉTICA', 'TACOS', 'LONCHERÍA', 'CARNICERÍA',
     'FERRETERÍA', 'CELULARES', 'REFACCIONARIA', 'DULCERÍA', 'NEVERÍA', 'BIRRIA', 'MARISCOS', 'PANADERÍA', 'POLLOS ASADOS'];
@@ -1761,6 +2162,11 @@ const signs = [];
   const chainPlaces = [];
   const file = path.join(DATA, 'overture', 'places.geojsonl');
   const locals = [];
+  // (every Overture business, by the words of its name: OpenStreetMap's own that Overture has too are left to it)
+  const seen = [];
+  const SAME_WORDS = new Set(['farmacia', 'farmacias', 'tienda', 'abarrotes', 'super', 'restaurante', 'taqueria', 'tacos', 'cafe',
+    'banco', 'plaza', 'centro', 'tepic', 'nayarit', 'nayar', 'mexico', 'casa', 'grupo', 'servicio', 'servicios', 'taller']);
+  const words = (n) => n.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !SAME_WORDS.has(w));
   let chains = 0, named = 0, generic = 0, plazas = 0;
   if (fs.existsSync(file)) {
     for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
@@ -1774,6 +2180,7 @@ const signs = [];
       if (/school|place_of_learning|government|worship|college|university|real_estate|attorney|professional_service|home_service|event_or_party|manufacturer|park|public_plaza/.test(cat)) continue;
       const [x, z] = toWorld(f.geometry.coordinates[0], f.geometry.coordinates[1]);
       if (!inBox(x, z)) continue;
+      seen.push({ x, z, words: words(name) });
       // a shopping centre (Plaza Cigarrera, Plaza del Valle...; not a public square): the building it stands in is a row
       // of locales, unless it's a hall already
       if (cat === 'shopping_mall' || /^plaza\b|centro comercial/i.test(name)) {
@@ -1790,6 +2197,53 @@ const signs = [];
       const i = houseAt(x, z, 8);
       if (i < 0 || houses[i + 7] || houses[i + 6] & KIND.coto) continue; // (no shops inside a coto)
       locals.push({ i, name, cat, conf: p.confidence || 0, d: Math.hypot(x, z) });
+    }
+  }
+  // OpenStreetMap's businesses (osm_tepic_details.json: shop=*, and the services: a pharmacy, bank, clinic, police or
+  // fire station, a restaurant, a café...) that Overture doesn't have (no place of hers within OSM_SAME m with a word
+  // of its name): local businesses too, sure of their names (OSM's are people's), their trade by their tags; a chain's
+  // a store of it (unless Overture has one of that chain within OSM_SAME_CHAIN m)
+  const OSM_SAME = 40, OSM_SAME_CHAIN = 150;
+  const SERVICE = /^(fuel|pharmacy|bank|atm|police|fire_station|clinic|doctors|dentist|townhall|library|post_office|marketplace|restaurant|fast_food|cafe|bar|ice_cream)$/;
+  const osmTally = { added: 0, chains: 0, known: 0, noHouse: 0 };
+  {
+    const seenCells = new Map();
+    for (const p of seen) {
+      const k = Math.floor(p.x / OSM_SAME) * 100003 + Math.floor(p.z / OSM_SAME);
+      if (!seenCells.has(k)) seenCells.set(k, []);
+      seenCells.get(k).push(p);
+    }
+    const known = (name, x, z) => {
+      const w = words(name);
+      if (!w.length) return false;
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+        for (const p of seenCells.get((Math.floor(x / OSM_SAME) + a) * 100003 + Math.floor(z / OSM_SAME) + b) || []) {
+          if (Math.hypot(p.x - x, p.z - z) < OSM_SAME && p.words.some((v) => w.includes(v))) return true;
+        }
+      }
+      return false;
+    };
+    for (const e of detailsOSM.elements) {
+      const t = e.tags || {};
+      if (!t.shop && !SERVICE.test(t.amenity || '')) continue;
+      if (t.amenity === 'atm' || t.amenity === 'marketplace') continue; // (a cash machine in a wall; the markets are landmarks)
+      const g = e.type === 'node' ? [e] : e.geometry || [];
+      if (!g.length) continue;
+      const [x, z] = toWorld(g.reduce((s2, n) => s2 + n.lon, 0) / g.length, g.reduce((s2, n) => s2 + n.lat, 0) / g.length);
+      if (!inBox(x, z)) continue;
+      const name = (t.name || t.brand || '').trim();
+      if (name && known(name, x, z)) { osmTally.known++; continue; }
+      const chain = name ? CHAINS.find((sf) => sf.match.test(name) || sf.match.test(t.brand || '')) : null;
+      if (chain) {
+        if (chainPlaces.some((c) => c.chain === chain && Math.hypot(c.x - x, c.z - z) < OSM_SAME_CHAIN)) { osmTally.known++; continue; }
+        chainPlaces.push({ chain, x, z, conf: 0.85 });
+        osmTally.chains++;
+        continue;
+      }
+      const i = houseAt(x, z, 8);
+      if (i < 0 || houses[i + 6] & KIND.coto) { osmTally.noHouse++; continue; }
+      locals.push({ i, name, cat: t.shop ? `shop ${t.shop}` : t.amenity, conf: name ? 0.9 : 0, d: Math.hypot(x, z) });
+      osmTally.added++;
     }
   }
   // The chains' stores, the surest first. Overture often has a big store twice (a second, older pin: "Liverpool" 430 m
@@ -1862,6 +2316,7 @@ const signs = [];
     houses[i + 7] = signIndex.get(`trade:${t}`);
   }
   log(`shop signs: ${plazas} shopping centres, ${chains} chain stores (${duplicates} pinned twice), ${named + generic} shops from ${locals.length} local businesses (${named} named, ${generic} by trade), ${signs.length} sign faces`);
+  log(`shop signs: OpenStreetMap's businesses: ${osmTally.added} that Overture hasn't (and ${osmTally.chains} chain stores), ${osmTally.known} Overture has, ${osmTally.noHouse} in no building`);
 }
 
 // =====================================================================================================================
@@ -1957,7 +2412,7 @@ const { ground = null, ...terrainGrid } = (() => {
       }
     }
   }
-  const roadAt = (x, z) => { const k = cellAt(x, z); return k >= 0 && lab[k] === 0; }; // (off the raster: no road)
+  const roadAt = (x, z) => { const k = cellAt(x, z); return k >= 0 && lab[k] === 0 && !lakeCell[k]; }; // (off the raster, or a lake: no road)
   for (let j = 0; j < TH; j++) {
     for (let i = 0; i < TW; i++) {
       const x = TX0 + i * CELL, z = TZ0 + j * CELL;
@@ -2051,6 +2506,28 @@ const { ground = null, ...terrainGrid } = (() => {
   let lifted = 0;
   for (let k = 0; k < U.length; k++) if (!U[k] && roadV[k] && outskirts[k] && h0[k] < 30) { U[k] = 1; lifted++; }
   const D = cityDistance(U), floorMean = cityMean(U);
+  // The lakes in the box (4) lie on the valley floor: the low rises under them (up to LAKE_HILL m, by the first guess
+  // at the hills) taken off below, as under the streets (every corner of a cell they reach into); a pond higher up a
+  // hill stays on it (flags 4: its water laid on the hillside, js/world/terrain.ts)
+  const LAKE_HILL = 30;
+  let lakesUp = 0;
+  const lakeCorners = [];
+  for (const l of lakes) {
+    if (l.flags & 2) continue;
+    const corners = new Set();
+    const mark = (x, z) => {
+      const i = Math.floor((x - TX0) / CELL), j = Math.floor((z - TZ0) / CELL);
+      if (i < 0 || j < 0 || i >= TW - 1 || j >= TH - 1) return;
+      for (const k of [j * TW + i, j * TW + i + 1, (j + 1) * TW + i, (j + 1) * TW + i + 1]) corners.add(k);
+    };
+    const bb = bbox(l.shore);
+    for (let z = bb.z0; z <= bb.z1; z += CELL / 4) for (let x = bb.x0; x <= bb.x1; x += CELL / 4) if (inRing(l.shore, x, z)) mark(x, z);
+    for (const [x, z] of l.shore) mark(x, z);
+    let top = 0;
+    for (const k of corners) top = Math.max(top, h0[k]);
+    if (top >= LAKE_HILL) { l.flags |= 4; lakesUp++; continue; }
+    lakeCorners.push(corners);
+  }
   // The ground under the town (js/world/ground.js): the city's own elevation on a 37.5 m grid (about the elevation
   // tiles' own ~38 m pixels), its lone spikes taken off: SRTM measures roofs & treetops, and what's wanted is a street's
   // grade, not each house, but any blur flattened the town's short steep streets into long gentle rises. Off the town
@@ -2105,6 +2582,36 @@ const { ground = null, ...terrainGrid } = (() => {
     const edge = Math.min(i, j, GW - 1 - i, GH - 1 - j) * GCELL;
     GF[k] = f + (floorMean - f) * Math.max(smooth(300, GMARGIN, GD[k]), 1 - smooth(0, GEDGE, edge));
   }
+  // The ground under each lake in the box levelled to its water: the nodes inside its shore at the height of the
+  // lower quarter of the ground round it (water lies flat; the blurred elevation tilts with the slopes around it)
+  const gBilinear = (x, z) => {
+    const fx = Math.min(GW - 1.001, Math.max(0, (x - GX0) / GCELL)), fz = Math.min(GH - 1.001, Math.max(0, (z - GZ0) / GCELL));
+    const i = Math.floor(fx), j = Math.floor(fz), tx = fx - i, tz = fz - j, k = j * GW + i;
+    return (GF[k] * (1 - tx) + GF[k + 1] * tx) * (1 - tz) + (GF[k + GW] * (1 - tx) + GF[k + GW + 1] * tx) * tz;
+  };
+  let lakeNodes = 0;
+  const lakeGround = new Uint8Array(GW * GH); // (its nodes under a lake: kept level, not evened with the hills below)
+  for (const l of lakes) {
+    if (l.flags & 6) continue;
+    const rim = [];
+    for (let a = 0; a < l.shore.length; a++) {
+      const [x0, z0] = l.shore[a], [x1, z1] = l.shore[(a + 1) % l.shore.length];
+      const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 5));
+      for (let s = 0; s < n; s++) rim.push(gBilinear(x0 + ((x1 - x0) * s) / n, z0 + ((z1 - z0) * s) / n));
+    }
+    rim.sort((p, q) => p - q);
+    const level = rim[Math.floor(0.25 * (rim.length - 1))];
+    const bb = bbox(l.shore);
+    for (let j = Math.max(0, Math.ceil((bb.z0 - GZ0) / GCELL)); j <= Math.min(GH - 1, Math.floor((bb.z1 - GZ0) / GCELL)); j++) {
+      for (let i = Math.max(0, Math.ceil((bb.x0 - GX0) / GCELL)); i <= Math.min(GW - 1, Math.floor((bb.x1 - GX0) / GCELL)); i++) {
+        if (!inRing(l.shore, GX0 + i * GCELL, GZ0 + j * GCELL)) continue;
+        GF[j * GW + i] = level;
+        lakeGround[j * GW + i] = 1;
+        lakeNodes++;
+      }
+    }
+  }
+  log(`lakes: ${lakesUp} up the hills, the hills taken off under the rest, ${lakeNodes} nodes of the town's ground levelled under them`);
   // the datum is the lowest node under the town's streets & houses (a node of a cell with a built-up corner in BOX),
   // so no point of the town is under it
   const town = (i, j) => {
@@ -2155,6 +2662,8 @@ const { ground = null, ...terrainGrid } = (() => {
     out[k] = Math.round(Math.min(3200, h) * 10);
     if (h > peak) peak = h;
   }
+  // (and none under the lakes on the valley floor)
+  for (const corners of lakeCorners) for (const k of corners) out[k] = 0;
   // Between the hills' nodes the game adds their 75 m triangles to the town's 37.5 m ones (ground.js), which bend at
   // the nodes halfway: those are set so the two add up to the floor and its hill there too, or the bends of the town's
   // floor came out as humps & dips of up to 20-30 m on the hillsides (a street up Cerro de la Cruz at 53% for 8%)
@@ -2170,6 +2679,7 @@ const { ground = null, ...terrainGrid } = (() => {
     // (the grid's border stays on the far floor it meets)
     if ((gi - gi0) % 2 === 0 && (gj - gj0) % 2 === 0 || !gi || !gj || gi === GW - 1 || gj === GH - 1) continue;
     const k = gj * GW + gi, x = GX0 + gi * GCELL, z = GZ0 + gj * GCELL;
+    if (lakeGround[k]) continue;
     const floor = datum + groundOut[k] / 10, hill = hillAt(x, z);
     const h = hillOver(GE[k] - floor, x, z, coarse(D, x, z));
     // (the town's ground, and the roads cutting through the low rises, as they are)
@@ -2237,6 +2747,7 @@ const { ground = null, ...terrainGrid } = (() => {
     const line = rdp(pts, 0.6);
     for (let i = 1; i < line.length; i++) pathLen += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]);
     paths.push([surface, width, flat(line)]);
+    hillPathWays.add(w);
   }
   log(`hill paths: ${paths.length} ways, ${(pathLen / 1000).toFixed(1)} km`);
   if (process.env.TERRAIN_DEBUG) {
@@ -2317,7 +2828,9 @@ const transit = { groups: [], routes: [] };
     const src = JSON.parse(fs.readFileSync(file, 'utf8'));
     const groups = src.geojson.groups || [];
     transit.groups = groups.map((g) => g.title.replace(/^Rutas? Tepic - /, ''));
-    const match = createRouteMatcher(linkPts.map(({ pts, dir }, i) => ({ a: links[i][0], b: links[i][1], pts, dir })));
+    // (the camiones & combis keep to the streets: never down an alley or a track, minorDrive)
+    const match = createRouteMatcher(linkPts.map(({ pts, dir }, i) => ({ a: links[i][0], b: links[i][1], pts, dir,
+      closed: /^(service|track)$/.test(linkDrafts[i].spec.hw) })));
     let drawn = 0, on = 0;
     for (const f of src.geojson.features) {
       if (!f.geometry || f.geometry.type !== 'LineString') continue;
@@ -2455,6 +2968,94 @@ for (const o of BUILDING_OVERRIDES) {
   overrides.push([n, storeys, paint]);
 }
 if (BUILDING_OVERRIDES.length) log(`overrides: ${overrides.length} of ${BUILDING_OVERRIDES.length} pinned to a building`);
+// ...and every building whose storeys OpenStreetMap maps (5B): drawn whole at as many, the palette's paint (the game
+// would split a long one into houses of their own heights, and keep a house under four storeys)
+{
+  const pinned = new Set(overrides.map(([n]) => n));
+  let mapped = 0;
+  floorsMapped.forEach((m, n) => {
+    if (!m || pinned.has(n)) return;
+    overrides.push([n, houses[n * HS + 5], -1]);
+    mapped++;
+  });
+  log(`overrides: ${mapped} buildings drawn at their mapped storeys`);
+}
+
+// =====================================================================================================================
+// 6E. FOOTWAYS: the walks through the parks & plazas, the andadores between the houses, the pedestrian streets of the
+//     centro, the paths and the steps (OSM highway=footway | path | pedestrian | steps; not the sidewalks or the
+//     crossings mapped as ways, which the streets' own sidewalks & crossings stand for, nor the private ones, nor those
+//     up the hills, 5D's paths): [kind (0 a footway, 1 a path, 2 a pedestrian street, 3 steps), width (m), flat points]
+//     each, cut to the box. js/world/footways.ts draws them; the people walk them (js/sim/pedestrian-routes.ts)
+// =====================================================================================================================
+const footways = [];
+{
+  const KIND = { footway: 0, path: 1, pedestrian: 2, steps: 3 };
+  const WIDTH = [2, 1.4, 4, 2];
+  const tally = [0, 0, 0, 0];
+  let skipped = 0;
+  for (const w of ways) {
+    const t = w.tags;
+    const kind = KIND[t.highway];
+    if (kind === undefined) continue;
+    if (/^(sidewalk|crossing|access_aisle)$/.test(t.footway || '') || /^(private|no)$/.test(t.access || '') || hillPathWays.has(w)) { skipped++; continue; }
+    const width = Math.min(12, Math.max(1, num(t.width) ?? WIDTH[kind]));
+    for (const piece of clipChain(w.geometry.map((g) => toWorld(g.lon, g.lat)))) {
+      footways.push([kind, Math.round(width * 10) / 10, flat(rdp(piece, 0.3))]);
+      tally[kind]++;
+    }
+  }
+  log(`footways: ${tally[0]} footways, ${tally[1]} paths, ${tally[2]} pedestrian streets, ${tally[3]} flights of steps; ${skipped} sidewalks, crossings, private or up the hills left out`);
+}
+
+// =====================================================================================================================
+// 6F. STREET FURNITURE & THE GAS STATIONS (osm_tepic_details.json): the benches & the bins where OpenStreetMap has them,
+//     each square to the street nearest it; and the gas stations OpenStreetMap maps (by their outline's middle, or
+//     their point) that Overture's (`fuel`, 1) hasn't, joining them
+// =====================================================================================================================
+// the direction (unit, the way it is drawn) of the roadway nearest (x, z) within a cell or so, or null
+const roadDirAt = (x, z) => {
+  let best = null, bd = Infinity;
+  const ci = Math.floor(x / DRIVE_CELL), cj = Math.floor(z / DRIVE_CELL);
+  for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+    for (const r of driveCells.get((ci + a) * 100003 + cj + b) || []) {
+      const ux = r.x1 - r.x0, uz = r.z1 - r.z0, M = Math.hypot(ux, uz);
+      if (M < 0.5) continue;
+      const t = Math.max(0, Math.min(1, ((x - r.x0) * ux + (z - r.z0) * uz) / (M * M)));
+      const d = Math.hypot(r.x0 + ux * t - x, r.z0 + uz * t - z);
+      if (d < bd) { bd = d; best = [ux / M, uz / M]; }
+    }
+  }
+  return best;
+};
+// a turn θ (mrad) whose local x runs along (ux, uz): R_y(θ) takes x to (cos θ, -sin θ)
+const turnAlong = ([ux, uz]) => Math.round(Math.atan2(-uz, ux) * 1000);
+const benches = [], bins = [];
+{
+  const tally = { benches: 0, bins: 0, fuel: 0, fuelKnown: 0 };
+  const FUEL_SAME = 70; // m: a station this near one already listed is that one (as Overture's own entries are)
+  const stations = [];
+  for (const e of detailsOSM.elements) {
+    const t = e.tags || {};
+    if (e.type === 'node' && (t.amenity === 'bench' || t.amenity === 'waste_basket')) {
+      const [x, z] = toWorld(e.lon, e.lat);
+      if (!inBox(x, z)) continue;
+      if (t.amenity === 'bench') { benches.push(q(x), q(z), turnAlong(roadDirAt(x, z) || [1, 0])); tally.benches++; }
+      else { bins.push(q(x), q(z)); tally.bins++; }
+    } else if (t.amenity === 'fuel') {
+      // (an outline by its middle, first: a station's point inside its own outline is the same station)
+      const p = e.type === 'way' && e.geometry ? centroid(e.geometry.map((g) => toWorld(g.lon, g.lat))) : e.type === 'node' ? toWorld(e.lon, e.lat) : null;
+      if (p && inBox(p[0], p[1])) stations.push({ x: p[0], z: p[1], way: e.type === 'way', name: (t.name || t.brand || 'Gasolinera').replace(/"/g, '').trim() });
+    }
+  }
+  stations.sort((a, b) => Number(b.way) - Number(a.way));
+  for (const st of stations) {
+    if (fuel.some(([x, z]) => Math.hypot(x - st.x, z - st.z) < FUEL_SAME)) { tally.fuelKnown++; continue; }
+    fuel.push([q(st.x), q(st.z), st.name]);
+    tally.fuel++;
+  }
+  log(`street furniture: ${tally.benches} benches, ${tally.bins} bins; gas stations: ${tally.fuel} more from OpenStreetMap (${tally.fuelKnown} Overture has, or the same twice), ${fuel.length} in all`);
+}
 
 // =====================================================================================================================
 // 7. ASSEMBLE
@@ -2534,6 +3135,30 @@ const GEO = {
   // or gravel), the stall rows' direction θ (mrad: along (cos θ, -sin θ)), outline (flat ring), entrances ([x, z on
   // the curb (m), the way in square to it (mrad, atan2 of z over x), width (m), path from the curb to the lot (flat)])]
   parking: parkingLots.map((p) => [p.name, p.surface, Math.round(p.th * 1000), flat(p.poly), p.entrances]),
+  // Lakes, presas, ponds & reservoirs (4): [kind (lake, pond, reservoir, wetland), name, flags (1 intermittent, 2
+  // beyond the box, 4 up the hills: laid on the hillside, no basin), outline (flat ring, its shore)]
+  lakes: lakes.map((l) => [l.kind, l.name, l.flags, flat(l.shore)]),
+  // Pedestrian crossings on the streets (3): x, z (m), kind (0 unmarked, 1 marked, 2 with lights), flat
+  crossings: pedCrossings,
+  // Bus stops on the sidewalks (3): x, z (m), flags (1 a shelter, 2 a bench), flat
+  busStops,
+  // Speed bumps (3): x, z (m), kind (0 a bump or hump, 1 a table, 2 a cushion, 3 a rumble strip), flat
+  topes,
+  // Trees OpenStreetMap maps (3): x, z (m), kind (0 a lone tree, 1 one of a row), flat
+  trees: mappedTrees,
+  // Street lamps OpenStreetMap maps (3): x, z (m), flat
+  lamps: streetLamps,
+  // High-voltage lines (3): [kV (0 not said), flat points: a tower at each]
+  powerLines,
+  // Swimming pools (4): their outlines, flat rings
+  pools,
+  // The minor ways' surfaces where not asphalt (2): [kind (2 earth, 3 concrete), width (m), flat centreline]
+  minorSurfaces,
+  // Footways (6E): [kind (0 footway, 1 path, 2 pedestrian street, 3 steps), width (m), flat points]
+  footways,
+  // Street furniture (6F): benches [x, z, turn (mrad, the seat along the street)], bins [x, z], flat
+  benches,
+  bins,
   // Walls & fences as OpenStreetMap maps them, off the streets & buildings: [kind (0 wall, 1 fence), height (m, 0
   // unmapped), flat points]
   walls: osmWalls

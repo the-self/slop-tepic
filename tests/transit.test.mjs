@@ -30,6 +30,13 @@ test('a two-way street is driven the way the line runs; a one-way street only it
   assert.ok(oneWay.pieces.flat().every((ref) => ref !== 0));
 });
 
+test('a link closed to the routes (an alley, a track) is never driven: the route goes round', () => {
+  const g = graph();
+  g[1].closed = true;
+  const r = createRouteMatcher(g)([[195, 0], [105, 0], [100, 50], [100, 95]]);
+  assert.ok(!r.pieces.flat().some((ref) => Math.abs(ref) === 2), 'never down the closed east side');
+});
+
 test('decoded routes run along their links, and a road on one is found with where it ends on it', () => {
   const transit = { groups: ['Centro'], routes: [['Vuelta', 0, '#00796b', 'bus', 1, [[1, 2, 3, 4]]]] };
   const [path] = decodeTransit(transit, roadGraph);

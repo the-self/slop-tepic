@@ -44,3 +44,13 @@ test('the player\'s person file names a near and a far body, each vertex two of 
   }
   assert.ok(glb.json.accessors[meshes.get('lod1').primitives[0].indices].count / 3 <= 3500, 'the far level is light');
 });
+
+test('the player\'s body is skinned to its own skeleton and carries the clips the game plays (actors/person-body.ts)', () => {
+  const glb = readGlb(new URL('../assets/models/people/player-rigged.glb', import.meta.url));
+  const prim = glb.json.meshes[0].primitives[0];
+  assert.ok('JOINTS_0' in prim.attributes && 'WEIGHTS_0' in prim.attributes && 'TEXCOORD_0' in prim.attributes, 'skinned and textured');
+  assert.equal(glb.json.skins[0].joints.length, 24);
+  const clips = new Set(glb.json.animations.map((a) => a.name));
+  for (const name of ['idle', 'walk', 'run', 'walk_back', 'walk_back_gun', 'strafe', 'jump']) assert.ok(clips.has(name), `clip ${name}`);
+  assert.ok(glb.json.accessors[prim.indices].count / 3 <= 32000, 'about 30,000 triangles');
+});

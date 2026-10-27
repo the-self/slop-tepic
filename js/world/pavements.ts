@@ -1,12 +1,13 @@
 import * as THREE from 'three/webgpu';
+import { SURFACES } from './street-surfaces.ts';
 import { PAVEMENTS } from './pavement-data.ts';
 import { createPavementMaterial } from '../render/tsl-materials.ts';
 import { drapeGeometry } from './drape.ts';
 import type { TileStreamer } from './streaming.ts';
 
 // js/world/pavements.ts
-// The streets of Tepic that are not asphalt (pavement-data.ts, from OpenStreetMap's surface tags and the colonias known
-// to be cobbled): the empedrado of river stones, the adoquín, the earth streets and the poured concrete, laid curb to
+// The streets of Tepic that are not asphalt (street-surfaces.ts: pavement-data.ts, from OpenStreetMap's surface tags
+// and the colonias known to be cobbled, and the town's earth tracks & concrete alleys): the empedrado of river stones, the adoquín, the earth streets and the poured concrete, laid curb to
 // curb over the roadway as a strip per segment of the street's centreline, each run on half its width past its ends so
 // the bends close (the pattern is in world space: overlapping strips match). Laid on the town's slopes like the road
 // paint, a few millimetres over the asphalt and under the paint; the raised sidewalks hide the strips' edges.
@@ -18,7 +19,7 @@ function buildPavements(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'add
   const position: number[] = [];
   const pave: number[] = [];
   const index: number[] = [];
-  for (const [kind, width, pts] of PAVEMENTS) {
+  for (const [kind, width, pts] of SURFACES) {
     const h = width * 0.5;
     // (each kind a hair apart: where two kinds meet they don't fight)
     const y = LIFT + kind * 0.0007;
@@ -42,7 +43,7 @@ function buildPavements(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'add
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(position.map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
   geometry.setAttribute('pave', new THREE.Float32BufferAttribute(pave, 1));
   geometry.setIndex(index);
-  console.info(`[pavements] ${PAVEMENTS.length} streets of empedrado, adoquín, tierra & concreto`);
+  console.info(`[pavements] ${SURFACES.length} streets of empedrado, adoquín, tierra & concreto (${SURFACES.length - PAVEMENTS.length} of them alleys & tracks)`);
   if (streamer) {
     streamer.addLayer(geometry, createPavementMaterial(), { name: 'Pavements' });
     return null;

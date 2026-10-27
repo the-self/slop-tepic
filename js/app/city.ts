@@ -26,6 +26,11 @@ import { paintFarGround, farGroundColor } from '../world/far-ground.ts';
 import { buildTepicLandmarks } from '../world/tepic-landmarks.ts';
 import { buildCotos } from '../world/cotos.ts';
 import { buildCarParks } from '../world/car-parks.ts';
+import { buildBusShelters } from '../world/bus-shelters.ts';
+import { buildPowerLines } from '../world/power-lines.ts';
+import { buildPools } from '../world/pools.ts';
+import { buildFootways } from '../world/footways.ts';
+import { buildFurniture } from '../world/furniture.ts';
 import { buildBardas } from '../world/bardas.ts';
 import { GEO } from '../world/city-geodata.js';
 import type { Collider } from '../world/buildings.ts';
@@ -74,6 +79,8 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   const { colliders: cotoColliders } = buildCotos(scene);
   // The supermarkets', plazas' & hospitals' car parks: their asphalt & stalls, and the cars parked in them
   const carParks = buildCarParks(scene, streamer);
+  // (and the swimming pools in the lots)
+  buildPools(scene);
   mark('carParks');
   const colliders: Collider[] = [...landmarkColliders, ...modelColliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...cityGrid.colliders];
   // The bardas round the big open plots (the canchas, the ranchos, the vacant lots), not across a car park
@@ -96,9 +103,12 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   mark('traffic');
   // Mast-arm traffic signals at the signalised junctions of a city off the grid (the grid's are built with the streets)
   streetDetails.addJunctionSignals(traffic.network, colliders); // (their poles stop the player)
+  // The paradas on the sidewalks, by the curb the camiones & combis pull in to (their backs & benches stop the player)
+  for (const c of buildBusShelters(scene, traffic.network.edges).colliders) colliders.push(c);
   const highwayTraffic = createHighwayTraffic(scene, cityGrid.highwayLanes);
   buildRoadPaint(scene, traffic.network, streamer);
   buildPavements(scene, streamer); // (the empedrado, adoquín, earth & concrete streets, under the paint)
+  buildFootways(scene, streamer); // (the walks, andadores, paths, pedestrian streets & steps)
   buildAirport(scene); // (the runway, taxiways & apron south-east of town, and the airliners at the gates)
   mark('roadPaint');
   // The overpasses, their ramps & the railway; their walls, parapets & piers stop the player (not the traffic's
@@ -110,6 +120,11 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   for (const c of buildFootbridges(scene).colliders) colliders.push(c);
   // The CFE's concrete poles stop the player (not the traffic: they stand on the sidewalks' outer edge)
   for (const c of streetDetails.colliders) colliders.push(c);
+  // The high-voltage lines over the valley & the hills; their towers in the town stop the player
+  const powerLines = buildPowerLines(scene);
+  for (const c of powerLines.colliders) colliders.push(c);
+  // The benches OpenStreetMap maps (they stop the player)
+  for (const c of buildFurniture(scene).colliders) colliders.push(c);
   mark('bridges');
-  return { streamer, cityGrid, farGround, rivers, cityBlocks, stores, carParks, streetDetails, traffic, highwayTraffic, bridges, colliders };
+  return { streamer, cityGrid, farGround, rivers, cityBlocks, stores, carParks, streetDetails, powerLines, traffic, highwayTraffic, bridges, colliders };
 }
