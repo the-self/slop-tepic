@@ -114,6 +114,7 @@ class CrimeSystem {
   _aim?: XZ;
   _size?: [number, number];
   _playerBox?: GroundBox;
+  _standBox?: GroundBox;
   _blips?: Blips;
   sight: SightCones = []; // the police's eyes while the player is wanted (update)
   seen = false; // whether the police saw the player at the last update

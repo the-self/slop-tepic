@@ -2,7 +2,7 @@
 // Vehicles striking each other and the player: knocks passed on, the player shoved and shoving, crash damage, and the
 // vehicles outside the traffic (police cars) bumping into it
 import { MIN_IMPACT, applyImpact, createDamage } from '../../player/vehicle-damage.ts';
-import { CRASH_SPEED, KNOCK_SPEED, clamp, massOf, onRoad } from './constants.ts';
+import { CRASH_SPEED, KNOCK_SPEED, RAM_SPEED, clamp, massOf, onRoad } from './constants.ts';
 import type { BumpBody, Bus, Car, DrivenVehicle, Vehicle } from './types.ts';
 import type { TrafficState } from './state.ts';
 import { reportCollision } from './hooks.ts';
@@ -175,9 +175,39 @@ function killedIfDead(ts: TrafficState, v: Car | Bus): void {
 }
 
 // A vehicle not in the traffic (a police car chasing the player: { x, z, heading, halfW, halfL, speed, vx, vz,
-// mass }) shoving the traffic it drives into, and shoved back: the vehicles' masses share the push
-function bumpBody(ts: TrafficState, b: BumpBody): void {
+// mass }) shoving the traffic it drives into, and shoved back: the vehicles' masses share the push. The cars already
+// thrown about in a crash near the player are shoved through their bodies in Jolt, so it never drives through one;
+// `ram` (a chase, not an ambulance on its way): one of the traffic it rams hard there is thrown about in Jolt too, as
+// one the player rams is
+function bumpBody(ts: TrafficState, b: BumpBody, ram = true): void {
   const reach = b.halfL + 6;
+  const bvx = Math.sin(b.heading) * b.speed + b.vx;
+  const bvz = Math.cos(b.heading) * b.speed + b.vz;
+  // (the cars in Jolt first: one it throws below is pushed out of it there, not struck a second time here)
+  const physics = ts.physics;
+  if (physics) {
+    for (const v of ts.crashed) {
+      const relX = b.x - v.x;
+      const relZ = b.z - v.z;
+      if (Math.abs(relX) > reach || Math.abs(relZ) > reach) continue;
+      const hit = overlapWithPlayer(relX, relZ, v.yaw, v.halfWidth, v.half, b.heading, b.halfW, b.halfL);
+      if (!hit) continue;
+      const { nx, nz, pen } = hit;
+      const o = v.crash.body.out;
+      const approach = (bvx - o.vx) * -nx + (bvz - o.vz) * -nz;
+      const ratio = b.mass / (b.mass + massOf(v));
+      b.x += nx * pen * (1 - ratio);
+      b.z += nz * pen * (1 - ratio);
+      const j = approach > 0 ? 1.28 * approach : 0;
+      const spin = (relX * nz - relZ * nx) / Math.max(1, v.half) * Math.min(3, j * 0.2);
+      physics.shove(v.crash.body, -nx * j * ratio * 0.92, 0, -nz * j * ratio * 0.92, 0, spin, 0, -nx * pen * ratio, -nz * pen * ratio);
+      if (approach <= 0) continue;
+      bounceBody(b, nx, nz, j, ratio);
+      const cx = b.x - nx * b.halfW, cz = b.z - nz * b.halfW, base = v.hy ?? hillAt(ts, cx, cz);
+      reportCollision(ts, b, v, cx, 0.58, cz, nx, nz, approach, base);
+      if (approach > 1.8) spawnCollisionSparks(ts, cx, 0.58, cz, nx, nz, approach, base);
+    }
+  }
   for (const v of ts.vehicles) {
     if (!onRoad(v)) continue;
     const relX = b.x - v.x;
@@ -186,32 +216,44 @@ function bumpBody(ts: TrafficState, b: BumpBody): void {
     const hit = overlapWithPlayer(relX, relZ, v.yaw + v.yawOffset, v.halfWidth, v.half, b.heading, b.halfW, b.halfL);
     if (!hit) continue;
     const { nx, nz, pen } = hit;
-    const bvx = Math.sin(b.heading) * b.speed + b.vx;
-    const bvz = Math.cos(b.heading) * b.speed + b.vz;
     const approach = (bvx - (v.tx * v.speed + v.vx)) * -nx + (bvz - (v.tz * v.speed + v.vz)) * -nz;
     if (v.bike || v.moto) {
       if (approach > KNOCK_SPEED) throwRider(ts, v, -nx, -nz, bvx, bvz, b.mass);
       continue;
     }
+    // (rammed hard: thrown about in Jolt from here, shoved by the hit below)
+    const thrown = ram && approach > RAM_SPEED ? crash(ts, v) : null;
     const mv = massOf(v);
     const ratio = b.mass / (b.mass + mv); // the vehicle's share of the separation and the momentum change
     b.x += nx * pen * (1 - ratio);
     b.z += nz * pen * (1 - ratio);
-    shove(ts, v, -nx * pen * ratio, -nz * pen * ratio);
-    if (approach <= 0) continue;
+    if (!thrown) shove(ts, v, -nx * pen * ratio, -nz * pen * ratio);
+    if (approach <= 0) continue; // (never thrown: it closed slower than RAM_SPEED)
     const j = 1.28 * approach;
-    v.vx -= nx * j * ratio * 0.92;
-    v.vz -= nz * j * ratio * 0.92;
-    v.speed *= Math.max(0, 1 - 1.3 * ratio);
-    v.yawVel += (Math.random() - 0.5) * Math.min(3, approach * 0.25);
-    b.vx += nx * j * (1 - ratio) * 0.48;
-    b.vz += nz * j * (1 - ratio) * 0.48;
-    b.speed *= 1 - Math.min(0.9, 1 - ratio) * Math.abs(Math.sin(b.heading) * nx + Math.cos(b.heading) * nz);
+    if (thrown) {
+      // (a hit off its middle spins it: the push's lever about its centre)
+      const spin = (relX * nz - relZ * nx) / Math.max(1, v.half) * Math.min(3, approach * 0.25);
+      ts.physics?.shove(thrown.body, -nx * j * ratio * 0.92, Math.min(1.5, approach * 0.05), -nz * j * ratio * 0.92,
+        0, spin, 0, -nx * pen * ratio, -nz * pen * ratio);
+    } else {
+      v.vx -= nx * j * ratio * 0.92;
+      v.vz -= nz * j * ratio * 0.92;
+      v.speed *= Math.max(0, 1 - 1.3 * ratio);
+      v.yawVel += (Math.random() - 0.5) * Math.min(3, approach * 0.25);
+    }
+    bounceBody(b, nx, nz, j, ratio);
     // (over the road it is on: the ground, or a bridge's deck, as the vehicles' crashes with each other)
     const cx = b.x - nx * b.halfW, cz = b.z - nz * b.halfW, base = v.hy ?? hillAt(ts, cx, cz);
     reportCollision(ts, b, v, cx, 0.58, cz, nx, nz, approach, base);
     if (approach > 1.8) spawnCollisionSparks(ts, cx, 0.58, cz, nx, nz, approach, base);
   }
+}
+// b knocked back along n (from what it hit towards it) by its share (1 - ratio) of impulse j (m/s), and slowed by
+// as much of its speed as went into it
+function bounceBody(b: BumpBody, nx: number, nz: number, j: number, ratio: number): void {
+  b.vx += nx * j * (1 - ratio) * 0.48;
+  b.vz += nz * j * (1 - ratio) * 0.48;
+  b.speed *= 1 - Math.min(0.9, 1 - ratio) * Math.abs(Math.sin(b.heading) * nx + Math.cos(b.heading) * nz);
 }
 
 export { knockOn, collideWithPlayer, hurtVehicle, killedIfDead, bumpBody };

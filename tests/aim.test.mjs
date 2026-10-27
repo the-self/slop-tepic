@@ -110,3 +110,25 @@ test('on foot with the pointer locked the left button fires from the hip; in a v
   aim.update(1 / 60);
   assert.equal(aim.fire, false);
 });
+
+test('from a vehicle the right button aims too, the left one fires; the mouse tilts the aim, not the player', () => {
+  const { win, doc, canvas, crosshair, controllers, aim } = setup();
+  controllers.activeMode = 'car';
+  aim.update(1 / 60);
+  win.dispatch('pointerdown', { pointerType: 'mouse', button: 2, target: canvas, stopPropagation() {}, preventDefault() {} });
+  assert.equal(doc.pointerLockElement, canvas);
+  for (let i = 0; i < 20; i++) aim.update(1 / 60);
+  assert.ok(aim.active && aim.blend > 0.9);
+  assert.equal(crosshair.hidden, false);
+  assert.equal(controllers.aiming, false, 'only on foot does aiming strafe');
+  doc.dispatch('mousemove', { movementX: 100, movementY: -50 });
+  assert.equal(controllers.entities.person.heading, 0, 'the camera turns the aim round the vehicle (cameras.ts)');
+  assert.ok(aim.pitch > 0);
+  win.dispatch('pointerdown', { pointerType: 'mouse', button: 0, target: canvas, stopPropagation() {}, preventDefault() {} });
+  assert.equal(aim.fire, true);
+  // not from the helicopter
+  controllers.activeMode = 'helicopter';
+  aim.update(1 / 60);
+  assert.equal(aim.active, false);
+  assert.equal(aim.fire, false);
+});

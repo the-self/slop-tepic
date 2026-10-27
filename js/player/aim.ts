@@ -5,6 +5,9 @@
 // walks and strafes (controllers.ts). The crosshair turns red over someone or something the shot would hit.
 // The pointer stays locked after (the mouse goes on looking around, cameras.ts), and on foot the left button fires
 // from the hip then, at whoever is ahead (crime.ts' lock-on).
+// In a car, on a moto or a bicycle the right button aims too: the camera comes up behind the vehicle along the aim
+// (cameras.ts), the mouse turns the aim round it (not the vehicle: WASD go on driving) and tilts it, and the left
+// button fires out of the window at the crosshair.
 // No three.js: only the DOM, the controllers' person entity and its keys.
 
 import { keyBindings } from '../input/keybindings.ts';
@@ -34,6 +37,8 @@ const PITCH_MAX = 0.7; // rad, looking up at the rooftops
 const BLEND_RATE = 14; // 1/s: how fast the shoulder view comes in and goes
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
+// The vehicles a gun is fired from (not the helicopter's: both hands on its controls)
+const fromVehicle = (mode: string) => mode === 'car' || mode === 'moto' || mode === 'cyclist';
 
 class AimControl {
   canvas: AimCanvas;
@@ -49,6 +54,7 @@ class AimControl {
   allowed: boolean;
   crosshair: HTMLElement | null;
   shown: { visible: boolean | null; target: boolean | null };
+  mode: string;
 
   constructor({ canvas, controllers, doc = document }: AimOptions) {
     this.canvas = canvas;
@@ -64,6 +70,7 @@ class AimControl {
     this.allowed = true; // on foot and in play (main.ts, every frame)
     this.crosshair = doc.getElementById('hud-crosshair');
     this.shown = { visible: null, target: null };
+    this.mode = controllers.activeMode; // (a toggled aim is dropped when it changes: getting in or out)
     this.bind();
   }
 
@@ -71,6 +78,7 @@ class AimControl {
     const canvas = this.canvas;
     const doc = this.doc;
     const onFoot = () => this.controllers.activeMode === 'person' && this.allowed;
+    const canAim = () => this.allowed && (this.controllers.activeMode === 'person' || fromVehicle(this.controllers.activeMode));
     // a left click aiming, or on foot with the pointer locked, is a shot
     const shot = () => this.active || (onFoot() && doc.pointerLockElement === canvas);
     // (in the capture phase, ahead of the camera's own drag)
@@ -78,7 +86,7 @@ class AimControl {
       if (e.pointerType !== 'mouse' || (e.target !== canvas && doc.pointerLockElement !== canvas)) return;
       if (e.button === 2) {
         this.held = true;
-        if (onFoot()) this.lock();
+        if (canAim()) this.lock();
       } else if (e.button === 0 && shot()) {
         this.fire = true;
         e.stopPropagation();
@@ -90,7 +98,7 @@ class AimControl {
       if (e.target !== canvas && doc.pointerLockElement !== canvas) return;
       if (e.button === 2 && !this.held) {
         this.held = true;
-        if (onFoot()) this.lock();
+        if (canAim()) this.lock();
       } else if (e.button === 0 && shot()) {
         this.fire = true;
       }
@@ -106,7 +114,7 @@ class AimControl {
     window.addEventListener('keydown', (e) => {
       if (!keyBindings.is('aim', e.code) || e.repeat || e.metaKey || e.ctrlKey || e.altKey || isTyping(e)) return;
       this.toggled = !this.toggled;
-      if (this.toggled && onFoot()) this.lock();
+      if (this.toggled && canAim()) this.lock();
     });
     // Esc lets go of the pointer: that ends a toggled aim too (a held one ends with the button)
     doc.addEventListener('pointerlockchange', () => {
@@ -114,8 +122,8 @@ class AimControl {
     });
     doc.addEventListener('mousemove', (e) => {
       if (!this.active) return;
-      const p = this.controllers.entities.person;
-      p.heading -= (e.movementX || 0) * SENSITIVITY;
+      // (from a vehicle the camera turns the aim round it, cameras.ts: the vehicle goes the way it is steered)
+      if (this.controllers.activeMode === 'person') this.controllers.entities.person.heading -= (e.movementX || 0) * SENSITIVITY;
       this.pitch = clamp(this.pitch - (e.movementY || 0) * SENSITIVITY, PITCH_MIN, PITCH_MAX);
     });
   }
@@ -141,14 +149,17 @@ class AimControl {
 
   // Every frame, before the camera: whether the player is aiming, the shoulder view eased in or out, the crosshair
   update(dt: number): void {
-    const onFoot = this.controllers.activeMode === 'person' && this.allowed;
-    if (!onFoot) this.toggled = false;
+    const mode = this.controllers.activeMode;
+    const onFoot = mode === 'person' && this.allowed;
+    const can = onFoot || (this.allowed && fromVehicle(mode));
+    if (!can || mode !== this.mode) this.toggled = false;
+    this.mode = mode;
     const was = this.active;
-    this.active = onFoot && (this.held || this.toggled);
+    this.active = can && (this.held || this.toggled);
     if (this.active && !was) this.pitch = 0;
     // (letting go of the aim lets go of the trigger too; the hip's is the left button held on foot)
-    if (!onFoot || (was && !this.active)) this.fire = false;
-    this.controllers.aiming = this.active;
+    if (!can || (was && !this.active)) this.fire = false;
+    this.controllers.aiming = this.active && onFoot; // (on foot it strafes)
     this.blend += ((this.active ? 1 : 0) - this.blend) * (1 - Math.exp(-dt * BLEND_RATE));
     if (!this.active && this.blend < 0.002) this.blend = 0;
 
