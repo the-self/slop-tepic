@@ -150,6 +150,42 @@ for (const r of ROADS) {
     }
   }
 }
+// Every roadway the traffic drives (city-geodata.js roadGraph: the streets and the alleys, service roads & tracks, named
+// or not), its segments by 32 m cell with their half widths (m), built on first use
+let ROADWAY: Map<number, number[][]> | null = null;
+/** (x, z) on a roadway of the road graph, or within `pad` m of its edge */
+function onRoadway(x: number, z: number, pad = 0): boolean {
+  if (!ROADWAY) {
+    ROADWAY = new Map();
+    const g = GEO.roadGraph, N = g.nodes;
+    for (const [a, b, , w, , , inner] of g.links) {
+      const pts = [N[2 * a], N[2 * a + 1], ...inner, N[2 * b], N[2 * b + 1]];
+      for (let i = 0; i + 3 < pts.length; i += 2) {
+        const seg = [pts[i], pts[i + 1], pts[i + 2], pts[i + 3], w / 2];
+        for (let ix = Math.floor((Math.min(seg[0], seg[2]) - w) / 32); ix <= Math.floor((Math.max(seg[0], seg[2]) + w) / 32); ix++) {
+          for (let iz = Math.floor((Math.min(seg[1], seg[3]) - w) / 32); iz <= Math.floor((Math.max(seg[1], seg[3]) + w) / 32); iz++) {
+            const k = ix * 100003 + iz;
+            let list = ROADWAY.get(k);
+            if (!list) ROADWAY.set(k, (list = []));
+            list.push(seg);
+          }
+        }
+      }
+    }
+  }
+  const r = pad + 8; // (no segment's half width is more)
+  for (let ix = Math.floor((x - r) / 32); ix <= Math.floor((x + r) / 32); ix++) {
+    for (let iz = Math.floor((z - r) / 32); iz <= Math.floor((z + r) / 32); iz++) {
+      for (const [ax, az, bx, bz, hw] of ROADWAY.get(ix * 100003 + iz) ?? []) {
+        const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz;
+        const t = L2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2)) : 0;
+        if (Math.hypot(x - ax - dx * t, z - az - dz * t) < hw + pad) return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** Nearest roads to (x, z) within `radius`: [{ road, dist }] sorted by distance (one entry per road name) */
 function nearestRoads(x: number, z: number, radius = 60): NearRoad[] {
   const best = new Map<string, NearRoad>();
@@ -419,6 +455,7 @@ export {
   blockAt,
   blocksInRect,
   nearestRoads,
+  onRoadway,
   getLocationLabel,
   isTypingInField,
   signalPhase,

@@ -505,7 +505,7 @@ async function initApp(): Promise<void> {
     controllerManager,
     cameraSystem,
     trafficSystem,
-    allBlocks: cityBlocks.allBlocks,
+    allBlocks: [...cityBlocks.allBlocks, city.uan.map], // (the UAN's buildings are uan.ts's, not among the blocks')
     onToggle: (open) => {
       controllerManager.resetInput();
       touchControls.setEnabled(!open);

@@ -42,9 +42,11 @@ const OSM_CELL = 25;
 
 /**
  * The bardas into the scene. `keepOpen(x, z)`: ground left open to the street (the car parks & their driveways,
- * car-parks.ts keepsOpen). Returns the group and the walls' & gates' colliders
+ * car-parks.ts keepsOpen); `claimed(x, z)`: ground walled otherwise (the UAN's grounds, uan.ts), where neither
+ * OpenStreetMap's walls nor ours stand. Returns the group and the walls' & gates' colliders
  */
-function buildBardas(scene: THREE.Object3D, keepOpen: ((x: number, z: number) => boolean) | null = null): { group: THREE.Group; colliders: ObbCollider[] } {
+function buildBardas(scene: THREE.Object3D, keepOpen: ((x: number, z: number) => boolean) | null = null,
+  claimed: ((x: number, z: number) => boolean) | null = null): { group: THREE.Group; colliders: ObbCollider[] } {
   const group = new THREE.Group();
   group.name = 'Bardas';
   scene.add(group);
@@ -78,6 +80,7 @@ function buildBardas(scene: THREE.Object3D, keepOpen: ((x: number, z: number) =>
     const paint = kind ? FENCE : OSM_PAINTS[Math.floor(hash(pts[0], pts[1], 43) * OSM_PAINTS.length)];
     for (let i = 0; i + 3 < pts.length; i += 2) {
       const ax = pts[i], az = pts[i + 1], bx = pts[i + 2], bz = pts[i + 3];
+      if (claimed?.((ax + bx) / 2, (az + bz) / 2)) continue;
       piece(ax, az, bx, bz, paint, pieces, height || (kind ? 2.0 : WALL_H), kind ? 0.06 : WALL_T);
       for (let ix = Math.floor((Math.min(ax, bx) - NEAR_OSM) / OSM_CELL); ix <= Math.floor((Math.max(ax, bx) + NEAR_OSM) / OSM_CELL); ix++) {
         for (let iz = Math.floor((Math.min(az, bz) - NEAR_OSM) / OSM_CELL); iz <= Math.floor((Math.max(az, bz) + NEAR_OSM) / OSM_CELL); iz++) {
@@ -98,7 +101,7 @@ function buildBardas(scene: THREE.Object3D, keepOpen: ((x: number, z: number) =>
 
   const walls = indexHouses(H, S);
   const runs = bardaRuns(BLOCKS, walls.wallDistance, {
-    keepOpen: (x, z) => nearOsm(x, z) || (keepOpen?.(x, z) ?? false), skip, sidewalk: GEO.frame.sidewalk || 2.2
+    keepOpen: (x, z) => nearOsm(x, z) || (keepOpen?.(x, z) ?? false) || (claimed?.(x, z) ?? false), skip, sidewalk: GEO.frame.sidewalk || 2.2
   });
   for (const run of runs) {
     // the wall's face on the property line: its middle half its thickness in

@@ -28,6 +28,7 @@ function createPeds() {
   for (let i = 0; i < NUM_PEDS; i++) {
     const female = hash(i, 1) < 0.48;
     const hairRoll = hash(i, 2);
+    const pace = 1.22 + (i % 5) * 0.1 + hash(i, 3) * 0.08; // preferred walking speed
     peds.push({
       placed: false,
       crossesStreets: i % 6 === 0, // some start near crossings; everyone can use them along their route
@@ -49,7 +50,9 @@ function createPeds() {
       coord: 0,
       line: 0, // its line over the crosswalk, off the centre line
       waiting: false,
-      speed: 1.22 + (i % 5) * 0.1 + hash(i, 3) * 0.08, // preferred walking speed
+      speed: pace,
+      pace,
+      jog: false,
       v: 0, // current speed, easing up to it and down to stops
       pause: 0,
       route: null,

@@ -166,8 +166,12 @@ interface Ped {
   coord: number;
   line: number;
   waiting: boolean;
-  /** preferred walking speed, and the current one easing up to it and down to stops */
+  /** preferred speed (their walking pace, or a jog's), and the current one easing up to it and down to stops (m/s) */
   speed: number;
+  /** their walking pace (m/s) */
+  pace: number;
+  /** out jogging (placed in a park, spawning.ts): at a run, no stops to rest or talk */
+  jog: boolean;
   v: number;
   pause: number;
   route: PedTrack | null;
