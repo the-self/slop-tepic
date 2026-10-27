@@ -1,7 +1,7 @@
 // js/sim/crime/player.ts
-// The player in the street's crime (sim/crime.ts): its input (fire: X, the left button on foot (aim.ts),
-// the right button from a vehicle; touch & gamepad through controllers.keys.fire; weapons 1-4, R to cycle, Tab for the
-// wheel: ui/weapon-wheel.ts), firing, aiming and punching, getting hurt, and being WASTED or BUSTED.
+// The player in the street's crime (sim/crime.ts): its input (fire: X, the left button (aim.ts): on foot, or taking
+// aim with the right one from a vehicle; touch & gamepad through controllers.keys.fire; weapons 1-4, R to cycle, Tab
+// for the wheel: ui/weapon-wheel.ts), firing, aiming and punching, getting hurt, and being WASTED or BUSTED.
 import * as THREE from 'three/webgpu';
 import type { Point3 } from '../ragdolls.ts';
 import type { Weapon, WeaponId } from '../weapons.ts';
@@ -19,9 +19,12 @@ import { t } from '../../i18n/i18n.ts';
 const _qHand = new THREE.Quaternion();
 const _qDown = new THREE.Quaternion();
 const _xAxis = new THREE.Vector3(1, 0, 0);
+// Aimed along the crosshair, an automatic weapon's spread is this much of its own (a single shot has none)
+const AIMED_SPREAD = 0.6;
 
 export function bindInput(crime: CrimeSystem, canvas: HTMLElement | null): void {
-  if (canvas) {
+  // (without the aim, aim.ts, the right button fires from a vehicle)
+  if (canvas && !crime.aim) {
     canvas.addEventListener('mousedown', (e) => {
       if (e.button === 2) crime.mouseFire = true;
     });
@@ -44,11 +47,11 @@ export function bindInput(crime: CrimeSystem, canvas: HTMLElement | null): void 
 export function updatePlayer(crime: CrimeSystem, dt: number, _elapsed: number): void {
   const c = crime.controllers;
   const p = c.entities.person;
-  // aiming on foot (aim.ts): the shots go where the crosshair is, and the right button aims rather than fires; on
-  // foot the left button fires (aim.ts: aiming, or from the hip with the pointer locked)
+  // aiming (aim.ts), on foot or from a vehicle: the shots go where the crosshair is, and the right button aims rather
+  // than fires; the left button fires (aim.ts: aiming, or from the hip on foot with the pointer locked)
   const aimCtl = crime.aim;
-  const free = aimCtl != null && aimCtl.active && crime.mode === 'person';
-  const mouse = crime.mode === 'person' && aimCtl ? aimCtl.fire : crime.mouseFire;
+  const free = freeAim(crime);
+  const mouse = aimCtl ? aimCtl.fire : crime.mouseFire;
   const held = Boolean(c.keys.fire) || mouse;
   const w = crime.arsenal.weapon;
   // a change of weapon (the keys, the wheel, the mouse wheel, or out of rounds): the last one put away, this one
@@ -68,8 +71,10 @@ export function updatePlayer(crime: CrimeSystem, dt: number, _elapsed: number): 
   if (held && usable) crime.aimHold = w.melee ? 0.2 : 0.7;
   else crime.aimHold = Math.max(0, crime.aimHold - dt);
 
-  if (free) {
+  if (free && aimCtl) {
     crime.lockTarget = null;
+    // (taking aim from a vehicle with the fists or the bazooka in hand: the pistol, if it has rounds)
+    if (crime.mode !== 'person' && (w.melee || w.rocket) && crime.arsenal.has('pistol')) crime.arsenal.select('pistol');
     const hit = crime.aimAlong(crime.camera, w);
     aimCtl.onTarget = !w.melee && (hit.kind === 'agent' || hit.kind === 'ped' || hit.kind === 'cruiser' || hit.kind === 'vehicle' || hit.kind === 'heli' || hit.kind === 'remote');
   } else if (crime.aim) {
@@ -143,7 +148,13 @@ export function findTarget(crime: CrimeSystem, x: number, z: number, heading: nu
   return pickTarget(x, z, heading, list, range, cone);
 }
 
-// Where the player's shots leave from: the hand on foot, the driver's window in a vehicle
+// Aiming freely (aim.ts): on foot, or from a car, a moto or a bicycle
+function freeAim(crime: CrimeSystem): boolean {
+  return crime.aim != null && crime.aim.active && crime.mode !== 'helicopter';
+}
+
+// Where the player's shots leave from: the hand on foot, the driver's window in a vehicle (the other one, across the
+// car, aiming out of that side), a rider's hand on the side it aims
 export function muzzle(crime: CrimeSystem, out: Point3): Point3 {
   const pe = crime.player;
   if (crime.mode === 'person') {
@@ -152,10 +163,16 @@ export function muzzle(crime: CrimeSystem, out: Point3): Point3 {
     out.y = h.handPosition.y + 0.05;
     out.z = h.handPosition.z + Math.cos(h.aimYaw) * 0.3;
   } else {
-    const ahead = crime.mode === 'car' ? 0.4 : 0.3;
-    out.x = pe.position.x + Math.sin(pe.heading) * ahead + Math.cos(pe.heading) * 0.95;
-    out.y = pe.position.y + (crime.mode === 'car' ? 1.15 : 1.35);
-    out.z = pe.position.z + Math.cos(pe.heading) * ahead - Math.sin(pe.heading) * 0.95;
+    const car = crime.mode === 'car';
+    const ahead = car ? 0.4 : 0.3;
+    // (its left is (cos h, -sin h): the driver's side)
+    const lx = Math.cos(pe.heading), lz = -Math.sin(pe.heading);
+    const a = crime.aimPoint;
+    const side = freeAim(crime) && (a.x - pe.position.x) * lx + (a.z - pe.position.z) * lz < 0 ? -1 : 1;
+    const across = (car ? (pe.halfW || 0.86) + 0.1 : 0.45) * side;
+    out.x = pe.position.x + Math.sin(pe.heading) * ahead + lx * across;
+    out.y = pe.position.y + (car ? 1.15 : 1.35);
+    out.z = pe.position.z + Math.cos(pe.heading) * ahead + lz * across;
   }
   return out;
 }
@@ -169,9 +186,10 @@ export function playerFire(crime: CrimeSystem, w: Weapon): void {
   const m = crime.muzzle(crime._muzzle ??= { x: 0, y: 0, z: 0 });
   const t = crime.lockTarget;
   const aimCtl = crime.aim;
-  const free = aimCtl != null && aimCtl.active && crime.mode === 'person';
+  const free = aimCtl != null && freeAim(crime);
   let yaw = t ? Math.atan2(t.x - m.x, t.z - m.z) : pe.heading;
   let slope: number | null = null; // (free aim: m up per m along, from the gun to the crosshair's point)
+  let spread = w.spread; // rad either side of the aim
   if (free) {
     const a = crime.aimPoint;
     const d = Math.hypot(a.x - m.x, a.z - m.z);
@@ -181,12 +199,14 @@ export function playerFire(crime: CrimeSystem, w: Weapon): void {
     } else {
       slope = Math.tan(aimCtl.pitch); // (right up against it: along the camera)
     }
-    slope += (Math.random() - 0.5) * 2 * w.spread;
+    // aimed, a single shot goes where the crosshair is; a burst still climbs and strays a little
+    spread = w.auto ? w.spread * AIMED_SPREAD : 0;
+    slope += (Math.random() - 0.5) * 2 * spread;
   } else if (t && t === crime.heli) {
     // locked on to the helicopter: up at its cabin
     slope = (crime.heli.y + 1.3 - m.y) / Math.max(1, Math.hypot(t.x - m.x, t.z - m.z)) + (Math.random() - 0.5) * 2 * w.spread;
   }
-  yaw += (Math.random() - 0.5) * 2 * w.spread;
+  yaw += (Math.random() - 0.5) * 2 * spread;
   crime.fx.muzzle(m.x, m.y, m.z, yaw, Boolean(w.rocket));
   crime.audio?.gunfire?.(w.id, m.x, m.y, m.z);
   crime.traffic.panic(m.x, m.z, w.rocket ? 45 : 35);

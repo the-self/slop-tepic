@@ -330,10 +330,12 @@ export function moveCruiser(crime: CrimeSystem, cr: Cruiser, dt: number, want: n
   const k = Math.exp(-4 * dt);
   cr.vx *= k;
   cr.vz *= k;
-  // its bumpers against the buildings
+  // its bumper against the buildings, the poles and the trees: its middle and its corners (a pole is thinner than
+  // the car: the bumper's middle alone drove past one at a corner)
   const way = cr.speed >= 0 ? 1 : -1;
   const bx = cr.x + Math.sin(cr.heading) * cr.halfL * way, bz = cr.z + Math.cos(cr.heading) * cr.halfL * way;
-  if (crime.solidAt(bx, bz) || crime.solidAt(cr.x, cr.z)) {
+  const sx = Math.cos(cr.heading) * cr.halfW * 0.9, sz = -Math.sin(cr.heading) * cr.halfW * 0.9;
+  if (crime.solidAt(bx, bz) || crime.solidAt(bx + sx, bz + sz) || crime.solidAt(bx - sx, bz - sz) || crime.solidAt(cr.x, cr.z)) {
     cr.x = ox;
     cr.z = oz;
     if (Math.abs(cr.speed) > 6) crime.traffic.sparks(bx, cr.y + 0.6, bz, -Math.sin(cr.heading) * way, -Math.cos(cr.heading) * way, Math.abs(cr.speed));
@@ -341,10 +343,11 @@ export function moveCruiser(crime: CrimeSystem, cr: Cruiser, dt: number, want: n
     cr.vx = cr.vz = 0;
   }
   if (!cr.wreck) {
-    // (they shove the traffic aside as if they weighed three times as much: a chase doesn't wait in line)
+    // (they shove the traffic aside as if they weighed three times as much: a chase doesn't wait in line; a fire truck
+    // or an ambulance on its way only shoves it, it doesn't send it flying)
     const mass = cr.mass; // (its own: a fire truck's is not a patrol car's)
     cr.mass = mass * 3;
-    crime.traffic.bumpBody(cr);
+    crime.traffic.bumpBody(cr, !isResponder(cr));
     cr.mass = mass;
     crime.traffic.knockBox(cr.x, cr.z, cr.heading, cr.halfW, cr.halfL,
       Math.sin(cr.heading) * cr.speed + cr.vx, Math.cos(cr.heading) * cr.speed + cr.vz);
@@ -382,6 +385,7 @@ export function collideCruisers(crime: CrimeSystem): void {
   const pe = crime.player;
   const box = crime._playerBox ??= { x: 0, z: 0, heading: 0, hw: 0, hl: 0 };
   const size = crime.playerSize();
+  const standing = crime.controllers.parkedVehicles?.();
   for (const cr of crime.cruisers) {
     if (!cr.active) continue;
     cr.hw = cr.halfW;
@@ -430,6 +434,32 @@ export function collideCruisers(crime: CrimeSystem): void {
           if (crime.mode === 'person' && approach > 3) crime.hurt(approach * 3.5, cr.x, cr.z);
           else if (approach > 7) crime.hurt((approach - 7) * 1.5, cr.x, cr.z);
         }
+      }
+    }
+    // the player's vehicles left standing (the car it got out of, the bicycle, the cars left behind): they don't give,
+    // the patrol car stops against them
+    if (standing) {
+      const box = crime._standBox ??= { x: 0, z: 0, heading: 0, hw: 0, hl: 0 };
+      for (const o of standing) {
+        if (Math.abs(o.x - cr.x) > cr.halfL + o.halfL || Math.abs(o.z - cr.z) > cr.halfL + o.halfL) continue;
+        box.x = o.x;
+        box.z = o.z;
+        box.heading = o.heading ?? 0;
+        box.hw = o.halfW;
+        box.hl = o.halfL;
+        const hit = boxOverlap(box, cr);
+        if (!hit) continue;
+        cr.x += hit.nx * hit.pen;
+        cr.z += hit.nz * hit.pen;
+        const cvx = Math.sin(cr.heading) * cr.speed + cr.vx, cvz = Math.cos(cr.heading) * cr.speed + cr.vz;
+        const approach = -(cvx * hit.nx + cvz * hit.nz);
+        if (approach <= 0.5) continue;
+        cr.speed *= 1 - 0.8 * Math.abs(Math.sin(cr.heading) * hit.nx + Math.cos(cr.heading) * hit.nz);
+        cr.vx += hit.nx * approach * 0.3;
+        cr.vz += hit.nz * approach * 0.3;
+        const cx = cr.x - hit.nx * cr.halfW, cz = cr.z - hit.nz * cr.halfW;
+        crime.audio?.crash?.({ a: cr, b: o, x: cx, y: cr.y + 0.6, z: cz, speed: approach });
+        if (approach > 2) crime.traffic.sparks(cx, cr.y + 0.6, cz, hit.nx, hit.nz, approach);
       }
     }
     for (const o of crime.cruisers) {

@@ -267,8 +267,15 @@ class CameraSystem {
       this.userOrbitTimer = 4.0;
     });
     document.addEventListener('mousemove', (e) => {
-      // (taking aim the mouse turns the player instead, aim.ts)
-      if (!locked() || this.aim?.active) return;
+      if (!locked()) return;
+      // taking aim the mouse turns the player instead (aim.ts), and tilts the aim; from a vehicle it turns the aim
+      // round the vehicle here
+      if (this.aim?.active) {
+        if (this.controllerManager.getActiveEntity().type === 'person') return;
+        this.orbitYawOffset -= (e.movementX || 0) * MOUSE_LOOK;
+        this.userOrbitTimer = Math.max(this.userOrbitTimer, 1.5);
+        return;
+      }
       this.orbitYawOffset -= (e.movementX || 0) * MOUSE_LOOK;
       this.orbitPitchOffset = this.clampPitch(this.orbitPitchOffset + (e.movementY || 0) * MOUSE_LOOK);
       // (a vehicle's camera swings back behind it soon after the mouse rests)
@@ -381,8 +388,10 @@ class CameraSystem {
     }
     this.aimWas = aiming;
     // On foot the player turns to the way it is steered, the camera doesn't: the orbit keeps its world yaw (taking aim
-    // the mouse turns the player, and the camera with it)
-    const freeLook = entity.type === 'person' && (this.activePresetId === 'chase' || this.activePresetId === 'pov');
+    // the mouse turns the player, and the camera with it). Aiming from a vehicle the aim keeps its world yaw too, as
+    // the vehicle turns under it, and doesn't swing back behind it
+    const vehicleAim = Boolean(this.aim?.active) && entity.type !== 'person' && this.getActivePreset().category === 'follow';
+    const freeLook = vehicleAim || (entity.type === 'person' && (this.activePresetId === 'chase' || this.activePresetId === 'pov'));
     if (freeLook && !aiming && this.headingEntity === entity) {
       this.orbitYawOffset -= entity.heading - this.lastHeading;
     }
@@ -542,10 +551,10 @@ class CameraSystem {
       p.z = Math.max(room.minZ, Math.min(room.maxZ, p.z));
       p.y = Math.min(room.maxY, p.y);
     }
-    // aiming on foot: eased from the follow camera's own framing (which goes on following meanwhile) to the shoulder's,
-    // a little zoomed in
+    // aiming: eased from the follow camera's own framing (which goes on following meanwhile) to the shoulder's on foot,
+    // to the one behind the vehicle along the aim from a vehicle; a little zoomed in
     const preset = this.getActivePreset();
-    const b = this.aim && entity.type === 'person' && preset.category === 'follow' ? this.aim.blend : 0;
+    const b = this.aim && entity.type !== 'helicopter' && preset.category === 'follow' ? this.aim.blend : 0;
     const k = b * b * (3 - 2 * b);
     const rush = this.speedEffects(entity, preset, dt, elapsed);
     const fov = preset.fov * (1 - 0.16 * k) + 12 * rush;
@@ -553,18 +562,21 @@ class CameraSystem {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
     }
+    const look = this._lookAt;
     if (k > 0) {
-      this.shoulderView(entity, this._aimPos, this._aimLook);
+      if (entity.type === 'person') this.shoulderView(entity, this._aimPos, this._aimLook);
+      else this.vehicleAimView(entity, this._aimPos, this._aimLook);
       this.camera.position.lerpVectors(this.currentPos, this._aimPos, k);
-      this.camera.lookAt(this._lookAt.lerpVectors(this.currentLookAt, this._aimLook, k));
+      look.lerpVectors(this.currentLookAt, this._aimLook, k);
     } else {
       this.camera.position.copy(this.currentPos);
-      this.camera.lookAt(this.currentLookAt);
+      look.copy(this.currentLookAt);
     }
+    this.camera.lookAt(look);
     if (this.shakeAmp > 0.0005) {
       // (moved after aiming: the follow framing itself stays smooth, only the lens shakes)
       this.camera.position.add(this._shake);
-      const sh = this._shake, t = this.currentLookAt;
+      const sh = this._shake, t = look;
       // (the aim shakes more than the lens moves: the view trembles rather than slides)
       this.camera.lookAt(this._lookAt.set(t.x + sh.x * 1.6, t.y + sh.y * 1.6, t.z + sh.z * 1.6));
     }
@@ -613,6 +625,30 @@ class CameraSystem {
     const pz = p.z + Math.sin(h) * side;
     pos.set(px - dx * back, Math.max(p.y + 0.45, py - dy * back), pz - dz * back);
     look.set(px + dx * 30, py + dy * 30, pz + dz * 30);
+  }
+
+  // The aiming view from a vehicle: behind it and over its roof along the aim (the orbit's yaw, the aim's pitch), so
+  // the crosshair in the middle of the screen looks past the vehicle (from the driver's eyes in POV); crime.ts fires
+  // out of the window at it
+  vehicleAimView(entity: PlayerEntity, pos: THREE.Vector3, look: THREE.Vector3): void {
+    const yaw = this.viewYaw;
+    const pitch = this.aim ? this.aim.pitch : 0; // (only called aiming)
+    const cp = Math.cos(pitch);
+    const dx = Math.sin(yaw) * cp, dy = Math.sin(pitch), dz = Math.cos(yaw) * cp;
+    const car = entity.type === 'car';
+    const p = entity.position;
+    if (this.activePresetId === 'pov') {
+      // (as the POV camera's own eyes: pov in update)
+      const ahead = car ? 0.55 : 0.35, h = entity.heading;
+      const ex = p.x + Math.sin(h) * ahead, ey = p.y + (car ? 1.52 : 1.55), ez = p.z + Math.cos(h) * ahead;
+      pos.set(ex, ey, ez);
+      look.set(ex + dx * 30, ey + dy * 30, ez + dz * 30);
+      return;
+    }
+    const back = car ? 5.6 : 3.4; // m behind the pivot along the aim
+    const py = p.y + (car ? 2.1 : 1.85);
+    pos.set(p.x - dx * back, Math.max(p.y + 0.8, py - dy * back), p.z - dz * back);
+    look.set(p.x + dx * 30, py + dy * 30, p.z + dz * 30);
   }
 
   // The chase camera on a sphere around the entity. Its yaw, distance and height are eased as orbit parameters, not

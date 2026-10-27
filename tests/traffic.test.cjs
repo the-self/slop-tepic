@@ -468,6 +468,58 @@ test('an edge carries its lift profile: interpolated along it, held past its end
   close(edgeLift({ lift: null }, 50), 0);
 });
 
+test('a patrol car never drives through a car thrown about in Jolt, and rams one of the traffic into Jolt', () => {
+  const shoves = [];
+  const physics = { shove: (body, dvx, dvy, dvz, dwx, dwy, dwz, dx, dz) => shoves.push({ body, dvx, dvz, dx, dz }) };
+  const thrown = [];
+  const { bumpBody } = trafficModule('collisions', {
+    './constants.ts': { ...constants, onRoad: (v) => v.edge !== null },
+    './overlap.ts': { overlapWithPlayer },
+    // (as crashes.ts: into ts.crashed, its body at rest where it was)
+    './crashes.ts': { crash: (ts, v) => { thrown.push(v); ts.crashed.push(v); return (v.crash = { body: { id: 'thrown', out: { vx: 0, vy: 0, vz: 0 } } }); } },
+    './hooks.ts': { reportCollision() {} },
+    './sparks.ts': { spawnCollisionSparks() {} },
+    './surface.ts': { hillAt: () => 0 },
+    './motion.ts': { shove() {} }
+  });
+  // (a patrol car heading -x at 12 m/s, its nose into a car lying across the road ahead of it)
+  const cruiser = () => ({ x: 3, z: 0, heading: -Math.PI / 2, halfW: 0.9, halfL: 2.3, speed: 12, vx: 0, vz: 0, mass: 1500 });
+  const crashedCar = {
+    x: 0, z: 0, yaw: 0, halfWidth: 0.9, half: 2.2, hy: 0, bodyType: 'sedan', edge: null,
+    crash: { body: { id: 'crashed', out: { vx: 0, vy: 0, vz: 0 } } }
+  };
+  const b = cruiser();
+  bumpBody({ vehicles: [], crashed: [crashedCar], physics }, b);
+  assert.equal(shoves.length, 1);
+  assert.equal(shoves[0].body.id, 'crashed');
+  assert.ok(shoves[0].dvx < -3, 'the crashed car is knocked on the way the patrol car was going');
+  assert.ok(shoves[0].dx < 0, 'and pushed out of it');
+  assert.ok(b.x > 3, 'the patrol car is pushed back out of it');
+  assert.ok(b.speed < 12, 'and slowed');
+
+  // one of the traffic standing in its lane, rammed at 12 m/s: thrown about in Jolt, not shoved through its lane
+  shoves.length = 0;
+  const car = {
+    x: 0, z: 0, yaw: 0, yawOffset: 0, halfWidth: 0.9, half: 2.2, tx: 0, tz: 1, speed: 0, vx: 0, vz: 0, hy: 0,
+    yawVel: 0, rollVel: 0, pitchVel: 0, bodyType: 'sedan', edge: {}, crash: null
+  };
+  bumpBody({ vehicles: [car], crashed: [], physics }, cruiser());
+  assert.deepEqual(thrown, [car]);
+  assert.equal(shoves.length, 1, 'struck once: not again as one of the cars already in Jolt');
+  assert.equal(shoves[0].body.id, 'thrown');
+  assert.ok(shoves[0].dvx < -3);
+  // ...but nudged slowly, it is only shoved along
+  thrown.length = 0;
+  shoves.length = 0;
+  car.crash = null;
+  bumpBody({ vehicles: [car], crashed: [], physics }, { ...cruiser(), speed: 2 });
+  assert.equal(thrown.length, 0);
+  assert.equal(shoves.length, 0);
+  // ...and an ambulance on its way (ram false) never sends it flying
+  bumpBody({ vehicles: [car], crashed: [], physics }, cruiser(), false);
+  assert.equal(thrown.length, 0);
+});
+
 test('a vehicle bumped or caught in a blast on a bridge reports and sparks over the deck, not the ground under it', () => {
   const GROUND = 5, DECK = 12;
   const reported = [];

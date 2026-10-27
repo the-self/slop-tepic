@@ -78,6 +78,8 @@ interface CrimeControllers {
   isSolidAt(x: number, z: number, height?: number, ground?: number): boolean;
   groundTilt(x: number, z: number, heading: number, along: number, across: number, out: { pitch: number; roll: number }): unknown;
   resetInput(): void;
+  // the player's vehicles left standing (player/controllers/boarding.ts): the patrol cars stop against them
+  parkedVehicles?(): readonly { x: number; z: number; heading?: number; halfW: number; halfL: number }[];
   // someone the player's car struck at (x, z), `speed` m/s: their blood on it (player/car-blood.ts)
   bloodyCar?(x: number, z: number, speed: number): void;
   // the car's tyre i burst (shot), or those over a spike strip (its middle, heading, half length & width, m): how many
