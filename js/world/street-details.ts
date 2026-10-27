@@ -2,9 +2,10 @@ import * as THREE from 'three/webgpu';
 import { Fn, float, color, positionGeometry, uniform, mod, step, smoothstep, mix, attribute, texture } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SIGNAL_TIMING, blockAt, BLOCKS, nearestRoads } from './city-config.ts';
-import { cityUniforms, createTreeGrateMaterial, atlasSlotUV, createWireMaterial, WIRE_FADE } from '../render/tsl-materials.ts';
-import { PropBreaker } from '../sim/mayhem.ts';
-import { createTreeField, treeTrunkColliders } from './trees.ts';
+import { cityUniforms, createTreeGrateMaterial, atlasSlotUV } from '../render/tsl-materials.ts';
+import { PropBreaker, hideInstance, showInstance } from '../sim/mayhem.ts';
+import { createTreeField, treeTrunkColliders, treeFall } from './trees.ts';
+import { CfeNetwork, cfePoint, cfeHash } from './cfe-network.ts';
 import { mappedTreeSites, clearOfMapped } from './mapped-trees.ts';
 import { lampFinder } from './mapped-lamps.ts';
 import { lotTrees } from './lot-greenery.ts';
@@ -13,10 +14,12 @@ import { parkTreeSites, sidewalkBlocks, parkLampSites, medianRuns } from './city
 import { liftAt } from './ground.ts';
 import { surfaceY } from './footways.ts';
 import { LA_LOMA, laLomaKeepsClear, laLomaWoods } from './la-loma-plan.ts';
+import { hashPos } from './hash.ts';
 import { GEO } from './city-geodata.js';
 import type { PointXZ, Bounds, CityBlock } from './city-config.ts';
-import type { BreakableProp, PropCollider } from '../sim/mayhem.ts';
+import type { BreakableProp, PropCollider, PropBody, PropLook } from '../sim/mayhem.ts';
 import type { TreeSite } from './trees.ts';
+import type { CfePole } from './cfe-network.ts';
 import type { Collider } from './buildings.ts';
 import type { RoadNetwork } from './road-network.ts';
 import type { AudioSignalSite } from '../audio/audio-sources.ts';
@@ -26,13 +29,15 @@ import type { AudioSignalSite } from '../audio/audio-sources.ts';
 // - Mast-arm traffic signals at the road network's signalised junctions (addJunctionSignals)
 // - Cobra-head streetlights along the curbs and post-top lamps in the centro
 // - The CFE's concrete poles down one side of every street (crossarm, insulators, a transformer here and there, a
-//   streetlight on the arm) strung with their lines and the cables sagging across to the houses
+//   streetlight on the arm) strung with their lines and the cables sagging across to the houses (cfe-network.ts): a
+//   car snaps them, the lines coming down and arcing, the run their transformer feeds going dark
 // - A few fire hydrants (rare in Tepic), the municipality's green bins, bollards round the plazas' corners, park &
 //   street trees, palms down the camellones
 // - A post with the two streets' name plates on a corner of every junction (addJunctionSignals: their names are drawn
 //   into a small atlas for the junctions near the camera, redrawn as it moves)
 // Each prop stands on the ground at its base (ground.ts liftAt: the town's slopes, y = 0 in the flat city). The lamps,
-// sign posts, hydrants and bins are the breaker's (sim/mayhem.ts): knocked loose as bodies in Jolt.
+// sign posts, hydrants and bins are the breaker's (sim/mayhem.ts): knocked loose as bodies in Jolt; so, by a car only,
+// are the CFE's poles and the trees thin enough to give (trees.ts treeFall).
 
 /** A cobra-head streetlight's light: the luminaire (m), the ground under its pole (g) and where it aims (tx, tz) */
 interface CobraLampSite {
@@ -44,8 +49,25 @@ interface CobraLampSite {
   tz: number;
   /** Knocked over (mayhem.ts): its light is out */
   broken: boolean;
+  /** Out for want of power (cfe-network.ts), or flickering off: its light is out */
+  dark?: boolean;
+  /** How many outages cut it (its lens dark while any does) */
+  cuts?: number;
+  /** Its lens's instance (and where it stands), swapped for a dark one while it has no power */
+  lens?: LampLens;
+  /** ...the dark one's slot meanwhile */
+  darkSlot?: number;
   /** Its distance this frame, weighted to the ones ahead of the camera (m) */
   _effDist: number;
+}
+
+/** A lamp's glowing lens or globe among the instances: its mesh, index and matrix */
+interface LampLens {
+  mesh: THREE.InstancedMesh;
+  index: number;
+  matrix: THREE.Matrix4;
+  /** a globe's (else a cobra head's lens) */
+  globe: boolean;
 }
 
 /** A post-top globe's or park lamp's point light: where (m), the ground under it (g), colour, intensity and reach (m) */
@@ -58,6 +80,10 @@ interface PointLampSite {
   intensity: number;
   dist: number;
   broken: boolean;
+  dark?: boolean;
+  cuts?: number;
+  lens?: LampLens;
+  darkSlot?: number;
   _effDist: number;
 }
 
@@ -79,22 +105,6 @@ interface BinProp extends BreakableProp {
   kind: 'bin';
 }
 type StreetProp = CobraProp | PostProp | HydrantProp | BinProp;
-
-/** A CFE pole: its foot (m), the ground there (g), along its curb (ux, uz), out over the street (outX, outZ) */
-interface CfePole {
-  x: number;
-  z: number;
-  g: number;
-  ux: number;
-  uz: number;
-  outX: number;
-  outZ: number;
-  /** m to the far curb (0 if none) */
-  across: number;
-  /** Its curb's index in cfeEdges, and its own in cfePoles */
-  edge: number;
-  i: number;
-}
 
 /** A sidewalk tree: its tree site, the ground under it (g) and its pit */
 interface StreetTree extends TreeSite {
@@ -566,9 +576,8 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
       cfeEdges.push(edge);
     }
   }
-  // A point of pole p's frame in the world
-  const cfePoint = (p: CfePole, x: number, y: number, z = 0) => new THREE.Vector3(p.x + p.outX * x + p.ux * z, p.g + y, p.z + p.outZ * x + p.uz * z);
-  const cfeHash = (p: CfePole, k: number) => hashPos(p.x, k, p.z);
+  // (which carry a transformer: one in five)
+  const cfeTransformer = cfePoles.map((p) => cfeHash(p, 4.7) < 0.2);
   // Spans: along each curb, and from the end poles on to the nearest pole of another curb straight ahead (within 42 m)
   const cfeSpans: [CfePole, CfePole][] = [];
   {
@@ -607,7 +616,9 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
       }
     }
   }
-  // The streetlight on the arm: a cobra head like the avenues', lit at night from the same pool (section 8)
+  // The streetlight on the arm: a cobra head like the avenues', lit at night from the same pool (section 8); its arm's
+  // and head's instances and its light, by pole, go down with it
+  const cfeLamps = new Map<number, { arm: number; head: number }>();
   for (const p of cfePoles) {
     if (cfeHash(p, 2.2) < 0.35 || nearMappedLamp(p.x, p.z)) continue; // not every pole carries one (nor round a mapped lamp)
     const yaw = Math.atan2(-p.outZ, p.outX);
@@ -621,6 +632,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
     dummy.position.copy(head);
     dummy.scale.set(1, 1, 1);
     dummy.updateMatrix();
+    cfeLamps.set(p.i, { arm: armMatrices.length - 1, head: lampHeadMatrices.length });
     lampHeadMatrices.push(dummy.matrix.clone());
     dummy.rotation.set(0, 0, 0);
     cobraLampSites.push({ x: head.x, y: head.y - 0.06, z: head.z, g: p.g, tx: p.x + p.outX * 3.4, tz: p.z + p.outZ * 3.4, broken: false, _effDist: 0 });
@@ -661,12 +673,19 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
       add(pedPostInst, b.idx.post);
       add(pedGlobeInst, b.idx.post);
       b.light = streetPointSites[b.lightIndex];
+      if (pedGlobeInst) streetPointSites[b.lightIndex].lens = { mesh: pedGlobeInst, index: b.idx.post, matrix: pedPostMatrices[b.idx.post], globe: true };
     }
     b.parts = parts;
   }
+  // (each cobra head's lens: its light is the one pushed with its head)
+  if (lampLensInst) cobraLampSites.forEach((s, k) => { s.lens = { mesh: lampLensInst, index: k, matrix: lampHeadMatrices[k], globe: false }; });
 
-  // The CFE poles' meshes: concrete shafts, the galvanised crossarms & racks, porcelain insulators, transformers
+  // The CFE poles' meshes: concrete shafts, the galvanised crossarms & racks, porcelain insulators, transformers. Each
+  // pole is a prop only a car knocks over (mayhem.ts): its instances, its streetlight's, its collider (which stops
+  // walkers) and its stand-in going with it, its lines coming down (cfe-network.ts)
   const cfeColliders: Collider[] = [];
+  const cfeProps: BreakableProp[] = [];
+  const cfe = new CfeNetwork(scene, group, cfePoles, cfeSpans, cfeTransformer);
   if (cfePoles.length) {
     const shaftGeo = new THREE.CylinderGeometry(0.09, 0.16, CFE_H, 8).translate(0, CFE_H / 2, 0);
     const steelGeo = mergeGeometries([
@@ -690,99 +709,65 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
     const tankMat = new THREE.MeshStandardNodeMaterial({ color: 0x8a9094, roughness: 0.55, metalness: 0.35 });
     const all: THREE.Matrix4[] = [];
     const transformers: THREE.Matrix4[] = [];
+    const transformerOf = new Map<number, number>();
+    const poleColliders: PropCollider[] = [];
     for (const p of cfePoles) {
       dummy.position.set(p.x, p.g, p.z);
       dummy.rotation.set(0, Math.atan2(-p.outZ, p.outX), 0);
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
       all.push(dummy.matrix.clone());
-      if (cfeHash(p, 4.7) < 0.2) transformers.push(dummy.matrix.clone());
-      // concrete stops a car (main.ts adds these to the player's colliders)
-      cfeColliders.push({ minX: p.x - 0.17, maxX: p.x + 0.17, minZ: p.z - 0.17, maxZ: p.z + 0.17, minY: p.g, maxY: p.g + CFE_H });
+      if (cfeTransformer[p.i]) {
+        transformerOf.set(p.i, transformers.length);
+        transformers.push(dummy.matrix.clone());
+      }
+      // concrete stops a car (main.ts adds these to the player's colliders), till one strikes it hard enough
+      const collider: PropCollider = { minX: p.x - 0.17, maxX: p.x + 0.17, minZ: p.z - 0.17, maxZ: p.z + 0.17, minY: p.g, maxY: p.g + CFE_H };
+      poleColliders.push(collider);
+      cfeColliders.push(collider);
     }
     dummy.rotation.set(0, 0, 0);
-    addMatrixArrayInstanced(shaftGeo, concreteMat, all);
-    addMatrixArrayInstanced(steelGeo, galvMat, all);
-    addMatrixArrayInstanced(insulatorGeo, porcelainMat, all);
-    addMatrixArrayInstanced(transformerGeo, tankMat, transformers);
+    const shaftInst = addMatrixArrayInstanced(shaftGeo, concreteMat, all);
+    const steelInst = addMatrixArrayInstanced(steelGeo, galvMat, all);
+    const insulatorInst = addMatrixArrayInstanced(insulatorGeo, porcelainMat, all);
+    const transformerInst = addMatrixArrayInstanced(transformerGeo, tankMat, transformers);
+    for (const m of [shaftInst, steelInst, insulatorInst, transformerInst]) if (m) m.userData.keepOwnShadow = true;
+    // the stand-in, in the pole's frame (x out over the street): the pole, and its transformer & its lamp if it has them
+    const poleLook: PropLook[] = [
+      { geometry: shaftGeo, material: concreteMat },
+      { geometry: steelGeo, material: galvMat },
+      { geometry: insulatorGeo, material: porcelainMat }
+    ];
+    const lampLook: PropLook[] = [
+      { geometry: unitBox, material: poleMetalMat, matrix: new THREE.Matrix4().makeScale(1.8, 0.08, 0.08).setPosition(0.9, 8.1, 0) },
+      { geometry: lampHousingGeo, material: poleMetalMat, matrix: new THREE.Matrix4().makeTranslation(1.85, 8.0, 0) },
+      { geometry: lampLensGeo, material: poleMetalMat, matrix: new THREE.Matrix4().makeTranslation(1.85, 8.0, 0) } // (out)
+    ];
+    const tankLook: PropLook = { geometry: transformerGeo, material: tankMat };
+    for (const p of cfePoles) {
+      const parts: BreakableProp['parts'] = [];
+      const add = (mesh: THREE.InstancedMesh | null, index: number | undefined) => { if (mesh && index !== undefined && index >= 0) parts.push({ mesh, index }); };
+      add(shaftInst, p.i);
+      add(steelInst, p.i);
+      add(insulatorInst, p.i);
+      const tank = transformerOf.get(p.i);
+      add(transformerInst, tank);
+      const lamp = cfeLamps.get(p.i);
+      add(armInst, lamp?.arm);
+      add(lampHousingInst, lamp?.head);
+      add(lampLensInst, lamp?.head);
+      const prop: BreakableProp = {
+        kind: 'cfe', x: p.x, z: p.z, yaw: Math.atan2(-p.outZ, p.outX), ground: p.g, base: p.g, parts,
+        collider: poleColliders[p.i], hard: 1,
+        light: lamp ? cobraLampSites[lamp.head] : null,
+        look: [...poleLook, ...(tank !== undefined ? [tankLook] : []), ...(lamp ? lampLook : [])],
+        onBreak: () => { cfe.fell(p); }
+      };
+      poleColliders[p.i].prop = prop;
+      cfeProps.push(prop);
+    }
   }
-
-  // The lines & the service cables, built in 200 m cells (each hidden beyond WIRE_FADE in update())
-  const wireCells: { mesh: THREE.Mesh; x: number; z: number }[] = [];
-  if (cfeSpans.length) {
-    const CELL = 200;
-    // (each cell's ribbons: positions, tangent & half width per vertex, indices; and the cell's centre, m)
-    const cells = new Map<number, { pos: number[]; wire: number[]; idx: number[]; x: number; z: number }>();
-    const up = new THREE.Vector3(0, 1, 0);
-    const p = new THREE.Vector3();
-    const tan = new THREE.Vector3();
-    const addWire = (a: THREE.Vector3, b: THREE.Vector3, sag: number, r: number) => {
-      const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
-      const key = Math.floor(mx / CELL) * 100003 + Math.floor(mz / CELL);
-      let c = cells.get(key);
-      if (!c) cells.set(key, (c = { pos: [], wire: [], idx: [], x: (Math.floor(mx / CELL) + 0.5) * CELL, z: (Math.floor(mz / CELL) + 0.5) * CELL }));
-      const L = a.distanceTo(b);
-      const segs = Math.max(3, Math.min(8, Math.ceil(L / 5)));
-      const base = c.pos.length / 3;
-      for (let s = 0; s <= segs; s++) {
-        const t = s / segs;
-        // a parabola close enough to the catenary for these sags
-        p.copy(a).lerp(b, t).addScaledVector(up, -4 * sag * t * (1 - t));
-        tan.copy(b).sub(a).addScaledVector(up, -4 * sag * (1 - 2 * t)).normalize();
-        for (const w of [r, -r]) {
-          c.pos.push(p.x, p.y, p.z);
-          c.wire.push(tan.x, tan.y, tan.z, w);
-        }
-        if (s < segs) {
-          const v = base + s * 2;
-          c.idx.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
-        }
-      }
-    };
-    // pole to pole: the three primaries on the insulators, the secondary & the phone / cable line
-    for (const [a, b] of cfeSpans) {
-      const L = Math.hypot(b.x - a.x, b.z - a.z);
-      for (const x of [-0.7, 0.3, 1.3]) addWire(cfePoint(a, x, 10.82), cfePoint(b, x, 10.82), 0.012 * L, 0.009);
-      addWire(cfePoint(a, 0.28, 9.0), cfePoint(b, 0.28, 9.0), 0.025 * L, 0.014);
-      addWire(cfePoint(a, 0.24, 7.6), cfePoint(b, 0.24, 7.6), 0.035 * L, 0.012);
-      if (cfeHash(a, 6.6) < 0.5) addWire(cfePoint(a, 0.24, 7.3), cfePoint(b, 0.24, 7.3), 0.045 * L, 0.016);
-    }
-    // the service cables: down to a house on this side, and across the street to one on the other
-    for (const q of cfePoles) {
-      const from = cfePoint(q, 0.28, 9.0);
-      const near = cfeHash(q, 7.1);
-      if (near < 0.75) {
-        const along = (near - 0.375) * 20;
-        const tx = q.x - q.outX * 2.4 + q.ux * along, tz = q.z - q.outZ * 2.4 + q.uz * along;
-        const blk = blockAt(tx, tz);
-        if (blk && !(blk.park > 0.6)) addWire(from, new THREE.Vector3(tx, liftAt(tx, tz) + 4.3, tz), 0.35, 0.008);
-      }
-      const far = cfeHash(q, 8.3);
-      if (q.across && far < 0.6) {
-        const along = (far - 0.3) * 16;
-        const d = q.across + 2.4;
-        const tx = q.x + q.outX * d + q.ux * along, tz = q.z + q.outZ * d + q.uz * along;
-        const blk = blockAt(tx, tz);
-        if (blk && !(blk.park > 0.6)) addWire(from, new THREE.Vector3(tx, liftAt(tx, tz) + 4.6, tz), 0.5, 0.008);
-      }
-    }
-    const wireMat = createWireMaterial();
-    for (const c of cells.values()) {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(c.pos, 3));
-      geo.setAttribute('wire', new THREE.Float32BufferAttribute(c.wire, 4));
-      geo.setIndex(c.pos.length / 3 > 65535 ? new THREE.Uint32BufferAttribute(c.idx, 1) : new THREE.Uint16BufferAttribute(c.idx, 1));
-      geo.computeBoundingSphere();
-      if (geo.boundingSphere) geo.boundingSphere.radius += 1; // (the ribbons widen in the vertex shader)
-      const mesh = new THREE.Mesh(geo, wireMat);
-      mesh.name = 'CfeWires';
-      mesh.renderOrder = 2; // (update() hides the far cells after the warm-up frame has compiled them)
-      group.add(mesh);
-      wireCells.push({ mesh, x: c.x, z: c.z });
-    }
-    if (wireCells.length > 1) for (const c of wireCells.slice(1)) c.mesh.userData.sharesPipelineWith = wireCells[0].mesh;
-  }
-  console.info(`[cfe] ${cfePoles.length} poles, ${cfeSpans.length} spans in ${wireCells.length} cells`);
+  console.info(`[cfe] ${cfePoles.length} poles, ${cfeSpans.length} spans in ${cfe.cells.length} cells`);
 
   // =========================================================================
   // 6. FIRE HYDRANTS ALONG CURBS (INSTANCED)
@@ -1077,18 +1062,34 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
   for (const pit of [pitCurbInst, pitSoilInst, pitGrateInst]) pit.computeBoundingSphere();
   group.add(pitCurbInst, pitSoilInst, pitGrateInst);
 
-  function hashPos(x: number, y: number, z: number) {
-    const s = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;
-    return s - Math.floor(s);
-  }
 
   // Procedural trees (js/world/trees.ts): species skeletons with leaf-spray cards, one instanced mesh per species, variant &
   // level of detail, each tree's level following the camera
   const planted = keepClear.length ? treePositions.filter((t) => !keepClear.some((r) => r.contains(t.x, t.z))) : treePositions;
   const treeField = createTreeField(scene, planted);
   group.add(treeField.group);
-  // ...and their trunks stop the player, like the CFE poles (main.ts adds both to the player's colliders)
-  for (const c of treeTrunkColliders(planted)) cfeColliders.push(c);
+  // ...and their trunks stop the player, like the CFE poles (main.ts adds both to the player's colliders); those thin
+  // enough to give, till a car strikes them hard enough (trees.ts treeFall: a body a size, shared)
+  const treeProps: BreakableProp[] = [];
+  {
+    const bodies = new Map<string, PropBody>();
+    treeTrunkColliders(planted).forEach((c: PropCollider, i) => {
+      cfeColliders.push(c);
+      const t = planted[i];
+      const shape = treeField.shapeOf(i);
+      const fall = treeFall(t, shape.top, shape.half, shape.yaw, bodies);
+      if (!fall) return;
+      const ground = t.y ?? 0;
+      const prop: BreakableProp = {
+        kind: 'tree', x: t.x, z: t.z, yaw: fall.yaw, ground, base: liftAt(t.x, t.z), parts: [], collider: c, def: fall.def, hard: fall.hard,
+        standIn: () => treeField.standIn(i),
+        onBreak: () => { treeField.fell(i); }
+      };
+      c.prop = prop;
+      treeProps.push(prop);
+    });
+    console.info(`[streetDetails] ${treeProps.length} of ${planted.length} trees a car can fell, in ${bodies.size} sizes`);
+  }
 
   // =========================================================================
   // 8. CLUSTERED STREETLIGHTS & STREET FURNITURE LIGHT POOLS
@@ -1138,11 +1139,6 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
   function update(camera: THREE.Camera | null) {
     if (!camera) return;
     if (cornerSigns) cornerSigns.update(camera.position);
-    // The overhead wires: the cells within their fade distance
-    for (const c of wireCells) {
-      const dx = c.x - camera.position.x, dz = c.z - camera.position.z;
-      c.mesh.visible = Math.sqrt(dx * dx + dz * dz) - 150 < WIRE_FADE;
-    }
     const glow = cityUniforms.uInteriorGlow.value;
     // Streetlights fade in smoothly as dusk approaches (matching lampBulbGlow smoothstep(0.4, 1.1, uInteriorGlow))
     const lampScale = Math.min(1.25, Math.max(0.0, (glow - 0.36) * 1.15));
@@ -1167,7 +1163,11 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
 
     let cobraCount = 0;
     for (const s of cobraLampSites) {
-      if (s.broken) continue;
+      if (s.broken) {
+        if (s.darkSlot !== undefined) darkOff(s); // (knocked over without power: its dark lens goes with it)
+        continue;
+      }
+      if (s.dark) continue;
       const dx = s.x - cx;
       const dy = s.g - cy; // from the lamp's foot (the town's slopes put it well over y = 0)
       const dz = s.z - cz;
@@ -1203,7 +1203,11 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
 
     let ptCount = 0;
     for (const s of streetPointSites) {
-      if (s.broken) continue;
+      if (s.broken) {
+        if (s.darkSlot !== undefined) darkOff(s);
+        continue;
+      }
+      if (s.dark) continue;
       const dx = s.x - cx;
       const dy = s.g - cy;
       const dz = s.z - cz;
@@ -1255,6 +1259,98 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
     hydrant: [{ geometry: hydrantInst.geometry, material: hydrantMat, matrix: at(0, 0.425, 0) }],
     bin: [{ geometry: binGeo, material: binMat }, { geometry: binLidGeo, material: binLidMat }]
   });
+  breaker.addProps(cfeProps);
+  breaker.addProps(treeProps);
+
+  // =========================================================================
+  // 8b. THE POWER CUT: the streetlights along a run without power (cfe-network.ts) go out, flickering first; once out
+  //     for good their lenses & globes are swapped for dark ones. The arcs' flash borrows a light of the pool.
+  // =========================================================================
+  const LAMP_OUT_REACH = 10; // m from the poles' line: the lamps on them and on the curb across a narrow street
+  const LAMP_GRID = 32; // m: the cells the lamps are found by
+  type LampSite = CobraLampSite | PointLampSite;
+  const darkLens = (geo: THREE.BufferGeometry, capacity: number) => {
+    const mesh = new THREE.InstancedMesh(geo, poleMetalMat, Math.max(1, capacity));
+    mesh.name = 'DarkLamps';
+    mesh.count = 0;
+    group.add(mesh);
+    const free: number[] = []; // (the slots of lamps whose power came back, for the next to go out)
+    return { mesh, free };
+  };
+  const darkLenses = darkLens(lampLensGeo, lampHeadMatrices.length);
+  const darkGlobes = darkLens(pedGlobeGeo, pedPostMatrices.length);
+  // Lamp s's glowing lens swapped for a dark one, and back (its dark slot freed)
+  function darkOn(s: LampSite) {
+    const lens = s.lens;
+    if (!lens || s.darkSlot !== undefined) return;
+    const dark = lens.globe ? darkGlobes : darkLenses;
+    const slot = dark.free.pop() ?? (dark.mesh.count < dark.mesh.instanceMatrix.count ? dark.mesh.count++ : -1);
+    if (slot < 0) return;
+    hideInstance(lens.mesh, lens.index);
+    dark.mesh.setMatrixAt(slot, lens.matrix);
+    dark.mesh.instanceMatrix.needsUpdate = true;
+    dark.mesh.computeBoundingSphere();
+    s.darkSlot = slot;
+  }
+  function darkOff(s: LampSite) {
+    const lens = s.lens, slot = s.darkSlot;
+    if (!lens || slot === undefined) return;
+    const dark = lens.globe ? darkGlobes : darkLenses;
+    hideInstance(dark.mesh, slot);
+    dark.free.push(slot);
+    s.darkSlot = undefined;
+    if (!s.broken) showInstance(lens.mesh, lens.index, lens.matrix);
+  }
+  // The lamps in LAMP_GRID m cells (built the first time the power goes), and those along each outage's stretches
+  let lampCells: Map<number, LampSite[]> | null = null;
+  const lampKey = (ix: number, iz: number) => ix * 100003 + iz;
+  const lampsAlong = new WeakMap<readonly number[], LampSite[]>();
+  function lampsNear(segs: readonly number[]) {
+    if (!lampCells) {
+      lampCells = new Map();
+      for (const s of [...cobraLampSites, ...streetPointSites]) {
+        if (s === flashSite) continue;
+        const k = lampKey(Math.floor(s.x / LAMP_GRID), Math.floor(s.z / LAMP_GRID));
+        let cell = lampCells.get(k);
+        if (!cell) lampCells.set(k, (cell = []));
+        cell.push(s);
+      }
+    }
+    const found = new Set<LampSite>();
+    for (let k = 0; k + 3 < segs.length; k += 4) {
+      const ax = segs[k], az = segs[k + 1], bx = segs[k + 2] - ax, bz = segs[k + 3] - az;
+      const len2 = Math.max(1e-6, bx * bx + bz * bz);
+      const x0 = Math.floor((Math.min(ax, ax + bx) - LAMP_OUT_REACH) / LAMP_GRID), x1 = Math.floor((Math.max(ax, ax + bx) + LAMP_OUT_REACH) / LAMP_GRID);
+      const z0 = Math.floor((Math.min(az, az + bz) - LAMP_OUT_REACH) / LAMP_GRID), z1 = Math.floor((Math.max(az, az + bz) + LAMP_OUT_REACH) / LAMP_GRID);
+      for (let ix = x0; ix <= x1; ix++) {
+        for (let iz = z0; iz <= z1; iz++) {
+          for (const s of lampCells.get(lampKey(ix, iz)) ?? []) {
+            const t = Math.max(0, Math.min(1, ((s.x - ax) * bx + (s.z - az) * bz) / len2));
+            if (Math.hypot(s.x - ax - bx * t, s.z - az - bz * t) < LAMP_OUT_REACH) found.add(s);
+          }
+        }
+      }
+    }
+    return [...found];
+  }
+  cfe.lampsOut = (segs, change) => {
+    let lamps = lampsAlong.get(segs);
+    if (!lamps) lampsAlong.set(segs, (lamps = lampsNear(segs)));
+    for (const s of lamps) {
+      const cuts = s.cuts ?? 0;
+      if (change === 'off' || change === 'on') {
+        if (!cuts) s.dark = change === 'off'; // (a lamp already out for another outage stays out)
+        continue;
+      }
+      s.cuts = Math.max(0, cuts + (change === 'cut' ? 1 : -1));
+      s.dark = s.cuts > 0;
+      if (s.dark && !s.broken) darkOn(s);
+      else if (!s.dark) darkOff(s);
+    }
+  };
+  const flashSite: PointLampSite = { x: 0, y: -1000, z: 0, g: -1000, color: 0xc4d8ff, intensity: 0, dist: 26, broken: true, _effDist: 0 };
+  streetPointSites.push(flashSite);
+  cfe.sparks.flash = flashSite;
 
   /**
    * Mexican mast-arm traffic signals at the road network's signalised junctions (built once the network exists, see
@@ -1570,7 +1666,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
     return { update };
   }
 
-  return { group, footprints, colliders: cfeColliders, signalClock, audioSignals, update, breaker, addJunctionSignals };
+  return { group, footprints, colliders: cfeColliders, signalClock, audioSignals, update, breaker, cfe, addJunctionSignals };
 }
 
 export { buildStreetDetails };

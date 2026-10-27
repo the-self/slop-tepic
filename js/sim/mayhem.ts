@@ -4,7 +4,8 @@ import type { Collider } from '../world/buildings.ts';
 
 // js/sim/mayhem.ts
 // Knock-downs for the player's vehicles: who is hit (pedestrians, cyclists, motorcyclists; thrown as ragdolls,
-// sim/ragdolls.ts), and the street furniture (lamp posts, sign posts, hydrants, bins) knocked loose as bodies in Jolt
+// sim/ragdolls.ts), and the street furniture (lamp posts, sign posts, hydrants, bins; and, to a car only, the CFE's
+// concrete poles and the trees and palms not too thick to give) knocked loose as bodies in Jolt
 // (player/car-physics.ts's world). Pure helpers (tested in tests/mayhem.test.cjs) plus the props' breaker, which hides
 // a prop's static instances and lets a stand-in fall, roll and come to rest in its place.
 
@@ -25,21 +26,24 @@ interface Sliding {
 }
 // Whether a wall stands at (x, z)
 type SolidQuery = (x: number, z: number) => boolean;
-type PropKind = 'cobra' | 'post' | 'sign' | 'hydrant' | 'bin';
+type PropKind = 'cobra' | 'post' | 'sign' | 'hydrant' | 'bin' | 'cfe' | 'tree';
 // A kind as a body (PROP_BODIES): mass (kg), its cylinder [radius, height] (m) and boxes [x, y, z, hx, hy, hz] (m, in
-// its own frame), the closing speed (m/s) it breaks loose at, and how far round it a vehicle's box reaches for it (m)
+// its own frame), the closing speed (m/s) it breaks loose at, and how far round it a vehicle's box reaches for it (m);
+// `heavy`: only a car breaks it (a bicycle or a moto just stops against it), and it topples on over the way it was
+// struck
 interface PropBody {
   mass: number;
   cyl: [number, number];
   boxes: [number, number, number, number, number, number][];
   breakAt: number;
   reach: number;
+  heavy?: boolean;
 }
 // A static InstancedMesh (or one of the chunks scene-culling.ts split it into, recorded in userData.chunked: `where`
 // gives each instance's chunk and slot, -1 for none)
 interface HideableMesh {
   instanceMatrix: {
-    array: { fill(value: number, start?: number, end?: number): unknown };
+    array: { fill(value: number, start?: number, end?: number): unknown; set(values: ArrayLike<number>, offset?: number): void };
     addUpdateRange?(start: number, count: number): void;
     needsUpdate: boolean;
   };
@@ -50,11 +54,13 @@ interface PropPart {
   mesh: THREE.InstancedMesh;
   index: number;
 }
-// A prop's collider among the player's (a corner's sign post, street-details.ts): broken (no longer stopping walkers)
-// once it is down; `prop` tells car-physics.ts the prop's own body stands for it in Jolt
+// A prop's collider among the player's (a corner's sign post, a CFE pole, a tree: street-details.ts): broken (no
+// longer stopping walkers) once it is down; `prop` and `held` tell car-physics.ts it is a wall in Jolt (for the people
+// and the cars thrown about) save while the breaker holds it, its own body standing for it near the player's vehicle
 interface PropCollider extends Collider {
   broken?: boolean;
   prop?: BreakableProp;
+  held?: boolean;
 }
 // A part of a kind's stand-in, in the prop's own frame (base at the origin, +x towards the street)
 interface PropLook {
@@ -65,7 +71,9 @@ interface PropLook {
 type PropLooks = Partial<Record<PropKind, PropLook[]>>;
 // A prop vehicles can knock over: where it stands (m; yaw rad), `ground` the height its stand-in stands at, `base` the
 // ground's height under it; `light` (a street lamp's) goes out with it, `collider` breaks with it, `look` is its own
-// stand-in (over its kind's), `onBreak` is told the first time it comes loose
+// stand-in (over its kind's) or `standIn` builds it, `def` its own body (over its kind's: a tree's, by its size),
+// `hard` how hard it is to hit (player/stats.ts hardness: a heavy prop's crash hurts the car's driver), `onBreak` is
+// told the first time it comes loose
 interface BreakableProp {
   kind: PropKind;
   x: number;
@@ -77,6 +85,9 @@ interface BreakableProp {
   light?: { broken: boolean } | null;
   collider?: PropCollider;
   look?: PropLook[];
+  standIn?: () => THREE.Object3D;
+  def?: PropBody;
+  hard?: number;
   onBreak?: () => void;
 }
 // 'up' (its instance drawn) | 'loose' (flying, rolling: dynamic in Jolt) | 'down' (lying still)
@@ -96,9 +107,10 @@ interface Prop extends BreakableProp {
   age: number;
   speed: number;
 }
-// The collision told to the listener (main.ts: the audio and the crash damage); one object, reused
+// The collision told to the listener (main.ts: the audio and the crash damage); one object, reused. A heavy prop's is
+// between the vehicle that struck it (a) and the prop (b), so it hurts whoever drives it
 interface PropImpact {
-  a: BreakableProp | null;
+  a: BreakableProp | KnockingEntity | null;
   b: THREE.InstancedMesh | BreakableProp | null;
   kind: 'prop';
   x: number;
@@ -110,8 +122,9 @@ interface PropImpact {
   speed: number;
 }
 // The player's car, bicycle or moto, as the breaker reads it (speed m/s along heading, rad; vx, vz m/s besides; the
-// car's half width & length, m)
+// car's half width & length, m; its body in Jolt, which a heavy prop it snaps slows)
 interface KnockingEntity {
+  vehicle?: { body: Jolt.Body } | null;
   position: { x: number; y: number; z: number };
   heading?: number;
   speed: number;
@@ -125,10 +138,12 @@ interface PropPhysics {
   world: {
     Jolt: typeof Jolt;
     bodies: Jolt.BodyInterface;
-    layers: { ragdoll: number };
+    layers: { ragdoll: number; debris: number };
     // a static body of ground n samples cell m apart a side round (cx, cz), sampled from fromY; or `body` reshaped
     groundField(body: Jolt.Body | null, cx: number, cz: number, fromY: number, n: number, cell: number): Jolt.Body;
     dropBody: (body: Jolt.Body) => void;
+    // collider c's wall out of the world (the prop's own body stands for it)
+    dropWall: (c: PropCollider) => void;
   };
   addSystem(sys: {
     before?(dt: number): void;
@@ -136,13 +151,14 @@ interface PropPhysics {
     foci?(out: THREE.Vector3[], focus: { x: number; z: number }, far: number): void;
   }): void;
 }
-// What the breaker keeps of Jolt once it has its world (setPhysics): scratch vectors, one shape a kind
+// What the breaker keeps of Jolt once it has its world (setPhysics): scratch vectors, one shape a body (a kind's, or a
+// tree size's)
 interface PropJolt {
   world: PropPhysics['world'];
   tmpV: Jolt.Vec3;
   tmpR: Jolt.RVec3;
   tmpQ: Jolt.Quat;
-  shapes: Partial<Record<PropKind, Jolt.Shape>>;
+  shapes: Map<PropBody, Jolt.Shape>;
 }
 // A broken hydrant's jet of water and its age (s)
 interface Jet {
@@ -199,14 +215,25 @@ function slide(o: Sliding, dx: number, dz: number, solidAt: SolidQuery | null | 
 // up from its base [radius, height] and boxes [x, y, z, hx, hy, hz] on it, the speed (m/s) a vehicle must hit it at to
 // break it loose (slower, it stands: anchored in the pavement, it stops what pushes it), and how far round it a
 // vehicle's box reaches for it. A cobra lamp: a steel mast & its arm; a farol; a corner's sign post & its plate; a
-// hydrant, bolted to its main; a bin, standing loose
+// hydrant, bolted to its main; a bin, standing loose; a CFE pole, 11 m of spun concrete (~1.5 t; lighter here, or a
+// car would stop dead on it) under its crossarm, snapping at its foot at ~45 km/h; a tree, a young jacaranda's (each
+// tree has its own by its size: street-details.ts)
 const PROP_BODIES: Record<PropKind, PropBody> = {
   cobra: { mass: 140, cyl: [0.12, 8.4], boxes: [[1.15, 8.1, 0, 1.15, 0.05, 0.05]], breakAt: 4, reach: 0.15 },
   post: { mass: 55, cyl: [0.09, 3.9], boxes: [], breakAt: 3, reach: 0.15 },
   sign: { mass: 16, cyl: [0.04, 2.8], boxes: [[0.48, 2.62, 0, 0.46, 0.11, 0.015]], breakAt: 2.5, reach: 0.1 },
   hydrant: { mass: 90, cyl: [0.24, 0.85], boxes: [], breakAt: 3, reach: 0.25 },
-  bin: { mass: 11, cyl: [0.24, 0.92], boxes: [], breakAt: 0.8, reach: 0.25 }
+  bin: { mass: 11, cyl: [0.24, 0.92], boxes: [], breakAt: 0.8, reach: 0.25 },
+  cfe: { mass: 900, cyl: [0.14, 11], boxes: [[0.3, 10.55, 0, 1.15, 0.05, 0.05]], breakAt: 12.5, reach: 0.2, heavy: true },
+  tree: { mass: 400, cyl: [0.14, 4], boxes: [[0, 6, 0, 2.5, 2, 2.5]], breakAt: 7, reach: 0.14, heavy: true }
 };
+// A heavy prop snapped (snap): Jolt's contact low on a tall free body would kick its foot away and drop its top back
+// onto the car, where a pole or a trunk, held at its foot, goes over ahead of it. So it falls through the car (the
+// debris layer) till it lies still, turning over its foot (rad/s per m/s it was struck at, over its height in m), its
+// foot carried on a little, and the car loses the momentum it gave it, as two bodies stuck together would
+const TOPPLE = 0.9;
+const SNAP_CARRY = 0.25; // of the speed it was struck at, its foot's
+const UNGHOST_MARGIN = 0.6; // m round the vehicle's box a snapped prop must lie clear of before it meets vehicles again
 const _up = new THREE.Vector3();
 const MAX_LOOSE = 20; // props flying & rolling at once: past that the stillest one lies where it is, out of Jolt
 const SETTLE_SPEED = 0.15; // m/s (and 0.3 rad/s) a loose prop lies still under...
@@ -215,11 +242,27 @@ const MAX_LOOSE_TIME = 20; // s after which one still rocking freezes anyway
 const STAND_REACH = 6; // m round a vehicle's box the props near it stand in Jolt (a slow push meets them)...
 const STAND_DROP = 12; // ...and past which they leave it again
 const LOOKAHEAD = 0.06; // s of a vehicle's motion its box is stretched by: a prop it is about to strike comes loose first
+const HEAVY_IMPACT = 30; // m/s: a heavy prop's crash is told at its full speed (up to this), a light one's at 12 at most
 const PROP_GROUND = 16; // samples of the ground under a loose prop, 1 m apart, sampled again once it is 5 m off
 
 /** Pure: the speed (m/s) a vehicle moving at (vx, vz) closes on a prop that lies along (nx, nz) from it */
 function closingSpeed(vx: number, vz: number, nx: number, nz: number): number {
   return Math.max(0, vx * nx + vz * nz);
+}
+
+/** A prop's body: its own, or its kind's */
+function bodyOf(p: BreakableProp): PropBody {
+  return p.def ?? PROP_BODIES[p.kind];
+}
+
+/**
+ * Pure: the spin (rad/s, about the world's axes) that tips a heavy prop `height` m tall over away from a vehicle that
+ * struck it at `speed` m/s along (nx, nz) (from the vehicle to it): about the level axis square to the blow, its top
+ * going the way of the blow
+ */
+function toppleSpin(nx: number, nz: number, speed: number, height: number): [number, number, number] {
+  const w = TOPPLE * speed / Math.max(1, height);
+  return [nz * w, 0, -nx * w];
 }
 
 /**
@@ -239,6 +282,8 @@ class PropBreaker {
   looks: PropLooks;
   cells: Map<number, Prop[]>;
   anchored: Set<Prop>;
+  /** Heavy props snapped (snap), still in the debris layer: through the car till they lie clear of it (unghost) */
+  snapped: Set<Prop>;
   loose: Set<Prop>;
   listener: ((e: PropImpact) => void) | null;
   physics: PropPhysics | null;
@@ -256,6 +301,7 @@ class PropBreaker {
     this.cells = new Map();
     this.anchored = new Set(); // props in Jolt as static bodies: standing, or lying where they came to rest
     this.loose = new Set(); // ...and flying, rolling (dynamic)
+    this.snapped = new Set();
     this.listener = null;
     this.physics = null;
     this.jolt = null;
@@ -307,7 +353,7 @@ class PropBreaker {
       tmpV: new Jolt.Vec3(0, 0, 0),
       tmpR: new Jolt.RVec3(0, 0, 0),
       tmpQ: new Jolt.Quat(0, 0, 0, 1),
-      shapes: {} // (one shape a kind, shared by its bodies)
+      shapes: new Map() // (one shape a body, shared by the props of that kind or size)
     };
     physics.addSystem(this);
   }
@@ -330,6 +376,7 @@ class PropBreaker {
         if (Math.hypot(at.x - entity.position.x, at.z - entity.position.z) > STAND_DROP) this.sit(p);
       }
       if (mode === 'car' || mode === 'cyclist' || mode === 'moto') this.near(entity, mode);
+      this.unghost(entity, mode);
     }
     this.spray(dt);
   }
@@ -351,10 +398,10 @@ class PropBreaker {
         const list = this.cells.get(this.key(ix + a, iz + b));
         if (!list) continue;
         for (const p of list) {
-          if (p.state === 'loose') continue;
+          if (p.state === 'loose' || this.snapped.has(p)) continue; // (one snapped lies through the car: unghost)
           // (one lying down, where it came to rest)
           const at = p.root ? p.root.position : p;
-          const body = PROP_BODIES[p.kind];
+          const body = bodyOf(p);
           if (!boxHit(x, z, heading, hw + STAND_REACH, hl + STAND_REACH, at.x, at.z, body.reach)) continue;
           if (!p.body) this.stand(p);
           // about to be struck: hard enough, it breaks loose (and Jolt's contact then trades the momentum). One lying
@@ -366,19 +413,19 @@ class PropBreaker {
             const up = _up.set(0, 1, 0).applyQuaternion(p.root.quaternion), h = body.cyl[1];
             for (let k = 1; k <= 2 && !hit; k++) hit = boxHit(cx, cz, heading, hw, l, at.x + up.x * h * k / 2, at.z + up.z * h * k / 2, body.reach);
           }
-          if (hit && closingSpeed(vx, vz, hit.nx, hit.nz) > body.breakAt) this.knock(p, vx, vz, hit);
+          // (a heavy one gives to a car only: against it a bicycle or a moto just stops)
+          if (hit && closingSpeed(vx, vz, hit.nx, hit.nz) > body.breakAt && (!body.heavy || mode === 'car')) this.knock(p, vx, vz, hit, entity);
         }
       }
     }
   }
 
-  // The kind's body shape: its cylinder from its base and its boxes (held for good)
-  shapeOf(kind: PropKind): Jolt.Shape {
+  // A body's shape: its cylinder from its base and its boxes (held for good)
+  shapeOf(def: PropBody): Jolt.Shape {
     const jolt = this.j();
-    const held = jolt.shapes[kind];
+    const held = jolt.shapes.get(def);
     if (held) return held;
     const { Jolt } = jolt.world;
-    const def = PROP_BODIES[kind];
     const compound = new Jolt.StaticCompoundShapeSettings();
     jolt.tmpQ.Set(0, 0, 0, 1);
     const [r, h] = def.cyl;
@@ -393,7 +440,8 @@ class PropBreaker {
     shape.AddRef();
     Jolt.destroy(result);
     Jolt.destroy(compound);
-    return (jolt.shapes[kind] = shape);
+    jolt.shapes.set(def, shape);
+    return shape;
   }
 
   vec(x: number, y: number, z: number): Jolt.Vec3 {
@@ -402,9 +450,13 @@ class PropBreaker {
     return tmpV;
   }
 
-  // Prop p into Jolt, static (anchored) where it stands or lies, ready to come loose
+  // Prop p into Jolt, static (anchored) where it stands or lies, ready to come loose (its wall out of it meanwhile)
   stand(p: Prop): void {
-    const { world: { Jolt, bodies, layers }, tmpR, tmpQ } = this.j();
+    const { world: { Jolt, bodies, layers, dropWall }, tmpR, tmpQ } = this.j();
+    if (p.collider && !p.collider.broken) {
+      p.collider.held = true;
+      dropWall(p.collider);
+    }
     if (p.root) {
       const { position: at, quaternion: q } = p.root;
       tmpR.Set(at.x, at.y, at.z);
@@ -414,10 +466,11 @@ class PropBreaker {
       tmpR.Set(p.x, p.ground, p.z); // (its stand-in's origin: on its plinth, if it has one)
       tmpQ.Set(0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2));
     }
-    const bcs = new Jolt.BodyCreationSettings(this.shapeOf(p.kind), tmpR, tmpQ, Jolt.EMotionType_Static, layers.ragdoll);
+    const def = bodyOf(p);
+    const bcs = new Jolt.BodyCreationSettings(this.shapeOf(def), tmpR, tmpQ, Jolt.EMotionType_Static, layers.ragdoll);
     bcs.mAllowDynamicOrKinematic = true;
     bcs.mOverrideMassProperties = Jolt.EOverrideMassProperties_CalculateInertia;
-    bcs.mMassPropertiesOverride.mMass = PROP_BODIES[p.kind].mass;
+    bcs.mMassPropertiesOverride.mMass = def.mass;
     bcs.mFriction = 0.6;
     bcs.mRestitution = 0.2;
     bcs.mLinearDamping = 0.1;
@@ -428,25 +481,31 @@ class PropBreaker {
     this.anchored.add(p);
   }
 
-  // ...and out of it again, standing or lying where it is (the player has driven on)
+  // ...and out of it again, standing or lying where it is (the player has driven on): a wall again, if it stands
   sit(p: Prop): void {
     if (p.body) this.j().world.dropBody(p.body);
     p.body = null;
+    if (p.collider) p.collider.held = false;
     this.anchored.delete(p);
+    this.snapped.delete(p);
   }
 
-  // Prop p about to be struck by a vehicle moving at (vx, vz), along `hit` (from the vehicle to it): loose in Jolt, its
-  // instance hidden and its stand-in following it the first time (a hydrant's main gushes, a lamp goes out)
-  knock(p: Prop, vx: number, vz: number, hit: BoxContact): void {
+  // Prop p about to be struck by `entity`, moving at (vx, vz), along `hit` (from the vehicle to it): loose in Jolt, its
+  // instance hidden and its stand-in following it the first time (a hydrant's main gushes, a lamp goes out); a heavy
+  // one standing tips over ahead of the vehicle
+  knock(p: Prop, vx: number, vz: number, hit: BoxContact, entity: KnockingEntity): void {
     const { Jolt, bodies } = this.j().world;
     const pb = p.body;
     if (!pb) return; // (near() stood it in Jolt first)
     this.anchored.delete(p);
     const first = p.state === 'up';
+    const def = bodyOf(p);
+    const speed = closingSpeed(vx, vz, hit.nx, hit.nz);
     p.state = 'loose';
     p.still = 0;
     p.age = 0;
     bodies.SetMotionType(pb.GetID(), Jolt.EMotionType_Dynamic, Jolt.EActivation_Activate);
+    if (def.heavy && first) this.snap(p, pb, def, hit, speed, entity);
     this.loose.add(p);
     // too many flying about: the stillest lies where it is
     if (this.loose.size > MAX_LOOSE) {
@@ -456,12 +515,12 @@ class PropBreaker {
     }
     if (this.listener) {
       const e = this.event;
-      e.a = p;
-      e.b = p.parts.at(0)?.mesh ?? p;
+      e.a = def.heavy ? entity : p;
+      e.b = def.heavy ? p : p.parts.at(0)?.mesh ?? p;
       const at = p.root ? p.root.position : p;
       e.x = at.x; e.y = 1.0 + (p.base || 0); e.z = at.z;
       e.nx = -hit.nx; e.nz = -hit.nz;
-      e.speed = Math.min(closingSpeed(vx, vz, hit.nx, hit.nz), p.kind === 'hydrant' ? 6 : 12);
+      e.speed = Math.min(speed, def.heavy ? HEAVY_IMPACT : p.kind === 'hydrant' ? 6 : 12);
       this.listener(e);
     }
     if (!first) return;
@@ -471,11 +530,14 @@ class PropBreaker {
     p.onBreak?.();
     // the stand-in, in the prop's own frame
     const root = new THREE.Group();
-    for (const { geometry, material, matrix } of p.look ?? this.looks[p.kind] ?? []) {
-      const m = new THREE.Mesh(geometry, material);
-      if (matrix) m.applyMatrix4(matrix);
-      m.castShadow = true;
-      root.add(m);
+    if (p.standIn) root.add(p.standIn());
+    else {
+      for (const { geometry, material, matrix } of p.look ?? this.looks[p.kind] ?? []) {
+        const m = new THREE.Mesh(geometry, material);
+        if (matrix) m.applyMatrix4(matrix);
+        m.castShadow = true;
+        root.add(m);
+      }
     }
     this.group.add(root);
     p.root = root;
@@ -486,6 +548,56 @@ class PropBreaker {
       jet.scale.set(1, 7, 1);
       this.group.add(jet);
       this.jets.push({ mesh: jet, age: 0 });
+    }
+  }
+
+  // Heavy prop body `pb` snapped by `entity`, struck at `speed` along `hit`: it falls ahead of the car, through it,
+  // turning over its foot, and the car is slowed by what it gave it (TOPPLE)
+  snap(p: Prop, pb: Jolt.Body, def: PropBody, hit: BoxContact, speed: number, entity: KnockingEntity): void {
+    const { bodies, layers } = this.j().world;
+    const id = pb.GetID();
+    bodies.SetObjectLayer(id, layers.debris);
+    this.snapped.add(p);
+    const [wx, wy, wz] = toppleSpin(hit.nx, hit.nz, speed, def.cyl[1]);
+    // (its centre of mass swung forward about its foot, the foot itself carried on a little)
+    const com = pb.GetCenterOfMassPosition().GetY() - pb.GetPosition().GetY();
+    const ahead = speed * SNAP_CARRY + Math.hypot(wx, wz) * com;
+    bodies.SetLinearVelocity(id, this.vec(hit.nx * ahead, 0, hit.nz * ahead));
+    bodies.SetAngularVelocity(id, this.vec(wx, wy, wz));
+    const car = entity.vehicle?.body;
+    if (!car) return;
+    const inverse = car.GetMotionProperties().GetInverseMass();
+    if (!(inverse > 0)) return;
+    const loss = speed * def.mass / (def.mass + 1 / inverse);
+    const v = car.GetLinearVelocity();
+    const vx = v.GetX() - hit.nx * loss, vy = v.GetY(), vz = v.GetZ() - hit.nz * loss;
+    bodies.SetLinearVelocity(car.GetID(), this.vec(vx, vy, vz));
+  }
+
+  // The snapped props lying still and clear of the player's vehicle back in the way of what drives into them (out of
+  // the debris layer): one still across the car would be inside a body that meets it, and Jolt would throw the car out
+  unghost(entity: KnockingEntity, mode: string): void {
+    if (!this.snapped.size) return;
+    const { bodies, layers } = this.j().world;
+    const vehicle = mode === 'car' || mode === 'cyclist' || mode === 'moto';
+    const heading = entity.heading || 0;
+    const hw = (mode === 'car' ? entity.halfW || 0.9 : 0.35) + UNGHOST_MARGIN;
+    const hl = (mode === 'car' ? entity.halfL || 2.25 : 1.0) + UNGHOST_MARGIN;
+    for (const p of this.snapped) {
+      if (!p.body) {
+        this.snapped.delete(p);
+        continue;
+      }
+      if (p.state !== 'down' || !p.root) continue;
+      if (vehicle) {
+        // (along its length, foot to top)
+        const up = _up.set(0, 1, 0).applyQuaternion(p.root.quaternion), h = bodyOf(p).cyl[1], at = p.root.position;
+        let inside = false;
+        for (let k = 0; k <= 4 && !inside; k++) inside = !!boxHit(entity.position.x, entity.position.z, heading, hw, hl, at.x + up.x * h * k / 4, at.z + up.z * h * k / 4, bodyOf(p).reach);
+        if (inside) continue;
+      }
+      bodies.SetObjectLayer(p.body.GetID(), layers.ragdoll);
+      this.snapped.delete(p);
     }
   }
 
@@ -574,8 +686,25 @@ function hideInstance(mesh: HideableMesh, index: number): void {
   attr.needsUpdate = true;
 }
 
+// Shows instance `index` of a static InstancedMesh again at `matrix` (its own, hideInstance's undone), wherever
+// scene-culling.ts moved it
+function showInstance(mesh: HideableMesh, index: number, matrix: { elements: ArrayLike<number> }): void {
+  let target: HideableMesh | undefined = mesh;
+  let j = index;
+  const ch = mesh.userData?.chunked;
+  if (ch) {
+    target = ch.chunks[ch.where[index * 2]];
+    j = ch.where[index * 2 + 1];
+  }
+  if (!target || j < 0) return;
+  const attr = target.instanceMatrix;
+  attr.array.set(matrix.elements, j * 16);
+  if (attr.addUpdateRange) attr.addUpdateRange(j * 16, 16);
+  attr.needsUpdate = true;
+}
+
 export type {
   BoxContact, Sliding, SolidQuery, PropKind, PropBody, HideableMesh, PropPart, PropCollider, BreakableProp, PropState, Prop,
   PropLook, PropLooks, PropImpact, KnockingEntity, PropPhysics, PropJolt, Jet
 };
-export { boxHit, riderKnocked, slide, closingSpeed, hideInstance, PropBreaker, PROP_BODIES };
+export { boxHit, riderKnocked, slide, closingSpeed, toppleSpin, bodyOf, hideInstance, showInstance, PropBreaker, PROP_BODIES };

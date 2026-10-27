@@ -5,3 +5,4 @@ tools/data/tepic/fetch.log
 .env
 node_modules/
 dist/
+__pycache__/

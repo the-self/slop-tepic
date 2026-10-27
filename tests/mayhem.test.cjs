@@ -6,7 +6,7 @@ const { loadModule } = require('./helpers/module.cjs');
 
 class Matrix4 {}
 class Vector3 {}
-const { boxHit, riderKnocked, closingSpeed, hideInstance, PROP_BODIES } = loadModule(
+const { boxHit, riderKnocked, closingSpeed, toppleSpin, bodyOf, hideInstance, PROP_BODIES } = loadModule(
   readFileSync(join(__dirname, '../js/sim/mayhem.ts'), 'utf8'),
   { imports: { 'three/webgpu': { Matrix4, Vector3 } }, filename: 'mayhem.ts' }
 );
@@ -42,6 +42,23 @@ test('the street furniture breaks loose at its own speeds: a loose bin at a nudg
   // as heavy as the real thing: a steel cobra mast & arm well over a farol, a bin a few kilos
   assert.ok(cobra.mass > post.mass && post.mass > sign.mass && bin.mass < 20);
   for (const p of Object.values(PROP_BODIES)) assert.ok(p.cyl[0] > 0 && p.cyl[1] > 0.5 && p.reach > 0);
+});
+
+test('a CFE pole and a tree give to a car only, far harder than a lamp mast, and topple on the way they were struck', () => {
+  const { cobra, cfe, tree } = PROP_BODIES;
+  assert.ok(cfe.heavy && tree.heavy && !cobra.heavy);
+  assert.ok(cfe.breakAt > cobra.breakAt * 2 && cfe.mass > cobra.mass * 4, 'spun concrete, not a steel mast');
+  // struck going +z: it spins about -x... its top (+y) swept towards +z
+  const [wx, wy, wz] = toppleSpin(0, 1, 15, 11);
+  assert.equal(wy, 0);
+  const top = [0, 1, 0];
+  const sweep = [wy * top[2] - wz * top[1], wz * top[0] - wx * top[2], wx * top[1] - wy * top[0]]; // w × top
+  assert.ok(sweep[2] > 0 && Math.abs(sweep[0]) < 1e-9, 'the top goes ahead of the car');
+  assert.ok(Math.hypot(...toppleSpin(1, 0, 15, 11)) > Math.hypot(...toppleSpin(1, 0, 15, 22)), 'a taller one tips slower');
+  // a tree's own body over its kind's
+  const own = { ...tree, breakAt: 14 };
+  assert.equal(bodyOf({ kind: 'tree', def: own }), own);
+  assert.equal(bodyOf({ kind: 'tree' }), tree);
 });
 
 test('only the speed a vehicle closes on a prop at counts, not its speed past it', () => {

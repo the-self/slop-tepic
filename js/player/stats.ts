@@ -44,6 +44,8 @@ function hardness(kind: string, other: unknown): number {
   if (('bike' in other && other.bike) || ('moto' in other && other.moto) || bodyType === 'bike' || bodyType === 'moto') return 0.25;
   if (bodyType) return 1;
   if ('rig' in other && other.rig) return 0; // a pedestrian
+  // (a prop's own: a CFE pole's concrete, a tree's trunk, sim/mayhem.ts)
+  if ('hard' in other && typeof other.hard === 'number') return other.hard;
   return 0.35; // a lamp post, a hydrant
 }
 
