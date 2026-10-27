@@ -16,7 +16,7 @@ export const CARS: CarModel[] = [
     gears: 5, top: 170, accel: 11.5, rarity: 16, paints: [0xf2f2ee, 0xf2f2ee, 0xc8cdd2, 0x8c1c1f, 0x1f3a6b, 0x2a2d31, 0x6f7377]
   },
   {
-    id: 'nissan-versa', glb: 'assets/models/cars/nissan-versa.glb', name: 'Nissan Versa', body: 'sedan', class: 'economy',
+    id: 'nissan-versa', name: 'Nissan Versa', body: 'sedan', class: 'economy',
     size: [4.50, 1.74, 1.47], mass: 1150, drive: 'fwd', power: [87, 6300], torque: [154, 4000], redline: 6500,
     gears: 5, top: 180, accel: 11.0, rarity: 30
   },
@@ -41,7 +41,7 @@ export const CARS: CarModel[] = [
     gears: 6, top: 190, accel: 10.0, rarity: 6
   },
   {
-    id: 'nissan-np300', glb: 'assets/models/cars/nissan-np300.glb', name: 'Nissan NP300', body: 'pickup', class: 'truck',
+    id: 'nissan-np300', name: 'Nissan NP300', body: 'pickup', class: 'truck',
     size: [5.25, 1.85, 1.78], mass: 1800, drive: 'rwd', power: [118, 6000], torque: [241, 4000], redline: 6000,
     gears: 5, top: 170, accel: 12.5, rarity: 14, paints: [0xf2f2ee, 0xf2f2ee, 0xc8cdd2, 0x2a2d31, 0xa31d22]
   },

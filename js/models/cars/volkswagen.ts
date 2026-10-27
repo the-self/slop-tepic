@@ -11,7 +11,7 @@ export const CARS: CarModel[] = [
   },
   {
     // the Vento's successor (since 2023), with the 1.6 MSI most of them have
-    id: 'volkswagen-virtus', glb: 'assets/models/cars/volkswagen-virtus.glb', name: 'Volkswagen Virtus', body: 'sedan', class: 'economy',
+    id: 'volkswagen-virtus', name: 'Volkswagen Virtus', body: 'sedan', class: 'economy',
     size: [4.56, 1.75, 1.48], mass: 1190, drive: 'fwd', power: [81, 5750], torque: [155, 4000], redline: 6250,
     gears: 6, top: 185, accel: 11.2, rarity: 8
   },

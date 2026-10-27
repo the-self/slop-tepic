@@ -120,6 +120,11 @@ Use `--keep-width` for props that stand alone.
 
 ## Cars and people
 
+- **The heavy files are unhooked for now** (2026-10-27): the Onix (111k triangles, 13 MB), the NP300 (115k, 12 MB),
+  the Virtus (86k, 9 MB) and the Versa (60k, 8 MB) cost the game too much, in traffic and to download. Their files
+  stay here and in their jobs, but their models have no `glb` field: the traffic draws them with their body shapes.
+  The light files (the Meshy cars at ~8k, the Tsuru at ~7k, the Cybertruck at ~10k) stay on. Put one back by its
+  `glb` field once it is lighter (a lower `--faces`, or remade).
 - **Cars are in.** The ten best sellers (Versa, Aveo, March, NP300, Vento, Gol, Kicks, Onix, Yaris, Rio) are
   Meshy models in `assets/models/cars/`. Nine were drawn white from one prompt each (`tools/models/jobs/cars/`, 18
   credits, Meshy T2.5 smart topology, ~8k triangles). The Versa is the pilot of the better way: four views drawn in a
