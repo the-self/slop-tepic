@@ -82,6 +82,7 @@ class CrimeSystem {
   onPlayerShot: ((shot: Shot) => void) | null = null;
   onRemoteHit: ((id: number, damage: number) => void) | null = null;
   fireBlocked = false;
+  policeOff = false; // a multiplayer room without police (net/lobby.ts): crimes raise no wanted level
   personGround: (owner: unknown, x: number, z: number) => number;
   // (a burning wreck where a blast went off: fires.ts, from main.ts)
   onExplosion?: (x: number, y: number, z: number, radius: number) => void;
@@ -424,7 +425,7 @@ class CrimeSystem {
   // A crime of `kind` (crime-rules.ts CRIME_HEAT): stars only if the police witness it, by default whoever of them can
   // see the player now
   report(kind: CrimeKind, seen = this.witnessed()): void {
-    if (this.state !== 'play') return;
+    if (this.state !== 'play' || this.policeOff) return;
     const before = this.wanted.stars;
     const gained = this.wanted.report(kind, seen);
     // (seen, or called in: the police know where the player is)

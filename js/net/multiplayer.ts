@@ -8,6 +8,8 @@ import {
   OP,
   CHAT_MAX,
   encodeHello,
+  encodeCreate,
+  encodeRules,
   encodeState,
   encodeChat,
   encodeShot,
@@ -16,12 +18,16 @@ import {
   encodeSky,
   decodeServer
 } from '../../shared/protocol.ts';
-import type { Mode, MovedPlayer, PoseSource, ServerMessage, Shot, SkyTime, SkyWeather } from '../../shared/protocol.ts';
+import type { Mode, MovedPlayer, PoseSource, RoomRules, ServerMessage, Shot, SkyTime, SkyWeather } from '../../shared/protocol.ts';
+import { NAME_KEY, rulesSummary } from './lobby.ts';
+import type { CurrentRoom, RoomEntry } from './lobby.ts';
 import type { CrimeSystem, RemoteTarget } from '../sim/crime.ts';
 import type { CarEntity, PersonEntity, PlayerEntity } from '../player/controllers.ts';
 import { onLocaleChange, setLabel, setText, t } from '../i18n/i18n.ts';
 
 // js/net/multiplayer.ts
+// (Which room it plays in is the lobby's, net/lobby.ts: the region's public rooms, a friend's by its code, or the
+// player's own, whose host alone sets its sky and its rules: police, PvP.)
 // Browser side of the room server (server/index.ts), loaded only with ?multiplayer=1 (see main.ts). Sends the active
 // player's pose SEND_HZ times a second, keeps a local list of the players the server says are in view, and draws them
 // INTERP_DELAY_MS in the past, interpolating between the poses it received so 10 Hz updates look smooth. And what the
@@ -43,7 +49,6 @@ const KEEPALIVE_MS = 2000; // resend an unchanged pose this often
 const MAX_REMOTE_PEOPLE = 96; // walkers + cyclists' riders drawn by the shared crowd
 const LABEL_DISTANCE = 140; // m within which name tags show
 const RETRY_MAX_MS = 10000;
-const NAME_KEY = 'mp-name';
 const RIDE_REACH = 3.2; // m from a friend's car to get in
 const KILL_WINDOW_MS = 10000; // a player's hit this recent killed the player
 const CHAT_LINES = 8; // lines kept on screen
@@ -112,6 +117,7 @@ export interface MultiplayerOptions {
   name?: string;
   /** the room's sky changed (or, on joining, is what it is): the time of day & weather to show */
   onSky?: ((time: SkyTime, weather: SkyWeather) => void) | null;
+  entry?: RoomEntry; // the room to go into (default: the region's public rooms)
 }
 
 export type MultiplayerStatus = 'connecting' | 'online' | 'offline' | 'error';
@@ -256,14 +262,29 @@ class Multiplayer {
   chatLog: HTMLDivElement;
   chatInput: HTMLInputElement;
   onSky: ((time: SkyTime, weather: SkyWeather) => void) | null;
+  entry: RoomEntry;
+  /** the room the player is in (WELCOME; null till then): its sky as the room last set it */
+  current: (CurrentRoom & { hostId: number }) | null;
+  roomsButton: HTMLButtonElement;
+  /** the room's rules arrived or changed: the police are main.ts's to apply (PvP is this module's) */
+  onRules: ((rules: RoomRules) => void) | null;
+  /** the server turned the player away from the room ('room', 'password', 'roomfull', 'wait'): main.ts reopens the lobby */
+  onRejected: ((code: string) => void) | null;
+  /** the HUD's Rooms button: main.ts opens the lobby */
+  onLobby: (() => void) | null;
 
-  constructor({ scene, controllers, camera, crime = null, cameras = null, url, region = DEFAULT_REGION, name = '', onSky = null }: MultiplayerOptions) {
+  constructor({ scene, controllers, camera, crime = null, cameras = null, url, region = DEFAULT_REGION, name = '', onSky = null, entry = { kind: 'public' } }: MultiplayerOptions) {
     this.scene = scene;
     this.controllers = controllers;
     this.camera = camera;
     this.crime = crime;
     this.cameras = cameras;
     this.onSky = onSky;
+    this.entry = entry;
+    this.current = null;
+    this.onRules = null;
+    this.onRejected = null;
+    this.onLobby = null;
     this.targets = [];
     this.lastHurtBy = 0;
     this.lastHurtAt = -Infinity;
@@ -299,6 +320,13 @@ class Multiplayer {
     document.body.append(this.labels);
     // under the frame rate, top left
     (document.querySelector('.hud-top-left') ?? document.body).append(this.badge);
+    // the rooms: which one the player is in, its code, another to go to (net/lobby.ts)
+    this.roomsButton = document.createElement('button');
+    this.roomsButton.type = 'button';
+    this.roomsButton.className = 'mp-rooms-btn';
+    setText(this.roomsButton, 'mp.rooms');
+    this.roomsButton.addEventListener('click', () => { this.onLobby?.(); });
+    this.badge.after(this.roomsButton);
     this.renderBadge();
     onLocaleChange(() => { this.renderBadge(); }); // (in the new language)
     [this.chat, this.chatLog, this.chatInput] = this.buildChat();
@@ -319,11 +347,43 @@ class Multiplayer {
     return this.status === 'online';
   }
 
-  // Sets the room's sky for everyone in it; false when not in a room (the change stays this player's)
+  // Sets the room's sky for everyone in it; false when not in a room (the change stays this player's). In a room of
+  // its own the sky is its host's: a guest's choice is turned down (true: it doesn't show either)
   setSky(time: SkyTime, weather: SkyWeather): boolean {
     if (!this.online) return false;
+    const room = this.current;
+    if (room?.hostId && !room.host) {
+      this.crime?.toast(t('mp.hostOnly'));
+      return true;
+    }
     this.sendFrame(encodeSky(time, weather));
     return true;
+  }
+
+  // The room's rules: PvP here (with it off, the player's shots pass through the others), the police main.ts's
+  applyRules(rules: RoomRules, announce: boolean): void {
+    if (this.crime) this.crime.remotes = rules.pvp ? this.targets : NO_TARGETS;
+    this.onRules?.(rules);
+    if (announce) this.crime?.toast(t('mp.rulesChanged', { summary: rulesSummary(rules) || t('room.rulesUsual') }));
+  }
+
+  // The host's new rules for its room (the server ignores anyone else's)
+  sendRules(rules: RoomRules): void {
+    if (this.current?.host) this.sendFrame(encodeRules(rules));
+  }
+
+  // Leaves the room for `entry` (another the lobby chose): a fresh connection, the others in view dropped
+  rejoin(entry: RoomEntry, name = this.name): void {
+    this.entry = entry;
+    this.name = name;
+    this.current = null;
+    const ws = this.ws;
+    this.ws = null; // (its onclose then sees it is no longer the one in use: no retry)
+    this.clearRemotes();
+    if (ws) ws.close();
+    this.stopped = false;
+    this.retryMs = 1000;
+    this.connect();
   }
 
   // The chat: the lines said in the room (bottom left), and a field Enter opens (Enter again says it, Esc lets it go)
@@ -411,7 +471,10 @@ class Multiplayer {
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
     ws.onopen = () => {
-      ws.send(encodeHello(this.region, this.name));
+      const entry = this.entry;
+      ws.send(entry.kind === 'create' ? encodeCreate(this.region, this.name, entry.spec)
+        : entry.kind === 'join' ? encodeHello(this.region, this.name, entry.room, entry.password)
+          : encodeHello(this.region, this.name));
       this.lastSent = null;
     };
     ws.onmessage = (e: MessageEvent<unknown>) => {
@@ -434,18 +497,37 @@ class Multiplayer {
   receive(msg: ServerMessage): void {
     if (msg.op === OP.WELCOME) {
       this.id = msg.id;
-      this.room = msg.room;
+      this.room = msg.title || msg.room;
       this.tickMs = 1000 / Math.max(1, msg.tickHz);
       this.status = 'online';
       this.retryMs = 1000;
+      // a room the player opened is one to come back to by its code (the connection drops, the room waits)
+      const entry = this.entry;
+      if (entry.kind === 'create') this.entry = { kind: 'join', room: msg.code, password: entry.spec.password };
+      const sky = entry.kind === 'create' ? entry.spec : { time: 'live' as const, weather: 'live' as const }; // (SKY_SET follows)
+      this.current = { title: msg.title, code: msg.code, host: msg.host === msg.id, hostId: msg.host, rules: msg.rules, ...sky };
+      this.applyRules(msg.rules, false);
       this.renderBadge();
       return;
     }
+    if (msg.op === OP.ROOM) {
+      const room = this.current;
+      if (!room) return;
+      const changed = rulesSummary(msg.rules) !== rulesSummary(room.rules);
+      room.host = msg.host === this.id;
+      if (room.host && room.hostId !== msg.host) this.crime?.toast(t('mp.host'));
+      room.hostId = msg.host;
+      room.rules = msg.rules;
+      if (changed) this.applyRules(msg.rules, true);
+      return;
+    }
     if (msg.op === OP.ERROR) {
-      // a version mismatch or a rejected region won't fix itself by retrying
-      if (msg.code === 'version' || msg.code === 'region') this.stopped = true;
+      // a version mismatch or a rejected region won't fix itself by retrying, nor a room that turned the player away
+      // (main.ts reopens the lobby with why)
+      if (msg.code === 'version' || msg.code === 'region' || REJECTIONS.has(msg.code)) this.stopped = true;
       this.status = 'error';
       this.renderBadge(msg.code);
+      if (REJECTIONS.has(msg.code)) this.onRejected?.(msg.code);
       return;
     }
     if (msg.op === OP.CHAT_LINE) {
@@ -462,6 +544,10 @@ class Multiplayer {
       return;
     }
     if (msg.op === OP.SKY_SET) {
+      if (this.current) {
+        this.current.time = msg.time;
+        this.current.weather = msg.weather;
+      }
       this.onSky?.(msg.time, msg.weather);
       return;
     }
@@ -736,11 +822,15 @@ class Multiplayer {
   }
 }
 
+// The errors that turn the player away from a room rather than from the server: the lobby is the way on
+const REJECTIONS: ReadonlySet<string> = new Set(['room', 'password', 'roomfull', 'wait']);
+const NO_TARGETS: RemoteTarget[] = []; // (a room without PvP: the player's shots find nobody)
+
 const groundFor = (controllers: MultiplayerControllers, x: number, z: number) => controllers.getGroundHeight(x, z, 'person');
 
 // Reads ?multiplayer & friends; returns null when multiplayer is off or there is no server to reach. The server is
 // &mp-server, else (from localhost) the one on DEFAULT_PORT, else the page's own (tools/play.ts serves both)
-function multiplayerOptions(search = location.search, host = location.hostname, origin = location.origin): Pick<MultiplayerOptions, 'url' | 'region' | 'name'> | null {
+function multiplayerOptions(search = location.search, host = location.hostname, origin = location.origin): (Pick<MultiplayerOptions, 'url' | 'region' | 'name'> & { roomsUrl: string }) | null {
   const params = new URLSearchParams(search);
   if (!params.has('multiplayer') || params.get('multiplayer') === '0') return null;
   const local = host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.localhost');
@@ -754,20 +844,17 @@ function multiplayerOptions(search = location.search, host = location.hostname, 
   } catch {
     // storage blocked: the server hands out a numbered name
   }
-  // the first time, asked for (the others see it over the player's head)
-  if (!name && typeof window.prompt === 'function') {
-    name = (window.prompt(t('mp.askName')) ?? '').trim();
-    try {
-      if (name) localStorage.setItem(NAME_KEY, name);
-    } catch {
-      // (asked again next time)
-    }
-  }
+  // (the first time, the lobby asks for it: the others see it over the player's head)
   // the flat city (?slopes=0) is a world of its own: everyone else stands up to 300 m higher on the town's slopes
   // (the region name is 32 characters at most, the suffix included)
   const base = params.get('mp-region') || DEFAULT_REGION;
   const region = params.get('slopes') === '0' ? `${base.slice(0, 27)}-flat` : base;
-  return { url, region, name };
+  // the room list, over http(s) from the same server
+  const rooms = new URL(url);
+  rooms.protocol = rooms.protocol === 'wss:' ? 'https:' : 'http:';
+  rooms.pathname = '/rooms';
+  rooms.search = `?region=${encodeURIComponent(region)}`;
+  return { url, region, name, roomsUrl: rooms.toString() };
 }
 
 export { Multiplayer, RemotePlayer, multiplayerOptions, DEFAULT_REGION };

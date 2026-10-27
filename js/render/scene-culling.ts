@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // js/render/scene-culling.ts
 // Spatial culling for the city-wide static geometry. Most of the street furniture and building massing is built as a
@@ -30,6 +31,10 @@ const GLOW_MAX = 2000;
 const PROXY_CELL = 500; // the far cascade spans ~400 m at street level: a cascade sees a few cells
 const PROXY_TRIANGLES = 600; // ...but a sparse caster's cells grow to hold about as many triangles (the hills' 75 m cells)
 const STATIC_CELL = 1000;
+// The plain meshes of a `merge` root (the hills', the rivers', the bridges') that share a parent and a material are
+// merged a square this big at a time: they were ~180 of the view's ~800 draws at street level, the same few materials
+// in dozens of pieces across the valley (at 2 km the squares still left ~10 a material in view)
+const MERGE_CELL = 4000;
 // The glowing props kept at any distance, in squares this big: every square in view is a draw, and the CPU's ~12 µs a
 // draw costs more than the lenses beside the frustum
 const GLOW_CELL = 2000;
@@ -51,6 +56,7 @@ const _c = new THREE.Vector3();
 const _pm = new THREE.Matrix4();
 const _frustum = new THREE.Frustum();
 const _sphere = new THREE.Sphere();
+const _identity = new THREE.Matrix4();
 
 // three.js's own type flags rather than instanceof, here and in releaseStaticArrays: the tests hand these functions
 // plain stand-ins
@@ -429,11 +435,75 @@ function cullForCascades(
   };
 }
 
+// What must match for meshes to be drawn as one: parent, material, the attributes' layout, indexed or not, how they
+// cast & receive shadows, their order and layers, and the MERGE_CELL square their centres are in. Null for a mesh that
+// stays as it is: moved by its matrix (its material may read local positions), transparent (drawn sorted), drawing part
+// of its geometry, or carrying hooks or data something else may reach it by.
+function mergeKey(o: THREE.Mesh, parent: THREE.Object3D): string | null {
+  const mat = o.material;
+  const geo = o.geometry;
+  if (Array.isArray(mat) || mat.transparent || !o.matrixWorld.equals(_identity)) return null;
+  if (geo.groups.length > 0 || geo.drawRange.start !== 0 || geo.drawRange.count !== Infinity || Object.keys(geo.morphAttributes).length) return null;
+  if (Object.prototype.hasOwnProperty.call(o, 'onBeforeRender') || Object.prototype.hasOwnProperty.call(o, 'onAfterRender')) return null;
+  if (Object.keys(o.userData).some((k) => k !== 'sharesPipelineWith')) return null;
+  const layout = [];
+  for (const [name, a] of Object.entries(geo.attributes)) {
+    if (!(a instanceof THREE.BufferAttribute)) return null; // (interleaved)
+    layout.push(`${name}:${String(a.itemSize)}:${String(a.normalized)}:${a.array.constructor.name}`);
+  }
+  if (!geo.boundingSphere) geo.computeBoundingSphere();
+  const c = geo.boundingSphere?.center;
+  if (!c) return null;
+  const cell = `${String(Math.floor(c.x / MERGE_CELL))},${String(Math.floor(c.z / MERGE_CELL))}`;
+  return [parent.uuid, mat.uuid, layout.sort().join(' '), String(geo.index !== null), String(o.castShadow), String(o.receiveShadow),
+    String(o.renderOrder), String(o.layers.mask), cell].join('|');
+}
+
+/** Merges the plain static meshes under `root` that mergeKey() puts together */
+function mergeSiblings(root: THREE.Object3D): void {
+  const groups = new Map<string, { parent: THREE.Object3D; meshes: THREE.Mesh[] }>();
+  root.traverse((o) => {
+    if (!isStaticMesh(o) || isInstancedMesh(o) || !o.parent) return;
+    const key = mergeKey(o, o.parent);
+    if (key === null) return;
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = { parent: o.parent, meshes: [] }));
+    g.meshes.push(o);
+  });
+  const removed = new Set<unknown>();
+  for (const { parent, meshes } of groups.values()) {
+    if (meshes.length < 2) continue;
+    const first = meshes[0];
+    // (null when the geometries can't be merged, though mergeKey matched their layouts: the meshes stay)
+    const geometry: THREE.BufferGeometry | null = mergeGeometries(meshes.map((m) => m.geometry));
+    if (!(geometry instanceof THREE.BufferGeometry)) continue;
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    const merged = new THREE.Mesh(geometry, first.material);
+    copyObjectState(merged, first);
+    delete merged.userData.sharesPipelineWith;
+    merged.updateMatrixWorld(true);
+    for (const m of meshes) removed.add(m);
+    parent.children = parent.children.filter((c) => !removed.has(c));
+    parent.add(merged);
+  }
+  // (a pipeline donor merged away: whoever pointed at it compiles its own)
+  if (removed.size) {
+    root.traverse((o) => {
+      const donor: unknown = o.userData.sharesPipelineWith;
+      if (removed.has(donor)) delete o.userData.sharesPipelineWith;
+    });
+  }
+}
+
 /**
  * Sets up the culling of the static city under `roots` (Object3Ds). `shadow` is the SunLightShadow whose cascade
- * cameras render the shadow stand-ins (none are made without it). Per-frame culling runs in updateSceneCulling().
+ * cameras render the shadow stand-ins (none are made without it). `propDistance` scales the props' draw distances (the
+ * graphics tier's), and the plain meshes under the `merge` roots are merged by material (mergeSiblings). Per-frame
+ * culling runs in updateSceneCulling().
  */
-function setupSceneCulling(scene: THREE.Scene, roots: THREE.Object3D[], shadow: ShadowCascades | null = null, propDistance = 1): void {
+function setupSceneCulling(scene: THREE.Scene, roots: THREE.Object3D[], shadow: ShadowCascades | null = null, propDistance = 1,
+  merge: readonly THREE.Object3D[] = []): void {
   scene.updateMatrixWorld(true);
   const culled: CulledChunk[] = [];
 
@@ -652,6 +722,8 @@ function setupSceneCulling(scene: THREE.Scene, roots: THREE.Object3D[], shadow: 
   }
   // (in a few dozen squares at most: the hills' mesh spans 38 km, and every square is a draw)
   for (const mesh of largePlain) splitMesh(mesh, Math.max(STATIC_CELL, (mesh.geometry.boundingSphere?.radius ?? 0) * mesh.matrixWorld.getMaxScaleOnAxis() / 4));
+  // ...and the `merge` roots' pieces sharing a material, one mesh a MERGE_CELL square
+  for (const root of merge) mergeSiblings(root);
 
   // 4. What the cascades walk and draw: each root's meshes that cast nothing in one group they skip (~1800 of them at
   //    street level, which they would cull & sort only to drop), the stand-ins by region, and the small props cast

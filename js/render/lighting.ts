@@ -19,7 +19,7 @@ import {
 } from 'three/tsl';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
 import { SunLight } from 'three/addons/lights/SunLight.js';
-import { SunLightNode } from 'three/addons/lights/SunLightNode.js';
+import { HalfRateSunLightNode } from './sun-shadow.ts';
 import { cityUniforms } from './tsl-materials.ts';
 import { GEO } from '../world/city-geodata.js';
 import { LiveWeather, sunDirection, isRaining } from '../world/weather.ts';
@@ -329,11 +329,12 @@ class LightingSystem {
 
     // Assign SunLight its node implementation for WebGPURenderer (Light.registerNode since r187; r186 used the library)
     // (@types/three 0.186 doesn't know Light.registerNode yet)
-    const sunLightClass: { prototype: SunLight; registerNode?: (nodeClass: typeof SunLightNode) => void } = SunLight;
+    // (ours draws the far cascade every other frame: render/sun-shadow.ts)
+    const sunLightClass: { prototype: SunLight; registerNode?: (nodeClass: typeof HalfRateSunLightNode) => void } = SunLight;
     if (sunLightClass.registerNode) {
-      sunLightClass.registerNode(SunLightNode);
+      sunLightClass.registerNode(HalfRateSunLightNode);
     } else if (renderer) {
-      renderer.library.addLight(SunLightNode, SunLight);
+      renderer.library.addLight(HalfRateSunLightNode, SunLight);
     }
 
     this.scene.fog = new THREE.FogExp2(0xdcc5ae, 0.00024);

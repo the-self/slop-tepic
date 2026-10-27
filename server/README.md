@@ -2,6 +2,18 @@
 
 Players connect over WebSocket and are placed in a room for their **region** (a metro area or state that shares one map, such as `nayarit` or `valle-de-mexico`). Each room holds up to `ROOM_CAPACITY` players. When a region's rooms are full, the next player opens a mirror room (`nayarit#2`), and empty rooms close.
 
+## Rooms of their own
+
+Besides the region's public rooms, a player can open a room of their own from the game's lobby ([`js/net/lobby.ts`](../js/net/lobby.ts), with `?multiplayer=1`). It has:
+
+- a **title**, and a **code** of five letters and digits (`K7Q2M`, no 0/O or 1/I) that friends type to join it;
+- an optional **password**, kept only as a salted scrypt hash ([`passwords.ts`](passwords.ts)). After ten tries in a minute that weren't right (counted as they come in, so a burst on many sockets meets the brake too), the room refuses the rest (`wait`) until the minute is up;
+- its **sky** (the time of day and the weather, as any room has: `SKY` → `SKY_SET`) and its **rules**: police on or off, and PvP on or off. With PvP off the server passes on no hits.
+
+Whoever opens a room hosts it: only the host changes its sky (a guest's `SKY` is ignored) and its rules (`RULES`), and everyone in it hears them (`SKY_SET`, `ROOM`). When the host leaves, the player who has been in it longest takes over. Left empty, it waits two minutes for its players to come back (a dropped connection rejoins it by its code, and the first one back hosts it), then closes.
+
+`GET /rooms?region=nayarit` lists a region's rooms (public first, then the players' own, fullest first): their title, code, players, whether they have a password, and their sky and rules. Never the password.
+
 The wire protocol ([`shared/protocol.ts`](../shared/protocol.ts)) is binary, in the spirit of RuneScape's. Every frame starts with a 1-byte opcode, and positions travel as integer centimetres.
 
 - **One frame per tick:** each server tick (10 Hz) sends every client a single `TICK` frame.
@@ -45,14 +57,14 @@ npm start
 
 The server is TypeScript that Node runs as is, stripping the types (Node ≥ 22.18; no build step).
 
-Then open the game with `?multiplayer=1` from `localhost`. It connects to `ws://localhost:8787` on its own (and served from anywhere else, to its page's own server). Open a second tab with `&mp-name=Beto` to see each other.
+Then open the game with `?multiplayer=1` from `localhost`. It connects to `ws://localhost:8787` on its own (and served from anywhere else, to its page's own server). The lobby comes up once the city has loaded: join the public room, a friend's by its code, or open your own. Open a second tab with `&mp-name=Beto` to see each other.
 
 | URL parameter | Meaning |
 |---|---|
 | `multiplayer=1` | Turn multiplayer on (off by default; single player never loads it) |
 | `mp-server=wss://host/path` | Server to use. Required when the page is not served from localhost |
 | `mp-region=nayarit` | Room region (defaults to this map's) |
-| `mp-name=Lalo` | Display name (remembered) |
+| `mp-name=Lalo` | Display name (remembered; the lobby asks for it otherwise) |
 
 | Environment variable | Default | |
 |---|---|---|
@@ -64,7 +76,7 @@ Then open the game with `?multiplayer=1` from `localhost`. It connects to `ws://
 | `ALLOWED_ORIGINS` | any | Comma-separated page origins allowed to connect |
 | `STATIC_DIR` | none | The game's folder: the server serves its page (`index.html`, `css/`, `dist/`, `assets/`) and nothing else of it |
 
-`GET /health` returns the rooms, the player count, the tick cost (`tickMs`) and the bytes sent per tick.
+`GET /rooms?region=<region>` lists the region's rooms. `GET /health` returns the rooms, the player count, the tick cost (`tickMs`) and the bytes sent per tick.
 
 ## Test and measure
 

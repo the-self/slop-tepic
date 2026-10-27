@@ -40,7 +40,9 @@ export interface TileWant {
   d: number;
 }
 
-const TILE_CELLS = 12; // lattice cells a tile side
+// Lattice cells a tile side (~900 m): every streamed layer is a draw per tile, and at 12 cells (450 m) a street-level view
+// held ~14 tiles of ~10 layers each, ~140 draws; twice the side, a few tiles do
+const TILE_CELLS = 24;
 const FLAT_TILE = 450; // m a side in the flat city (?slopes=0), where there is no lattice
 const KEY_BIAS = 32768; // tile indices from -32768 to 32767 each way in a key
 
