@@ -471,9 +471,9 @@ function beamTint(ctx: CanvasRenderingContext2D, blue: number): CanvasGradient {
   if (!tints) {
     const tint = (rgb: string) => {
       const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
-      g.addColorStop(0, `rgba(${rgb}, 0.6)`);
-      g.addColorStop(0.55, `rgba(${rgb}, 0.42)`);
-      g.addColorStop(0.85, `rgba(${rgb}, 0.18)`);
+      g.addColorStop(0, `rgba(${rgb}, 0.75)`);
+      g.addColorStop(0.55, `rgba(${rgb}, 0.55)`);
+      g.addColorStop(0.85, `rgba(${rgb}, 0.28)`);
       g.addColorStop(1, `rgba(${rgb}, 0)`);
       return g;
     };
@@ -486,10 +486,15 @@ function beamTint(ctx: CanvasRenderingContext2D, blue: number): CanvasGradient {
 // A beam's sides, softened: it is laid as these sectors one over the other, each a fraction of its half angle wide and
 // BEAM_ALPHA strong, so it is brightest along the middle and fades out across its edges like a torch's
 const BEAM_LAYERS = [0.45, 0.7, 0.9, 1.1] as const;
-const BEAM_ALPHA = 0.4;
+const BEAM_ALPHA = 0.5;
+// The thin line round each beam's true edge (CSS px), in the colour it blinks
+const BEAM_LINE = ['rgba(248, 113, 113, 0.8)', 'rgba(96, 165, 250, 0.8)'] as const;
 
-// One beam of `r` px at (x, y) on the screen, `half` rad either side of the screen angle `look` (π: all round), in `tint`
-function drawBeam(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, look: number, half: number, tint: CanvasGradient): void {
+// One beam of `r` px at (x, y) on the screen, `half` rad either side of the screen angle `look` (π: all round), in `tint`,
+// outlined in `line` (or not, null)
+function drawBeam(
+  ctx: CanvasRenderingContext2D, x: number, y: number, r: number, look: number, half: number, tint: CanvasGradient, line: string | null
+): void {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(r, r);
@@ -507,25 +512,36 @@ function drawBeam(ctx: CanvasRenderingContext2D, x: number, y: number, r: number
       ctx.closePath();
       ctx.fill();
     }
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.arc(0, 0, 1, look - half, look + half);
+    ctx.closePath();
+  }
+  if (line) {
+    ctx.strokeStyle = line;
+    ctx.lineWidth = 1 / r; // (1 px, the beam being drawn r times its size)
+    ctx.stroke();
   }
   ctx.restore();
 }
 
 // Where the police can see the player while it is wanted, GTA-style: a beam like a torch's out of each of them, turning
-// with them and fading out at its reach, and a faint glow round them (right beside them); the helicopter's all round (it
+// with them, fading out at its reach inside a thin line, and a faint glow round them (right beside them); the helicopter's all round (it
 // looks down). Out of all of them, the stars start to go (crime-rules.ts Wanted).
 function drawPoliceSight(ctx: CanvasRenderingContext2D, v: MapView, police: PoliceSight | null | undefined): void {
   if (!police || police.wanted.stars === 0 || police.sight.length === 0) return;
   const c = police.sight;
-  const tint = beamTint(ctx, sirenPhase());
+  const blue = sirenPhase();
+  const tint = beamTint(ctx, blue), line = BEAM_LINE[blue];
   for (let i = 0; i < c.length; i += SIGHT) {
     const x = v.toX(c[i], c[i + 1]), y = v.toY(c[i], c[i + 1]);
     const half = c[i + 4], near = c[i + 5] * v.s;
     // where it looks, turned onto the screen (a point ahead of it through the map's own turn)
     const ax = c[i] + Math.sin(c[i + 3]), az = c[i + 1] + Math.cos(c[i + 3]);
     const look = Math.atan2(v.toY(ax, az) - y, v.toX(ax, az) - x);
-    drawBeam(ctx, x, y, c[i + 2] * v.s, look, half, tint);
-    if (near > 0 && half < Math.PI) drawBeam(ctx, x, y, near, 0, Math.PI, tint);
+    drawBeam(ctx, x, y, c[i + 2] * v.s, look, half, tint, line);
+    if (near > 0 && half < Math.PI) drawBeam(ctx, x, y, near, 0, Math.PI, tint, null);
   }
 }
 
