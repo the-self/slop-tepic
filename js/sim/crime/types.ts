@@ -30,6 +30,11 @@ type TraceKind = 'none' | 'wall' | 'ground' | 'agent' | 'cruiser' | 'ped' | 'veh
 // The radar's blips, flat: kind ('cop' | 'soldier' | 'thief' | 'rojos' | 'verdes' | 'narcos' | 'cruiser' | 'truck' |
 // 'army' | 'heli' | a PickupKind, or fires.ts's 'fire'), x, z, kind, x, z, ...
 type Blips = (string | number)[];
+// The police's eyes, flat (crime-rules.ts SIGHT numbers each): a cone for each officer, soldier, patrol car (the chase's
+// and the traffic's) and the helicopter, inside which they see the player past the buildings: x, z (its tip, m), reach
+// (m), heading (rad, where it looks: x along its sine, z its cosine), half angle (rad either side; π all round), near (m
+// all round: right beside them), then the next (crime.ts update; drawn on the radar while the player is wanted)
+type SightCones = number[];
 
 interface XZ {
   x: number;
@@ -274,5 +279,5 @@ interface TraceHit {
 }
 
 export type {
-  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, RemoteTarget, ShotProp, TraceTarget, TraceHit
+  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, SightCones, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, RemoteTarget, ShotProp, TraceTarget, TraceHit
 };

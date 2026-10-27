@@ -10,7 +10,10 @@ export function dispatch(crime: CrimeSystem, dt: number): void {
   const t = crime.timers;
   const stars = crime.state === 'play' ? crime.wanted.stars : 0;
   t.dispatch -= dt;
-  if (t.dispatch <= 0 && stars > 0) {
+  // (once the police have lost the player and it is well away from where they last saw it, they send nobody more: they
+  // look for it there, round crime.huntX & huntZ)
+  const lost = !crime.seen && Math.hypot(crime.px - crime.huntX, crime.pz - crime.huntZ) > 150;
+  if (t.dispatch <= 0 && stars > 0 && !lost) {
     t.dispatch = 1.2;
     let cops = 0, soldiers = 0;
     for (const a of crime.agents) {
@@ -28,7 +31,7 @@ export function dispatch(crime: CrimeSystem, dt: number): void {
     // an officer on foot first, else (or with no sidewalk about to send one to) a patrol car
     let sent = false;
     if (cops < POLICE.foot[stars] && onFoot) {
-      const s = crime.traffic.sidewalkSpot(crime.px, crime.pz, 35, 75);
+      const s = crime.traffic.sidewalkSpot(crime.huntX, crime.huntZ, 35, 75);
       if (s) sent = Boolean(crime.spawnAgent('cop', s.x, s.z, { weapon: POLICE.weapon[stars] || 'pistol' }));
     }
     if (!sent && cars < POLICE.cruisers[stars]) crime.spawnCruiser('police');
@@ -36,7 +39,7 @@ export function dispatch(crime: CrimeSystem, dt: number): void {
     const wantTruck = armyTrucks < POLICE.armyTrucks[stars];
     let marched = false;
     if (soldiers < POLICE.soldiers[stars] && onFoot && (soldiers < 2 || !wantTruck)) {
-      const s = crime.traffic.sidewalkSpot(crime.px, crime.pz, 40, 85);
+      const s = crime.traffic.sidewalkSpot(crime.huntX, crime.huntZ, 40, 85);
       if (s) marched = Boolean(crime.spawnAgent('cop', s.x, s.z, { weapon: 'rifle', army: true }));
     }
     if (!marched && wantTruck) crime.spawnCruiser('army');
@@ -46,7 +49,7 @@ export function dispatch(crime: CrimeSystem, dt: number): void {
   t.patrols -= dt;
   if (t.patrols <= 0) {
     t.patrols = 0.5;
-    const v = stars > 0 && crime.onStreet ? crime.trafficPatrolSees(crime.px, crime.pz) : null;
+    const v = stars > 0 && crime.onStreet ? crime.trafficPatrolSees(crime.px, crime.pz, true) : null;
     if (v && crime.takeOverPatrol(v)) crime.toast('A patrol car spotted you');
   }
 

@@ -127,6 +127,8 @@ export interface RoadEdge {
   lift?: LiftProfile | null;
   /** The street's name (OpenStreetMap's; '' none) */
   name?: string;
+  /** An alley's, a service road's or a track's (city-geodata.js links' `minor`): too narrow for lane lines */
+  minor?: boolean;
   /** Its index among the one-way centreline edges (step 5; -1 none) */
   oneWay: number;
   /** A vehicle could both reach it and leave it */
@@ -178,6 +180,8 @@ export interface PaintEdge {
   half: number;
   lanes: number[];
   lift: LiftProfile | null | undefined;
+  /** An alley's, a service road's or a track's: no lane lines (RoadEdge.minor) */
+  minor: boolean;
 }
 
 /** Cubic Bézier from one lane's stop line to the next edge's lane start (m): control points, arc-length table */
@@ -269,6 +273,7 @@ interface StreetLink {
   a: number;
   b: number;
   name: string;
+  minor: boolean;
   w: number;
   lanes: number;
   dir: number;
@@ -290,6 +295,7 @@ interface StreetRun extends RunLanes {
   to: RoadNode;
   profile: LinkPoint[] | null;
   name: string;
+  minor: boolean;
   divided?: boolean;
   /** From or to a junction that stands off the link's own end (see 4b): its lanes aren't tested for obstacles */
   approach?: boolean;
@@ -317,6 +323,7 @@ const Z_MAX = Math.ceil(ISLAND_BOUNDS.maxZ) + 20;
 const LANE_CLEAR = 1.2; // half width each lane keeps free of obstacles
 const CHORD_STRAY = 0.5; // m a centreline street's edge (a chord between stations) may stray from the street it follows
 const CROSSWALK = 2.5; // depth between an intersection box and its stop lines
+const SIGNAL_CLEAR = 26; // m from a street's junctions a signal along it stands for a stop of its own (8.)
 const SHORE_MARGIN = 6;
 
 function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly Footprint[]): RoadNetwork {
@@ -606,7 +613,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     }
     // Links the grid already carries: most of their length runs along an avenue (north-south) or a cross street
     const links: StreetLink[] = [];
-    for (const [a, b, ni, w, lanes, dir, inner, lifts] of RG.links) {
+    for (const [a, b, ni, w, lanes, dir, inner, lifts, , minor] of RG.links) {
       const pts: LinkPoint[] = [pos[a]];
       for (let k = 0; k < inner.length; k += 2) pts.push({ x: inner[k], z: inner[k + 1] });
       pts.push(pos[b]);
@@ -619,7 +626,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
         if ((Math.abs(dz) > 0.94 && aveAt(x, z, 1.5)) || (Math.abs(dx) > 0.94 && pieceAt(x, z, 1.5, false))) hit++;
       });
       if (n && hit > n * 0.5) continue;
-      links.push({ a, b, name: RG.names[ni], w, lanes, dir, pts, len });
+      links.push({ a, b, name: RG.names[ni], minor: minor === 1, w, lanes, dir, pts, len });
     }
     // Junctions a few metres apart (divided roads, offset corners) are one: collapse links under 14 m
     const parent = pos.map((_, i) => i);
@@ -733,6 +740,46 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
       }
     };
     const farther = (a: number, b: number) => (Math.abs(b) > Math.abs(a) ? b : a); // (the lift farther from grade)
+    // The signals standing along a street, clear of the junctions at its ends (a pedestrian crossing's lights): s m
+    // along the link's own line where each stands within its roadway (and SIGNAL_CLEAR m of either end)
+    const signalCells = new Map<number, number[]>();
+    {
+      const sig = GEO.roadGraph.signals;
+      for (let i = 0; i + 1 < sig.length; i += 2) {
+        const key = Math.floor(sig[i] / 64) * 100003 + Math.floor(sig[i + 1] / 64);
+        let list = signalCells.get(key);
+        if (!list) signalCells.set(key, (list = []));
+        list.push(sig[i], sig[i + 1]);
+      }
+    }
+    const signalsAlong = (l: StreetLink): number[] => {
+      const out: number[] = [];
+      const seen = new Set<number>();
+      let walked = 0;
+      for (let k = 0; k + 1 < l.pts.length; k++) {
+        const a = l.pts[k], b = l.pts[k + 1];
+        const L = Math.hypot(b.x - a.x, b.z - a.z);
+        if (L > 0) {
+          for (let i = Math.floor((Math.min(a.x, b.x) - 20) / 64); i <= Math.floor((Math.max(a.x, b.x) + 20) / 64); i++) {
+            for (let j = Math.floor((Math.min(a.z, b.z) - 20) / 64); j <= Math.floor((Math.max(a.z, b.z) + 20) / 64); j++) {
+              const list = signalCells.get(i * 100003 + j) ?? [];
+              for (let m = 0; m < list.length; m += 2) {
+                const t = ((list[m] - a.x) * (b.x - a.x) + (list[m + 1] - a.z) * (b.z - a.z)) / (L * L);
+                if (t < 0 || t > 1) continue;
+                const d = Math.abs((list[m] - a.x) * (b.z - a.z) - (list[m + 1] - a.z) * (b.x - a.x)) / L;
+                const s = walked + t * L;
+                const key = Math.round(list[m] * 10) * 1e6 + Math.round(list[m + 1] * 10);
+                if (d > l.w / 2 + 1.5 || s < SIGNAL_CLEAR || s > l.len - SIGNAL_CLEAR || seen.has(key)) continue;
+                seen.add(key);
+                out.push(s);
+              }
+            }
+          }
+        }
+        walked += L;
+      }
+      return out.sort((p, q) => p - q);
+    };
     for (const l of links) {
       const A = junction(find(l.a));
       const B = junction(find(l.b));
@@ -756,12 +803,17 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
       if (!raised) {
         const reach = (off: number) => Math.max(15, 2 * off);
         const sA = offA > CHORD_STRAY ? reach(offA) : 0, sB = offB > CHORD_STRAY ? reach(offB) : 0;
+        const at: number[] = [];
         if (sA + sB + 15 < l.len) {
-          if (sA) insertAt(pts, l.pts, sA);
-          if (sB) insertAt(pts, l.pts, l.len - sB);
+          if (sA) at.push(sA);
+          if (sB) at.push(l.len - sB);
           approachA = sA > 0;
           approachB = sB > 0;
         }
+        // (and a station under each signal along it, for its stop: 8.)
+        for (const s of signalsAlong(l)) if (at.every((o) => Math.abs(o - s) > 5)) at.push(s);
+        // (in order along the line: insertAt puts each after the ones before it)
+        for (const s of at.sort((p, q) => p - q)) insertAt(pts, l.pts, s);
       }
       if (A === B) insertAt(pts, l.pts, l.len / 2); // (the loop's half-way station)
       // stations along it: the ends, the approaches' ends above, and every bend over 12° (or point where the road
@@ -812,7 +864,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
           }
         }
         const approach = (k === 0 && approachA) || (k === stations.length - 2 && approachB);
-        runs.push({ from: stations[k], to: stations[k + 1], ...lanes, profile, name: l.name || '', approach });
+        runs.push({ from: stations[k], to: stations[k + 1], ...lanes, profile, name: l.name || '', minor: l.minor, approach });
       }
     }
     console.info(`[roads] centreline streets: ${links.length} links not on the grid, ${runs.length} straight runs`);
@@ -872,7 +924,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     }
     return true;
   };
-  function addEdgeGeneral(from: RoadNode, to: RoadNode, axis: RoadAxis, lanes: number[], half: number, divided: boolean | undefined, profile: LinkPoint[] | null = null, name = '', approach = false) {
+  function addEdgeGeneral(from: RoadNode, to: RoadNode, axis: RoadAxis, lanes: number[], half: number, divided: boolean | undefined, profile: LinkPoint[] | null = null, name = '', approach = false, minor = false) {
     const x0 = from.x;
     const z0 = from.z;
     const span = Math.hypot(to.x - x0, to.z - z0);
@@ -886,7 +938,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     // (every point of a raised link's profile has its lift)
     const lift = profile ? profile.map((p): [number, number] => [(p.x - x0) * dx + (p.z - z0) * dz, p.lift ?? 0]).sort((p, q) => p[0] - q[0]) : null;
     // (`name`: the street's, OpenStreetMap's; the traffic weighs the busiest avenues by it, traffic-demand.ts)
-    edges.push({ from, to, axis, x0, z0, dx, dz, rx: -dz, rz: dx, span, half, lanes: open.sort((p, q) => p - q), moves: [], general: true, cand: lanes, divided: !!divided, lift, name, ...unplaced });
+    edges.push({ from, to, axis, x0, z0, dx, dz, rx: -dz, rz: dx, span, half, lanes: open.sort((p, q) => p - q), moves: [], general: true, cand: lanes, divided: !!divided, lift, name, minor, ...unplaced });
   }
   // A divided road drawn as two one-way roadways between the same two junctions (most of the Bowery) runs both ways
   // along one centreline here: each way keeps to the right of it, as on a two-way street, and the road is as wide as
@@ -917,8 +969,8 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     if (r.half >= 7.25) r.axis = o.axis = 'ave'; // as wide as a major road (see lanesOf)
   }
   for (const r of genRuns) {
-    if (r.fwd.length) addEdgeGeneral(r.from, r.to, r.axis, r.fwd, r.half, r.divided, r.profile, r.name, r.approach);
-    if (r.back.length) addEdgeGeneral(r.to, r.from, r.axis, r.back, r.half, r.divided, r.profile, r.name, r.approach);
+    if (r.fwd.length) addEdgeGeneral(r.from, r.to, r.axis, r.fwd, r.half, r.divided, r.profile, r.name, r.approach, r.minor);
+    if (r.back.length) addEdgeGeneral(r.to, r.from, r.axis, r.back, r.half, r.divided, r.profile, r.name, r.approach, r.minor);
   }
   // Two edges from one node to the same next one (a service road whose ends were drawn onto its main road's junctions)
   // would drive through each other: keep the grid's, else the one with the most lanes
@@ -1195,7 +1247,7 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
     const { from, to, axis, x0, z0, sx, sz, dx, dz, rx, rz, span, len, half, lanes, lift } = e;
     const pFrom = paintNodes.get(from), pTo = paintNodes.get(to);
     if (!pFrom || !pTo) throw new Error('[roads] an edge off the node list'); // (every node is in it)
-    const paint = { from: pFrom, to: pTo, axis, x0, z0, sx, sz, dx, dz, rx, rz, span, len, half, lanes, lift };
+    const paint = { from: pFrom, to: pTo, axis, x0, z0, sx, sz, dx, dz, rx, rz, span, len, half, lanes, lift, minor: e.minor === true };
     paintOf.set(e, paint);
     return paint;
   });

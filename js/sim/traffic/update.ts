@@ -219,6 +219,8 @@ function update(ts: TrafficState, dt: number, elapsed: number, focusPos: { x: nu
   gatherBodies(ts);
   for (const n of ts.walkedNodes) n.walkers.length = 0;
   ts.walkedNodes.length = 0;
+  for (const c of ts.walkedCrossings) c.walkers.length = 0;
+  ts.walkedCrossings.length = 0;
   let pedBudget = jump ? NUM_PEDS : 6;
   let pedRetire = jump ? Infinity : 3;
   let out = 0;

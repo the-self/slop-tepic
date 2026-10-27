@@ -115,7 +115,7 @@ async function initApp(): Promise<void> {
   // 3. The city: streets, hills, landmarks, blocks, street details & traffic
   loading.status(`Construyendo ${CITY.city || 'la ciudad'}: calles, manzanas y colonias...`);
   const city = buildCity(scene, { stream: params.get('stream') !== '0', mark: (label) => { loading.mark(label); } });
-  const { streamer, rivers, cityBlocks, stores, carParks, streetDetails, traffic: trafficSystem, highwayTraffic, colliders } = city;
+  const { streamer, rivers, cityBlocks, stores, carParks, streetDetails, powerLines, traffic: trafficSystem, highwayTraffic, colliders } = city;
 
   // 4. The player (on foot, car, bicycle, moto, helicopter), its cameras and its input
   const controllerManager = new ThirdPersonControllerManager(scene, colliders);
@@ -329,7 +329,7 @@ async function initApp(): Promise<void> {
   const cullingRoots = named(['CityGrid', 'CityBlocks', 'StreetDetails', 'Hills', 'Rivers', 'Bridges', 'Bardas']);
   setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
   // ...whose world matrices never change again: rendering stops walking them (the loop updates the rest of the scene)
-  const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Airport', 'RoadMarkings', 'Pavements', 'Topes', 'StreamedTiles'])
+  const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Airport', 'RoadMarkings', 'Pavements', 'Footways', 'Topes', 'StreamedTiles', 'BusStops', 'PowerLines', 'Pools', 'Furniture'])
     .filter((o) => o.parent === scene)];
   freezeStaticMatrices(scene, staticRoots);
   loading.mark('culling');
@@ -407,7 +407,7 @@ async function initApp(): Promise<void> {
   }
 
   const boarding = new Boarding({
-    controllers: controllerManager, traffic: trafficSystem, crime: crimeSystem, tills: stores.tills, interiors: rooms, streetFood,
+    controllers: controllerManager, traffic: trafficSystem, carParks, crime: crimeSystem, tills: stores.tills, interiors: rooms, streetFood,
     mapOpen: () => mapSystem.isFullMapOpen, onModeChange: syncMode
   });
   boardButton?.addEventListener('pointerdown', (event) => {
@@ -492,6 +492,7 @@ async function initApp(): Promise<void> {
   wireTeleportButtons(document.querySelectorAll('[data-teleport]'), TELEPORT_LOCATIONS, teleportTo, closePopovers);
   // (the police, gangs, pickups, fires & gas stations on the radar)
   mapSystem.setBlipSource(() => gasStations.blips(fires.blips(crimeSystem.blips())));
+  mapSystem.setPolice(crimeSystem); // (where the police can see the player, on both maps)
   document.getElementById('btn-open-map')?.addEventListener('click', () => { mapSystem.toggleFullMap(true); });
 
   hudToggleBtn?.addEventListener('click', () => {
@@ -675,8 +676,12 @@ async function initApp(): Promise<void> {
       cityBlocks.update(eye.x, eye.z);
       stores.update(eye.x, eye.z);
       carParks.update(eye.x, eye.z);
+      // (no parked car where another vehicle stands: the player's left standing, the other players')
+      for (const v of controllerManager.parkedVehicles()) carParks.clearAt(v.x, v.z);
+      for (const r of crimeSystem.remotes) if (!r.person) carParks.clearAt(r.x, r.z);
       cityBlocks.updateLights(cameraSystem.camera);
       streetDetails.update(cameraSystem.camera);
+      powerLines.update(cameraSystem.camera.position);
       lightingSystem.update(eye);
     })
     .add(weather)

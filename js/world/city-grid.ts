@@ -18,6 +18,7 @@ import { SLOPES, liftAt, groundSlope } from './ground.ts';
 import { drapeMeshes, streamMeshes, cutOnCells } from './drape.ts';
 import { cutDeckHoles } from './river-channels.ts';
 import { openness } from './lot-greenery.ts';
+import { lampFinder } from './mapped-lamps.ts';
 import { cyclewayRuns, CYCLEWAY_HALF } from './medians.ts';
 import { insidePoly, insideRing, polyCover } from './rings.ts';
 import { PARK_WALK_Y as PARK_Y, PARK_BED_Y as BED_Y, isRaisedPark, offsetPolygonInward, parkBed } from './park-floor.ts';
@@ -430,6 +431,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   const treeSites: ParkTreeSite[] = []; // { x, y, z, scale, species } park trees planted by street-details.ts (section 7)
   const pavedRects: Bounds[] = []; // park slab bounds, exported so street trees (street-details.ts) stay off them
 
+  const nearMappedLamp = lampFinder(GEO.lamps);
   function addLamp(x: number, y: number, z: number) {
     lampMatrices.push(new THREE.Matrix4().makeTranslation(x, y + liftAt(x, z), z));
   }
@@ -488,7 +490,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
         treeSites.push({ x: tx, y: BED_Y + liftAt(tx, tz), z: tz, scale: 0.9 + prand(tx, tz, 3) * 0.4, species });
       }
     }
-    // lampposts every ~34 m along the walk
+    // lampposts every ~34 m along the walk (not round a lamp the map has: street-details.ts puts that one up)
     for (let i = 0; i < slab.length; i++) {
       const a = slab[i];
       const c = slab[(i + 1) % slab.length];
@@ -496,7 +498,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
       for (let t = 17; t < len - 8; t += 34) {
         const px = a.x + ((c.x - a.x) * t) / len;
         const pz = a.z + ((c.z - a.z) * t) / len;
-        addLamp(px, PARK_Y, pz);
+        if (!nearMappedLamp(px, pz)) addLamp(px, PARK_Y, pz);
       }
     }
   }
@@ -616,6 +618,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     const pitchGeos: THREE.BufferGeometry[] = [];
     const goals: THREE.Matrix4[] = [];
     const parkSet = new Set(genericParks);
+    let oddPitches = 0; // (a rodeo's ring, a running track's field, a sliver: no pitch to draw)
     for (const p of GEO.parks) {
       const r = p.cat === 'pitch' && p.rings[0];
       if (!r || r.length < 6) continue;
@@ -639,7 +642,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
       const cu = (best.u0 + best.u1) / 2, cv = (best.v0 + best.v1) / 2;
       const cx = cu * ux - cv * uz, cz = cu * uz + cv * ux;
       if (W > L) { [L, W] = [W, L]; a += Math.PI / 2; ux = Math.cos(a); uz = Math.sin(a); } // (u along the length)
-      if (L < 12 || W < 6 || L > 140) continue;
+      if (L < 12 || W < 6 || L > 140) { oddPitches++; continue; }
       const b = blockAt(cx, cz);
       const y = !b || b.rural ? 0.05 : parkSet.has(b) ? BED_Y + 0.012 : b.park > 0.6 ? PARK_Y + 0.012 : SW_TOP + 0.024;
       const court = L * W < 700 ? 1 : 0;
@@ -658,6 +661,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
           new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a + (end > 0 ? Math.PI : 0)), new THREE.Vector3(gw / 7.32, gh / 2.44, 1)));
       }
     }
+    console.info(`[cityGrid] ${pitchGeos.length} pitches & courts of ${GEO.parks.filter((p) => p.cat === 'pitch').length} mapped (${oddPitches} of no pitch's size)`);
     for (let i = 0; i < pitchGeos.length; i += 200) {
       const m = new THREE.Mesh(mergeGeometries(pitchGeos.slice(i, i + 200), false), pitchMat);
       m.receiveShadow = true;

@@ -5,6 +5,8 @@ import { SIGNAL_TIMING, blockAt, BLOCKS, nearestRoads } from './city-config.ts';
 import { cityUniforms, createTreeGrateMaterial, atlasSlotUV, createWireMaterial, WIRE_FADE } from '../render/tsl-materials.ts';
 import { PropBreaker } from '../sim/mayhem.ts';
 import { createTreeField, treeTrunkColliders } from './trees.ts';
+import { mappedTreeSites, clearOfMapped } from './mapped-trees.ts';
+import { lampFinder } from './mapped-lamps.ts';
 import { lotTrees } from './lot-greenery.ts';
 import { medianTrees } from './medians.ts';
 import { parkTreeSites, sidewalkBlocks, parkLampSites, medianRuns } from './city-grid.ts';
@@ -296,6 +298,113 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
     return true;
   };
 
+  // A cobra-head streetlight: its pole at (lx, lz) on the sidewalk, its arm out over the street along (outX, outZ)
+  function addCobra(lx: number, lz: number, outX: number, outZ: number) {
+    const armYaw = Math.atan2(-outZ, outX);
+    const headX = lx + outX * 2.6;
+    const headZ = lz + outZ * 2.6;
+    placedPoles.push({ x: lx, z: lz });
+    addFootprint(lx, lz, 0.45, 0.45);
+    const g = liftAt(lx, lz); // the whole lamp stands on the ground at its pole
+    // (parts: resolved once the meshes are built)
+    const cobraProp: CobraProp = { kind: 'cobra', x: lx, z: lz, yaw: armYaw, ground: 0.1 + g, base: g, idx: { pole: poleMatrices.length, arm: armMatrices.length, head: lampHeadMatrices.length }, parts: [] };
+    breakables.push(cobraProp);
+
+    // Tall ornamental streetlight pole
+    dummy.position.set(lx, 4.3 + g, lz);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(0.12, 8.4, 0.12);
+    dummy.updateMatrix();
+    poleMatrices.push(dummy.matrix.clone());
+
+    // Upper luminaire bracket arm overhanging the street
+    dummy.position.set(lx + outX * 1.15, 8.2 + g, lz + outZ * 1.15);
+    dummy.rotation.set(0, armYaw, 0);
+    dummy.scale.set(2.3, 0.09, 0.09);
+    dummy.updateMatrix();
+    armMatrices.push(dummy.matrix.clone());
+
+    // Cobra-head LED luminaire on the end of the arm, lens facing the street
+    dummy.position.set(headX, 8.08 + g, headZ);
+    dummy.rotation.set(0, armYaw, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    lampHeadMatrices.push(dummy.matrix.clone());
+    dummy.rotation.set(0, 0, 0);
+
+    cobraLampSites.push({
+      x: headX,
+      y: 8.02 + g,
+      z: headZ,
+      g,
+      tx: lx + outX * 3.4,
+      tz: lz + outZ * 3.4,
+      broken: false,
+      _effDist: 0
+    });
+    cobraProp.light = cobraLampSites[cobraLampSites.length - 1];
+  }
+  // A cast-iron post-top globe lightpole at (px, pz), its swan neck out towards the street along (outX, outZ)
+  function addPostTop(px: number, pz: number, outX: number, outZ: number, intensity: number, dist: number) {
+    placedPoles.push({ x: px, z: pz });
+    addFootprint(px, pz, 0.4, 0.4);
+
+    const g = liftAt(px, pz);
+    const yaw = farolYaw(outX, outZ);
+    dummy.position.set(px, 0.18 + g, pz);
+    dummy.rotation.set(0, yaw, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    breakables.push({ kind: 'post', x: px, z: pz, yaw, ground: 0.18 + g, base: g, idx: { post: pedPostMatrices.length }, lightIndex: streetPointSites.length, parts: [] });
+    pedPostMatrices.push(dummy.matrix.clone());
+    streetPointSites.push({
+      x: px + outX * SWAN.x,
+      y: 0.18 + SWAN.y + g,
+      z: pz + outZ * SWAN.x,
+      g,
+      color: 0xffe0aa,
+      intensity,
+      dist,
+      broken: false,
+      _effDist: 0
+    });
+  }
+
+  // =========================================================================
+  // 1b. THE STREET LAMPS OPENSTREETMAP MAPS (highway=street_lamp): each on the sidewalk where it is mapped (or the
+  //     nearest spot of one within LAMP_SNAP m), a cobra head with its arm out over the nearest roadway, or a post-top
+  //     globe where no roadway is near (in a plaza). Round them (LAMP_REPLACE m) the lamps of sections 2 & 2b, which
+  //     guess where the town's lamps are, aren't put up: there the map knows better (mapped-lamps.ts)
+  // =========================================================================
+  const LAMP_SNAP = 4;
+  const nearMappedLamp = lampFinder(GEO.lamps);
+  {
+    let cobras = 0, posts = 0, off = 0;
+    for (let k = 0; k + 1 < GEO.lamps.length; k += 2) {
+      const mx = GEO.lamps[k], mz = GEO.lamps[k + 1];
+      // where it stands: the mapped point, or the nearest spot on a curb island round it
+      let spot: PointXZ | null = isOnCurbIsland(mx, mz, 0.3) ? { x: mx, z: mz } : null;
+      for (let r = 0.5; !spot && r <= LAMP_SNAP; r += 0.5) {
+        for (let a = 0; a < 16 && !spot; a++) {
+          const x = mx + Math.cos((a * Math.PI) / 8) * r, z = mz + Math.sin((a * Math.PI) / 8) * r;
+          if (isOnCurbIsland(x, z, 0.3)) spot = { x, z };
+        }
+      }
+      if (!spot || !isClearOfPoles(spot.x, spot.z, 1.5)) { off++; continue; }
+      // the nearest roadway: the first step off the island round it
+      let out: PointXZ | null = null;
+      for (let r = 1; !out && r <= 7; r += 0.5) {
+        for (let a = 0; a < 16 && !out; a++) {
+          const ox = Math.cos((a * Math.PI) / 8), oz = Math.sin((a * Math.PI) / 8);
+          if (!blockAt(spot.x + ox * r, spot.z + oz * r)) out = { x: ox, z: oz };
+        }
+      }
+      if (out) { addCobra(spot.x, spot.z, out.x, out.z); cobras++; }
+      else { addPostTop(spot.x, spot.z, 1, 0, 28, 14.0); posts++; }
+    }
+    console.info(`[streetDetails] ${cobras + posts} of ${GEO.lamps.length / 2} mapped street lamps (${cobras} cobra heads, ${posts} post-top globes), ${off} on no sidewalk`);
+  }
+
   // =========================================================================
   // 2. MID-BLOCK AVENUE & STREET ORNAMENTAL ACORN & COBRA STREETLIGHTS
   //    Placed directly along the true curb edges of every city block (BLOCKS)
@@ -337,7 +446,6 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
       const isAvenueEdge = len >= 40 && (Math.abs(uz) > 0.5 || Math.hypot(mx, mz) > 650);
       const postTops = Math.hypot(mx, mz) < 650;
       if (isAvenueEdge) {
-        const armYaw = Math.atan2(-outZ, outX);
         const cobraFracs = inx > 0 ? [0.26, 0.72] : [0.32, 0.78];
         for (const f of cobraFracs) {
           const cx = p0.x + dx * f;
@@ -350,50 +458,12 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
             !isOnSidewalk(lx, lz, 0.55) ||
             blockAt(cx + outX * 2.5, cz + outZ * 2.5) ||
             blockAt(headX, headZ) ||
-            !isClearOfPoles(lx, lz, 6.5)
+            !isClearOfPoles(lx, lz, 6.5) ||
+            nearMappedLamp(lx, lz)
           ) {
             continue;
           }
-          placedPoles.push({ x: lx, z: lz });
-          addFootprint(lx, lz, 0.45, 0.45);
-          const g = liftAt(lx, lz); // the whole lamp stands on the ground at its pole
-          // (parts: resolved once the meshes are built)
-          const cobraProp: CobraProp = { kind: 'cobra', x: lx, z: lz, yaw: armYaw, ground: 0.1 + g, base: g, idx: { pole: poleMatrices.length, arm: armMatrices.length, head: lampHeadMatrices.length }, parts: [] };
-          breakables.push(cobraProp);
-
-          // Tall ornamental streetlight pole
-          dummy.position.set(lx, 4.3 + g, lz);
-          dummy.rotation.set(0, 0, 0);
-          dummy.scale.set(0.12, 8.4, 0.12);
-          dummy.updateMatrix();
-          poleMatrices.push(dummy.matrix.clone());
-
-          // Upper luminaire bracket arm overhanging the street
-          dummy.position.set(lx + outX * 1.15, 8.2 + g, lz + outZ * 1.15);
-          dummy.rotation.set(0, armYaw, 0);
-          dummy.scale.set(2.3, 0.09, 0.09);
-          dummy.updateMatrix();
-          armMatrices.push(dummy.matrix.clone());
-
-          // Cobra-head LED luminaire on the end of the arm, lens facing the street
-          dummy.position.set(headX, 8.08 + g, headZ);
-          dummy.rotation.set(0, armYaw, 0);
-          dummy.scale.set(1, 1, 1);
-          dummy.updateMatrix();
-          lampHeadMatrices.push(dummy.matrix.clone());
-          dummy.rotation.set(0, 0, 0);
-
-          cobraLampSites.push({
-            x: headX,
-            y: 8.02 + g,
-            z: headZ,
-            g,
-            tx: lx + outX * 3.4,
-            tz: lz + outZ * 3.4,
-            broken: false,
-            _effDist: 0
-          });
-          cobraProp.light = cobraLampSites[cobraLampSites.length - 1];
+          addCobra(lx, lz, outX, outZ);
         }
 
         // Cast-iron pedestrian post-top globe lightpoles along avenue sidewalks (with PointLights)
@@ -406,32 +476,12 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
           if (
             !isOnSidewalk(px, pz, 0.55) ||
             blockAt(cx + outX * 2.2, cz + outZ * 2.2) ||
-            !isClearOfPoles(px, pz, 5.2)
+            !isClearOfPoles(px, pz, 5.2) ||
+            nearMappedLamp(px, pz)
           ) {
             continue;
           }
-          placedPoles.push({ x: px, z: pz });
-          addFootprint(px, pz, 0.4, 0.4);
-
-          const g = liftAt(px, pz);
-          const yaw = farolYaw(outX, outZ);
-          dummy.position.set(px, 0.18 + g, pz);
-          dummy.rotation.set(0, yaw, 0);
-          dummy.scale.set(1, 1, 1);
-          dummy.updateMatrix();
-          breakables.push({ kind: 'post', x: px, z: pz, yaw, ground: 0.18 + g, base: g, idx: { post: pedPostMatrices.length }, lightIndex: streetPointSites.length, parts: [] });
-          pedPostMatrices.push(dummy.matrix.clone());
-          streetPointSites.push({
-            x: px + outX * SWAN.x,
-            y: 0.18 + SWAN.y + g,
-            z: pz + outZ * SWAN.x,
-            g,
-            color: 0xffe0aa,
-            intensity: 30,
-            dist: 14.5,
-            broken: false,
-            _effDist: 0
-          });
+          addPostTop(px, pz, outX, outZ, 30, 14.5);
         }
       } else if (len >= 36 && postTops) {
         // Cross-street cast-iron pedestrian post-top globe lightpoles along north and south block curbs
@@ -444,32 +494,12 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
           if (
             !isOnSidewalk(px, pz, 0.55) ||
             blockAt(cx + outX * 2.2, cz + outZ * 2.2) ||
-            !isClearOfPoles(px, pz, 5.5)
+            !isClearOfPoles(px, pz, 5.5) ||
+            nearMappedLamp(px, pz)
           ) {
             continue;
           }
-          placedPoles.push({ x: px, z: pz });
-          addFootprint(px, pz, 0.4, 0.4);
-
-          const g = liftAt(px, pz);
-          const yaw = farolYaw(outX, outZ);
-          dummy.position.set(px, 0.18 + g, pz);
-          dummy.rotation.set(0, yaw, 0);
-          dummy.scale.set(1, 1, 1);
-          dummy.updateMatrix();
-          breakables.push({ kind: 'post', x: px, z: pz, yaw, ground: 0.18 + g, base: g, idx: { post: pedPostMatrices.length }, lightIndex: streetPointSites.length, parts: [] });
-          pedPostMatrices.push(dummy.matrix.clone());
-          streetPointSites.push({
-            x: px + outX * SWAN.x,
-            y: 0.18 + SWAN.y + g,
-            z: pz + outZ * SWAN.x,
-            g,
-            color: 0xffe0aa,
-            intensity: 28,
-            dist: 14.0,
-            broken: false,
-            _effDist: 0
-          });
+          addPostTop(px, pz, outX, outZ, 28, 14.0);
         }
       }
     }
@@ -577,7 +607,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
   }
   // The streetlight on the arm: a cobra head like the avenues', lit at night from the same pool (section 8)
   for (const p of cfePoles) {
-    if (cfeHash(p, 2.2) < 0.35) continue; // not every pole carries one
+    if (cfeHash(p, 2.2) < 0.35 || nearMappedLamp(p.x, p.z)) continue; // not every pole carries one (nor round a mapped lamp)
     const yaw = Math.atan2(-p.outZ, p.outX);
     const arm = cfePoint(p, 0.9, 8.1);
     dummy.position.copy(arm);
@@ -807,6 +837,11 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
       }
     }
   }
+  // (and the bins OpenStreetMap maps, where they stand)
+  for (let k = 0; k + 1 < GEO.bins.length; k += 2) {
+    binPositions.push([GEO.bins[k], GEO.bins[k + 1]]);
+    placedPoles.push({ x: GEO.bins[k], z: GEO.bins[k + 1] });
+  }
   const binMat = new THREE.MeshStandardNodeMaterial({ color: 0x2c5a37, roughness: 0.55, metalness: 0.35 });
   const binLidMat = new THREE.MeshStandardNodeMaterial({ color: 0x23262a, roughness: 0.6, metalness: 0.3 });
   const binGeo = new THREE.CylinderGeometry(0.23, 0.2, 0.86, 12, 1, true).translate(0, 0.43, 0);
@@ -980,6 +1015,19 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
   for (const t of yardTrees) {
     t.y = SIDEWALK_Y + 0.012 + liftAt(t.x, t.z);
     treePositions.push(t);
+  }
+  // E. The trees OpenStreetMap maps (mapped-trees.ts), where they are; the ones planted above keep clear of them
+  const mappedTrees = mappedTreeSites(GEO.trees, blockAt, liftAt);
+  {
+    const kept = new Set(clearOfMapped(treePositions, mappedTrees));
+    const before = treePositions.length;
+    const all = treePositions.filter((t) => kept.has(t));
+    treePositions.length = 0;
+    treePositions.push(...all, ...mappedTrees);
+    const streets = sidewalkTreePositions.filter((t) => kept.has(t));
+    sidewalkTreePositions.length = 0;
+    sidewalkTreePositions.push(...streets);
+    console.info(`[streetDetails] ${mappedTrees.length} of ${GEO.trees.length / 3} mapped trees planted (the rest in a roadway), ${before - all.length} of the game's own kept clear of them`);
   }
   console.info(`[streetDetails] ${treePositions.length} trees (${sidewalkTreePositions.length} street trees, ${yardTrees.length} in the yards & lots)`);
 
