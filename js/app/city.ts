@@ -24,6 +24,7 @@ import { liftAt, SLOPES, LATTICE, deckHoles } from '../world/ground.ts';
 import { TileStreamer } from '../world/streaming.ts';
 import { paintFarGround, farGroundColor } from '../world/far-ground.ts';
 import { buildTepicLandmarks } from '../world/tepic-landmarks.ts';
+import { buildLaLoma } from '../world/la-loma.ts';
 import { buildCotos } from '../world/cotos.ts';
 import { buildCarParks } from '../world/car-parks.ts';
 import { buildBusShelters } from '../world/bus-shelters.ts';
@@ -70,6 +71,8 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   const { colliders: landmarkColliders } = buildTepicLandmarks(scene);
   // (and the landmarks made as 3D models, world/landmark-models.ts: their lots now, the models as they load)
   const { colliders: modelColliders } = buildLandmarkModels(scene);
+  // (and the Parque La Loma's curb, benches & mural, the white building on Paseo de la Loma, the ISSSTE)
+  const { colliders: lomaColliders } = buildLaLoma(scene);
   mark('landmarks');
   const cityBlocks = buildCityBlocks(scene);
   // The big chain stores you can walk into: their walls, door, shelves & tills (world/store-interiors.ts)
@@ -82,7 +85,7 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   // (and the swimming pools in the lots)
   buildPools(scene);
   mark('carParks');
-  const colliders: Collider[] = [...landmarkColliders, ...modelColliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...cityGrid.colliders];
+  const colliders: Collider[] = [...landmarkColliders, ...modelColliders, ...lomaColliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...cityGrid.colliders];
   // The bardas round the big open plots (the canchas, the ranchos, the vacant lots), not across a car park
   const bardas = buildBardas(scene, carParks.keepsOpen);
   mark('bardas');

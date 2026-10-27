@@ -9,12 +9,15 @@ import { GEO } from './city-geodata.js';
 import { blockAt } from './city-config.ts';
 import { createPavementMaterial } from '../render/tsl-materials.ts';
 import { drapeGeometry } from './drape.ts';
+import { LA_LOMA } from './la-loma-plan.ts';
 import type { TileStreamer } from './streaming.ts';
 
 // over what: the road deck (a pedestrian street), the open country, a park's lawn, a yard's open ground
 const ROAD_Y = 0.007, FIELD_Y = 0.036, PARK_Y = 0.416, LOT_Y = 0.24;
 // the pavement material's kinds (createPavementMaterial: 0 empedrado, 1 adoquín, 2 tierra, 3 concreto) by footway kind
 const PAVE = [3, 2, 1, 3];
+// (and the Parque La Loma's andador along its curb, la-loma-plan.ts)
+const FOOTWAYS = [...GEO.footways, ...(LA_LOMA?.walks ?? [])];
 
 /** The height (m over the town's floor) of the ground a footway, a bench or a gas station's forecourt stands on at
  *  (x, z): a park's lawn, a yard's open ground, the open country, the road deck */
@@ -28,7 +31,7 @@ function buildFootways(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   const position: number[] = [];
   const pave: number[] = [];
   const index: number[] = [];
-  for (const [kind, width, pts] of GEO.footways) {
+  for (const [kind, width, pts] of FOOTWAYS) {
     const h = width * 0.5;
     for (let i = 0; i + 3 < pts.length; i += 2) {
       const ax = pts[i], az = pts[i + 1], bx = pts[i + 2], bz = pts[i + 3];
@@ -52,7 +55,7 @@ function buildFootways(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(position.map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
   geometry.setAttribute('pave', new THREE.Float32BufferAttribute(pave, 1));
   geometry.setIndex(index);
-  console.info(`[footways] ${GEO.footways.length} footways, paths, pedestrian streets & steps`);
+  console.info(`[footways] ${FOOTWAYS.length} footways, paths, pedestrian streets & steps`);
   if (streamer) {
     streamer.addLayer(geometry, createPavementMaterial(), { name: 'Footways' });
     return null;

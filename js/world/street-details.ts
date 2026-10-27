@@ -11,6 +11,8 @@ import { lotTrees } from './lot-greenery.ts';
 import { medianTrees } from './medians.ts';
 import { parkTreeSites, sidewalkBlocks, parkLampSites, medianRuns } from './city-grid.ts';
 import { liftAt } from './ground.ts';
+import { surfaceY } from './footways.ts';
+import { LA_LOMA, laLomaKeepsClear, laLomaWoods } from './la-loma-plan.ts';
 import { GEO } from './city-geodata.js';
 import type { PointXZ, Bounds, CityBlock } from './city-config.ts';
 import type { BreakableProp, PropCollider } from '../sim/mayhem.ts';
@@ -915,7 +917,9 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
   const streetSpecies = (r: number) => (r < 0.5 ? 0 : r < 0.7 ? 3 : r < 0.85 ? 1 : 2);
 
   // A. The parks & the plazas (sites laid out by city-grid.ts)
-  for (const s of parkTreeSites ?? []) treePositions.push(s);
+  for (const s of parkTreeSites ?? []) if (!laLomaKeepsClear(s.x, s.z)) treePositions.push(laLomaWoods(s));
+  //    and the Parque La Loma's rows of big laureles along its curb, the ISSSTE's palms (la-loma-plan.ts)
+  for (const t of LA_LOMA?.trees ?? []) treePositions.push({ ...t, y: liftAt(t.x, t.z) + surfaceY(t.x, t.z), tier: 0 });
 
   // B. Street trees on the raised sidewalks of every rectangular block (city-config.ts BLOCKS via the slabs city-grid.ts
   //    laid): along their long w / e fronts, here and there (Tepic's streets are no avenue of planes: a tree where a
