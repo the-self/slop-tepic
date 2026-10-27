@@ -5,6 +5,8 @@
 // textContent only.
 
 import type { DriveState } from '../player/drivetrain.ts';
+import { setText, t } from '../i18n/i18n.ts';
+import type { MessageKey } from '../i18n/i18n.ts';
 
 /** What the dial reads of an engine (player/drivetrain.ts DriveSpec): redline in rpm */
 export interface TachoSpec {
@@ -104,22 +106,22 @@ class Tachometer {
     this.box = document.createElement('span');
     this.box.className = 'tacho-box';
     this.side.appendChild(this.box);
-    this.nitroBar = this.bar('Nitro', 'tacho-nitro');
-    this.fuelBar = this.bar('Fuel', 'tacho-fuel');
-    this.healthBar = this.bar('Engine', 'tacho-health');
+    this.nitroBar = this.bar('tacho.nitro', 'tacho-nitro');
+    this.fuelBar = this.bar('tacho.fuel', 'tacho-fuel');
+    this.healthBar = this.bar('tacho.engine', 'tacho-health');
     this.warning = document.createElement('span');
     this.warning.className = 'tacho-warning';
-    this.warning.textContent = 'Engine dead · F to get out';
+    setText(this.warning, 'tacho.dead');
     this.side.appendChild(this.warning);
     if (root) root.replaceChildren(this.dial, this.side);
   }
 
-  bar(label: string, cls: string): HTMLSpanElement {
+  bar(label: MessageKey, cls: string): HTMLSpanElement {
     const wrap = document.createElement('div');
     wrap.className = `tacho-bar ${cls}`;
     const name = document.createElement('span');
     name.className = 'tacho-bar-label';
-    name.textContent = label;
+    setText(name, label);
     const track = document.createElement('span');
     track.className = 'tacho-track';
     const fill = document.createElement('span');
@@ -175,7 +177,7 @@ class Tachometer {
     }
     if (gear !== s.gear) s.gear = this.gear.textContent = gear;
     if (kmh !== s.speed) this.speed.textContent = String((s.speed = kmh));
-    const box = this.electric ? 'EV' : drive.manual ? 'Manual' : 'Auto';
+    const box = t(this.electric ? 'tacho.ev' : drive.manual ? 'tacho.manual' : 'tacho.auto');
     if (box !== s.manual) this.box.textContent = s.manual = box;
     const nitro = Math.round(drive.nitro * 100);
     if (nitro !== s.nitro) this.nitroBar.style.transform = `scaleX(${(s.nitro = nitro) / 100})`;

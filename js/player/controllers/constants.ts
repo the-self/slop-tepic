@@ -9,6 +9,7 @@ import type { CarModel } from '../../models/cars/index.ts';
 import type { BodySpec } from '../../models/bodies.ts';
 import type { PlayerMode } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
+import type { MessageKey } from '../../i18n/i18n.ts';
 
 
 // Spawn at the city's start (city-geodata.js frame.start: Tepic's Plaza Principal)
@@ -26,8 +27,8 @@ const SPAWN = {
   helicopter: spawnAt(-60, -110)
 };
 const LEFT_CARS = 4; // cars the player left for another kept where they stood (leaveCarBehind), the oldest going first
-// HUD names of the player's characters & vehicles, in the city's language (the moto's: its model's)
-const LABELS: Record<Exclude<PlayerMode, 'moto'>, string> = { person: 'Peatón', car: 'Taxi de Tepic', cyclist: 'Ciclista', helicopter: 'Helicóptero turístico' };
+// HUD names of the player's characters & vehicles, as message keys (i18n/; the moto's: its model's name)
+const LABELS: Record<Exclude<PlayerMode, 'moto'>, MessageKey> = { person: 'mode.person', car: 'mode.car', cyclist: 'mode.cyclist', helicopter: 'mode.helicopter' };
 const groundCollider = { type: 'ground' };
 // The player's own person: as the others see it (multiplayer: a Meshy model on the crowd's skeleton,
 // tools/models/jobs/people/player.json), and its own body, on foot and riding (that model as Meshy rigged and animated
@@ -54,7 +55,7 @@ const AIM_WALK = 2.4; // m/s: walking (and strafing) with the gun up (player/aim
 const EJECT_SPEED = 19;
 const GET_UP = 2.5;
 // Getting out faster than this (m/s, ~15 km/h) the player jumps out of the car, or off the moto, and tumbles along the
-// road (boarding.ts leaveVehicle), GTA-style
+// road (boarding.ts leaveVehicle)
 const BAIL_SPEED = 4;
 // The car's tank (L) and what it burns (L/s): idling, and more with the throttle down. A full tank lasts about an hour
 // with the foot down (~2 h of town driving): a few times thirstier than a real car, so a long drive across the city

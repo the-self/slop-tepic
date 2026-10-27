@@ -6,6 +6,7 @@ import { WEAPONS } from '../weapons.ts';
 import type { PickupKind, Pickup } from './types.ts';
 import { MAX_PICKUPS, PICKUP_COLORS, dummy, zero, tint } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
+import { t } from '../../i18n/i18n.ts';
 
 export function buildPickups(crime: CrimeSystem): void {
   crime.pickupMesh.name = 'Pickups';
@@ -58,18 +59,18 @@ export function collect(crime: CrimeSystem, p: Pickup): void {
   crime.audio?.gunfire?.('pickup', p.x, p.y + 1, p.z);
   if (p.kind === 'money') {
     crime.money += p.amount;
-    crime.toast(`+$${p.amount}`);
+    crime.toast(t('toast.cash', { amount: p.amount }));
   } else if (p.kind === 'health') {
     crime.health = Math.min(100, crime.health + p.amount);
-    crime.toast('Health');
+    crime.toast(t('toast.health'));
   } else if (p.kind === 'armor') {
     crime.armor = Math.min(100, crime.armor + p.amount);
-    crime.toast('Armor');
+    crime.toast(t('toast.armor'));
   } else {
     const w: Weapon = WEAPONS[p.kind];
     const had = crime.arsenal.has(w.id);
     crime.arsenal.add(w.id, w.pickup);
     if (!had && w.id !== 'fists') crime.arsenal.select(w.id);
-    crime.toast(`${w.label} +${w.pickup}`);
+    crime.toast(t('toast.ammo', { weapon: t(w.label), rounds: w.pickup }));
   }
 }

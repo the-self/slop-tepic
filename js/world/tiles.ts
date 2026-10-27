@@ -1,6 +1,6 @@
 // js/world/tiles.ts
 // The city cut in square tiles, so its heaviest layers are built only around the player (world/streaming.ts), the way
-// GTA streams its map. A tile's edges lie on the ground's lattice (ground.ts: 37.5 m cells in Tepic), 12 cells a side
+// open-world games stream their maps. A tile's edges lie on the ground's lattice (ground.ts: 37.5 m cells in Tepic), 12 cells a side
 // (450 m), so the pieces a layer is cut into to lie on the slopes never straddle two tiles.
 // A flat layer (the road deck, the sidewalks & curbs, the paint, the empedrado: built at y = 0 in world space) is
 // bucketed here once by the tiles its triangles overlap; each tile's part is cut out of it on the tile's edges and laid

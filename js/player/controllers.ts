@@ -1,5 +1,5 @@
 // js/player/controllers.ts
-// Sculpted, non-blocky GTA 6-style 3D models, animations, and physics controllers
+// Sculpted, non-blocky 3D models, animations, and physics controllers
 // for Third-Person Navigation:
 // 1. Person (Skinned Pedestrian: planted-footstep IK walk/run/jump, see pedestrians.ts)
 // 2. Car (Aerodynamic Sculpted Yellow Taxi with Sloped Windshield & Clearcoat, or whatever car was taken): engine,
@@ -144,7 +144,7 @@ class ThirdPersonControllerManager {
     this.interior = null;
     // Taking aim on foot (player/aim.ts sets it every frame): the player walks and strafes instead of turning
     this.aiming = false;
-    // Which way the camera looks (cameras.ts viewHeading, main.ts sets it every frame), GTA-style: on foot WASD walk
+    // Which way the camera looks (cameras.ts viewHeading, main.ts sets it every frame): on foot WASD walk
     // away from it, across it and towards it. Null on the cameras that sit behind the player (the action cam)
     this.viewHeading = null;
 

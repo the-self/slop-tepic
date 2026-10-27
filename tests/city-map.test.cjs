@@ -3,6 +3,7 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const test = require('node:test');
 const { loadModule } = require('./helpers/module.cjs');
+const { i18n } = require('./helpers/i18n.cjs');
 
 const source = readFileSync(join(__dirname, '../js/ui/city-map.ts'), 'utf8');
 
@@ -12,7 +13,7 @@ for (const [width, height, dpr] of [[500, 300, 1], [320, 180, 1.5], [1920, 1080,
     const { CityMapSystem } = loadModule(source, {
       globals: { window, performance: { now: () => 0 } },
       // the grid turned 24.87° east of true north, as Tepic's is: the map turns it back
-      imports: { '../world/city-geodata.js': { GEO: { frame: { bearingDeg: 24.87 }, places: [] } }, '../world/city-config.ts': { ROADS: [] }, '../sim/crime-rules.ts': { SIGHT: 6 } }
+      imports: { '../world/city-geodata.js': { GEO: { frame: { bearingDeg: 24.87 }, places: [] } }, '../world/city-config.ts': { ROADS: [] }, '../sim/crime-rules.ts': { SIGHT: 6 }, '../i18n/i18n.ts': i18n }
     });
     const map = Object.create(CityMapSystem.prototype);
     // Capture the production render viewport; drawing primitives are irrelevant to coordinate conversion.
@@ -104,7 +105,7 @@ function mapHarness() {
   };
   const { CityMapSystem } = loadModule(source, {
     globals: { window, document },
-    imports: { '../world/city-geodata.js': { GEO: { frame: {}, places: [] } }, '../world/city-config.ts': config, '../sim/crime-rules.ts': { SIGHT: 6 } }
+    imports: { '../world/city-geodata.js': { GEO: { frame: {}, places: [] } }, '../world/city-config.ts': config, '../sim/crime-rules.ts': { SIGHT: 6 }, '../i18n/i18n.ts': i18n }
   });
   const teleports = [], toggles = [];
   const map = new CityMapSystem({

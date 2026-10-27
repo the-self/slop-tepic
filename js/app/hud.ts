@@ -4,22 +4,29 @@
 // here, the sound button, and the 250 ms telemetry (fps, speed, altitude). The popovers (camera, time, teleports) open
 // against the control that toggles them.
 import type { PlayerMode } from '../player/controllers.ts';
+import type { PromptAction } from './boarding.ts';
+import { setText, t, tName } from '../i18n/i18n.ts';
+import type { MessageKey } from '../i18n/i18n.ts';
 
-/** A keyboard guide row: [keys, action] */
-type Hint = readonly [keys: readonly string[], action: string];
+/** A keyboard guide row: [keys (a key's name, or the message key of a word: 'key.space'), what they do] */
+type Hint = readonly [keys: readonly string[], action: MessageKey];
 
 // Keyboard guide for each mode
 const CONTROL_HINTS: Readonly<Record<PlayerMode, readonly Hint[]>> = {
   // (the mouse looks once a click has locked the pointer, cameras.ts)
-  person: [[['W', 'A', 'S', 'D'], 'Walk'], [['Mouse'], 'Look (Esc frees it)'], [['Shift'], 'Sprint'], [['Space'], 'Jump'],
-    [['RMB', 'Z'], 'Aim'], [['LMB', 'X'], 'Fire'], [['Tab', '1-4'], 'Weapons'], [['F'], 'Robar / Subir']], // (3 again: SMG / rifle)
+  person: [[['W', 'A', 'S', 'D'], 'hint.walk'], [['key.mouse'], 'hint.look'], [['Shift'], 'hint.sprint'], [['key.space'], 'hint.jump'],
+    [['key.rmb', 'Z'], 'hint.aim'], [['key.lmb', 'X'], 'hint.fire'], [['Tab', '1-4'], 'hint.weapons'], [['F'], 'hint.stealBoard']], // (3 again: SMG / rifle)
   // (Shift's Nitro only in a car with a kit, drivetrain.ts)
-  car: [[['W', 'S'], 'Gas / Brake'], [['A', 'D'], 'Steer'], [['Shift'], 'Nitro'], [['Space'], 'Handbrake'], [['E', 'Q'], 'Gears'],
-    [['T'], 'Auto / Manual'], [['RMB', 'X'], 'Shoot'], [['F'], 'Bajar']],
-  cyclist: [[['W', 'S'], 'Pedal / Brake'], [['A', 'D'], 'Lean & Turn'], [['Shift'], 'Sprint'], [['RMB', 'X'], 'Shoot'], [['F'], 'Bajar']],
-  moto: [[['W', 'S'], 'Gas / Brake'], [['A', 'D'], 'Lean & Turn'], [['Shift'], 'Nitro'], [['E', 'Q'], 'Gears'], [['T'], 'Auto / Manual'],
-    [['RMB', 'X'], 'Shoot'], [['F'], 'Bajar']],
-  helicopter: [[['W', 'S'], 'Pitch'], [['A', 'D'], 'Yaw'], [['Space', 'E'], 'Ascend'], [['Q', 'C'], 'Descend'], [['F'], 'Bajar']]
+  car: [[['W', 'S'], 'hint.gasBrake'], [['A', 'D'], 'hint.steer'], [['Shift'], 'hint.nitro'], [['key.space'], 'hint.handbrake'], [['E', 'Q'], 'hint.gears'],
+    [['T'], 'hint.gearbox'], [['key.rmb', 'X'], 'hint.shoot'], [['F'], 'hint.exit']],
+  cyclist: [[['W', 'S'], 'hint.pedal'], [['A', 'D'], 'hint.lean'], [['Shift'], 'hint.sprint'], [['key.rmb', 'X'], 'hint.shoot'], [['F'], 'hint.exit']],
+  moto: [[['W', 'S'], 'hint.gasBrake'], [['A', 'D'], 'hint.lean'], [['Shift'], 'hint.nitro'], [['E', 'Q'], 'hint.gears'], [['T'], 'hint.gearbox'],
+    [['key.rmb', 'X'], 'hint.shoot'], [['F'], 'hint.exit']],
+  helicopter: [[['W', 'S'], 'hint.pitch'], [['A', 'D'], 'hint.yaw'], [['key.space', 'E'], 'hint.ascend'], [['Q', 'C'], 'hint.descend'], [['F'], 'hint.exit']]
+};
+// The touch button's word for what F would do
+const BOARD_LABELS: Readonly<Record<PromptAction, MessageKey>> = {
+  none: 'touch.board.board', board: 'touch.board.board', steal: 'touch.board.steal', exit: 'touch.board.exit', use: 'touch.board.use'
 };
 // Boosted top speeds in km/h (controllers.ts caps them; the car has its tachometer instead): the
 // speed meter's full scale
@@ -71,18 +78,18 @@ export class Hud {
     document.body.dataset.mode = mode;
     if (this.mode) this.mode.textContent = label;
     if (!this.controlsHint) return;
-    const hints = CONTROL_HINTS[mode].filter(([, action]) => action !== 'Nitro' || nitro);
+    const hints = CONTROL_HINTS[mode].filter(([, action]) => action !== 'hint.nitro' || nitro);
     const items = hints.map(([keys, action]) => {
       const item = document.createElement('span');
       item.className = 'hint';
       for (const key of keys) {
         const kbd = document.createElement('kbd');
-        kbd.textContent = key;
+        kbd.textContent = tName(key);
         item.appendChild(kbd);
       }
       const text = document.createElement('span');
       text.className = 'hint-label';
-      text.textContent = action;
+      setText(text, action);
       item.appendChild(text);
       return item;
     });
@@ -121,7 +128,7 @@ export class Hud {
         streets = streets.slice(5);
         const near = document.createElement('span');
         near.className = 'location-near';
-        near.textContent = 'near';
+        setText(near, 'hud.near');
         row.appendChild(near);
       }
       for (const name of streets.split(' & ')) {
@@ -135,17 +142,16 @@ export class Hud {
     this.location.replaceChildren(...nodes);
   }
 
-  /** What F does here (`text`, '' for nothing), over the controls guide and on the touch button */
-  showPrompt(text: string, onFoot: boolean): void {
-    const state = `${onFoot}:${text}`;
+  /** What F does here (`text`, '' for nothing), over the controls guide; `action`, its word on the touch button */
+  showPrompt(text: string, action: PromptAction): void {
+    const state = `${action}:${text}`;
     if (state === this.promptState) return;
     this.promptState = state;
     if (this.boardButton) {
       // the touch button: get in or take what is at hand, or get out
-      this.boardButton.hidden = onFoot && !text;
-      const label = this.boardButton.querySelector('[data-board-label]');
-      const first = text.split(' ')[0] ?? '';
-      if (label) label.textContent = !onFoot ? 'Bajar' : text.startsWith('Robar') || text.startsWith('Asaltar') ? 'Robar' : first === 'Subir' || !text ? 'Subir' : first;
+      this.boardButton.hidden = action === 'none';
+      const label = this.boardButton.querySelector<HTMLElement>('[data-board-label]');
+      if (label) setText(label, BOARD_LABELS[action]);
     }
     if (!this.prompt) return;
     this.prompt.hidden = !text;
@@ -162,8 +168,8 @@ export class Hud {
     if (!button) return;
     if (button instanceof HTMLButtonElement) button.disabled = !supported;
     button.setAttribute('aria-pressed', String(enabled));
-    button.setAttribute('aria-label', enabled ? 'Mute sound' : 'Enable sound');
-    button.title = supported ? `${enabled ? 'Mute' : 'Enable'} sound [N]` : 'Web Audio is unavailable';
+    button.setAttribute('aria-label', t(enabled ? 'sound.mute' : 'sound.enable'));
+    button.title = t(!supported ? 'sound.unavailable' : enabled ? 'sound.muteTitle' : 'sound.enableTitle');
     button.querySelector('use')?.setAttribute('href', enabled ? '#i-sound' : '#i-sound-off');
   }
 

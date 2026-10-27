@@ -1,12 +1,17 @@
 // js/ui/crime-hud.ts
 // The crime HUD (crime.ts's state): wanted stars, health, stamina (player/stats.ts) & armour bars, money, the weapon in hand (in
-// 3D once ui/weapon-icons.ts has baked it, drawn again on a change) and its rounds, short messages, the red edges of getting hurt and the WASTED / BUSTED screen. Safe DOM APIs only; the text and
+// 3D once ui/weapon-icons.ts has baked it, drawn again on a change) and its rounds, short messages, the red edges of getting hurt and the screen of being down or arrested. Safe DOM APIs only; the text and
 // bars change only when their values do.
 
 import type { WeaponId } from '../sim/weapons.ts';
 import type { WeaponIcons } from './weapon-icons.ts';
+import { setText, t } from '../i18n/i18n.ts';
+import type { MessageKey } from '../i18n/i18n.ts';
 
 const TOAST_TIME = 2.6; // s a message stays
+
+// The banner over the screen when the player is down, by the crime state
+const BANNERS: Readonly<Partial<Record<string, MessageKey>>> = { wasted: 'banner.wasted', busted: 'banner.busted' };
 
 /** What the HUD reads of the CrimeSystem (sim/crime.ts) */
 export interface CrimeHudState {
@@ -14,7 +19,7 @@ export interface CrimeHudState {
   health: number; // 0..100
   armor: number; // 0..100
   money: number; // pesos
-  arsenal: { weapon: { id: WeaponId; label: string }; ammo: Readonly<Record<WeaponId, number>> }; // (Infinity: fists)
+  arsenal: { weapon: { id: WeaponId; label: MessageKey }; ammo: Readonly<Record<WeaponId, number>> }; // (Infinity: fists)
   toasts: string[]; // messages waiting, oldest first (the HUD takes them)
   state: string; // 'play' | 'wasted' | 'busted'
   hurtFlash: number; // 0..1
@@ -107,7 +112,7 @@ class CrimeHud {
     this.set('stars', stars, (n) => {
       el.stars.forEach((s, i) => s.classList.toggle('is-lit', i < n));
       el.wanted.classList.toggle('is-wanted', n > 0);
-      el.wanted.setAttribute('aria-label', `Wanted level: ${n} of 5`);
+      el.wanted.setAttribute('aria-label', t('crime.wanted', { n }));
     });
     this.set('evading', evading, (on) => el.wanted.classList.toggle('is-evading', on));
 
@@ -138,7 +143,7 @@ class CrimeHud {
     });
 
     const w = crime.arsenal.weapon;
-    this.set('weapon', w.label, (label) => { el.weapon.textContent = label; });
+    this.set('weapon', t(w.label), (label) => { el.weapon.textContent = label; });
     // its picture: the 3D one in the hand once baked, the flat symbol till then
     const url = this.icons?.ready ? this.icons.url(w.id, true) : null;
     this.set('weaponIcon', url || w.id, () => {
@@ -178,7 +183,8 @@ class CrimeHud {
 
     this.set('banner', crime.state, (state) => {
       el.banner.hidden = state === 'play';
-      el.banner.textContent = state === 'wasted' ? 'Wasted' : state === 'busted' ? 'Busted' : '';
+      const banner = BANNERS[state];
+      if (banner) setText(el.banner, banner);
       el.banner.classList.toggle('is-busted', state === 'busted');
       document.body.classList.toggle('is-down', state !== 'play');
     });

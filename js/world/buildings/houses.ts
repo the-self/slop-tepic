@@ -7,7 +7,8 @@ import { blockAt } from '../city-config.ts';
 import { GEO } from '../city-geodata.js';
 import { STOREFRONTS } from '../storefronts/index.ts';
 import { signKind, VENUE_KINDS } from '../venues.ts';
-import { LANDMARK_RESERVES as TEPIC_RESERVES } from '../tepic-landmarks.ts';
+import { LANDMARK_RESERVES } from '../tepic-landmarks.ts';
+import { LA_LOMA_RESERVES } from '../la-loma-plan.ts';
 import { isEnterableStore, storeReserve } from '../store-interiors.ts';
 import { SLOPES, groundHeight, liftAt } from '../ground.ts';
 import { chance, irange, pickW, rand, range, seedDice } from './dice.ts';
@@ -15,6 +16,9 @@ import { MEX, storeys } from './facades.ts';
 import type { CityBlock } from '../city-config.ts';
 import type { LotReserve } from '../landmark-models.ts';
 import type { CityBuild, HouseBlock, Span } from './types.ts';
+
+// the lots the landmarks & La Loma's buildings stand on (tepic-landmarks.ts, la-loma-plan.ts)
+const TEPIC_RESERVES = [...LANDMARK_RESERVES, ...LA_LOMA_RESERVES];
 
 // Blocks the real buildings stand on (city-geodata.js `houses`, Overture Maps): built house by house (A2) instead
 const HOUSES = GEO.houses;

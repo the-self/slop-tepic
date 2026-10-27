@@ -17,6 +17,7 @@ import {
 import type { Mode, MovedPlayer, PoseSource, ServerMessage, Shot } from '../../shared/protocol.ts';
 import type { CrimeSystem, RemoteTarget } from '../sim/crime.ts';
 import type { CarEntity, PersonEntity, PlayerEntity } from '../player/controllers.ts';
+import { onLocaleChange, setLabel, setText, t } from '../i18n/i18n.ts';
 
 // js/net/multiplayer.ts
 // Browser side of the room server (server/index.ts), loaded only with ?multiplayer=1 (see main.ts). Sends the active
@@ -292,6 +293,7 @@ class Multiplayer {
     // under the brand panel, top left, so it never collides with the toolbar
     (document.querySelector('.hud-top-left') ?? document.body).append(this.badge);
     this.renderBadge();
+    onLocaleChange(() => { this.renderBadge(); }); // (in the new language)
     [this.chat, this.chatLog, this.chatInput] = this.buildChat();
     if (crime) {
       crime.remotes = this.targets;
@@ -318,13 +320,14 @@ class Multiplayer {
     input.className = 'mp-chat-input';
     input.type = 'text';
     input.maxLength = CHAT_MAX;
-    input.placeholder = 'Escribe y pulsa Enter · Esc para cerrar';
-    input.setAttribute('aria-label', 'Chat');
+    input.dataset.i18nPlaceholder = 'mp.chatPlaceholder';
+    input.placeholder = t('mp.chatPlaceholder');
+    setLabel(input, 'mp.chat');
     input.hidden = true;
     const button = document.createElement('button');
     button.className = 'mp-chat-btn';
     button.type = 'button';
-    button.textContent = 'Chat';
+    setText(button, 'mp.chat');
     chat.append(log, input, button);
     // over the minimap, bottom left (in the HUD's column there)
     (document.querySelector('.hud-bottom-left') ?? document.body).prepend(chat);
@@ -365,7 +368,7 @@ class Multiplayer {
     if (from) {
       const who = document.createElement('span');
       who.className = 'mp-chat-name';
-      who.textContent = from === this.id ? `${name} (tú)` : name;
+      who.textContent = from === this.id ? t('mp.you', { name }) : name;
       line.append(who, document.createTextNode(` ${text}`));
     } else {
       line.textContent = text;
@@ -618,7 +621,7 @@ class Multiplayer {
       this.cameras.follow = this.ride;
       this.cameras.resetForTeleport();
     }
-    this.crime?.toast(`En el coche de ${r.name} · F para bajar`);
+    this.crime?.toast(t('toast.rideIn', { name: r.name }));
   }
 
   // Out of the car: the walker stands at its right-hand door (where the car is now), the camera back on it
@@ -696,10 +699,10 @@ class Multiplayer {
 
   renderBadge(detail = ''): void {
     const text = {
-      connecting: 'Connecting…',
-      online: `Online · ${this.room} · ${this.roomPlayers} ${this.roomPlayers === 1 ? 'player' : 'players'}`,
-      offline: 'Offline · reconnecting…',
-      error: `Multiplayer error${detail ? `: ${detail}` : ''}`
+      connecting: t('mp.connecting'),
+      online: t(this.roomPlayers === 1 ? 'mp.onlineOne' : 'mp.online', { room: this.room, count: this.roomPlayers }),
+      offline: t('mp.offline'),
+      error: detail ? t('mp.errorDetail', { detail }) : t('mp.error')
     }[this.status];
     if (this.badge.textContent !== text) this.badge.textContent = text;
     this.badge.dataset.status = this.status;
@@ -726,7 +729,7 @@ function multiplayerOptions(search = location.search, host = location.hostname, 
   }
   // the first time, asked for (the others see it over the player's head)
   if (!name && typeof window.prompt === 'function') {
-    name = (window.prompt('¿Cómo te llamas? Los demás lo verán sobre tu cabeza.') ?? '').trim();
+    name = (window.prompt(t('mp.askName')) ?? '').trim();
     try {
       if (name) localStorage.setItem(NAME_KEY, name);
     } catch {

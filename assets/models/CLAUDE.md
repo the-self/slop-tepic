@@ -141,7 +141,7 @@ Use `--keep-width` for props that stand alone.
   - **Levels of detail**: a heavy car (20k triangles or more) carries two lighter levels in its file,
     `tools/models/add-lods.mjs` (`lod1`, ~30%; `lod2`, ~10%, its corners joined by place so the colour seams don't
     stop the simplifier, each triangle one colour; and their wheels). The traffic draws the file's own to 25 m, `lod1`
-    to 50 m and `lod2` to 90 m (`MODEL_LOD_DISTANCES`; GTA V's cars change at 15, 30, 60 & 120 m); the player's car
+    to 50 m and `lod2` to 90 m (`MODEL_LOD_DISTANCES`); the player's car
     is always the full one. Run it again after preparing a car again: it replaces the levels. Up close the levels look
     rough, as they should.
   - **Wheels**: `prepare.mjs` copies the front wheel on the +x side out as a mesh of its own, `wheel`, its axle on the

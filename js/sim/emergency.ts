@@ -13,6 +13,7 @@ import type { Station } from './emergency/stations.ts';
 import type { CrimeSystem } from './crime.ts';
 import type { Cruiser } from './crime/types.ts';
 import type { RagdollHandle } from './ragdolls.ts';
+import { t } from '../i18n/i18n.ts';
 
 type Service = 'fire' | 'ambulance';
 interface XZ {
@@ -199,7 +200,7 @@ class EmergencyServices {
             u.phase = 'go';
             u.t = 0;
             const p = this.crime.player.position;
-            if (u.slot === 0 && call.service === 'fire' && Math.hypot(p.x - call.x, p.z - call.z) < 800) this.crime.toast('The bomberos are on their way');
+            if (u.slot === 0 && call.service === 'fire' && Math.hypot(p.x - call.x, p.z - call.z) < 800) this.crime.toast(t('toast.firefighters'));
           } else {
             // (no way there: nobody can get to it)
             call.open = false;

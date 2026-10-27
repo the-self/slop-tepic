@@ -76,5 +76,10 @@ crop the neighbours, scale it to a known height, and simplify it.
   (walking, running, Idle 3, Walk Backward, Regular Jump, Walk Left with Gun, Walk Backward with Gun 1), made one
   file by `tools/models/prepare-rigged-person.mjs`.
 
+- `hermana-agua.glb`: the woman over the fountain in the glorieta by the Parque La Loma, made with Meshy (Meshy 7.1,
+  untextured: the game gives her stone) from an image Meshy drew (Nano Banana Pro, then edited to her pose: her head
+  bowed over the water cupped in her hands), and prepared in Blender by `tools/models/prepare-statue.py` (simplified to
+  30k triangles, 3.8 m tall, her feet on the origin). The user's photographs were only a reference for the pose.
+
 Models taken from Google Maps, Street View or Google's 3D tiles can't be used: their licence
 doesn't allow copying them.

@@ -6,7 +6,7 @@ import type { TileGrid } from './tiles.ts';
 import type { Bounds6, TileInitMessage, TileLayerMessage, TilePart, TileRequestMessage, TileWorkerOut } from './tile-worker.ts';
 
 // js/world/streaming.ts
-// Streams the city's heaviest layers tile by tile around the camera, the way GTA streams its map: the flat ground
+// Streams the city's heaviest layers tile by tile around the camera, the way open-world games stream their maps: the flat ground
 // layers (the road deck, sidewalks & curbs, lots, paint, empedrado: built at y = 0 in world space) are handed over
 // once with addLayer(); from then on only the tiles within DETAIL_RADIUS of the camera, and of where it is heading
 // LOOKAHEAD seconds on, are laid on the slopes and drawn, and those left behind are dropped. Laying a tile (cutting it

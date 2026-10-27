@@ -12,6 +12,7 @@ import type { ShotProp } from './crime/types.ts';
 import type { FireKind } from './fires.ts';
 import { boxHit } from './mayhem.ts';
 import type { PlayerCollider } from '../player/controllers/types.ts';
+import { t } from '../i18n/i18n.ts';
 
 interface XZ {
   x: number;
@@ -258,7 +259,7 @@ class GasStations {
     if (!s.burnt) {
       s.burnt = 1e-3;
       w.ignite('house', s.x, s.z, 12);
-      w.crime.toast(`${s.name} went up`);
+      w.crime.toast(t('toast.stationBlew', { station: s.name }));
     }
     this.draw(s);
   }
@@ -319,13 +320,13 @@ class GasStations {
       if (w.crime.money >= n * TYRE) {
         w.crime.money -= n * TYRE;
         car.damage.flats = 0;
-        w.crime.toast(`Tyres mended: $${n * TYRE}`);
+        w.crime.toast(t('toast.tyres', { cost: n * TYRE }));
       }
     }
     const wants = at && Math.abs(car.speed) < 0.6 && car.fuel < TANK - 0.05;
     if (!at) this.broke = false;
     if (!wants || this.broke) {
-      if (this.filling && this.litres > 0.5) w.crime.toast(`Gas: ${Math.round(this.litres)} L, $${Math.round(this.paid)}`);
+      if (this.filling && this.litres > 0.5) w.crime.toast(t('toast.gas', { litres: Math.round(this.litres), paid: Math.round(this.paid) }));
       // (paid in whole pesos)
       if (this.filling) w.crime.money = Math.floor(w.crime.money);
       this.filling = null;
@@ -334,11 +335,11 @@ class GasStations {
     }
     if (!this.filling) {
       this.filling = at.station;
-      w.crime.toast(`${at.station.name}: filling up`);
+      w.crime.toast(t('toast.filling', { station: at.station.name }));
     }
     const litres = Math.min(FILL * dt, TANK - car.fuel, w.crime.money / PRICE);
     if (litres <= 0) {
-      w.crime.toast('Not enough money for gas');
+      w.crime.toast(t('toast.noGasMoney'));
       this.broke = true;
       return;
     }
@@ -348,7 +349,7 @@ class GasStations {
     this.paid += litres * PRICE;
     if (car.fuel >= TANK - 0.05) {
       w.crime.money = Math.floor(w.crime.money);
-      w.crime.toast(`Full tank: ${Math.round(this.litres)} L, $${Math.round(this.paid)}`);
+      w.crime.toast(t('toast.fullTank', { litres: Math.round(this.litres), paid: Math.round(this.paid) }));
       this.litres = this.paid = 0;
     }
   }
