@@ -44,10 +44,11 @@ export type Road = [name: string, width: number, dir: 'TW' | 'FT' | 'TF', lanes:
 
 /** A road-graph link between two nodes: [a, b (node indices), name (index into `names`), width (m), lanes,
  *  dir, inner (flat interior points, a → b), lifts (dm over the ground at a, inner..., b, < 0 down in an underpass's
- *  cut; 0 when all at grade), way (1: a bridge way, 2: a tunnel way, 0 neither)]. */
+ *  cut; 0 when all at grade), way (1: a bridge way, 2: a tunnel way, 0 neither), minor (1: an alley, a service road
+ *  or a track of the town, 0 a street)]. */
 export type GraphLink = [
   a: number, b: number, name: number, width: number, lanes: number, dir: LinkDir,
-  inner: FlatPoints, lifts: number[] | 0, way: 0 | 1 | 2
+  inner: FlatPoints, lifts: number[] | 0, way: 0 | 1 | 2, minor: Flag
 ];
 
 export interface RoadGraph {
@@ -99,6 +100,18 @@ export type WaterwayKind = 'river' | 'stream' | 'canal' | 'drain' | 'ditch';
 export type Waterway = [kind: WaterwayKind, halfWidth: number, name: string, flags: number, pts: FlatPoints];
 /** A river's whole course where it runs on beyond the detailed box: [name, flat points downstream]. */
 export type FarRiver = [name: string, pts: FlatPoints];
+
+/** A footway, path, pedestrian street or flight of steps: [kind (0, 1, 2, 3), width (m), flat points]. */
+export type Footway = [kind: 0 | 1 | 2 | 3, width: number, pts: FlatPoints];
+
+/** A high-voltage line: [kV (0 not said), flat points, a tower at each]. */
+export type PowerLine = [kv: number, pts: FlatPoints];
+
+/** The kinds of lake kept (OSM water=lake | pond | reservoir | wetland | basin, or none). */
+export type LakeKind = 'lake' | 'pond' | 'reservoir' | 'wetland';
+/** A lake, presa, pond or reservoir: [kind, name ('' none), flags (1 intermittent, 2 beyond the detailed box, 4 up the
+ *  hills: both laid on the hillside, no basin), outline (flat ring at its shore, a metre out from OSM's)]. */
+export type Lake = [kind: LakeKind, name: string, flags: number, ring: FlatPoints];
 
 /** A notable OSM building footprint, by name. */
 export interface Landmark {
@@ -270,7 +283,7 @@ export interface CityGeodata {
   points: Record<string, never>;
   places: Place[];
   pois: Poi[];
-  /** The gas stations (Overture Maps' places): where each stands (m) and its name. */
+  /** The gas stations (Overture Maps' places, and the ones only OpenStreetMap maps): where each stands (m) and its name. */
   fuel: [x: number, z: number, name: string][];
   teleports: Record<string, Teleport>;
   /** Integers per house in `houses` (8). */
@@ -289,6 +302,33 @@ export interface CityGeodata {
   airport: Airport;
   overrides: BuildingOverride[];
   parking: ParkingLot[];
+  lakes: Lake[];
+  /** Pedestrian crossings on the streets, 3 numbers each: x, z (m), kind (0 unmarked, 1 marked: a zebra, 2 with
+   *  lights). */
+  crossings: number[];
+  /** Bus stops on the sidewalks, 3 numbers each: x, z (m), flags (1 a shelter, 2 a bench). */
+  busStops: number[];
+  /** Speed bumps mapped on the streets, 3 numbers each: x, z (m), kind (0 a bump or hump, 1 a table, 2 a cushion, 3 a
+   *  rumble strip). */
+  topes: number[];
+  /** Trees OpenStreetMap maps, 3 numbers each: x, z (m), kind (0 a lone tree, 1 one of a row). */
+  trees: number[];
+  /** Street lamps OpenStreetMap maps, 2 numbers each: x, z (m). */
+  lamps: number[];
+  /** High-voltage lines: [kV (0 not said), flat points, a tower at each]. */
+  powerLines: PowerLine[];
+  /** Swimming pools: their outlines (flat rings, m). */
+  pools: FlatPoints[];
+  /** The surfaces of the minor ways (alleys, service roads, the town's tracks) where not asphalt: [kind (2 earth, 3
+   *  concrete), width (m), flat centreline]. */
+  minorSurfaces: [kind: number, width: number, pts: FlatPoints][];
+  /** Footways, paths, pedestrian streets & steps: [kind (0 footway, 1 path, 2 pedestrian street, 3 steps), width (m),
+   *  flat points]. */
+  footways: Footway[];
+  /** Benches OpenStreetMap maps, 3 numbers each: x, z (m), turn (mrad: the seat along (cos θ, -sin θ), the street). */
+  benches: number[];
+  /** Bins OpenStreetMap maps, 2 numbers each: x, z (m). */
+  bins: number[];
   walls: OsmWall[];
 }
 

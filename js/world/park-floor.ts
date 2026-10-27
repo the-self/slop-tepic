@@ -51,13 +51,40 @@ export function offsetPolygonInward(pts: readonly PointXZ[], d: number): PointXZ
   return a2 * area > 0 && Math.abs(a2) < Math.abs(area) ? out : null;
 }
 
+// Whether two edges of a ring that don't share a corner cross (a C-shaped park round a lake, inset by more than its
+// arms are wide, folds over itself: its fill would span the lake)
+export function crossesItself(pts: readonly PointXZ[]): boolean {
+  const n = pts.length;
+  const side = (a: PointXZ, b: PointXZ, c: PointXZ) => (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x);
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % n];
+    for (let j = i + 2; j < n; j++) {
+      if (i === 0 && j === n - 1) continue;
+      const c = pts[j], d = pts[(j + 1) % n];
+      if (Math.max(a.x, b.x) < Math.min(c.x, d.x) || Math.max(c.x, d.x) < Math.min(a.x, b.x)) continue;
+      if (Math.max(a.z, b.z) < Math.min(c.z, d.z) || Math.max(c.z, d.z) < Math.min(a.z, b.z)) continue;
+      if (side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0) return true;
+    }
+  }
+  return false;
+}
+
 const beds = new WeakMap<CityBlock, PointXZ[] | null>();
 
-/** A raised park's lawn bed: its outline inset by a fifth of its narrower side, at most 5 m (null: too small for one) */
+/**
+ * A raised park's lawn bed: its outline inset by a fifth of its narrower side, at most 5 m; narrower (halved, down to
+ * 0.75 m) where that would fold over itself, a park round a lake (null: too small for one). A narrow park's first
+ * inset is under the 0.75 m the retries stop at, and is tried all the same.
+ */
 export function parkBed(b: CityBlock): PointXZ[] | null {
   let bed = beds.get(b);
   if (bed === undefined) {
-    bed = offsetPolygonInward(b.poly, Math.min(5, Math.min(b.maxX - b.minX, b.maxZ - b.minZ) * 0.2));
+    bed = null;
+    const d0 = Math.min(5, Math.min(b.maxX - b.minX, b.maxZ - b.minZ) * 0.2);
+    for (let d = d0; !bed && (d === d0 || d >= 0.75); d /= 2) {
+      const inset = offsetPolygonInward(b.poly, d);
+      if (inset && !crossesItself(inset)) bed = inset;
+    }
     beds.set(b, bed);
   }
   return bed;

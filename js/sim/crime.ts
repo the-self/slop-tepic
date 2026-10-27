@@ -6,17 +6,19 @@ import type { CrimeKind, StreetGun } from './crime-rules.ts';
 import type { PlayerMode } from '../player/controllers.ts';
 import type { Ped, Car } from './traffic.ts';
 import { WEAPONS, Arsenal } from './weapons.ts';
-import { Wanted, GANGS } from './crime-rules.ts';
+import { Wanted, GANGS, SIGHT, inSight } from './crime-rules.ts';
 import { GunfireFX } from './gunfire-fx.ts';
 import type {
-  CrimeState, DownKind, AgentKind, Faction, PickupKind, Blips, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers,
+  CrimeState, DownKind, AgentKind, Faction, PickupKind, Blips, SightCones, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers,
   CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, TraceHit, RemoteTarget, ShotProp
 } from './crime/types.ts';
 import type { Shot } from '../../shared/protocol.ts';
-import { MAX_AGENTS, MAX_PICKUPS, COP_SIGHT, CRUISER_SIGHT, HELI_SIGHT, rand, zero } from './crime/constants.ts';
+import {
+  MAX_AGENTS, MAX_PICKUPS, COP_SIGHT, CRUISER_SIGHT, COP_FOV, CRUISER_FOV, ARMY_SIGHT, ARMY_FOV, ARMY_TRUCK_SIGHT, NEAR_SIGHT, HELI_SIGHT, rand, zero
+} from './crime/constants.ts';
 import { buildGuns, buildCruisers, buildHelicopter } from './crime/models.ts';
-import { spawnHeli, removeHeli, damageHeli, updateHeli } from './crime/helicopter.ts';
-import { witnessed, trafficPatrolSees } from './crime/witnesses.ts';
+import { spawnHeli, removeHeli, damageHeli, updateHeli, skyLine } from './crime/helicopter.ts';
+import { witnessed, trafficPatrolSees, patrolEyes } from './crime/witnesses.ts';
 import { buildRoadGraph, nearestNode, route, clearLine } from './crime/road-graph.ts';
 import {
   bindInput, updatePlayer, placePlayerGun, findTarget, muzzle, playerFire, punch, hurt, down, updateDown, playerSize
@@ -108,6 +110,9 @@ class CrimeSystem {
   _size?: [number, number];
   _playerBox?: GroundBox;
   _blips?: Blips;
+  sight: SightCones = []; // the police's eyes while the player is wanted (update)
+  seen = false; // whether the police saw the player at the last update
+  lastSeen: XZ = { x: 0, z: 0 }; // m: where they last saw it (or a crime of its was reported): where they hunt for it
 
   fx: GunfireFX;
   crowd: PersonCrowd;
@@ -307,17 +312,42 @@ class CrimeSystem {
     this.updatePickups(dt, elapsed);
     updateSpikes(this, dt);
 
-    // the police see the player: the stars stay
+    // while wanted, the police see the player in the cone ahead of any of them or right beside them, past the buildings
+    // (their eyes on the radar, ui/city-map.ts): the stars stay, and they all know where the player is
+    const sight = this.sight;
+    sight.length = 0;
     let seen = false;
-    for (const a of this.agents) {
-      if (a.kind === 'cop' && !a.fallen && a.state !== 'leave' && Math.hypot(a.x - this.px, a.z - this.pz) < COP_SIGHT) seen = true;
+    if (this.wanted.stars > 0) {
+      const px = this.px, pz = this.pz;
+      for (const a of this.agents) {
+        if (a.kind !== 'cop' || a.fallen || a.state === 'leave') continue;
+        sight.push(a.x, a.z, a.army ? ARMY_SIGHT : COP_SIGHT, a.heading, a.army ? ARMY_FOV : COP_FOV, NEAR_SIGHT);
+        // (a.los: its line to the player past the walls, agents.ts, a few times a second)
+        if (!seen && a.los && inSight(sight, sight.length - SIGHT, px, pz)) seen = true;
+      }
+      for (const cr of this.cruisers) {
+        if (!cr.active || cr.wreck || !cr.police) continue;
+        sight.push(cr.x, cr.z, cr.faction === 'army' ? ARMY_TRUCK_SIGHT : CRUISER_SIGHT, cr.heading, CRUISER_FOV, NEAR_SIGHT);
+        if (!seen && inSight(sight, sight.length - SIGHT, px, pz) && this.clearLine(cr.x, cr.z, px, pz)) seen = true;
+      }
+      const h = this.heli;
+      if (h.active && h.state === 'chase') {
+        sight.push(h.x, h.z, HELI_SIGHT, h.heading, Math.PI, 0);
+        const py = this.player.position.y + 1;
+        if (!seen && inSight(sight, sight.length - SIGHT, px, pz) && skyLine(this, h.x, h.y, h.z, px, py, pz)) seen = true;
+      }
+      // the traffic's own patrols too (one that sees the player takes up the chase, dispatch.ts)
+      for (const v of this.trafficPolice) {
+        if (!v.edge || v.wrecked) continue;
+        patrolEyes(v, sight, sight.length);
+        if (!seen && inSight(sight, sight.length - SIGHT, px, pz) && this.clearLine(v.x, v.z, px, pz)) seen = true;
+      }
     }
-    for (const cr of this.cruisers) {
-      if (cr.active && !cr.wreck && cr.police && Math.hypot(cr.x - this.px, cr.z - this.pz) < CRUISER_SIGHT) seen = true;
+    this.seen = seen;
+    if (seen) {
+      this.lastSeen.x = this.px;
+      this.lastSeen.z = this.pz;
     }
-    const h = this.heli;
-    if (h.active && h.state === 'chase' && Math.hypot(h.x - this.px, h.z - this.pz) < HELI_SIGHT) seen = true;
-    if (!seen && this.wanted.stars > 0) seen = this.trafficPatrolSees(this.px, this.pz) !== null;
     if (this.state === 'play') this.wanted.update(dt, seen);
     this.dispatch(dt);
     this.fx.update(dt);
@@ -393,6 +423,12 @@ class CrimeSystem {
     if (this.state !== 'play') return;
     const before = this.wanted.stars;
     const gained = this.wanted.report(kind, seen);
+    // (seen, or called in: the police know where the player is)
+    if (seen) {
+      this.lastSeen.x = this.px;
+      this.lastSeen.z = this.pz;
+      this.seen = true;
+    }
     if (gained > 0 && before === 0) this.toast('The police are after you');
     if (gained > 0 && before < 4 && this.wanted.stars >= 4) this.toast('The army and a helicopter are coming');
   }
@@ -402,8 +438,17 @@ class CrimeSystem {
     return witnessed(this, x, z);
   }
 
-  trafficPatrolSees(x: number, z: number): Car | null {
-    return trafficPatrolSees(this, x, z);
+  // m: where the police look for the player: where it is while they see it, else where they last saw it
+  get huntX(): number {
+    return this.seen ? this.px : this.lastSeen.x;
+  }
+
+  get huntZ(): number {
+    return this.seen ? this.pz : this.lastSeen.z;
+  }
+
+  trafficPatrolSees(x: number, z: number, looking = false): Car | null {
+    return trafficPatrolSees(this, x, z, looking);
   }
 
   // One of crime's own people (not a passer-by of the traffic's)
@@ -591,7 +636,7 @@ class CrimeSystem {
 }
 
 export type {
-  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, NpcGun, CrimePlayer,
+  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, SightCones, NpcGun, CrimePlayer,
   CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter,
   RocketFlight, Pickup, LockTarget, RemoteTarget, TraceHit
 } from './crime/types.ts';

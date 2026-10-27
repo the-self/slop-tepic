@@ -12,10 +12,10 @@ import type { CrimeSystem } from '../crime.ts';
 export function spawnHeli(crime: CrimeSystem): void {
   const h = crime.heli;
   const ang = Math.random() * Math.PI * 2;
-  h.x = crime.px + Math.cos(ang) * 240;
-  h.z = crime.pz + Math.sin(ang) * 240;
-  h.y = Math.max(crime.groundAt(h.x, h.z), crime.groundAt(crime.px, crime.pz)) + HELI_ALT + 30;
-  h.heading = Math.atan2(crime.px - h.x, crime.pz - h.z);
+  h.x = crime.huntX + Math.cos(ang) * 240;
+  h.z = crime.huntZ + Math.sin(ang) * 240;
+  h.y = Math.max(crime.groundAt(h.x, h.z), crime.groundAt(crime.huntX, crime.huntZ)) + HELI_ALT + 30;
+  h.heading = Math.atan2(crime.huntX - h.x, crime.huntZ - h.z);
   h.vx = h.vy = h.vz = 0;
   h.active = true;
   h.state = 'chase';
@@ -79,12 +79,14 @@ export function updateHeli(crime: CrimeSystem, dt: number): void {
       tz = h.z - dz / Math.max(1, dist) * 200;
       ty = ground + HELI_ALT + 40;
     } else {
-      // round the player, keeping up with it
+      // round the player, keeping up with it; once the police have lost it, wider round where they last saw it
+      const seen = crime.seen;
+      const cx = crime.huntX, cz = crime.huntZ;
       h.orbit += dt * 0.2;
-      tx = crime.px + Math.cos(h.orbit) * HELI_ORBIT;
-      tz = crime.pz + Math.sin(h.orbit) * HELI_ORBIT;
+      tx = cx + Math.cos(h.orbit) * HELI_ORBIT * (seen ? 1 : 2);
+      tz = cz + Math.sin(h.orbit) * HELI_ORBIT * (seen ? 1 : 2);
       ty = ground + HELI_ALT;
-      follow = 1;
+      follow = seen ? 1 : 0;
     }
     const ex = tx - h.x, ez = tz - h.z;
     const ed = Math.hypot(ex, ez) || 1;
@@ -161,7 +163,7 @@ function heliShoot(crime: CrimeSystem, h: Helicopter, dt: number): void {
 }
 
 // Can one see from (x0, y0, z0) down to (x1, y1, z1) past the buildings? (eight points along it)
-function skyLine(crime: CrimeSystem, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): boolean {
+export function skyLine(crime: CrimeSystem, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): boolean {
   for (let i = 1; i < 8; i++) {
     const t = i / 8;
     if (crime.controllers.isSolidAt(x0 + (x1 - x0) * t, z0 + (z1 - z0) * t, 0.2, y0 + (y1 - y0) * t)) return false;

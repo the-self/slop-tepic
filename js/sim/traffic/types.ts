@@ -3,7 +3,9 @@
 // them, and what it hands the rest of the game (collisions, shots, the vehicle the player takes)
 import type * as THREE from 'three/webgpu';
 import type { LaneCurve, RoadEdge, RoadMove, RoadNetwork, RoadNode } from '../../world/road-network.ts';
-import type { WalkLeg, WalkTrack } from '../pedestrian-routes.ts';
+import type { WalkCrossing, WalkLeg, WalkTrack } from '../pedestrian-routes.ts';
+import type { CrossingKind } from '../../world/crossings.ts';
+import type { BusStop } from '../../world/bus-stops.ts';
 import type { CityBlock } from '../../world/city-config.ts';
 import type { PersonRig } from '../pedestrians.ts';
 import type { RideFrame } from '../pedestrians.ts';
@@ -75,6 +77,25 @@ interface TrafficEdge extends RoadEdge {
   touched?: boolean;
   /** its class (traffic-demand.ts), worked out the first time it is needed */
   roadClass?: RoadClass;
+  /** the street crossings along it (crossings.ts), by s: m from its start stop line */
+  crossings: { c: StreetCrossing; s: number }[];
+  /** the bus stops by its right curb (world/bus-stops.ts), by s */
+  stops: BusStop<TrafficEdge>[];
+  /** the topes across it (topes.ts): m from its start stop line, in order */
+  topes: number[];
+}
+
+/** A street crossing along a road (crossings.ts): where it is taken, its kind, the edges it crosses (pedestrian-
+ *  routes.ts WalkCrossing), whether it goes with a signal's lights and which right-of-way group those stop, the road's
+ *  width curb to curb (m), and who is out on the road on it this frame */
+interface StreetCrossing extends WalkCrossing<TrafficEdge> {
+  x: number;
+  z: number;
+  kind: CrossingKind;
+  signal: boolean;
+  group: number;
+  len: number;
+  walkers: Ped[];
 }
 
 /** The road network as the traffic sees it: its nodes and edges carry the traffic's state (filled in at start-up) */
@@ -85,8 +106,8 @@ interface TrafficNetwork extends RoadNetwork {
 
 
 /** A sidewalk or crosswalk track, and a leg of a walk along them (pedestrian-routes.ts) */
-type PedTrack = WalkTrack<TrafficNode, TrafficEdge, CityBlock>;
-type PedLeg = WalkLeg<TrafficNode, TrafficEdge, CityBlock>;
+type PedTrack = WalkTrack<TrafficNode, TrafficEdge, CityBlock, StreetCrossing>;
+type PedLeg = WalkLeg<TrafficNode, TrafficEdge, CityBlock, StreetCrossing>;
 
 /** Two people stopped to talk, for `remaining` s more */
 interface Conversation {
@@ -137,6 +158,10 @@ interface Ped {
   t: number;
   dir: number;
   node: TrafficNode | null;
+  /** the street crossing (along a road) it is on, or null */
+  cross: StreetCrossing | null;
+  /** on a footway (pedestrian-routes.ts): on the ground of whatever it crosses, not up on a sidewalk */
+  foot: boolean;
   side: number;
   coord: number;
   line: number;
@@ -597,7 +622,7 @@ interface LookKit {
 }
 
 export type {
-  DriverModel, LaneEntry, TrafficNode, TrafficMove, TrafficEdge, TrafficNetwork, PedTrack, Conversation,
+  DriverModel, LaneEntry, TrafficNode, TrafficMove, TrafficEdge, StreetCrossing, TrafficNetwork, PedTrack, Conversation,
   SidewalkPoint, Bail, Ped, Ride, CurbStop, BikeWreck, TwoWheelKit, VehicleBase, Car, Bus, Bike, Moto, TwoWheeler, Vehicle,
   Hijackable, VehicleKind, DrivenVehicle, OnEdge, CrashBody, CarCrash, CrashedCar, Spark, TrafficPlayer,
   TrafficPlayerEntity, ParkedVehicle, SirenSource, BumpBody, TrafficCollision, MayhemListener, KnockListener, SmokeEmitter,

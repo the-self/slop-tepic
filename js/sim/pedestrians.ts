@@ -738,6 +738,13 @@ function createPersonMaterial(pose: StorageBufferNode<'vec4'>): THREE.MeshStanda
   const isPart = (partId: Node<'float'>, id: number) => step(abs(partId.sub(id)), 0.25);
   const lane = (salt: number) => fract(sin(vInfo.x.add(salt).mul(12.9898)).mul(43758.5453));
   const partOf = () => attribute('skin', 'vec4').w;
+  // 1 for an outfit (its index, OUTFIT) that is a uniform: police, bombero, soldier, paramedic; booted: in boots
+  const isOutfit = (outfit: Node<'float'>, id: number) => step(abs(outfit.sub(id)), 0.25);
+  const uniformed = (outfit: Node<'float'>) =>
+    isOutfit(outfit, OUTFIT.police).add(isOutfit(outfit, OUTFIT.bombero)).add(isOutfit(outfit, OUTFIT.soldier)).add(isOutfit(outfit, OUTFIT.paramedic));
+  const booted = (outfit: Node<'float'>) => isOutfit(outfit, OUTFIT.bombero).add(isOutfit(outfit, OUTFIT.soldier));
+  // the boot's shaft up the shin, painted on the trouser leg (part LEG) below this height (m, bind pose)
+  const bootShaft = (outfit: Node<'float'>, y: Node<'float'>) => booted(outfit).mul(smoothstep(0.24, 0.225, y));
 
   mat.colorNode = Fn(() => {
     const partId = partOf();
@@ -814,9 +821,10 @@ function createPersonMaterial(pose: StorageBufferNode<'vec4'>): THREE.MeshStanda
     const crease = smoothstep(0.004, 0.0, abs(abs(q.x).sub(HIP_X))).mul(step(0.0, q.z)).mul(0.08);
     const trouserCol = legsCol.mul(float(1.0).sub(crease));
 
-    // Shoes: sneakers or leather, soles, laces over the instep
-    const sneaker = step(0.4, lane(5.0));
-    const leatherCol = mix(color(0x201e1c), color(0x4a3524), lane(23.0));
+    // Shoes: sneakers or leather, soles, laces over the instep; a uniform's always black leather, the soldiers' and
+    // the bomberos' boots up the shin, the trousers tucked into them
+    const sneaker = step(0.4, lane(5.0)).mul(float(1.0).sub(uniformed(outfit)));
+    const leatherCol = mix(mix(color(0x201e1c), color(0x4a3524), lane(23.0)), color(0x121110), uniformed(outfit));
     const sneakerCol = mix(color(0x252b32), color(0xc8c3b8), step(0.55, lane(31.0)));
     const upperCol = mix(leatherCol, sneakerCol, sneaker);
     const sole = smoothstep(0.024, 0.016, q.y);
@@ -829,12 +837,13 @@ function createPersonMaterial(pose: StorageBufferNode<'vec4'>): THREE.MeshStanda
       .mul(step(0.075, q.y))
       .mul(sneaker);
     const shoeCol = mix(mix(upperCol, soleCol, sole), color(0xb8b4aa), laces.mul(0.6));
+    const legCol = mix(trouserCol, leatherCol, bootShaft(outfit, q.y));
 
     return mix(
       mix(
         mix(
           mix(
-            mix(mix(torsoCol, trouserCol, isPart(partId, PART.LEG)), shoeCol, isPart(partId, PART.SHOE)),
+            mix(mix(torsoCol, legCol, isPart(partId, PART.LEG)), shoeCol, isPart(partId, PART.SHOE)),
             sleeveCol,
             isPart(partId, PART.ARM)
           ),
@@ -852,7 +861,9 @@ function createPersonMaterial(pose: StorageBufferNode<'vec4'>): THREE.MeshStanda
   mat.roughnessNode = Fn(() => {
     const partId = partOf();
     const skin = max(isPart(partId, PART.HAND), isPart(partId, PART.HEAD));
-    const leather = isPart(partId, PART.SHOE).mul(step(lane(5.0), 0.4));
+    const outfit = floor(vInfo.x.mul(1 / OUTFIT_SEED));
+    const shoe = isPart(partId, PART.SHOE).mul(max(step(lane(5.0), 0.4), uniformed(outfit)));
+    const leather = max(shoe, isPart(partId, PART.LEG).mul(bootShaft(outfit, attribute('position', 'vec3').y)));
     return mix(mix(mix(float(0.86), float(0.55), skin), float(0.74), step(PART.HAIR - 0.5, partId)), float(0.38), leather);
   })();
 
@@ -1138,6 +1149,9 @@ class PersonRig {
   /** riding: the head's position and rotation (world space) */
   headPosition?: THREE.Vector3;
   headQuaternion?: THREE.Quaternion;
+  /** a body drawing this rig with clips of its own (actors/person-body.ts): its right hand's turn in the world, as the
+   * rig's right forearm would be turned to put the hand there (identity: hanging as in the bind pose) */
+  handTurn?: THREE.Quaternion;
 
   constructor({ seed = 0, scale = 1, female = false, girth = 1, hair = 0.2, armSwing = 1, stride = 1 }: PersonLooks = {}) {
     this.seed = seed;

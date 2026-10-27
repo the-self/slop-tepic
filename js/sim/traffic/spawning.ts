@@ -13,8 +13,10 @@ import { laneClear } from './occupancy.ts';
 import { place } from './motion.ts';
 import { drawModel } from './fleet.ts';
 import { vehicleAt } from './bodies.ts';
-import { KERB, QUEUE_GAP, atCurb, crosswalkTrack, sidewalkTrack } from './sidewalks.ts';
+import { KERB, QUEUE_GAP, atCurb, crosswalkTrack, footwayTrack, sidewalkTrack } from './sidewalks.ts';
 import { endConversation } from './walking.ts';
+
+const FOOT_SPAWN = 0.15; // of the people placed, the share started out on a footway near the focus (if any)
 
 function nearView(ts: TrafficState, x: number, z: number, radius: number, distance: number): boolean {
   return ts.hasView && Math.hypot(x - ts.camX, ts.camY - hillAt(ts, x, z), z - ts.camZ) < distance && visible(ts, x, z, radius);
@@ -83,9 +85,11 @@ function spawnVehicle(ts: TrafficState, v: Vehicle, rMin: number, rMax: number, 
 function spawnPed(ts: TrafficState, p: Ped, rMin: number, rMax: number, protectView: boolean): boolean {
   for (let attempt = 0; attempt < 10; attempt++) {
     const crosswalk = p.crossesStreets && ts.nearSignals.length > 0 && attempt < 5;
+    // (now and then on a footway: a park's walk, an andador, a pedestrian street)
     const ok = crosswalk
       ? crosswalkTrack(ts, ts.nearSignals[Math.floor(Math.random() * ts.nearSignals.length)])
-      : ts.nearEdges.length > 0 && sidewalkTrack(ts, pickWeighted(ts.nearEdges, ts.nearPedWeights));
+      : (attempt < 2 && Math.random() < FOOT_SPAWN && footwayTrack(ts, rMax)) ||
+        (ts.nearEdges.length > 0 && sidewalkTrack(ts, pickWeighted(ts.nearEdges, ts.nearPedWeights)));
     if (!ok) continue;
     const along = (ts.focusX - ts.track.ax) * ts.track.ux + (ts.focusZ - ts.track.az) * ts.track.uz;
     const minT = Math.max(0, along - rMax), maxT = Math.min(ts.track.len, along + rMax);

@@ -48,8 +48,8 @@ import { buildCity } from './app/city.ts';
 import { playerStateKey, restorePlayer, savePlayer } from './app/player-state.ts';
 import { createRenderPipeline } from './app/render-pipeline.ts';
 import { precompileShaders, warmUpFrame } from './app/shaders.ts';
-import { loadPersonFile } from './actors/person-files.ts';
-import { PLAYER_PERSON } from './player/controllers/constants.ts';
+import { loadPersonBody } from './actors/person-body.ts';
+import { PLAYER_BODY } from './player/controllers/constants.ts';
 import { Hud, wirePopovers } from './app/hud.ts';
 import { createTeleport, wireTeleportButtons } from './app/teleport.ts';
 import { Boarding } from './app/boarding.ts';
@@ -71,7 +71,7 @@ interface GameEvents {
 const HARD_CRASH = 9; // m/s (~32 km/h) a crash is struck at for an ambulance to be called
 
 const isWeatherSample = (name: string | null): name is WeatherSampleName => name !== null && name in WEATHER_SAMPLES;
-const PERSON_WAIT = 8000; // ms the loading screen waits for the player's person model (3 MB) before the shaders compile
+const PERSON_WAIT = 8000; // ms the loading screen waits for the player's body (3 MB) before the shaders compile
 
 async function initApp(): Promise<void> {
   const params = new URLSearchParams(location.search);
@@ -115,7 +115,7 @@ async function initApp(): Promise<void> {
   // 3. The city: streets, hills, landmarks, blocks, street details & traffic
   loading.status(`Construyendo ${CITY.city || 'la ciudad'}: calles, manzanas y colonias...`);
   const city = buildCity(scene, { stream: params.get('stream') !== '0', mark: (label) => { loading.mark(label); } });
-  const { streamer, rivers, cityBlocks, stores, carParks, streetDetails, traffic: trafficSystem, highwayTraffic, colliders } = city;
+  const { streamer, rivers, cityBlocks, stores, carParks, streetDetails, powerLines, traffic: trafficSystem, highwayTraffic, colliders } = city;
 
   // 4. The player (on foot, car, bicycle, moto, helicopter), its cameras and its input
   const controllerManager = new ThirdPersonControllerManager(scene, colliders);
@@ -329,7 +329,7 @@ async function initApp(): Promise<void> {
   const cullingRoots = named(['CityGrid', 'CityBlocks', 'StreetDetails', 'Hills', 'Rivers', 'Bridges', 'Bardas']);
   setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
   // ...whose world matrices never change again: rendering stops walking them (the loop updates the rest of the scene)
-  const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Airport', 'RoadMarkings', 'Pavements', 'Topes', 'StreamedTiles'])
+  const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Airport', 'RoadMarkings', 'Pavements', 'Footways', 'Topes', 'StreamedTiles', 'BusStops', 'PowerLines', 'Pools', 'Furniture'])
     .filter((o) => o.parent === scene)];
   freezeStaticMatrices(scene, staticRoots);
   loading.mark('culling');
@@ -492,6 +492,7 @@ async function initApp(): Promise<void> {
   wireTeleportButtons(document.querySelectorAll('[data-teleport]'), TELEPORT_LOCATIONS, teleportTo, closePopovers);
   // (the police, gangs, pickups, fires & gas stations on the radar)
   mapSystem.setBlipSource(() => gasStations.blips(fires.blips(crimeSystem.blips())));
+  mapSystem.setPolice(crimeSystem); // (where the police can see the player, on both maps)
   document.getElementById('btn-open-map')?.addEventListener('click', () => { mapSystem.toggleFullMap(true); });
 
   hudToggleBtn?.addEventListener('click', () => {
@@ -570,10 +571,10 @@ async function initApp(): Promise<void> {
     loading.mark(`tiles ${streamer.stats.shown}`);
   }
 
-  // The player's person model (actors/person-files.ts) in before the shaders compile, so its pipelines are among them
+  // The player's body (actors/person-body.ts) in before the shaders compile, so its pipelines are among them
   // rather than built in play the frame it comes in; a slow connection waits PERSON_WAIT at most (it then comes in late)
   loading.status('Dressing the player...');
-  await Promise.race([loadPersonFile(PLAYER_PERSON).catch(() => null), new Promise((resolve) => setTimeout(resolve, PERSON_WAIT))]);
+  await Promise.race([loadPersonBody(PLAYER_BODY).catch(() => null), new Promise((resolve) => setTimeout(resolve, PERSON_WAIT))]);
   loading.mark('person');
 
   // The loading screen stays up while the shaders compile and until the first frame is on screen
@@ -677,6 +678,7 @@ async function initApp(): Promise<void> {
       carParks.update(eye.x, eye.z);
       cityBlocks.updateLights(cameraSystem.camera);
       streetDetails.update(cameraSystem.camera);
+      powerLines.update(cameraSystem.camera.position);
       lightingSystem.update(eye);
     })
     .add(weather)

@@ -1,15 +1,19 @@
 import * as THREE from 'three/webgpu';
-import { waterways, deckHoles } from './ground.ts';
+import { waterways, lakes, deckHoles } from './ground.ts';
 import { cutHoles } from './waterways.ts';
 import { drapeGeometry } from './drape.ts';
-import { createRiverBankMaterial, createRiverWaterMaterial, createCurbMaterial, createBridgeConcreteMaterial } from '../render/tsl-materials.ts';
+import {
+  createRiverBankMaterial, createRiverWaterMaterial, createCurbMaterial, createBridgeConcreteMaterial, createLakeShoreMaterial,
+  createLakeWaterMaterial
+} from '../render/tsl-materials.ts';
 import type { ChannelMesh } from './waterways.ts';
 
 // js/world/river-channels.ts
 // Draws the river channels of waterways.ts (the Río Mololoa, its old bed, the arroyos): their stone banks & silty bed,
 // the water in them and the bridges' decks seen from below, laid on the town's slopes (drape.ts), and opens the road
 // deck over them and over the open underpasses (cutDeckHoles), so the channels and the cuts are seen sunk into the
-// ground instead of under the asphalt.
+// ground instead of under the asphalt. The lakes' basins (lakes.ts) likewise: their earth banks & bed and the water
+// standing in them.
 
 /** The channels drawn: their group, and the water's mesh (null without channels), which rises with a flood. */
 export interface RiverChannels {
@@ -50,6 +54,32 @@ function buildRiverChannels(scene: THREE.Object3D): RiverChannels {
     const slab = createCurbMaterial();
     slab.side = THREE.DoubleSide;
     add(bridges, slab, true);
+  }
+  if (lakes?.basins.length) {
+    const { shore, water, bed } = lakes.meshData();
+    const shoreMat = createLakeShoreMaterial();
+    const banks = new THREE.Mesh(draped(shore), shoreMat);
+    banks.name = 'LakeShores';
+    banks.receiveShadow = true;
+    group.add(banks);
+    // (the bed flat under the water, as the water: not laid on the floor)
+    const bedGeo = new THREE.BufferGeometry();
+    bedGeo.setAttribute('position', new THREE.BufferAttribute(bed.position, 3));
+    bedGeo.setAttribute('uv', new THREE.BufferAttribute(bed.uv, 2));
+    bedGeo.setAttribute('wet', new THREE.BufferAttribute(bed.wet, 1));
+    bedGeo.computeVertexNormals();
+    bedGeo.computeBoundingSphere();
+    group.add(new THREE.Mesh(bedGeo, shoreMat));
+    // (the water flat at its level: not laid on the floor, whose slopes would bend it)
+    const flat = new THREE.BufferGeometry();
+    flat.setAttribute('position', new THREE.BufferAttribute(water.position, 3));
+    flat.setAttribute('uv', new THREE.BufferAttribute(water.uv, 2));
+    flat.computeVertexNormals();
+    flat.computeBoundingSphere();
+    const surface = new THREE.Mesh(flat, createLakeWaterMaterial());
+    surface.name = 'Lakes';
+    surface.receiveShadow = true;
+    group.add(surface);
   }
   scene.add(group);
   return { group, water: waterMesh };

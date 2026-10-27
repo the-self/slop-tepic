@@ -4,6 +4,7 @@
 // Re-exported by player/controllers.ts, which every other module imports them from
 import type * as THREE from 'three/webgpu';
 import type { PersonCrowd, PersonRig } from '../../sim/pedestrians.ts';
+import type { PersonBody } from '../../actors/person-body.ts';
 import type { CarModel } from '../../models/cars/index.ts';
 import type { DriveInput, DriveSpec, DriveState } from '../drivetrain.ts';
 import type { CarDamage } from '../vehicle-damage.ts';
@@ -71,6 +72,7 @@ export interface PersonEntity extends EntityBase {
   shadow: THREE.Mesh;
   crowd: PersonCrowd;
   rig: PersonRig;
+  body: PersonBody | null; // the player's own (actors/person-body.ts), once loaded: drawn instead of the crowd's
   verticalVel: number; // m/s
   strafe?: number; // m/s to its right, aiming (player/aim.ts)
   ragdoll?: RagdollHandle | null; // down as a body (sim/ragdolls.ts)

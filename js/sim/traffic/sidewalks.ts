@@ -16,6 +16,15 @@ function sidewalkTrack(ts: TrafficState, e: TrafficEdge | undefined): boolean {
   return true;
 }
 
+// A footway's track near the focus (within r m), for someone to start out along (pedestrian-routes.ts footNear)
+function footwayTrack(ts: TrafficState, r: number): boolean {
+  const near = ts.pedRoutes.footNear(ts.focusX, ts.focusZ, r);
+  if (!near.length) return false;
+  const route = near[Math.floor(Math.random() * near.length)];
+  Object.assign(ts.track, route, { route });
+  return true;
+}
+
 function crosswalkTrack(ts: TrafficState, n: TrafficNode): boolean {
   const choices = ts.pedRoutes.across(n);
   if (!choices.length) return false;
@@ -54,4 +63,4 @@ function mayCross(ts: TrafficState, p: Ped): boolean {
   return true;
 }
 
-export { KERB, sidewalkTrack, crosswalkTrack, QUEUE_GAP, curbProgress, atCurb, gatherCurbs, mayCross };
+export { KERB, sidewalkTrack, footwayTrack, crosswalkTrack, QUEUE_GAP, curbProgress, atCurb, gatherCurbs, mayCross };

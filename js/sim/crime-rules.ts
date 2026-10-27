@@ -4,6 +4,7 @@
 // imports it directly (tests/crime-rules.test.mjs). crime.ts plays them out.
 
 import type { WeaponId } from './weapons.ts';
+import { wrapAngle } from './weapons.ts';
 
 // Heat at which each star is reached (index = stars)
 const STAR_HEAT: readonly number[] = [0, 10, 60, 150, 320, 560];
@@ -57,6 +58,19 @@ const POLICE: PoliceByStars = {
 
 // Seconds out of the police's sight it takes to lose a star
 const evadeTime = (stars: number): number => 10 + stars * 5;
+
+// The police's eyes, flat: SIGHT numbers each (crime/types.ts SightCones: x, z, reach, heading, half angle, near).
+// Whether (x, z) is in the eyes at `i` in `cones`: within `near` m all round (someone right beside them), or within
+// their reach and no further than their half angle off where they look. (Walls are the caller's: crime.ts update.)
+const SIGHT = 6;
+function inSight(cones: readonly number[], i: number, x: number, z: number): boolean {
+  const dx = x - cones[i], dz = z - cones[i + 1];
+  const d = Math.hypot(dx, dz);
+  if (d < cones[i + 5]) return true;
+  if (d >= cones[i + 2]) return false;
+  const half = cones[i + 4];
+  return half >= Math.PI || Math.abs(wrapAngle(Math.atan2(dx, dz) - cones[i + 3])) <= half;
+}
 
 const starsFor = (heat: number): number => {
   let stars = 0;
@@ -150,4 +164,4 @@ function gangTurf(x: number, z: number): number {
 }
 
 export type { CrimeKind, StreetGun, PoliceByStars, Gang };
-export { STAR_HEAT, CRIME_HEAT, POLICE, GANGS, NARCO, NARCO_RADIUS, TURF_CELL, Wanted, starsFor, evadeTime, gangTurf };
+export { STAR_HEAT, CRIME_HEAT, POLICE, GANGS, NARCO, NARCO_RADIUS, TURF_CELL, Wanted, SIGHT, starsFor, evadeTime, inSight, gangTurf };

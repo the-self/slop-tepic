@@ -3,17 +3,19 @@
 // - GEO.terrain, the hills around the valley over its flat floor (zero under the town);
 // - GEO.ground, the town's own slopes (its blurred elevation over the datum, the town's lowest point), which ?slopes=0
 //   leaves out (the flat city, as it was built before).
-// The rivers & arroyos (GEO.waterways, waterways.ts) are cut into it: their channels carve the ground everyone stands
-// on, but not the floor the city's layers are laid on (the road deck opens over them instead, river-channels.ts). The
+// The rivers & arroyos (GEO.waterways, waterways.ts) and the lakes (GEO.lakes, lakes.ts) are cut into it: their
+// channels & basins carve the ground everyone stands on, but not the floor the city's layers are laid on (the road deck
+// opens over them instead, river-channels.ts). The
 // underpasses (the road links sunk under others, underpasses.ts) are cut into it alike, the deck opened over them
 // where they run open to the sky (bridges.ts draws their walls).
 // Everything the city builds at y = 0 is raised by the ground under it (liftAt), its flat layers laid on it (drape.ts).
 // No three.js here, so node --test imports it directly.
 import { GEO } from './city-geodata.js';
 import { createWaterways } from './waterways.ts';
+import { createLakes } from './lakes.ts';
 import { createUnderpasses } from './underpasses.ts';
 import { decodeHeights, gridSampler, clipToLattice } from './lattice.ts';
-import type { Footbridge, Ground, HeightGrid, Road, RoadGraph, Waterway } from './city-geodata.js';
+import type { Footbridge, Ground, HeightGrid, Lake, Road, RoadGraph, Waterway } from './city-geodata.js';
 import type { HeightFn, Lattice } from './lattice.ts';
 
 /** What createGround reads of the city data (GEO, or a test's grids). */
@@ -21,6 +23,7 @@ export interface GroundSource {
   terrain?: HeightGrid | null;
   ground?: Ground | null;
   waterways?: Waterway[] | null;
+  lakes?: Lake[] | null;
   roads?: Road[] | null;
   roadGraph?: RoadGraph | null;
   footbridges?: Footbridge[] | null;
@@ -81,13 +84,19 @@ function createGround(geo: GroundSource, { slopes = false }: { slopes?: boolean 
       foot: (geo.footbridges ?? []).filter(([, lifts]) => Math.max(...lifts) < 10).map(([pts, , width]) => ({ w: width / 10, pts }))
     })
     : null;
+  // the lakes' basins, sunk into it where the hills leave their shores bare (the others laid on the hillside)
+  const lakes = geo.lakes?.length ? createLakes(geo.lakes, { floor: townHeight, hills: terrainHeight }) : null;
+  const basins = lakes?.basins.length ? lakes : null;
+  /** Height (m) of the land at (x, z) and the channels & basins cut into it (see gradeHeight) */
+  const cutHeight: GroundHeightFn = waterways
+    ? (x: number, z: number, fromY?: number) => landHeight(x, z) + waterways.offset(x, z, fromY) : landHeight;
   /**
    * Height (m) of the ground at grade at (x, z): the land and the channels cut into it (under a bridge for a body
-   * coming from `fromY` down in the channel, else on it), the underpasses left out: what the road links' lifts are
-   * reckoned from (the traffic's ground)
+   * coming from `fromY` down in the channel, else on it) and the lakes' basins, the underpasses left out: what the
+   * road links' lifts are reckoned from (the traffic's ground)
    */
-  const gradeHeight: GroundHeightFn = waterways
-    ? (x: number, z: number, fromY?: number) => landHeight(x, z) + waterways.offset(x, z, fromY) : landHeight;
+  const gradeHeight: GroundHeightFn = basins
+    ? (x: number, z: number, fromY?: number) => cutHeight(x, z, fromY) + basins.offset(x, z) : cutHeight;
   // the underpasses, sunk into the ground at grade and roofed by the streets over them
   const cuts = createUnderpasses(geo.roadGraph, { grade: (x, z) => gradeHeight(x, z) });
   const underpasses = cuts.cuts.length ? cuts : null;
@@ -118,6 +127,7 @@ function createGround(geo: GroundSource, { slopes = false }: { slopes?: boolean 
     townHeight,
     landHeight,
     waterways,
+    lakes,
     underpasses,
     gradeHeight,
     groundHeight,
@@ -128,9 +138,12 @@ function createGround(geo: GroundSource, { slopes = false }: { slopes?: boolean 
 // The town on its slopes, unless ?slopes=0 asks for the flat city
 const SLOPES = typeof location === 'undefined' || new URLSearchParams(location.search).get('slopes') !== '0';
 const ground = createGround(GEO, { slopes: SLOPES });
-const { townGrid, hillHeights, terrainHeight, hillGround, townHeight, landHeight, waterways, underpasses, gradeHeight, groundHeight, groundSlope } = ground;
-/** The holes the river channels and the open underpasses make in the road deck (flat triangles x0, z0, x1, z1, x2, z2) */
-const deckHoles = (): number[] => [...(waterways?.holes() ?? []), ...(underpasses?.holes() ?? [])];
+const { townGrid, hillHeights, terrainHeight, hillGround, townHeight, landHeight, waterways, lakes, underpasses, gradeHeight, groundHeight, groundSlope } = ground;
+/**
+ * The holes the river channels, the lakes and the open underpasses make in the road deck (flat triangles x0, z0, x1,
+ * z1, x2, z2)
+ */
+const deckHoles = (): number[] => [...(waterways?.holes() ?? []), ...(lakes?.holes() ?? []), ...(underpasses?.holes() ?? [])];
 // The lattice of both grids' triangles: the town's, whose cells halve the hills' 75 m ones on their own lines (see the
 // geodata builder), so its triangles lie each in one of theirs
 const LATTICE: Lattice | null = GEO.ground ? { x0: GEO.ground.x0, z0: GEO.ground.z0, cell: GEO.ground.cell }
@@ -264,6 +277,6 @@ const surfaceHeight = (x: number, z: number, y?: number): number => {
 
 export {
   SINK, SLOPES, LATTICE, createGround, clipToLattice, liftAt, townGrid,
-  hillHeights, terrainHeight, hillGround, townHeight, landHeight, waterways, underpasses, deckHoles, gradeHeight, groundHeight, groundSlope,
+  hillHeights, terrainHeight, hillGround, townHeight, landHeight, waterways, lakes, underpasses, deckHoles, gradeHeight, groundHeight, groundSlope,
   createDecks, createFootDecks, decks, footDecks, deckLift, walkDeckLift, surfaceHeight
 };

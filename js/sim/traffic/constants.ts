@@ -51,6 +51,7 @@ const BIKE_DRIVER: DriverModel = { a: 1.0, b: 2.6, T: 1.0, s0: 1.5, aLat: 2.5 };
 const MOTO_DRIVER: DriverModel = { a: 2.8, b: 3.6, T: 1.0, s0: 1.8, aLat: 4.0 };
 
 const LOOKAHEAD = 70; // metres a driver looks ahead for vehicles, stop lines and signals
+const STOP_CELL = 100; // m, the cells of the lookup of the bus stops (pickups.ts)
 
 // Retire distant actors even when looking their way: keeping them indefinitely starves upcoming streets.
 // Replacements may enter the far view, but nearby visible roads and sidewalks are protected from pop-in.
@@ -88,6 +89,6 @@ export {
   NUM_CARS, NUM_BUSES, NUM_PEDS, NUM_BIKES, NUM_MOTOS, KNOCK_SPEED, MASS, MASS_OF_BODY, massOf, DOWN_TIME, SURVIVE, LETHAL, GET_UP,
   DEAD_TIME, BODY_TIME,
   CRASH_RANGE, CRASH_SPEED, MAX_CRASHED, CRASH_LOOKAHEAD, CRASH_STILL, CRASH_BRAKE, MISHAP_FIRST, MISHAP_EVERY, CAR_DRIVER, BUS_DRIVER,
-  BIKE_DRIVER, MOTO_DRIVER, LOOKAHEAD, VEHICLE_RADIUS, PED_RADIUS, NEAR_RADIUS, VEHICLE_SPAWN_DISTANCE,
+  BIKE_DRIVER, MOTO_DRIVER, LOOKAHEAD, STOP_CELL, VEHICLE_RADIUS, PED_RADIUS, NEAR_RADIUS, VEHICLE_SPAWN_DISTANCE,
   ROUTE_HEADWAY, PED_SPAWN_DISTANCE, LIVERIES, liveryOf, clamp, VEHICLE_KINDS, onRoad, onEdge, ridden
 };
