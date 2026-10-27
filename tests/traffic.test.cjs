@@ -98,7 +98,7 @@ function intersectionHarness() {
   const ts = { connector: () => ({ len: 20 }) };
   const junctions = trafficModule('junctions', {
     './constants.ts': constants,
-    './signals.ts': { phaseOf: () => state.phase },
+    './signals.ts': { phaseOf: () => state.phase, runsRed: (v) => v.isPolice || v.sirenNear === true },
     './idm.ts': { canStopBefore: () => true, stopAt: () => -3, timeTo: () => 1 },
     './occupancy.ts': { boxBusy: () => state.occupied, ahead: () => null, laneCoord: () => 0 },
     './right-of-way.ts': {
@@ -115,6 +115,19 @@ function intersectionHarness() {
     signalAhead: (v, f, d) => junctions.signalAhead(ts, v, f, d)
   };
 }
+
+test('a car pulled over for a siren behind edges through a red, giving way to the cross traffic as police do', () => {
+  const { car, state, mayEnter, signalAhead } = intersectionHarness();
+  state.phase = 'red';
+  car.sirenNear = true;
+  assert.equal(signalAhead(car, car.edge, 18), 0);
+  assert.equal(mayEnter(car, 18), true);
+  state.conflict = true;
+  assert.equal(mayEnter(car, 18), false);
+  car.sirenNear = false;
+  state.conflict = false;
+  assert.equal(mayEnter(car, 18), false);
+});
 
 test('police pass red and amber signals while ordinary cars stop', () => {
   const { car, state, mayEnter, signalAhead } = intersectionHarness();
@@ -177,7 +190,7 @@ test('left turns account for oncoming police even when their signal is red', () 
   const car = { edge, move: { turn: 'S', out: [0] }, lane: 0, speed: 10, half: 2.25, isPolice: false };
   edge.occ.push([{ v: car, s: 85 }]);
   const rightOfWay = trafficModule('right-of-way', {
-    './signals.ts': { phaseOf: () => 'red' },
+    './signals.ts': { phaseOf: () => 'red', runsRed: (v) => v.isPolice || v.sirenNear === true },
     './occupancy.ts': { leadOf: (list) => list.at(-1) }
   });
   const yieldOncoming = (o, impatient) => rightOfWay.yieldOncoming({}, o, impatient);
@@ -509,7 +522,7 @@ function roadHarness({ pickups, lanes = [1.8], lane = 0, half = 4.55 } = {}) {
   const curb = pickups ? trafficModule('pickups', { './constants.ts': constants, './idm.ts': idm, './population.ts': population }) : null;
   const driving = trafficModule('driving', {
     './constants.ts': constants,
-    './signals.ts': { phaseOf: () => 'green' },
+    './signals.ts': { phaseOf: () => 'green', runsRed: (v) => v.isPolice || v.sirenNear === true },
     './occupancy.ts': { ahead: () => null, cross() {}, straddle: () => 0 },
     './idm.ts': idm,
     './routing.ts': { nearestLane: (m, l) => l },

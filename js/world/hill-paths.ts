@@ -35,6 +35,7 @@ const PATH_STEP = 2.5; // m between a path's cross-sections
 const ON_HILL = 0.3; // m: a run whose ends' hill rises no higher than this is in town
 const ACROSS = 6; // land samples across a cross-section, edge to edge (the grid's triangles are planes: a few find its top)
 const CELL = 16; // m: the runs' index
+const COARSE = 64; // m: the cells of the index's map of where any run is (most of the ground asked of lies in none)
 const LEAN = 0.12; // rise over run across a street (~7°) past which, where `alsoAt` says, its path is levelled
 
 /**
@@ -89,6 +90,7 @@ function createHillPaths(paths: readonly HillPath[], land: HeightFn, hill: Heigh
    */
   interface Run { ax: number; az: number; bx: number; bz: number; la: number; lb: number; half: number; onA: boolean; onB: boolean }
   const cells = new Map<number, Run[]>();
+  const used: number[] = []; // the cells' (ix, iz), flat
   for (const p of levelled) {
     for (let k = 0; k < p.on.length; k++) {
       if (!p.on[k]) continue;
@@ -100,15 +102,35 @@ function createHillPaths(paths: readonly HillPath[], land: HeightFn, hill: Heigh
         for (let iz = Math.floor((Math.min(a.z, b.z) - p.half) / CELL); iz <= Math.floor((Math.max(a.z, b.z) + p.half) / CELL); iz++) {
           const key = ix * 100003 + iz;
           let list = cells.get(key);
-          if (!list) cells.set(key, (list = []));
+          if (!list) {
+            cells.set(key, (list = []));
+            used.push(ix, iz);
+          }
           list.push(run);
         }
       }
     }
   }
 
+  // Which COARSE m cells any run reaches into, over the box they all lie in: a byte read turns away the ground asked of
+  // where none runs (the town, nearly all of it, every frame: groundHeight is on the traffic's & the people's hot path)
+  // before the index's hash is looked up
+  const per = COARSE / CELL;
+  let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+  for (let i = 0; i < used.length; i += 2) {
+    x0 = Math.min(x0, Math.floor(used[i] / per));
+    x1 = Math.max(x1, Math.floor(used[i] / per));
+    z0 = Math.min(z0, Math.floor(used[i + 1] / per));
+    z1 = Math.max(z1, Math.floor(used[i + 1] / per));
+  }
+  const cols = used.length ? x1 - x0 + 1 : 0, rows = used.length ? z1 - z0 + 1 : 0;
+  const any = new Uint8Array(cols * rows);
+  for (let i = 0; i < used.length; i += 2) any[(Math.floor(used[i + 1] / per) - z0) * cols + Math.floor(used[i] / per) - x0] = 1;
+
   /** The height (m) to stand at on (x, z), whose land is `g` (m): the highest path's level over it, else g */
   const level = (x: number, z: number, g: number): number => {
+    const cx = Math.floor(x / COARSE) - x0, cz = Math.floor(z / COARSE) - z0;
+    if (cx < 0 || cz < 0 || cx >= cols || cz >= rows || !any[cz * cols + cx]) return g;
     const list = cells.get(Math.floor(x / CELL) * 100003 + Math.floor(z / CELL));
     if (!list) return g;
     let best = g;
