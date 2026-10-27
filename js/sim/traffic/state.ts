@@ -18,7 +18,7 @@ import type { Ragdolls } from '../ragdolls.ts';
 import type { CarPhysics } from '../../player/car-physics.ts';
 import { MASS, MISHAP_FIRST, NUM_CARS, NUM_PEDS } from './constants.ts';
 import type {
-  Car, Bus, Bike, Moto, Vehicle, VehicleKind, Ped, PedTrack, Spark, TwoWheelKit, TrafficNode, TrafficEdge, TrafficNetwork,
+  Car, Bus, Bike, Moto, Vehicle, VehicleKind, Ped, PedTrack, Spark, TwoWheelKit, TrafficNode, TrafficEdge, TrafficNetwork, StreetCrossing,
   LaneEntry, TrafficPlayer, ParkedVehicle, SirenSource, CrashedCar, TrafficCollision, MayhemListener, KnockListener, SmokeEmitter,
   SolidQuery, HillQuery, SurfaceQuery, TrafficRayHit, BodyBox, RoadSpot
 } from './types.ts';
@@ -30,6 +30,7 @@ import { createTwoWheelKits } from './two-wheelers.ts';
 import { createPeds, pedGround } from './peds.ts';
 import { createLightPools } from './render.ts';
 import { kindOf } from './population.ts';
+import { placeStreetCrossings } from './crossings.ts';
 
 /** Where spawnPed places someone: a track's fields, copied onto them */
 interface TrackPick {
@@ -39,6 +40,7 @@ interface TrackPick {
   uz: number;
   len: number;
   node: TrafficNode | null;
+  cross: StreetCrossing | null;
   side: number;
   line: number;
   route: PedTrack | null;
@@ -85,7 +87,9 @@ interface TrafficState extends VehicleMeshes {
   curvePoint: TrafficNetwork['curvePoint'];
   transit: Transit;
   /** the sidewalk and crosswalk tracks (pedestrian-routes.ts) */
-  pedRoutes: PedestrianRoutes<TrafficNode, TrafficEdge, CityBlock>;
+  pedRoutes: PedestrianRoutes<TrafficNode, TrafficEdge, CityBlock, StreetCrossing>;
+  /** the street crossings along the roads (crossings.ts) */
+  streetCrossings: StreetCrossing[];
 
   // ---- who there is (fleet.ts, peds.ts) and how they are drawn ----
   cars: Car[];
@@ -186,6 +190,8 @@ interface TrafficState extends VehicleMeshes {
   /** the intersections with someone at the curbs of their crosswalks, and with someone on them */
   curbNodes: TrafficNode[];
   walkedNodes: TrafficNode[];
+  /** the street crossings with someone out on them this frame */
+  walkedCrossings: StreetCrossing[];
   /** who is where, for people to meet and talk (walking.ts meet), and when to look next */
   meetingCells: Map<string, Ped[]>;
   nextMeeting: number;
@@ -274,7 +280,11 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     e.to.road[e.inSide] = e.from.road[e.outSide] = e;
     e.through = 0; // vehicles from e crossing e.to straight on or to the right
     e.lefts = 0; // and to the left
+    e.crossings = []; // the street crossings along it (crossings.ts)
   }
+  // The street crossings along the roads, OpenStreetMap's (crossings.ts): the sidewalks split at them, people cross
+  // there and the traffic stops for them
+  const streetCrossings = placeStreetCrossings(GEO.crossings, edges);
 
   // =========================================================================
   // 1-2. THE VEHICLES (fleet.ts: cars, camiones, cyclists and motorcyclists, drawn from the models in that order) AND
@@ -314,13 +324,19 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
   scene.add(group);
 
   // (and over the footbridges, from the intersections near their feet)
-  const pedRoutes = createPedestrianRoutes<TrafficNode, TrafficEdge, CityBlock>(network, blockAt, {
+  const pedRoutes = createPedestrianRoutes<TrafficNode, TrafficEdge, CityBlock, StreetCrossing>(network, blockAt, {
     nodes: network.nodes,
+    streetCrossings,
     bridges: GEO.footbridges.map(([flat, lifts]) => ({
       pts: Array.from({ length: flat.length / 2 }, (_, i) => ({ x: flat[i * 2], z: flat[i * 2 + 1] })),
       lifts: lifts.map((v) => v / 10)
     }))
   });
+  {
+    // (a crossing whose curbs aren't both on a sidewalk, a median's or a car park's edge, has no way over)
+    const over = streetCrossings.filter((c) => pedRoutes.crossingTrack(c)).length;
+    console.info(`[roads] ${streetCrossings.length} of ${GEO.crossings.length / 3} mapped street crossings on the roads (${streetCrossings.filter((c) => c.signal).length} with lights), ${over} with a sidewalk at both curbs`);
+  }
   // How many of each kind of vehicle there are (population.ts allowance)
   const fleetSize: Record<VehicleKind, number> = { car: 0, bike: 0, moto: 0, bus: 0 };
   for (const v of vehicles) fleetSize[kindOf(v)]++;
@@ -348,6 +364,7 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     curvePoint,
     transit,
     pedRoutes,
+    streetCrossings,
     cars,
     buses,
     bikes,
@@ -411,9 +428,10 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     warnedNowhere: false,
     crashed: [],
     mishap: { next: MISHAP_FIRST, v: null, o: null },
-    track: { ax: 0, az: 0, ux: 0, uz: 1, len: 1, node: null, side: 0, line: 0, route: null },
+    track: { ax: 0, az: 0, ux: 0, uz: 1, len: 1, node: null, cross: null, side: 0, line: 0, route: null },
     curbNodes: [],
     walkedNodes: [],
+    walkedCrossings: [],
     meetingCells: new Map<string, Ped[]>(),
     nextMeeting: 0,
     dirtyPaint: new Set<THREE.InstancedMesh>(),

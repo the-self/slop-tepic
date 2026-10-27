@@ -55,3 +55,52 @@ test('a footbridge out of reach of the intersections, or none at all, adds no ro
     }
   }
 });
+
+test('a street crossing along the road splits its sidewalks, and a walker crosses there from curb to curb', () => {
+  const { A, B, ab, ba } = street();
+  // a crossing at x = 50: 20 m along either edge
+  const crossing = { edge: ab, s: 20, back: ba, bs: 20 };
+  const routes = createPedestrianRoutes(surface, blockAt, { nodes: [A, B], streetCrossings: [crossing] });
+  const pieces = routes.along(ab);
+  // each of the four lines in two pieces, meeting at the crossing
+  assert.equal(pieces.length, 8);
+  for (const p of pieces) assert.ok(Math.abs(p.len - 20) < 1e-9);
+  const first = pieces.find((t) => blockAt(t.ax, t.az) === north && t.toCross === crossing);
+  assert.ok(first, 'a piece of the north sidewalk ending at the crossing');
+  assert.equal(first.to, undefined); // (its end there is the crossing's, not the junction's)
+  let over = null;
+  for (let i = 0; i < 100 && !over; i++) {
+    const path = routes.next(first, 1, 50, 500);
+    if (path?.some((leg) => leg.track.cross === crossing)) over = path;
+  }
+  assert.ok(over, 'a route over the crossing');
+  const across = over.find((leg) => leg.track.cross === crossing).track;
+  // over the road from 2 m in on one sidewalk to 2 m in on the other, at x = 50
+  assert.ok(Math.abs(across.len - (14 + 4)) < 1e-9);
+  assert.ok(Math.abs(across.ax - 50) < 1e-9 && Math.abs(across.ux) < 1e-9);
+  // ...and from its far end on along the south sidewalk
+  const far = over.find((leg) => leg.track.cross === crossing);
+  const end = far.dir > 0 ? 1 : 0;
+  const onward = routes.next(across, far.dir, 50, 500) ?? [];
+  assert.ok(onward.some((leg) => leg.track.edge && blockAt(leg.track.ax, leg.track.az) === south), `from z ${across.az + across.uz * across.len * end}`);
+  // the junctions' ports keep only their own ends: none of the pieces ending at the crossing
+  const atA = routes.next(pieces.find((t) => t.from === A && blockAt(t.ax, t.az) === north), -1, -100, 0);
+  assert.ok(!atA?.some((leg) => leg.track.toCross === crossing && leg.dir < 0));
+});
+
+test('a street crossing on a junction\'s crosswalk is one of the junction\'s ways over, from its sidewalks', () => {
+  const { A, B, ab, ba } = street();
+  // on B's crosswalk, 1.25 m past the end of ab
+  const crossing = { edge: ab, s: 41.25, back: ba, bs: -1.25 };
+  const routes = createPedestrianRoutes(surface, blockAt, { nodes: [A, B], streetCrossings: [crossing] });
+  const track = routes.crossingTrack(crossing);
+  assert.ok(track && track.from === B && track.to === B && track.cross === crossing);
+  assert.equal(routes.along(ab).length, 4); // (no sidewalk split for it)
+  const toB = routes.along(ab).find((t) => blockAt(t.ax, t.az) === north);
+  let over = null;
+  for (let i = 0; i < 100 && !over; i++) {
+    const path = routes.next(toB, 1, 70, 500);
+    if (path?.some((leg) => leg.track === track)) over = path;
+  }
+  assert.ok(over, 'from the north sidewalk at B over to the south');
+});

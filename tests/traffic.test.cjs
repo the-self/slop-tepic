@@ -514,7 +514,8 @@ function roadHarness({ pickups, lanes = [1.8], lane = 0, half = 4.55 } = {}) {
     './routing.ts': { nearestLane: (m, l) => l },
     './right-of-way.ts': { holdsOn: () => false, mergingAhead: () => null, pedsOut: () => null },
     './junctions.ts': { enter() {}, leave() {}, mayEnter: () => true, signalAhead: () => 0 },
-    './pickups.ts': curb ?? { curbBrake: () => 0, curbside() {} }
+    './pickups.ts': curb ?? { curbBrake: () => 0, curbside() {} },
+    './crossings.ts': { crossingBrake: () => 0 }
   });
   const edge = { len: 600, lanes, half, occ: lanes.map(() => []), to: {}, sx: 0, sz: 0, dx: 0, dz: 1, rx: -1, rz: 0 };
   const v = {
@@ -719,6 +720,16 @@ test('a signal with no junction near it stops the traffic at its own street\'s b
   assert.ok(into.len < into.span - 2, 'stopping short of the crossing');
   // a signal off the street (12 m out from the bend, past the roadway's edge) stops nobody
   assert.ok(!networkOf(ring({ signals: [200, -44] })).nodes.some((n) => n.signal));
+});
+
+test('a signal along a straight street, clear of its junctions, gets a stop of its own (a crossing\'s lights)', () => {
+  // (the ring's east side runs straight from (400, 0) to (400, 400))
+  const net = networkOf(ring({ signals: [401, 150] }));
+  const stop = net.nodes.find((n) => n.signal);
+  assert.ok(stop?.midblock, 'a signalised stop');
+  assert.ok(Math.hypot(stop.x - 400, stop.z - 150) < 1);
+  // one within 26 m of a junction is the junction's: no stop along the street for it
+  assert.ok(!networkOf(ring({ signals: [400, 380] })).nodes.some((n) => n.midblock));
 });
 
 test('a street looping back to its own junction keeps its lanes, out to a station half way round and back', () => {

@@ -317,6 +317,7 @@ const Z_MAX = Math.ceil(ISLAND_BOUNDS.maxZ) + 20;
 const LANE_CLEAR = 1.2; // half width each lane keeps free of obstacles
 const CHORD_STRAY = 0.5; // m a centreline street's edge (a chord between stations) may stray from the street it follows
 const CROSSWALK = 2.5; // depth between an intersection box and its stop lines
+const SIGNAL_CLEAR = 26; // m from a street's junctions a signal along it stands for a stop of its own (8.)
 const SHORE_MARGIN = 6;
 
 function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly Footprint[]): RoadNetwork {
@@ -733,6 +734,46 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
       }
     };
     const farther = (a: number, b: number) => (Math.abs(b) > Math.abs(a) ? b : a); // (the lift farther from grade)
+    // The signals standing along a street, clear of the junctions at its ends (a pedestrian crossing's lights): s m
+    // along the link's own line where each stands within its roadway (and SIGNAL_CLEAR m of either end)
+    const signalCells = new Map<number, number[]>();
+    {
+      const sig = GEO.roadGraph.signals;
+      for (let i = 0; i + 1 < sig.length; i += 2) {
+        const key = Math.floor(sig[i] / 64) * 100003 + Math.floor(sig[i + 1] / 64);
+        let list = signalCells.get(key);
+        if (!list) signalCells.set(key, (list = []));
+        list.push(sig[i], sig[i + 1]);
+      }
+    }
+    const signalsAlong = (l: StreetLink): number[] => {
+      const out: number[] = [];
+      const seen = new Set<number>();
+      let walked = 0;
+      for (let k = 0; k + 1 < l.pts.length; k++) {
+        const a = l.pts[k], b = l.pts[k + 1];
+        const L = Math.hypot(b.x - a.x, b.z - a.z);
+        if (L > 0) {
+          for (let i = Math.floor((Math.min(a.x, b.x) - 20) / 64); i <= Math.floor((Math.max(a.x, b.x) + 20) / 64); i++) {
+            for (let j = Math.floor((Math.min(a.z, b.z) - 20) / 64); j <= Math.floor((Math.max(a.z, b.z) + 20) / 64); j++) {
+              const list = signalCells.get(i * 100003 + j) ?? [];
+              for (let m = 0; m < list.length; m += 2) {
+                const t = ((list[m] - a.x) * (b.x - a.x) + (list[m + 1] - a.z) * (b.z - a.z)) / (L * L);
+                if (t < 0 || t > 1) continue;
+                const d = Math.abs((list[m] - a.x) * (b.z - a.z) - (list[m + 1] - a.z) * (b.x - a.x)) / L;
+                const s = walked + t * L;
+                const key = Math.round(list[m] * 10) * 1e6 + Math.round(list[m + 1] * 10);
+                if (d > l.w / 2 + 1.5 || s < SIGNAL_CLEAR || s > l.len - SIGNAL_CLEAR || seen.has(key)) continue;
+                seen.add(key);
+                out.push(s);
+              }
+            }
+          }
+        }
+        walked += L;
+      }
+      return out.sort((p, q) => p - q);
+    };
     for (const l of links) {
       const A = junction(find(l.a));
       const B = junction(find(l.b));
@@ -756,12 +797,17 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
       if (!raised) {
         const reach = (off: number) => Math.max(15, 2 * off);
         const sA = offA > CHORD_STRAY ? reach(offA) : 0, sB = offB > CHORD_STRAY ? reach(offB) : 0;
+        const at: number[] = [];
         if (sA + sB + 15 < l.len) {
-          if (sA) insertAt(pts, l.pts, sA);
-          if (sB) insertAt(pts, l.pts, l.len - sB);
+          if (sA) at.push(sA);
+          if (sB) at.push(l.len - sB);
           approachA = sA > 0;
           approachB = sB > 0;
         }
+        // (and a station under each signal along it, for its stop: 8.)
+        for (const s of signalsAlong(l)) if (at.every((o) => Math.abs(o - s) > 5)) at.push(s);
+        // (in order along the line: insertAt puts each after the ones before it)
+        for (const s of at.sort((p, q) => p - q)) insertAt(pts, l.pts, s);
       }
       if (A === B) insertAt(pts, l.pts, l.len / 2); // (the loop's half-way station)
       // stations along it: the ends, the approaches' ends above, and every bend over 12° (or point where the road

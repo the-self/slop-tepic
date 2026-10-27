@@ -5,11 +5,14 @@ import { color, mix, step, fract, uv, float } from 'three/tsl';
 import { createRoadPaintMaterial } from '../render/tsl-materials.ts';
 import { PAVEMENTS } from './pavement-data.ts';
 import { drapeGeometry } from './drape.ts';
+import { placeCrossings } from './crossings.ts';
+import { GEO } from './city-geodata.js';
 
 // js/world/road-paint.ts
 // Road markings generated from the drivable road network (js/world/road-network.ts), so the paint matches where traffic
 // actually drives and stops: dashed lane lines, double yellow centre lines on two-way roads, stop bars at the stop
-// lines, continental crosswalks across every intersection approach and green bike lanes along wide one-way avenues.
+// lines, continental crosswalks across every intersection approach and at the marked crossings OpenStreetMap maps
+// along the streets (crossings.ts), and green bike lanes along wide one-way avenues.
 // And the topes: the speed bumps across a third of the two-way residential streets, a little in from the corner,
 // painted in yellow & black stripes (seen only: the traffic and the player's car roll over them). The empedrado and
 // earth streets (pavement-data.ts) get no paint: nobody paints lines on river stones.
@@ -21,6 +24,7 @@ const HEIGHT = 0.012; // above the asphalt
 const TOPE_LEN = 0.9; // along the street (m)
 const TOPE_H = 0.09;
 const TOPE_SEGS = 6;
+const ZEBRA_CLEAR = 4; // m from a stop line a mapped crossing must be for a zebra of its own (nearer, the junction's)
 
 /** A point on the ground [x, z] (m) */
 type Pt = [number, number];
@@ -200,6 +204,16 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
       at.push({ e, end, lines: lines.slice(firstLine) });
     }
   }
+
+  // The real crossings (OpenStreetMap's, crossings.ts) away from the junctions' own crosswalks: a zebra curb to curb
+  // where a marked one (or one with lights) crosses the street
+  let zebras = 0;
+  for (const c of placeCrossings(GEO.crossings, network.paintEdges)) {
+    if (c.kind === 0 || c.raw < ZEBRA_CLEAR || c.raw > c.edge.len - ZEBRA_CLEAR || unpainted(c.x, c.z)) continue;
+    across(c.edge, c.s, -c.edge.half, c.edge.half, CROSSWALK - 0.3, WHITE, 1.2, 0.5);
+    zebras++;
+  }
+  console.info(`[roads] ${zebras} zebras at the mapped crossings`);
 
   // At a simple bend, corresponding offset lines meet at a bounded miter, without an intersection-sized gap.
   for (const roadsAtBend of bends.values()) {

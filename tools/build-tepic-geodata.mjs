@@ -609,6 +609,31 @@ for (const e of poisOSM.elements) {
   if (inBox(p[0], p[1])) signals.push(q(p[0]), q(p[1]));
 }
 log(`${signals.length / 2} traffic signals`);
+// The pedestrian crossings on the drivable streets (OSM highway=crossing, a node of the street's way): [x, z, kind]
+// each, flat; kind 0 unmarked, 1 marked (crossing=zebra | marked | uncontrolled, or its crossing:markings), 2 with
+// lights (crossing=traffic_signals, crossing:signals=yes). A crossing's lights not mapped as a signal of their own
+// stop the traffic as one (js/world/road-network.ts makes them a stop along the street)
+const pedCrossings = [];
+{
+  const tally = { kinds: [0, 0, 0], off: 0, lights: 0 };
+  for (const e of poisOSM.elements) {
+    const t = e.tags;
+    if (e.type !== 'node' || !t || t.highway !== 'crossing') continue;
+    const p = nodeWorld.get(nodeKey(e));
+    if (!p || !inBox(p[0], p[1])) { tally.off++; continue; } // (on a footway, a track, a service road; or off the box)
+    const markings = t['crossing:markings'];
+    const kind = t.crossing === 'traffic_signals' || t['crossing:signals'] === 'yes' ? 2
+      : /^(zebra|marked|uncontrolled)$/.test(t.crossing || '') || (markings && markings !== 'no') ? 1 : 0;
+    tally.kinds[kind]++;
+    pedCrossings.push(q(p[0]), q(p[1]), kind);
+    if (kind === 2) {
+      let near = false;
+      for (let i = 0; i < signals.length && !near; i += 2) near = Math.hypot(signals[i] - p[0], signals[i + 1] - p[1]) < 15;
+      if (!near) { signals.push(q(p[0]), q(p[1])); tally.lights++; }
+    }
+  }
+  log(`pedestrian crossings: ${pedCrossings.length / 3} on the streets (${tally.kinds[0]} unmarked, ${tally.kinds[1]} marked, ${tally.kinds[2]} with lights, ${tally.lights} of those made signals), ${tally.off} off them`);
+}
 
 // =====================================================================================================================
 // 4. BLOCKS: the box minus every roadway (and the things that cut blocks without carrying traffic)
@@ -2570,7 +2595,9 @@ const GEO = {
   parking: parkingLots.map((p) => [p.name, p.surface, Math.round(p.th * 1000), flat(p.poly), p.entrances]),
   // Lakes, presas, ponds & reservoirs (4): [kind (lake, pond, reservoir, wetland), name, flags (1 intermittent, 2
   // beyond the box, 4 up the hills: laid on the hillside, no basin), outline (flat ring, its shore)]
-  lakes: lakes.map((l) => [l.kind, l.name, l.flags, flat(l.shore)])
+  lakes: lakes.map((l) => [l.kind, l.name, l.flags, flat(l.shore)]),
+  // Pedestrian crossings on the streets (3): x, z (m), kind (0 unmarked, 1 marked, 2 with lights), flat
+  crossings: pedCrossings
 };
 
 const json = JSON.stringify(GEO);

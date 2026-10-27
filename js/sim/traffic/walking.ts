@@ -7,6 +7,7 @@ import type { TrafficState } from './state.ts';
 import { walkOn } from './signals.ts';
 import { stepBlocked } from './bodies.ts';
 import { KERB, QUEUE_GAP, atCurb, curbProgress, mayCross } from './sidewalks.ts';
+import { mayCrossStreet } from './crossings.ts';
 
 // Continue through validated sidewalk corners. Crossing tracks retain their curb queues and right of way;
 // only a dead end needs a turnaround. Goals guide local choices without a city-wide path search.
@@ -83,14 +84,18 @@ function walk(ts: TrafficState, p: Ped, dt: number): void {
       const gap = curbProgress(q) - s;
       if (gap > 0) room = Math.min(room, Math.max(0, gap - QUEUE_GAP));
     }
+  } else if (p.cross) {
+    // at a street crossing's curb: up to it until p may step off
+    const s = curbProgress(p);
+    room = s <= KERB && !mayCrossStreet(ts, p) ? KERB - s : Infinity;
   }
   vMax = Math.min(vMax, Math.sqrt(2 * PED_BRAKE * room));
   p.v += Math.max(-2 * PED_BRAKE * dt, Math.min(PED_ACCEL * dt, vMax - p.v));
   const movement = Math.min(p.v * dt, room);
   if (p.v * dt > room) p.v = 0;
   let t = p.t + p.dir * movement;
-  const reachesCurb = !!p.node && curbProgress(p) <= KERB && (p.dir > 0 ? t : p.len - t) >= KERB - 1e-6;
-  p.waiting = reachesCurb && !mayCross(ts, p);
+  const reachesCurb = (p.node ?? p.cross) !== null && curbProgress(p) <= KERB && (p.dir > 0 ? t : p.len - t) >= KERB - 1e-6;
+  p.waiting = reachesCurb && !(p.node ? mayCross(ts, p) : mayCrossStreet(ts, p));
   if (p.waiting) {
     t = p.dir > 0 ? Math.min(t, KERB) : Math.max(t, p.len - KERB);
     p.v = 0;
@@ -104,7 +109,7 @@ function walk(ts: TrafficState, p: Ped, dt: number): void {
     p.wallT = (p.wallT || 0) - dt;
     let wall = false;
     const up = !!(p.la || p.lb); // (up a footbridge: over the walls and the cars below)
-    if (ts.wallAt && !p.node && !up && p.wallT <= 0) {
+    if (ts.wallAt && !p.node && !p.cross && !up && p.wallT <= 0) {
       p.wallT = WALL_CHECK;
       // (one who has grazed a step into the wall turns back out too; only one deep inside it, a step behind as well,
       // walks on out of it)
@@ -149,6 +154,11 @@ function walk(ts: TrafficState, p: Ped, dt: number): void {
     p.coord = p.side >= 2 ? p.x : p.z;
     if (!p.node.walkers.length) ts.walkedNodes.push(p.node);
     p.node.walkers.push(p);
+  }
+  // (out on the road over a street crossing: the traffic stops for them, crossings.ts)
+  if (p.cross && t > KERB && t < p.len - KERB) {
+    if (!p.cross.walkers.length) ts.walkedCrossings.push(p.cross);
+    p.cross.walkers.push(p);
   }
 }
 

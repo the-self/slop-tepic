@@ -290,6 +290,9 @@ export interface CityGeodata {
   overrides: BuildingOverride[];
   parking: ParkingLot[];
   lakes: Lake[];
+  /** Pedestrian crossings on the streets, 3 numbers each: x, z (m), kind (0 unmarked, 1 marked: a zebra, 2 with
+   *  lights). */
+  crossings: number[];
 }
 
 export declare const GEO: CityGeodata;

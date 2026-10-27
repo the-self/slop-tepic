@@ -42,6 +42,7 @@ function createPeds() {
       t: 0,
       dir: 1,
       node: null, // the intersection of its crosswalk, which side of it, where along it
+      cross: null, // ...or the street crossing it is on
       side: 0,
       coord: 0,
       line: 0, // its line over the crosswalk, off the centre line
@@ -94,7 +95,7 @@ function pedGround(ts: TrafficState, p: Ped, x: number, z: number): number {
     const b = blockAt(x, z);
     return (b && !(b.park > 0.6 && !b.median) ? SIDEWALK_Y : 0) + hill;
   }
-  if (!p.node) return SIDEWALK_Y + hill;
+  if (!p.node && !p.cross) return SIDEWALK_Y + hill;
   const t = (x - p.ax) * p.ux + (z - p.az) * p.uz;
   return (t > 2 && t < p.len - 2 ? CROSSWALK_Y : SIDEWALK_Y) + hill;
 }

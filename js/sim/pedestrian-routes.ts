@@ -1,7 +1,8 @@
 // js/sim/pedestrian-routes.ts
 // Small, lazily connected sidewalk tracks. Junctions only connect points on the same curb island;
 // crossing the roadway is a separate, signal-controlled track owned by traffic.ts, or a footbridge over it: a route up
-// its stairs, over its deck and down to a sidewalk on the far side (tracks with lifts).
+// its stairs, over its deck and down to a sidewalk on the far side (tracks with lifts), or a street crossing along a
+// road (OpenStreetMap's, world/crossings.ts): the sidewalks split at it, a track over the road from curb to curb.
 
 interface WalkPoint {
   x: number;
@@ -46,7 +47,7 @@ interface WalkNode<E> {
 /** A straight walking line: start (m), unit direction, length (m). Along a sidewalk it has the edge (and its ends,
  *  its block); over a crosswalk the intersection, its side and its line off the crosswalk's centre (m); a corner
  *  piece neither. */
-interface WalkTrack<N, E, B> {
+interface WalkTrack<N, E, B, C = WalkCrossing<E>> {
   ax: number;
   az: number;
   ux: number;
@@ -62,20 +63,33 @@ interface WalkTrack<N, E, B> {
   /** Its lift over the ground at its start and its end (m): 0 but up a footbridge's stairs and over its deck */
   la: number;
   lb: number;
+  /** Over a street crossing: the crossing, else null */
+  cross: C | null;
+  /** A sidewalk's piece ending at a street crossing (instead of its edge's node), at its start or end */
+  fromCross?: C;
+  toCross?: C;
 }
 /** A leg of a walk: a track, walked forwards (1) or backwards (-1) */
-interface WalkLeg<N, E, B> {
-  track: WalkTrack<N, E, B>;
+interface WalkLeg<N, E, B, C = WalkCrossing<E>> {
+  track: WalkTrack<N, E, B, C>;
   dir: number;
 }
-interface WalkPort<N, E, B> {
-  track: WalkTrack<N, E, B>;
+interface WalkPort<N, E, B, C = WalkCrossing<E>> {
+  track: WalkTrack<N, E, B, C>;
   end: number;
 }
 /** The road network's tests of open ground (road-network.ts) */
 interface WalkSurface {
   walkable: (x0: number, x1: number, z0: number, z1: number) => boolean;
   onSidewalk: (x: number, z: number) => boolean;
+}
+/** A crossing of a street along it (world/crossings.ts) as the walkers see it: the edge it crosses and m along it from
+ *  its stop line, and the edge back along the same road (if two-way) and m along that */
+interface WalkCrossing<E> {
+  edge: E;
+  s: number;
+  back: E | null;
+  bs: number;
 }
 /** A footbridge as the walkers see it (city-geodata.js footbridges): its points from one foot to the other, and the
  *  lift over the ground at each (m) */
@@ -88,20 +102,74 @@ const BRIDGE_REACH = 80; // m from a footbridge's foot to the intersections whos
 const BRIDGE_LAND = 25; // m from a footbridge's far foot to the sidewalk its walkers carry on along
 const BRIDGE_BAND = 14; // m from the curb the way to a footbridge's foot may run
 const APRON = 2; // m walked straight in line into a footbridge's stairs
+const CROSS_CURB = 2; // m of sidewalk a street crossing's track starts & ends with (as a crosswalk's: KERB is short of it)
+const CROSS_SPLIT = 3; // m from an edge's ends a sidewalk is split at a crossing (nearer, the crossing is the junction's)
+const CROSS_REACH = 8; // m from a sidewalk piece's end to the tracks it meets at a crossing
 
-function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B extends WalkBlock>(
+function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B extends WalkBlock, C extends WalkCrossing<E> = WalkCrossing<E>>(
   { walkable, onSidewalk }: WalkSurface, blockAt: (x: number, z: number) => B | null,
-  { bridges = [], nodes = [] }: { bridges?: readonly WalkBridge[]; nodes?: readonly N[] } = {}
+  { bridges = [], nodes = [], streetCrossings = [] }: { bridges?: readonly WalkBridge[]; nodes?: readonly N[]; streetCrossings?: readonly C[] } = {}
 ) {
-  type Track = WalkTrack<N, E, B>;
-  type Leg = WalkLeg<N, E, B>;
-  const sidewalks = new Map<E, Track[]>(), crossings = new Map<N, Track[]>(), junctions = new Map<N, WalkPort<N, E, B>[]>();
+  type Track = WalkTrack<N, E, B, C>;
+  type Leg = WalkLeg<N, E, B, C>;
+  type Port = WalkPort<N, E, B, C>;
+  const sidewalks = new Map<E, Track[]>(), crossings = new Map<N, Track[]>(), junctions = new Map<N, Port[]>();
   const connections = new WeakMap<Track, Leg[][][]>();
   const point = (track: Track, end: number): WalkPoint => ({ x: track.ax + track.ux * track.len * end, z: track.az + track.uz * track.len * end });
   const segment = (a: WalkPoint, b: WalkPoint, extra: Partial<Track> = {}): Track => {
     const len = Math.hypot(b.x - a.x, b.z - a.z);
     return { ax: a.x, az: a.z, ux: (b.x - a.x) / len, uz: (b.z - a.z) / len,
-      len, node: null, side: 0, line: 0, la: 0, lb: 0, ...extra };
+      len, node: null, side: 0, line: 0, la: 0, lb: 0, cross: null, ...extra };
+  };
+
+  // The street crossings: where along each edge its sidewalks split (both edges of a two-way road), and at each the
+  // tracks that meet there (the sidewalks' pieces, the crossing's own track: its curb ends)
+  const splits = new Map<E, { c: C; s: number }[]>();
+  for (const c of streetCrossings) {
+    for (const [e, at] of [[c.edge, c.s], [c.back, c.bs]] as const) {
+      if (!e || at < CROSS_SPLIT || at > e.len - CROSS_SPLIT) continue;
+      let list = splits.get(e);
+      if (!list) splits.set(e, (list = []));
+      list.push({ c, s: at });
+    }
+  }
+  for (const list of splits.values()) list.sort((p, q) => p.s - q.s);
+  // (one on a junction's crosswalk, at either end of its edge, is that junction's: its track meets the sidewalks there)
+  const atJunction = (c: C): N | null => (c.s < CROSS_SPLIT ? c.edge.from : c.s > c.edge.len - CROSS_SPLIT ? c.edge.to : null);
+  const junctionCrossings = new Map<N, C[]>();
+  for (const c of streetCrossings) {
+    const n = atJunction(c);
+    if (!n) continue;
+    let list = junctionCrossings.get(n);
+    if (!list) junctionCrossings.set(n, (list = []));
+    list.push(c);
+  }
+  // the crossing's own track, curb to curb across the road where it is taken (if both its ends are sidewalk), or null
+  const crossTracks = new Map<C, Track | null>();
+  const crossingTrack = (c: C): Track | null => {
+    let track = crossTracks.get(c);
+    if (track === undefined) {
+      const e = c.edge, off = e.half + CROSS_CURB;
+      const x = e.sx + e.dx * c.s, z = e.sz + e.dz * c.s;
+      const a = { x: x - e.rx * off, z: z - e.rz * off }, b = { x: x + e.rx * off, z: z + e.rz * off };
+      const n = atJunction(c);
+      // (on a curb island at either end: of the centreline streets, by the island's outline, as their sidewalks)
+      const curb = (p: WalkPoint) => (e.general ? blockAt(p.x, p.z) !== null : onSidewalk(p.x, p.z));
+      track = curb(a) && curb(b) && clear(a, b)
+        ? segment(a, b, n ? { cross: c, from: n, to: n } : { cross: c, fromCross: c, toCross: c }) : null;
+      crossTracks.set(c, track);
+    }
+    return track;
+  };
+  const stops = new Map<C, Port[]>();
+  const stopOf = (c: C) => {
+    let ports = stops.get(c);
+    if (!ports) {
+      stops.set(c, (ports = []));
+      const track = crossingTrack(c);
+      if (track) ports.push({ track, end: 0 }, { track, end: 1 });
+    }
+    return ports;
   };
 
   // The footbridges: their tracks foot to foot, and the intersections near each foot (node -> the bridge ends there)
@@ -182,7 +250,16 @@ function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B 
         const block = blockAt(a.x, a.z);
         if (!block || blockAt(b.x, b.z) !== block || !clear(a, b, block)) continue;
         if (!e.general && (!onSidewalk(a.x, a.z) || !onSidewalk(b.x, b.z))) continue;
-        result.push(segment(a, b, { edge: e, from: e.from, to: e.to, block }));
+        // (in pieces between the street crossings along it, each piece's end there one of the crossing's)
+        let from: { p: WalkPoint; c: C | null } = { p: a, c: null };
+        for (const cut of [...(splits.get(e) ?? []), null]) {
+          const p = cut ? { x: a.x + e.dx * cut.s, z: a.z + e.dz * cut.s } : b;
+          const piece = segment(from.p, p, { edge: e, block });
+          if (from.c) { piece.fromCross = from.c; stopOf(from.c).push({ track: piece, end: 0 }); } else piece.from = e.from;
+          if (cut) { piece.toCross = cut.c; stopOf(cut.c).push({ track: piece, end: 1 }); } else piece.to = e.to;
+          result.push(piece);
+          if (cut) from = { p, c: cut.c };
+        }
       }
     }
     return result;
@@ -210,17 +287,26 @@ function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B 
     return result;
   }
 
-  function ports(n: N): WalkPort<N, E, B>[] {
+  function ports(n: N): Port[] {
     const known = junctions.get(n);
     if (known) return known;
-    const result: WalkPort<N, E, B>[] = [], seen = new Set<E>();
+    const result: Port[] = [], seen = new Set<E>();
     junctions.set(n, result);
     for (const e of [...n.in, ...n.out]) {
       if (seen.has(e)) continue;
       seen.add(e);
-      for (const track of along(e)) result.push({ track, end: e.from === n ? 0 : 1 });
+      for (const track of along(e)) {
+        // (a sidewalk's piece whose end here is a street crossing's, not this junction's, isn't one of its ports)
+        const end = e.from === n ? 0 : 1;
+        if ((end ? track.to : track.from) === n) result.push({ track, end });
+      }
     }
     for (const track of across(n)) result.push({ track, end: 0 }, { track, end: 1 });
+    // (and the street crossings on its own crosswalks)
+    for (const c of junctionCrossings.get(n) ?? []) {
+      const track = crossingTrack(c);
+      if (track) result.push({ track, end: 0 }, { track, end: 1 });
+    }
     return result;
   }
 
@@ -248,6 +334,25 @@ function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B 
     const end = dir > 0 ? 1 : 0;
     if (ends[end]) return ends[end];
     const result: Leg[][] = ends[end] = [];
+    const c = end ? track.toCross : track.fromCross;
+    if (c) {
+      // at a street crossing: on along the sidewalk, onto the other line of it, or over the road
+      const a = point(track, end), block = blockAt(a.x, a.z);
+      if (!block) return result;
+      along(c.edge);
+      if (c.back) along(c.back);
+      for (const port of stopOf(c)) {
+        const next = port.track, nextDir = port.end ? -1 : 1;
+        if (next === track) continue;
+        const b = point(next, port.end);
+        if (Math.hypot(b.x - a.x, b.z - a.z) > CROSS_REACH || blockAt(b.x, b.z) !== block) continue;
+        const path: Leg[] = [];
+        if (Math.hypot(b.x - a.x, b.z - a.z) > 0.01) path.push({ track: segment(a, b), dir: 1 });
+        path.push({ track: next, dir: nextDir });
+        result.push(path);
+      }
+      return result;
+    }
     const n = end ? track.to : track.from;
     if (!n) return result;
     const a = point(track, end), block = blockAt(a.x, a.z);
@@ -331,10 +436,11 @@ function createPedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B 
     return best;
   }
 
-  return { along, across, next };
+  return { along, across, next, crossingTrack };
 }
 
-type PedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B extends WalkBlock> = ReturnType<typeof createPedestrianRoutes<N, E, B>>;
+type PedestrianRoutes<N extends WalkNode<E>, E extends WalkEdge<N>, B extends WalkBlock, C extends WalkCrossing<E> = WalkCrossing<E>> =
+  ReturnType<typeof createPedestrianRoutes<N, E, B, C>>;
 
-export type { WalkPoint, WalkBlock, WalkRoad, WalkEdge, WalkNode, WalkTrack, WalkLeg, WalkSurface, WalkBridge, PedestrianRoutes };
+export type { WalkPoint, WalkBlock, WalkRoad, WalkEdge, WalkNode, WalkTrack, WalkLeg, WalkSurface, WalkBridge, WalkCrossing, PedestrianRoutes };
 export { createPedestrianRoutes };
