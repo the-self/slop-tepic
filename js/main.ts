@@ -283,6 +283,8 @@ async function initApp(): Promise<void> {
   });
   audioSystem.sources.pursuers = [...crimeSystem.cruisers, crimeSystem.heli]; // (the patrol cars & trucks, the helicopter)
   crimeSystem.ragdolls = ragdolls;
+  // (the patrol cars and the trucks near the player are cars in Jolt: crime/cruiser-bodies.ts)
+  crimeSystem.physics = physics;
   // Thrown out through the windscreen (controllers.ts ejectDriver), or off the moto (ejectRider; stepping off it as it
   // falls over, offMoto, impact 0): on foot now, bleeding; out of the car hurt by how hard it hit (off the moto, the
   // crash itself already hurt, crashDamage)

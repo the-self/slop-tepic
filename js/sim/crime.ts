@@ -4,6 +4,7 @@ import type { RagdollHandle, Ragdolls, Point3 } from './ragdolls.ts';
 import type { Weapon, WeaponId, GroundBox } from './weapons.ts';
 import type { CrimeKind, StreetGun } from './crime-rules.ts';
 import type { PlayerMode } from '../player/controllers.ts';
+import type { CarPhysics } from '../player/car-physics.ts';
 import type { Ped, Car } from './traffic.ts';
 import { WEAPONS, Arsenal } from './weapons.ts';
 import { Wanted, GANGS, SIGHT, inSight } from './crime-rules.ts';
@@ -87,6 +88,7 @@ class CrimeSystem {
   // (a burning wreck where a blast went off: fires.ts, from main.ts)
   onExplosion?: (x: number, y: number, z: number, radius: number) => void;
   ragdolls: Ragdolls | null;
+  physics: CarPhysics | null;
   playerFall: RagdollHandle | null = null; // the player's body, killed on foot
 
   wanted: Wanted;
@@ -224,6 +226,7 @@ class CrimeSystem {
       controllers.bloodyCar?.(x, z, speed); // (on the player's car, if it was the car)
     });
     this.ragdolls = null; // (sim/ragdolls.ts, from main.ts: who falls, falls as a body)
+    this.physics = null; // (player/car-physics.ts, from main.ts: the patrol cars near the player are cars in it)
   }
 
   // =========================================================================
@@ -551,7 +554,7 @@ class CrimeSystem {
   }
 
   removeCruiser(cr: Cruiser): void {
-    removeCruiser(cr);
+    removeCruiser(this, cr);
   }
 
   damageCruiser(cr: Cruiser, damage: number, byPlayer: boolean): void {

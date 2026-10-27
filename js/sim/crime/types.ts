@@ -11,6 +11,7 @@ import type { AimControl } from '../../player/aim.ts';
 import type { CollisionImpact } from '../../audio/audio-sources.ts';
 import type { PlayerMode, PersonEntity } from '../../player/controllers.ts';
 import type { TrafficSystem, Ped, Vehicle } from '../traffic.ts';
+import type { CruiserBody } from './cruiser-bodies.ts';
 
 // What the player is going through: playing, or on the WASTED (killed) / BUSTED (arrested) screen
 type CrimeState = 'play' | 'wasted' | 'busted';
@@ -67,6 +68,7 @@ interface CrimePlayer {
   rollVel?: number;
   heaveVel?: number;
   angularVel?: number;
+  vehicle?: unknown; // its body in Jolt (player/car-physics.ts), a vehicle's
 }
 // What crime uses of player/controllers.ts's ThirdPersonControllerManager
 interface CrimeControllers {
@@ -190,6 +192,8 @@ interface Cruiser extends XZ {
   /** its siren wailing (the audio's; unset: as its faction has it): a fire truck or ambulance going back has it off */
   siren?: boolean;
   position: THREE.Vector3;
+  /** its car in Jolt near the player (crime/cruiser-bodies.ts); null: it drives on the map */
+  body?: CruiserBody | null;
 }
 // A rocket in flight: where (m), its heading (dx, dz) and climb (dh along, dy up per m), t s since it was fired
 interface RocketFlight {

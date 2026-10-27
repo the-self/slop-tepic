@@ -67,7 +67,7 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     panic: (x: number, z: number, radius: number): void => { panic(ts, x, z, radius); },
     knockBox: (x: number, z: number, heading: number, hw: number, hl: number, vx: number, vz: number): number =>
       knockBox(ts, x, z, heading, hw, hl, vx, vz),
-    bumpBody: (b: BumpBody, ram?: boolean): void => { bumpBody(ts, b, ram); },
+    bumpBody: (b: BumpBody, ram?: boolean, inJolt?: boolean): void => { bumpBody(ts, b, ram, inJolt); },
     roadSpot: (x: number, z: number, rMin: number, rMax: number): RoadSpot | null => roadSpot(ts, x, z, rMin, rMax),
     sidewalkSpot: (x: number, z: number, rMin: number, rMax: number): RoadSpot | null => sidewalkSpot(ts, x, z, rMin, rMax),
     setSolidQuery: (fn: SolidQuery | null): void => { setSolidQuery(ts, fn); },
