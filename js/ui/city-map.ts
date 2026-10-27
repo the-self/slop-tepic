@@ -463,38 +463,70 @@ interface PoliceSight {
 const SIREN = ['#ff3b3b', '#3b82ff'] as const;
 const sirenPhase = () => (performance.now() % 700 < 350 ? 0 : 1);
 
-// Where the police can see the player while it is wanted, GTA-style: a cone like a torch's beam out of each of them,
-// turning with them, and a little circle round them (right beside them); the helicopter's all round (it looks down).
-// The overlapping ones are filled as one. Out of all of them, the stars start to go (crime-rules.ts Wanted).
+// A beam's tint, strongest at the officer and fading to nothing at its reach: a radial gradient of radius 1 round the
+// origin, scaled onto each beam (a red and a blue one per canvas, made once)
+const beamTints = new WeakMap<CanvasRenderingContext2D, readonly [CanvasGradient, CanvasGradient]>();
+function beamTint(ctx: CanvasRenderingContext2D, blue: number): CanvasGradient {
+  let tints = beamTints.get(ctx);
+  if (!tints) {
+    const tint = (rgb: string) => {
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+      g.addColorStop(0, `rgba(${rgb}, 0.6)`);
+      g.addColorStop(0.55, `rgba(${rgb}, 0.42)`);
+      g.addColorStop(0.85, `rgba(${rgb}, 0.18)`);
+      g.addColorStop(1, `rgba(${rgb}, 0)`);
+      return g;
+    };
+    tints = [tint('239, 68, 68'), tint('59, 130, 246')];
+    beamTints.set(ctx, tints);
+  }
+  return tints[blue];
+}
+
+// A beam's sides, softened: it is laid as these sectors one over the other, each a fraction of its half angle wide and
+// BEAM_ALPHA strong, so it is brightest along the middle and fades out across its edges like a torch's
+const BEAM_LAYERS = [0.45, 0.7, 0.9, 1.1] as const;
+const BEAM_ALPHA = 0.4;
+
+// One beam of `r` px at (x, y) on the screen, `half` rad either side of the screen angle `look` (π: all round), in `tint`
+function drawBeam(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, look: number, half: number, tint: CanvasGradient): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(r, r);
+  ctx.fillStyle = tint;
+  if (half >= Math.PI) {
+    ctx.beginPath();
+    ctx.arc(0, 0, 1, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.globalAlpha = BEAM_ALPHA;
+    for (const k of BEAM_LAYERS) {
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, 1, look - half * k, look + half * k);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+// Where the police can see the player while it is wanted, GTA-style: a beam like a torch's out of each of them, turning
+// with them and fading out at its reach, and a faint glow round them (right beside them); the helicopter's all round (it
+// looks down). Out of all of them, the stars start to go (crime-rules.ts Wanted).
 function drawPoliceSight(ctx: CanvasRenderingContext2D, v: MapView, police: PoliceSight | null | undefined): void {
   if (!police || police.wanted.stars === 0 || police.sight.length === 0) return;
   const c = police.sight;
-  ctx.beginPath();
+  const tint = beamTint(ctx, sirenPhase());
   for (let i = 0; i < c.length; i += SIGHT) {
     const x = v.toX(c[i], c[i + 1]), y = v.toY(c[i], c[i + 1]);
-    const r = c[i + 2] * v.s, half = c[i + 4], near = c[i + 5] * v.s;
-    if (half >= Math.PI) {
-      ctx.moveTo(x + r, y);
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      continue;
-    }
+    const half = c[i + 4], near = c[i + 5] * v.s;
     // where it looks, turned onto the screen (a point ahead of it through the map's own turn)
     const ax = c[i] + Math.sin(c[i + 3]), az = c[i + 1] + Math.cos(c[i + 3]);
     const look = Math.atan2(v.toY(ax, az) - y, v.toX(ax, az) - x);
-    ctx.moveTo(x, y);
-    ctx.arc(x, y, r, look - half, look + half);
-    ctx.closePath();
-    if (near > 0) {
-      ctx.moveTo(x + near, y);
-      ctx.arc(x, y, near, 0, Math.PI * 2);
-    }
+    drawBeam(ctx, x, y, c[i + 2] * v.s, look, half, tint);
+    if (near > 0 && half < Math.PI) drawBeam(ctx, x, y, near, 0, Math.PI, tint);
   }
-  const blue = sirenPhase();
-  ctx.fillStyle = blue ? 'rgba(59, 130, 246, 0.32)' : 'rgba(239, 68, 68, 0.32)';
-  ctx.strokeStyle = blue ? 'rgba(96, 165, 250, 0.85)' : 'rgba(248, 113, 113, 0.85)';
-  ctx.lineWidth = 1.2;
-  ctx.fill();
-  ctx.stroke();
 }
 
 // The police, gangs, thieves, pickups, fires & gas stations (crime.ts blips: kind, x, z, ...), on either map, clamped to
