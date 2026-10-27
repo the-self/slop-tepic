@@ -1,4 +1,4 @@
-import { cityUniforms, townFloorNode } from './materials/shared.ts';
+import { cityUniforms, townFloorNode, blackoutSpans, uBlackouts, BLACKOUT_MAX, BLACKOUT_REACH } from './materials/shared.ts';
 import { WALL_KINDS, atlasSlotUV } from './materials/facade-cell.ts';
 import { createMexicanHouseMaterial } from './materials/mexican-house.ts';
 import { createCurtainWallMaterial } from './materials/curtain-wall.ts';
@@ -58,6 +58,10 @@ export type { FacadeBoxSpec } from './materials/facade-boxes.ts';
 export {
   cityUniforms,
   townFloorNode,
+  blackoutSpans,
+  uBlackouts,
+  BLACKOUT_MAX,
+  BLACKOUT_REACH,
   WALL_KINDS,
   atlasSlotUV,
   createMexicanHouseMaterial,

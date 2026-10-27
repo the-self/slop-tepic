@@ -1,11 +1,11 @@
 // js/audio/audio-events.ts
-// One-shot sounds (footsteps, speech, horns, crashes, gunfire, blasts, thunder, the WALK signals' ticks), each baked
-// once into a few variants, and the wind's and the rain's continuous beds.
+// One-shot sounds (footsteps, speech, horns, crashes, gunfire, blasts, thunder, a fallen line's arcs, the WALK signals'
+// ticks), each baked once into a few variants, and the wind's and the rain's continuous beds.
 import { setControlRate } from './audio-synthesis.ts';
 import type { SynthResources } from './audio-synthesis.ts';
 
 /** Every one-shot playEvent() plays */
-export type EventKind = 'footstep' | 'talk' | 'horn' | 'signal' | 'crash' | 'gun' | 'explosion' | 'pickup' | 'draw' | 'thunder';
+export type EventKind = 'footstep' | 'talk' | 'horn' | 'signal' | 'crash' | 'gun' | 'explosion' | 'pickup' | 'draw' | 'thunder' | 'arc';
 
 /** A gun's shots, a few variants each; any other weapon fires the pistol's */
 export interface GunBuffers {
@@ -25,6 +25,7 @@ export interface EventResources extends SynthResources {
   guns: GunBuffers;
   explosions: AudioBuffer[];
   thunder: AudioBuffer[];
+  arcs: AudioBuffer[];
   chime: AudioBuffer;
   rack: AudioBuffer;
   /** The wind's gust envelope, a slow control signal (8 kHz) */
@@ -412,6 +413,25 @@ function thunder(ctx: BaseAudioContext, seed: number) {
   }, 0.9);
 }
 
+// A fallen line arcing on the street (world/cfe-sparks.ts): a burst of sharp crackles (sparse snaps of bright noise) over
+// the 60 Hz hum's harsh buzz, cut off as the arc breaks
+function arc(ctx: BaseAudioContext, seed: number) {
+  const random = randomSource(seed);
+  const length = 0.22 + random() * 0.18;
+  const coefficient = 1 - Math.exp(-TAU * 2400 / ctx.sampleRate);
+  let low = 0;
+  let snap = 0;
+  return makeBuffer(ctx, length + 0.05, (t) => {
+    const noise = random() * 2 - 1;
+    low += (noise - low) * coefficient;
+    if (random() < 0.004) snap = 1; // (a crackle)
+    snap *= 0.993;
+    const on = t < length ? 1 - Math.exp(-t * 400) : Math.exp(-(t - length) * 120);
+    const buzz = Math.sign(Math.sin(TAU * 120 * t)) * 0.18 + Math.sin(TAU * 60 * t) * 0.12;
+    return ((noise - low) * (0.25 + snap * 1.6) + buzz * (0.6 + random() * 0.4)) * on;
+  }, 0.7);
+}
+
 // A pickup's chime: two quick rising notes
 function chime(ctx: BaseAudioContext) {
   return makeBuffer(ctx, 0.32, (t) => {
@@ -492,6 +512,7 @@ export function createEventResources(ctx: BaseAudioContext, resources: SynthReso
     },
     explosions: Array.from({ length: 2 }, (_, i) => explosion(ctx, i + 701)),
     thunder: Array.from({ length: 2 }, (_, i) => thunder(ctx, i + 801)),
+    arcs: Array.from({ length: 3 }, (_, i) => arc(ctx, i + 851)),
     chime: chime(ctx),
     rack: rack(ctx),
     gusts: gustBuffer(ctx),
@@ -504,7 +525,7 @@ export function playEvent(ctx: BaseAudioContext, resources: EventResources, kind
   const random = randomSource(options.seed);
   const start = Math.max(ctx.currentTime, finite(options.when, ctx.currentTime));
   const intensity = clamp(finite(options.intensity, 1));
-  const levels: Record<EventKind, number> = { footstep: 0.22, talk: 0.065, horn: 0.23, signal: 0.13, crash: 0.35, gun: 0.5, explosion: 0.7, pickup: 0.18, draw: 0.16, thunder: 0.6 };
+  const levels: Record<EventKind, number> = { footstep: 0.22, talk: 0.065, horn: 0.23, signal: 0.13, crash: 0.35, gun: 0.5, explosion: 0.7, pickup: 0.18, draw: 0.16, thunder: 0.6, arc: 0.3 };
   if (!Object.hasOwn(levels, kind) || intensity === 0) return { endTime: start, dispose() { /* nothing is playing */ } };
   const gain = ctx.createGain();
   gain.gain.value = intensity * levels[kind];
@@ -595,6 +616,8 @@ export function playEvent(ctx: BaseAudioContext, resources: EventResources, kind
   } else if (kind === 'thunder') {
     // the farther the strike, the lower and duller its rumble
     play(resources.thunder[Math.floor(random() * resources.thunder.length)], start, 0.75 + intensity * 0.3 + random() * 0.08);
+  } else if (kind === 'arc') {
+    play(resources.arcs[Math.floor(random() * resources.arcs.length)], start, 0.9 + random() * 0.2, 0.5 + intensity * 0.5);
   } else if (kind === 'pickup') {
     play(resources.chime, start);
   } else if (kind === 'draw') {

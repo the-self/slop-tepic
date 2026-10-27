@@ -26,7 +26,7 @@ import {
   pow,
   fwidth
 } from 'three/tsl';
-import { cityUniforms, hash2D, noise2D, bumpNormal, filteredPulse, canyonSkyAONode } from './shared.ts';
+import { cityUniforms, hash2D, noise2D, bumpNormal, filteredPulse, canyonSkyAONode, blackoutLit } from './shared.ts';
 import { facadeCell } from './facade-cell.ts';
 import { evaluateApartmentInterior } from './apartment-interior.ts';
 
@@ -240,6 +240,7 @@ export function createCurtainWallMaterial(opts: CurtainWallOptions = {}): THREE.
       .mul(transmission)
       .mul(paneMask)
       .mul(cityUniforms.uInteriorGlow)
+      .mul(blackoutLit(positionWorld.xz)) // (dark where the street's power is out)
       .mul(0.72);
   })();
 
