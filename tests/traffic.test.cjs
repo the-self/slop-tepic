@@ -327,6 +327,53 @@ test('a cyclist turns off an avenue where it can, and onto one only where the st
   assert.equal(routing.chooseMove({}, { ...bike, edge: tee }, true).to, avenue);
 });
 
+test('a bus whose route turns where the network has no turn goes round the block back onto it', () => {
+  // the route east along z = 0 to x = 200, then left (north, -z) up x = 200; the junction at (200, 0) has no left turn
+  const transit = loadModule(readFileSync(join(__dirname, '../js/sim/transit.ts'), 'utf8')).createTransit(
+    { groups: [''], routes: [['Vuelta', 0, '#000', 'bus', 0, [[1, 2]]]] },
+    { nodes: [0, 0, 200, 0, 200, -200], links: [[0, 1, 0, 8, 2, 0, []], [1, 2, 0, 8, 2, 0, []]], names: [''] });
+  const routing = trafficModule('routing', {
+    '../traffic-demand.ts': { AVENUE: 2, ROUTE_PULL: [1, 2.5, 6], roadClass: () => 1 }
+  });
+  let offPathCalls = 0; // (detourTo's search asks it of every road it reaches)
+  const offPath = transit.offPath;
+  transit.offPath = (...args) => { offPathCalls++; return offPath(...args); };
+  const edges = [];
+  const road = (sx, sz, ex, ez) => {
+    const len = Math.hypot(ex - sx, ez - sz);
+    const e = { id: edges.length, axis: 'st', sx, sz, dx: (ex - sx) / len, dz: (ez - sz) / len, len, lanes: [0], moves: [] };
+    const on = transit.pathsAlong(sx, sz, ex, ez);
+    e.transit = on.length ? on : null;
+    edges.push(e);
+    return e;
+  };
+  const move = (from, turn, to) => from.moves.push({ turn, to, out: [0] });
+  const A = road(0, 0, 190, 0), B = road(210, 0, 290, 0), C = road(200, 10, 200, 90), D = road(200, -10, 200, -90);
+  const E = road(300, -10, 300, -90), F = road(290, -100, 210, -100), G = road(200, -110, 200, -190);
+  move(A, 'S', B); move(A, 'R', C); // (no left onto D)
+  move(B, 'L', E); move(E, 'L', F); move(F, 'R', G); move(F, 'S', road(190, -100, 110, -100)); move(D, 'S', G);
+  assert.ok(A.transit && D.transit && G.transit && !B.transit && !E.transit && !F.transit, 'A, D and G are on the route');
+  const bus = { bus: true, edge: A, lane: 0, s: 100, path: transit.paths[0], pathS: 190, nextPathS: 190, lost: 0, detour: [], detourAt: 0, detourS: 0, move: null };
+  const driven = [];
+  for (let k = 0; k < 4; k++) {
+    bus.move = routing.chooseMove({ transit }, bus, false);
+    // choosing again from its lane before it leaves (junctions.ts mayEnter): the detour's same next road, not a search
+    // for another way back (from its cursor before the detour)
+    if (k === 0 || k === 3) {
+      const searched = offPathCalls;
+      assert.equal(routing.chooseMove({ transit }, bus, true), bus.move, `the same move again at ${k}`);
+      assert.equal(offPathCalls, searched, `no new search at ${k}`);
+    }
+    driven.push(bus.move.to);
+    bus.edge = bus.move.to;
+    bus.pathS = bus.nextPathS; // (junctions.ts leave)
+  }
+  assert.deepEqual(driven.map((e) => e.id), [B, E, F, G].map((e) => e.id), 'straight on, left, left, right: round the block');
+  assert.ok(Math.abs(bus.pathS - 390) < 1e-6, 'and on along the route from where G ends on it');
+  assert.equal(bus.lost, 0);
+  assert.equal(bus.detourAt, bus.detour.length, 'the detour done');
+});
+
 test('combis and buses spawn on the roads of routes their fleet serves, joining the route there', () => {
   const { ts: context, spawnVehicle } = populationContext();
   const shared = { fleet: '', routeIndex: 3, name: 'Insurgentes' };
@@ -338,7 +385,7 @@ test('combis and buses spawn on the roads of routes their fleet serves, joining 
   context.transit.paths.push(shared, busOnly);
 
   context.nearTransitEdges.push(onRoute);
-  const combi = { half: 2.45, fleet: 'combi', path: null };
+  const combi = { half: 2.45, fleet: 'combi', path: null, detour: [] };
   assert.equal(spawnVehicle(combi, 0, 350, false), true);
   assert.equal(combi.edge, onRoute);
   assert.equal(combi.path, shared);
@@ -347,7 +394,7 @@ test('combis and buses spawn on the roads of routes their fleet serves, joining 
   // ...and never within a headway of the last unit of its route: no convoys of one route
   Object.assign(combi, { x: 0, z: onRoute.sz + combi.s }); // (where it was placed: the stub doesn't locate it)
   context.vehicles.push(combi);
-  const next = { half: 2.45, fleet: 'combi', path: null };
+  const next = { half: 2.45, fleet: 'combi', path: null, detour: [] };
   assert.equal(spawnVehicle(next, 0, 350, false), false, 'the route already has a combi here');
   combi.x += 400;
   assert.equal(spawnVehicle(next, 0, 350, false), true);
@@ -356,7 +403,7 @@ test('combis and buses spawn on the roads of routes their fleet serves, joining 
 
   context.nearTransitEdges.length = 0;
   context.nearTransitEdges.push(busRoad);
-  const other = { half: 2.45, fleet: 'combi', path: null };
+  const other = { half: 2.45, fleet: 'combi', path: null, detour: [] };
   assert.equal(spawnVehicle(other, 0, 350, false), false, 'a camión route takes no combis');
 
   const car = { half: 2.25, fleet: null };
@@ -511,6 +558,61 @@ test('a junction standing off a link\'s end gets an approach, and the rest of th
   assert.ok(Math.abs(along[0].z0 + 5) < 1e-6 && Math.abs(along[0].x0) < 1e-6);
   assert.ok(Math.abs(along[1].z0) < 1e-6 && Math.abs(along[1].dz) < 1e-9, 'on the road, straight east');
   assert.ok(along[1].x0 >= 15 - 1e-6);
+});
+
+test('a short link off a bend that stands in the way at its junction is kept where it is the only way on', () => {
+  // the way out of the Hermana Agua glorieta onto Av. México Sur (the road graph's links within 180 m of (185, 1030)):
+  // the exit runs south-east from the glorieta, bends at (185, 1030), and its last few metres into Av. México stand in
+  // the way of the traffic crossing there. Dropped, the exit had no way on, and every road leading only to it was pruned
+  // (no bus could take its route out of the glorieta).
+  const nodes = [196.7, 1016.9, 255.4, 1016.1, 348.7, 1017.9, 272.1, 886, 247.7, 886.5, 193.5, 886.2, 183, 892.3, 93.4, 892.8, 253.2, 1118.2, 251.4, 902.9, 196.8, 1118.4, 100.5, 903.6, 104.7, 1018.6, 114.4, 1105.6, 194.5, 903.6, 244.5, 903.3, 99.2, 887.6, 258.6, 891.5, 187.6, 897.1, 205.2, 897.4, 93.3, 896.7, 258.6, 897.1, 143.8, 1106.9, 169.8, 1060.6, 192.7, 1059, 141.6, 1130.8, 147.1, 1117.9, 112, 1109.3, 116.3, 1131.4, 123.1, 1135.2, 128.1, 1135.9, 132.2, 1135.6];
+  const links = [
+    [0, 1, 0, 7.4, 1, 1, [], 0, 0],
+    [1, 2, 0, 7.4, 1, 1, [260, 1016.7], 0, 0],
+    [3, 4, 0, 10, 2, 1, [], 0, 0],
+    [4, 5, 0, 10, 2, 1, [231.4, 885.2], 0, 0],
+    [6, 7, 0, 3.2, 1, 1, [99.6, 892.7], [-60, -60, -60], 2],
+    [8, 1, 0, 7.4, 1, 1, [], 0, 0],
+    [1, 9, 0, 7.4, 1, 1, [], 0, 0],
+    [8, 10, 0, 7.4, 1, 1, [], 0, 0],
+    [11, 12, 0, 7.4, 1, 1, [], 0, 0],
+    [12, 13, 0, 7.4, 1, 1, [110.5, 1093.8, 111.2, 1098.2], 0, 0],
+    [11, 14, 0, 10, 2, 1, [], 0, 0],
+    [14, 15, 0, 10, 2, 1, [], 0, 0],
+    [15, 9, 0, 10, 2, 1, [], 0, 0],
+    [16, 11, 0, 7.4, 1, 1, [99.6, 892.7, 100, 896.8], 0, 0],
+    [0, 12, 0, 7.4, 1, 1, [], 0, 0],
+    [14, 5, 0, 14, 4, 0, [194.1, 897.2, 193.8, 892.2], 0, 0],
+    [5, 16, 0, 10, 2, 1, [], 0, 0],
+    [0, 14, 0, 14, 4, 0, [198.5, 997.6, 198.5, 976.6], 0, 0],
+    [17, 6, 0, 3.2, 1, 1, [238.4, 891.7, 193.8, 892.2], [-60, -60, -60, -60], 2],
+    [18, 19, 0, 3.4, 1, 1, [194.1, 897.2], [-60, -60, -60], 2],
+    [20, 18, 0, 3.8, 1, 1, [100, 896.8], [-60, -60, -60], 2],
+    [19, 21, 0, 3.2, 1, 1, [238.2, 897.2], [-60, -60, -60], 2],
+    [4, 15, 0, 7, 1, 1, [241.1, 888.4, 239.7, 889.5, 238.4, 891.7, 238, 892.5, 238.3, 897.6, 239.6, 900, 241.3, 901.9], 0, 0],
+    [22, 23, 0, 7, 2, 0, [149.6, 1101.3, 155.9, 1092.5], 0, 0],
+    [23, 0, 0, 7, 2, 0, [176.6, 1044.8, 185.2, 1029.8], 0, 0],
+    [23, 24, 0, 7, 1, 1, [174.9, 1054.2, 179, 1050.9, 182.2, 1049.7, 184.8, 1049.8, 187.2, 1050.8, 189.5, 1052.9], 0, 0],
+    [10, 24, 0, 14, 4, 0, [], 0, 0],
+    [24, 0, 0, 14, 4, 0, [], 0, 0],
+    [25, 26, 0, 10, 2, 1, [145.2, 1126.1, 147.1, 1120.4], 0, 0],
+    [26, 22, 0, 10, 2, 1, [147.1, 1114.4, 145.2, 1108.8], 0, 0],
+    [22, 13, 0, 10, 2, 1, [141.3, 1103.7, 135.9, 1100.2, 129.6, 1098.8, 123.2, 1099.5, 117.4, 1102.4], 0, 0],
+    [13, 27, 0, 10, 2, 1, [], 0, 0],
+    [27, 28, 0, 10, 2, 1, [110.3, 1113, 109.9, 1119.4, 111.4, 1125.1, 114.7, 1130.1], 0, 0],
+    [28, 29, 0, 10, 2, 1, [119.3, 1133.8], 0, 0],
+    [29, 30, 0, 10, 2, 1, [], 0, 0],
+    [30, 31, 0, 10, 2, 1, [], 0, 0],
+    [31, 25, 0, 10, 2, 1, [136.7, 1134.3], 0, 0],
+    [10, 26, 0, 7.4, 1, 1, [], 0, 0]
+  ];
+  const net = networkOf({ nodes, links });
+  const exit = net.edges.find((e) => Math.hypot(e.sx + e.dx * e.len - 185, e.sz + e.dz * e.len - 1031) < 2);
+  assert.ok(exit, 'the exit up to the bend is kept');
+  assert.equal(exit.moves.length, 1);
+  const link = exit.moves[0].to;
+  assert.ok(Math.hypot(link.sx - 185, link.sz - 1029) < 2, 'on round the bend, onto the short link');
+  assert.ok(link.moves.length > 0, 'and from it onto Av. México');
 });
 
 // A driver on a long straight road (lane 1.8 m right of the centreline, curb 4.55 m), driven by the real IDM, lane

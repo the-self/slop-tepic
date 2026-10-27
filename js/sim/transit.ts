@@ -183,6 +183,28 @@ function createTransit(transit: TransitData | null | undefined, roadGraph: RoadG
     return found;
   }
 
+  // How far (x, z) lies from path p, any way along it: m, or CELL if farther (the hash's cells round it only)
+  function offPath(p: TransitPath, x: number, z: number): number {
+    let best = CELL;
+    const ix0 = Math.floor(x / CELL), iz0 = Math.floor(z / CELL);
+    for (let ix = ix0 - 1; ix <= ix0 + 1; ix++) {
+      for (let iz = iz0 - 1; iz <= iz0 + 1; iz++) {
+        const list = grid.get(ix * 100003 + iz);
+        if (!list) continue;
+        for (let k = 0; k < list.length; k += 2) {
+          if (paths[list[k]] !== p) continue;
+          const i = list[k + 1];
+          const ax = p.pts[2 * i], az = p.pts[2 * i + 1];
+          const ex = p.pts[2 * i + 2] - ax, ez = p.pts[2 * i + 3] - az;
+          const L2 = ex * ex + ez * ez;
+          const t = L2 > 1e-9 ? Math.max(0, Math.min(1, ((x - ax) * ex + (z - az) * ez) / L2)) : 0;
+          best = Math.min(best, Math.hypot(ax + ex * t - x, az + ez * t - z));
+        }
+      }
+    }
+    return best;
+  }
+
   // Of the moves out of a road, the one that carries on along path p from cursor s (the end of the road the vehicle is
   // on): each move's road is probed along its length; the one closest to the path ahead, running its way, wins.
   // Returns its index and where its road ends on the path, or index -1 when none runs on along it (the vehicle has
@@ -213,7 +235,7 @@ function createTransit(transit: TransitData | null | undefined, roadGraph: RoadG
     return pick;
   }
 
-  return { paths, routeNames, pathsAlong, pickMove, project, segmentAt };
+  return { paths, routeNames, pathsAlong, pickMove, project, segmentAt, offPath };
 }
 
 type Transit = ReturnType<typeof createTransit>;
