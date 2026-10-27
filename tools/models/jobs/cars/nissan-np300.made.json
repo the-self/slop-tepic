@@ -1,9 +1,0 @@
-{
-  "note": "A model made by hand, downloaded from Sketchfab (GLB, with the user's login) and prepared with tools/models/prepare-made.mjs <the downloaded file> assets/models/cars/nissan-np300.glb --length 5.25 --roles tools/models/jobs/cars/nissan-np300.roles.json --faces 60000 --error 0.01",
-  "license": "CC BY 4.0",
-  "source": "https://sketchfab.com/3d-models/nissan-navara-2021-calibre-e-2a877fdf866b4dbb8b0aa4dd9ef2319d",
-  "title": "Nissan Navara 2021 Calibre E",
-  "author": "Asadawut.Kaewma",
-  "file": "nissan_navara_2021_calibre_e.glb",
-  "args": "--length 5.25 --roles tools/models/jobs/cars/nissan-np300.roles.json --faces 60000 --error 0.01"
-}

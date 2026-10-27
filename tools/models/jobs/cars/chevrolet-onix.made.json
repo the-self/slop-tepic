@@ -1,9 +1,0 @@
-{
-  "note": "A model made by hand, downloaded from Sketchfab (GLB, with the user's login) and prepared with tools/models/prepare-made.mjs <the downloaded file> assets/models/cars/chevrolet-onix.glb --length 4.47 --roles tools/models/jobs/cars/chevrolet-onix.roles.json --faces 100000 --plates 0.43,0.51 --lenses",
-  "license": "CC BY 4.0",
-  "source": "https://sketchfab.com/3d-models/chevrolet-onix-bfd798c2695847b28ab681d42abc7056",
-  "title": "chevrolet onix",
-  "author": "uzb_rx7 (@uzbek_supra)",
-  "file": "chevrolet_onix.glb",
-  "args": "--length 4.47 --roles tools/models/jobs/cars/chevrolet-onix.roles.json --faces 100000 --plates 0.43,0.51 --lenses"
-}

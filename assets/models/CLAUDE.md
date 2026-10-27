@@ -120,13 +120,13 @@ Use `--keep-width` for props that stand alone.
 
 ## Cars and people
 
-- **The heavy files are unhooked for now** (2026-10-27): the Onix (111k triangles, 13 MB), the NP300 (115k, 12 MB),
-  the Virtus (86k, 9 MB) and the Versa (60k, 8 MB) cost the game too much, in traffic and to download. Their files
-  stay here and in their jobs, but their models have no `glb` field: the traffic draws them with their body shapes.
-  The light files (the Meshy cars at ~8k, the Tsuru at ~7k, the Cybertruck at ~10k) stay on. Put one back by its
-  `glb` field once it is lighter (a lower `--faces`, or remade).
-- **Cars are in.** The ten best sellers (Versa, Aveo, March, NP300, Vento, Gol, Kicks, Onix, Yaris, Rio) are
-  Meshy models in `assets/models/cars/`. Nine were drawn white from one prompt each (`tools/models/jobs/cars/`, 18
+- **Only the Cybertruck is a file** (2026-10-27): `cars/tesla-cybertruck.glb`, modelled by script in Blender
+  (`tools/models/blender/`). Every other car is drawn with its procedural body shape (`js/actors/actor-models.ts`,
+  `models/bodies.ts`). The ten Meshy cars and the four from Sketchfab below were taken out, files and jobs: they
+  looked worse than the body shapes, and the heavy ones cost the game too much (the Onix 111k triangles, 13 MB). What
+  was learnt making them stays here; their files and jobs are in git's history (before 2026-10-27).
+- **Cars from Meshy (removed).** The ten best sellers (Versa, Aveo, March, NP300, Vento, Gol, Kicks, Onix, Yaris, Rio)
+  were Meshy models in `assets/models/cars/`. Nine were drawn white from one prompt each (`tools/models/jobs/cars/`, 18
   credits, Meshy T2.5 smart topology, ~8k triangles). The Versa is the pilot of the better way: four views drawn in a
   key colour, magenta, and one multi-image-to-3d with Meshy 7.1 at its best (Ultra geometry, 4K texture, PBR: 71
   credits, its job says how; the standard 2K one was visibly lumpier, and its rims plainer). Each was prepared with
@@ -177,13 +177,14 @@ Use `--keep-width` for props that stand alone.
     their arches and that the paint takes (a page that draws one prepared car in six colours, with its wheels where
     its extras say, is quick to write: GLTFLoader plus an `onBeforeCompile` doing the material's mix).
 - **Cars made by hand beat the AI ones.** A free model from Sketchfab, made by a person, comes in parts with a
-  material each (body, glass, tyres, rims, chrome, lamps) and clean lines. Four are in: the private Tsuru
+  material each (body, glass, tyres, rims, chrome, lamps) and clean lines. Four were in: the private Tsuru
   (`nissan-tsuru-particular`), the Onix, the NP300 (a Navara 2021) and the Virtus (`volkswagen-virtus`, the Vento's
   successor). `tools/models/prepare-made.mjs` makes such a model the same kind of file as the Meshy ones: each part's
   material a cell of a small palette texture (its colour, roughness, metal and paint mask; a textured part its
   texture's mean colour), the paint exactly the body's faces, the glass opaque and dark, the normals smoothed under
   40°, the front +x wheel apart. Each car's command, source and author are in `tools/models/jobs/cars/<id>.made.json`,
-  and its parts' roles in `<id>.roles.json`.
+  and its parts' roles in `<id>.roles.json` (now only the Cybertruck's, which goes through the same tool; the four
+  Sketchfab cars were removed with the Meshy ones).
   - **Writing a car's roles**: run it with `--report` first, each part's box in metres. The interior goes (`drop`):
     the glass is opaque. Lamp lenses over their reflectors go too. A second shell under the paint (the Onix's) is a
     `backing`, pushed 4 mm in, or it fights the paint.

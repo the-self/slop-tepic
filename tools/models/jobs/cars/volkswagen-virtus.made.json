@@ -1,9 +1,0 @@
-{
-  "note": "A model made by hand, downloaded from Sketchfab (GLB, with the user's login) and prepared with tools/models/prepare-made.mjs <the downloaded file> assets/models/cars/volkswagen-virtus.glb --length 4.56 --roles tools/models/jobs/cars/volkswagen-virtus.roles.json --faces 180000 --flip --cabin --plates 0.40,0.56 --lenses",
-  "license": "CC BY 4.0",
-  "source": "https://sketchfab.com/3d-models/2022-volkswagen-virtus-gt-3955e5c050f843398b49b2b21ab2f232",
-  "title": "2022 Volkswagen Virtus GT",
-  "author": "BHP3D",
-  "file": "2022_volkswagen_virtus_gt.glb",
-  "args": "--length 4.56 --roles tools/models/jobs/cars/volkswagen-virtus.roles.json --faces 180000 --flip --cabin --plates 0.40,0.56 --lenses"
-}

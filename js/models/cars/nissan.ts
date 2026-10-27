@@ -11,7 +11,7 @@ export const CARS: CarModel[] = [
   },
   {
     // ...and the Tsurus that aren't taxis, still all over Tepic: drawn from a model made by hand (CC BY, README.md)
-    id: 'nissan-tsuru-particular', glb: 'assets/models/cars/nissan-tsuru.glb', name: 'Nisán Tsurito', body: 'sedan', class: 'economy',
+    id: 'nissan-tsuru-particular', name: 'Nisán Tsurito', body: 'sedan', class: 'economy',
     size: [4.32, 1.69, 1.38], mass: 1100, drive: 'fwd', power: [78, 5200], torque: [136, 4000], redline: 6500,
     gears: 5, top: 170, accel: 11.5, rarity: 16, paints: [0xf2f2ee, 0xf2f2ee, 0xc8cdd2, 0x8c1c1f, 0x1f3a6b, 0x2a2d31, 0x6f7377]
   },
@@ -21,7 +21,7 @@ export const CARS: CarModel[] = [
     gears: 5, top: 180, accel: 11.0, rarity: 30
   },
   {
-    id: 'nissan-march', glb: 'assets/models/cars/nissan-march.glb', name: 'Nisán Marcha', body: 'hatch', class: 'economy',
+    id: 'nissan-march', name: 'Nisán Marcha', body: 'hatch', class: 'economy',
     size: [3.83, 1.67, 1.51], mass: 1050, drive: 'fwd', power: [79, 6000], torque: [146, 4400], redline: 6500,
     gears: 5, top: 175, accel: 11.5, rarity: 18
   },
@@ -31,7 +31,7 @@ export const CARS: CarModel[] = [
     gears: 6, top: 200, accel: 9.4, rarity: 10
   },
   {
-    id: 'nissan-kicks', glb: 'assets/models/cars/nissan-kicks.glb', name: 'Nisán Patadas', body: 'suv', class: 'economy',
+    id: 'nissan-kicks', name: 'Nisán Patadas', body: 'suv', class: 'economy',
     size: [4.30, 1.76, 1.59], mass: 1200, drive: 'fwd', power: [88, 6300], torque: [149, 4000], redline: 6500,
     gears: 6, top: 175, accel: 11.0, rarity: 12
   },

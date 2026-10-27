@@ -5,7 +5,7 @@ import type { CarModel } from './index.ts';
 
 export const CARS: CarModel[] = [
   {
-    id: 'toyota-yaris', glb: 'assets/models/cars/toyota-yaris.glb', name: 'Totoya Yaris', body: 'sedan', class: 'economy',
+    id: 'toyota-yaris', name: 'Totoya Yaris', body: 'sedan', class: 'economy',
     size: [4.42, 1.73, 1.47], mass: 1070, drive: 'fwd', power: [79, 6000], torque: [140, 4200], redline: 6500,
     gears: 6, top: 180, accel: 11.0, rarity: 12
   },

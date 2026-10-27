@@ -5,7 +5,7 @@ import type { CarModel } from './index.ts';
 
 export const CARS: CarModel[] = [
   {
-    id: 'chevrolet-aveo', glb: 'assets/models/cars/chevrolet-aveo.glb', name: 'Chebo Aveo', body: 'sedan', class: 'economy',
+    id: 'chevrolet-aveo', name: 'Chebo Aveo', body: 'sedan', class: 'economy',
     size: [4.40, 1.73, 1.47], mass: 1120, drive: 'fwd', power: [72, 6000], torque: [136, 4000], redline: 6500,
     gears: 5, top: 175, accel: 11.6, rarity: 22
   },

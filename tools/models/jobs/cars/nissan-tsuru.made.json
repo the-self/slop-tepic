@@ -1,9 +1,0 @@
-{
-  "note": "A model made by hand, downloaded from Sketchfab (GLB, with the user's login) and prepared with tools/models/prepare-made.mjs <the downloaded file> assets/models/cars/nissan-tsuru.glb --length 4.32 --plates 0.42,0.55",
-  "license": "CC BY 4.0",
-  "source": "https://sketchfab.com/3d-models/nissan-tsuru-59d6b88fbdc24041a2652b12eab7ceb6",
-  "title": "Nissan Tsuru",
-  "author": "Meet The Colors the User TAD (@kotris666)",
-  "file": "nissan_tsuru.glb",
-  "args": "--length 4.32 --plates 0.42,0.55"
-}
