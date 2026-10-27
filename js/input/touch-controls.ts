@@ -1,6 +1,8 @@
 // js/input/touch-controls.ts
 // Touch input stays separate from the keyboard, so releasing a finger never releases a held key.
 import type { PlayerMode, ThirdPersonControllerManager } from '../player/controllers.ts';
+import { setLabel, setText } from '../i18n/i18n.ts';
+import type { MessageKey } from '../i18n/i18n.ts';
 
 /** What the touch controls drive of the controllers (player/controllers.ts) */
 export type TouchTarget = Pick<ThirdPersonControllerManager, 'activeMode' | 'setTouchInput' | 'clearTouchInput'>;
@@ -10,6 +12,15 @@ interface HeldButton {
   button: HTMLElement;
   action: TouchAction;
 }
+
+// What each button says in each mode (in the car the up button is its handbrake, see updateButton)
+const TOUCH_LABELS: Readonly<Record<PlayerMode, Readonly<Record<TouchAction, MessageKey>>>> = {
+  person: { boost: 'touch.sprint', up: 'touch.jump', down: 'touch.descend', fire: 'touch.fire' },
+  cyclist: { boost: 'touch.sprint', up: 'touch.jump', down: 'touch.descend', fire: 'touch.fire' },
+  car: { boost: 'touch.nitro', up: 'touch.handbrake', down: 'touch.descend', fire: 'touch.fire' },
+  moto: { boost: 'touch.nitro', up: 'touch.jump', down: 'touch.descend', fire: 'touch.fire' },
+  helicopter: { boost: 'touch.boost', up: 'touch.ascend', down: 'touch.descend', fire: 'touch.fire' }
+};
 
 const DEAD_ZONE = 0.15;
 const MAX_RADIUS = 44;
@@ -128,20 +139,14 @@ class TouchControls {
     this.reset();
     if (!this.root) return;
     this.mode = mode;
-    // (in the car the up button is its handbrake, see updateButton)
-    const labels: Record<TouchAction, string> = {
-      boost: mode === 'person' || mode === 'cyclist' ? 'Sprint' : mode === 'car' || mode === 'moto' ? 'Nitro' : 'Boost',
-      up: mode === 'helicopter' ? 'Ascend' : mode === 'car' ? 'Handbrake' : 'Jump',
-      down: 'Descend',
-      fire: 'Fire'
-    };
+    const labels = TOUCH_LABELS[mode];
     for (const button of this.buttons) {
       const action = button.getAttribute('data-touch-action') as TouchAction;
       button.hidden = (action === 'up' && (mode === 'cyclist' || mode === 'moto')) || (action === 'down' && mode !== 'helicopter') ||
         (action === 'fire' && mode === 'helicopter'); // (no guns from the helicopter, crime.ts)
-      button.setAttribute('aria-label', labels[action]);
-      const label = this.root.querySelector(`[data-touch-label="${action}"]`);
-      if (label) label.textContent = labels[action];
+      setLabel(button, labels[action]);
+      const label = this.root.querySelector<HTMLElement>(`[data-touch-label="${action}"]`);
+      if (label) setText(label, labels[action]);
     }
   }
 

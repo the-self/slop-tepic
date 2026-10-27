@@ -77,7 +77,7 @@ export function setCarLook(ctl: ThirdPersonControllerManager, bodyType = 'taxi',
   if (c.carState) c.carState.value.set(0, 0, 0, police ? 1 : 0); // (livery: 1 = police)
   c.blood = (mat.userData.blood as BloodUniforms | undefined) ?? null;
   c.bloodFrame = bloodFrame(spec, dims.halfW);
-  c.label = spec.name === 'taxi' ? LABELS.car : police ? 'Patrulla' : model.name;
+  c.label = spec.name === 'taxi' ? LABELS.car : police ? 'vehicle.police' : model.name;
   c.look = { bodyType: spec.name, paint, police, model: model.id, route: kit ? route : null };
   if (kit) {
     // a combi's route sign on its roof (in the body shape's frame, stretched with it)

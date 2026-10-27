@@ -37,9 +37,10 @@ import type { SpikeStrip } from './crime/spikes.ts';
 // A patrol car's (or truck's) blip on the radar (ui/city-map.ts BLIP_STYLES)
 const BLIP_OF: Readonly<Record<Faction, string>> = { police: 'cruiser', army: 'army', narco: 'truck', fire: 'firetruck', ambulance: 'ambulance' };
 import { buildPickups, drop, updatePickups, collect } from './crime/pickups.ts';
+import { t } from '../i18n/i18n.ts';
 
 // js/sim/crime.ts
-// The street's crime, GTA-style, played out over the traffic and the crowds (traffic.ts):
+// The street's crime, played out over the traffic and the crowds (traffic.ts):
 // - The player's guns (weapons.ts: fists, pistol, SMG, bazooka): lock-on aim, hit-scan shots, rockets that explode,
 //   and what they do to people, cars and walls (gunfire-fx.ts draws it).
 // - The wanted level (crime-rules.ts): running people over, shooting, blowing things up or attacking the police bring
@@ -256,7 +257,7 @@ class CrimeSystem {
 
   selectWeapon(id: WeaponId): boolean {
     if (this.arsenal.select(id)) return true;
-    this.toast(`No ${WEAPONS[id].label.toLowerCase()} rounds`);
+    this.toast(t('toast.noAmmo', { weapon: t(WEAPONS[id].label).toLowerCase() }));
     return false;
   }
 
@@ -429,8 +430,8 @@ class CrimeSystem {
       this.lastSeen.z = this.pz;
       this.seen = true;
     }
-    if (gained > 0 && before === 0) this.toast('The police are after you');
-    if (gained > 0 && before < 4 && this.wanted.stars >= 4) this.toast('The army and a helicopter are coming');
+    if (gained > 0 && before === 0) this.toast(t('toast.police'));
+    if (gained > 0 && before < 4 && this.wanted.stars >= 4) this.toast(t('toast.army'));
   }
 
   // Do the police see (x, z) (the player's place, left out)? (crime/witnesses.ts)

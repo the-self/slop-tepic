@@ -2,7 +2,7 @@
   "name": "slop-tepic",
   "private": true,
   "type": "module",
-  "description": "A GTA-style open world of Tepic, Nayarit at 1:1 scale, in three.js WebGPU",
+  "description": "An open world of Tepic, Nayarit at 1:1 scale, in three.js WebGPU",
   "engines": {
     "node": ">=24"
   },

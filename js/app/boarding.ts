@@ -1,5 +1,5 @@
 // js/app/boarding.ts
-// GTA-style boarding (F, the gamepad's Y, the touch button): on foot, get into the nearest of the player's own vehicles,
+// Boarding (F, the gamepad's Y, the touch button): on foot, get into the nearest of the player's own vehicles,
 // take the nearest car, bicycle or moto from the traffic (its driver is left in the street) or a car parked in a car
 // park, rob a store's till, buy
 // from a taco stand or go in through a door; in a vehicle, get out (a helicopter once it has landed). In multiplayer,
@@ -11,13 +11,18 @@ import type { StoreTill } from '../world/store-interiors.ts';
 import type { Interiors } from '../world/interiors.ts';
 import type { StreetFood } from '../world/street-food.ts';
 import type { CarParksBuild, PlacedCar } from '../world/car-parks.ts';
+import { t } from '../i18n/i18n.ts';
+import type { MessageKey } from '../i18n/i18n.ts';
 
 const BOARD_REACH = 1.6; // m from the vehicle's body
 const TILL_REACH = 1.8; // m from a store's till (store-interiors.ts)
 const TILL_REFILL = 600; // s: a robbed till stays empty this long
-const PROMPT_NAMES: Readonly<Record<VehicleMode, string>> = {
-  car: 'Subir al coche', cyclist: 'Subir a la bici', moto: 'Subir a la moto', helicopter: 'Subir al helicóptero'
+const PROMPT_NAMES: Readonly<Record<VehicleMode, MessageKey>> = {
+  car: 'prompt.board.car', cyclist: 'prompt.board.cyclist', moto: 'prompt.board.moto', helicopter: 'prompt.board.helicopter'
 };
+
+/** What F would do, for the touch button's word: get in, steal or rob, get out, use what is at hand (buy, go in) */
+export type PromptAction = 'none' | 'board' | 'steal' | 'exit' | 'use';
 
 /** A vehicle of the traffic the player can take */
 type TrafficVehicle = NonNullable<ReturnType<TrafficSystem['vehicleNear']>>;
@@ -82,12 +87,12 @@ export class Boarding {
     const { crime, traffic } = this.systems;
     const now = performance.now() / 1000;
     if (now < till.refill) {
-      crime.toast('The till is empty');
+      crime.toast(t('toast.tillEmpty'));
       return;
     }
     const amount = Math.round(400 + Math.random() * 1100);
     crime.money += amount;
-    crime.toast(`+$${amount} · ${till.store.name}`);
+    crime.toast(t('toast.robbed', { amount, store: till.store.name }));
     crime.report('robbery', true);
     traffic.panic(till.x, till.z, 45);
     till.refill = now + TILL_REFILL;
@@ -148,26 +153,41 @@ export class Boarding {
     onModeChange();
   }
 
-  /** What F would do here ('' for nothing) */
+  /** What the last prompt() offers, for the touch button */
+  promptAction: PromptAction = 'none';
+
+  /** What F would do here ('' for nothing), in the player's language; promptAction says which kind of thing it is */
   prompt(): string {
     const { controllers, interiors, streetFood } = this.systems;
-    if (this.ride?.riding) return 'Bajar del coche';
+    const onFoot = controllers.activeMode === 'person';
+    this.promptAction = onFoot ? 'none' : 'exit';
+    if (this.ride?.riding) return this.offer('exit', t('prompt.exitRide'));
     const friend = this.ride?.rideTarget();
-    if (friend) return `Subir con ${friend.name}`;
-    if (controllers.activeMode === 'person') {
+    if (friend) return this.offer('board', t('prompt.rideWith', { name: friend.name }));
+    if (onFoot) {
       const target = this.target();
-      if (!target) return (interiors.active ? '' : streetFood.prompt()) || interiors.prompt();
-      if ('till' in target) return 'Asaltar la caja';
-      if ('mode' in target) return PROMPT_NAMES[target.mode];
-      if ('parked' in target) return 'Robar el coche';
+      if (!target) {
+        const text = (interiors.active ? '' : streetFood.prompt()) || interiors.prompt();
+        return this.offer(text ? 'use' : 'none', text);
+      }
+      if ('till' in target) return this.offer('steal', t('prompt.robTill'));
+      if ('mode' in target) return this.offer('board', t(PROMPT_NAMES[target.mode]));
+      if ('parked' in target) return this.offer('steal', t('prompt.steal.car'));
       const v = target.taken;
-      return v.bike ? 'Robar la bici' : v.moto ? 'Robar la moto' : v.isPolice ? 'Robar la patrulla' : v.bus ? 'Robar el camión' : v.fleet === 'combi' ? 'Robar la combi' : 'Robar el coche';
+      const what: MessageKey = v.bike ? 'prompt.steal.bike' : v.moto ? 'prompt.steal.moto' : v.isPolice ? 'prompt.steal.police'
+        : v.bus ? 'prompt.steal.bus' : v.fleet === 'combi' ? 'prompt.steal.combi' : 'prompt.steal.car';
+      return this.offer('steal', t(what));
     }
     if (controllers.activeMode === 'helicopter') {
       const h = controllers.entities.helicopter;
       const air = h.position.y - controllers.getGroundHeight(h.position.x, h.position.z, 'helicopter');
-      return air > 3 ? 'Aterriza para bajar' : 'Bajar del helicóptero';
+      return t(air > 3 ? 'prompt.land' : 'prompt.exitHeli');
     }
     return '';
+  }
+
+  private offer(action: PromptAction, text: string): string {
+    this.promptAction = action;
+    return text;
   }
 }
