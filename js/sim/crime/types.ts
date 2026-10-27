@@ -11,6 +11,7 @@ import type { AimControl } from '../../player/aim.ts';
 import type { CollisionImpact } from '../../audio/audio-sources.ts';
 import type { PlayerMode, PersonEntity } from '../../player/controllers.ts';
 import type { TrafficSystem, Ped, Vehicle } from '../traffic.ts';
+import type { CruiserBody } from './cruiser-bodies.ts';
 
 // What the player is going through: playing, or on the WASTED (killed) / BUSTED (arrested) screen
 type CrimeState = 'play' | 'wasted' | 'busted';
@@ -18,7 +19,7 @@ type DownKind = Exclude<CrimeState, 'play'>;
 // Who is on foot: police, gang members (the cartel's among them), thieves
 type AgentKind = 'cop' | 'gang' | 'thief';
 // approach (a thief closing in), flee (with the money), idle (a gang on its corner), chase, leave
-type AgentState = 'approach' | 'flee' | 'idle' | 'chase' | 'leave';
+type AgentState = 'approach' | 'flee' | 'idle' | 'chase' | 'leave' | 'board';
 // A patrol car's side: the police, the cartel's black trucks, or the army's olive ones (four stars on)
 // (the bomberos' trucks & the Cruz Roja's ambulances share the patrol cars' driving: sim/emergency.ts sends them)
 type Faction = 'police' | 'narco' | 'army' | 'fire' | 'ambulance';
@@ -67,6 +68,7 @@ interface CrimePlayer {
   rollVel?: number;
   heaveVel?: number;
   angularVel?: number;
+  vehicle?: unknown; // its body in Jolt (player/car-physics.ts), a vehicle's
 }
 // What crime uses of player/controllers.ts's ThirdPersonControllerManager
 interface CrimeControllers {
@@ -78,6 +80,8 @@ interface CrimeControllers {
   isSolidAt(x: number, z: number, height?: number, ground?: number): boolean;
   groundTilt(x: number, z: number, heading: number, along: number, across: number, out: { pitch: number; roll: number }): unknown;
   resetInput(): void;
+  // the player's vehicles left standing (player/controllers/boarding.ts): the patrol cars stop against them
+  parkedVehicles?(): readonly { x: number; z: number; heading?: number; halfW: number; halfL: number }[];
   // someone the player's car struck at (x, z), `speed` m/s: their blood on it (player/car-blood.ts)
   bloodyCar?(x: number, z: number, speed: number): void;
   // the car's tyre i burst (shot), or those over a spike strip (its middle, heading, half length & width, m): how many
@@ -138,6 +142,9 @@ interface Agent extends XZ {
   stepT: number;
   foe: Agent | null;
   foeT: number;
+  /** the patrol car (or army truck) they got out of, to run back to and drive on in once the player gets away
+   *  (state 'board'); null: on foot for good */
+  car: Cruiser | null;
 }
 // A patrol car, a cartel truck or an army truck, or a fire truck or ambulance (m, rad, m/s; police: on the law's side, faction says which): its meshes, its chase (path: the intersections of its route, pathI
 // the next; replan s to a new one; goal where the player was then), being stuck (checked every 2 s against check;
@@ -180,6 +187,10 @@ interface Cruiser extends XZ {
   goalZ: number;
   passSide: number;
   deployed: boolean;
+  /** its officers or soldiers out on foot (deployOfficers), and how many are still in it or got back in: none of
+   *  either, it was left in the street (they're down), its lights still going */
+  crew: Agent[];
+  aboard: number;
   life: number;
   pitch: number;
   roll: number;
@@ -188,6 +199,8 @@ interface Cruiser extends XZ {
   /** its siren wailing (the audio's; unset: as its faction has it): a fire truck or ambulance going back has it off */
   siren?: boolean;
   position: THREE.Vector3;
+  /** its car in Jolt near the player (crime/cruiser-bodies.ts); null: it drives on the map */
+  body?: CruiserBody | null;
 }
 // A rocket in flight: where (m), its heading (dx, dz) and climb (dh along, dy up per m), t s since it was fired
 interface RocketFlight {

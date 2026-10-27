@@ -180,6 +180,39 @@ export function hitScan(crime: CrimeSystem, ox: number, oy: number, oz: number, 
   }
 }
 
+// A round someone on foot fires from (ox, oy, oz) at a mark at (tx, ty, tz) (the player, one of the other side): what
+// stands in its way short of the mark by `short` m (its own body or car) takes it instead, a car of the traffic or a
+// patrol car, a passer-by, a pump, a wall or a parked car at the round's height. Nobody shoots through a car: the
+// player crouched behind one is out of the line. Whether it was stopped (its tracer and strike drawn, `damage` done)
+export function shotStopped(crime: CrimeSystem, ox: number, oy: number, oz: number, tx: number, ty: number, tz: number, short: number, damage: number): boolean {
+  const len = Math.hypot(tx - ox, tz - oz);
+  if (len <= short + 0.8) return false;
+  const yaw = Math.atan2(tx - ox, tz - oz), slope = (ty - oy) / len;
+  const { t, kind, target } = crime.trace(ox, oy, oz, yaw, len - short, slope, 0.6);
+  // (the shooter's own side, and the sky, let it by)
+  if (kind === 'none' || kind === 'agent' || kind === 'heli' || kind === 'remote') return false;
+  const dx = Math.sin(yaw), dz = Math.cos(yaw);
+  const ex = ox + dx * t, ey = oy + slope * t, ez = oz + dz * t;
+  crime.fx.tracer(ox, oy, oz, ex, ey, ez);
+  if (kind === 'wall' || kind === 'ground') crime.fx.impact(ex, ey, ez, 'dust', -dx, -dz);
+  else if (kind === 'cruiser') {
+    crime.fx.impact(ex, ey, ez, 'metal', -dx, -dz);
+    crime.damageCruiser(target as Cruiser, damage * 0.22, false);
+  } else if (kind === 'ped') {
+    crime.fx.impact(ex, ey, ez, 'blood', dx, dz);
+    crime.traffic.shootPed(target as Ped, dx, dz, 3.5);
+  } else if (kind === 'vehicle') {
+    crime.fx.impact(ex, ey, ez, 'metal', -dx, -dz);
+    crime.traffic.shootTyre(target as Vehicle, ex, ey, ez);
+    crime.traffic.shootVehicle(target as Vehicle, ex, ey, ez, dx, dz);
+  } else {
+    // (a pump: sim/gas-stations.ts)
+    crime.fx.impact(ex, ey, ez, 'metal', -dx, -dz);
+    (target as ShotProp).shot(damage, false);
+  }
+  return true;
+}
+
 export function updateRockets(crime: CrimeSystem, dt: number): void {
   const w = WEAPONS.bazooka;
   for (let i = crime.rockets.length - 1; i >= 0; i--) {

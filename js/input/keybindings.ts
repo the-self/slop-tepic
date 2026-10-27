@@ -11,7 +11,7 @@ import type { MessageKey } from '../i18n/en.ts';
 /** A thing a key can be bound to */
 export type BindAction =
   | 'forward' | 'backward' | 'left' | 'right' | 'boost' | 'up' | 'down'
-  | 'handbrake' | 'shiftUp' | 'shiftDown' | 'gearbox' | 'board' | 'horn'
+  | 'handbrake' | 'shiftUp' | 'shiftDown' | 'gearbox' | 'board' | 'horn' | 'refuel'
   | 'fire' | 'aim' | 'weaponWheel' | 'nextWeapon'
   | 'camera' | 'map' | 'cleanView' | 'sound' | 'chat';
 
@@ -41,6 +41,7 @@ export const BIND_ACTIONS: Readonly<Record<BindAction, BindSpec>> = {
   gearbox: { label: 'bind.gearbox', group: 'vehicles', keys: ['KeyT'] },
   board: { label: 'bind.board', group: 'vehicles', keys: ['KeyF'] },
   horn: { label: 'bind.horn', group: 'vehicles', keys: ['KeyB'] },
+  refuel: { label: 'bind.refuel', group: 'vehicles', keys: ['KeyG'] },
   fire: { label: 'bind.fire', group: 'weapons', keys: ['KeyX'] },
   aim: { label: 'bind.aim', group: 'weapons', keys: ['KeyZ'] },
   weaponWheel: { label: 'bind.weaponWheel', group: 'weapons', keys: ['Tab'] },

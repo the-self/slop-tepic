@@ -94,7 +94,7 @@ export class Boarding {
     crime.money += amount;
     crime.toast(t('toast.robbed', { amount, store: till.store.name }));
     crime.report('robbery', true);
-    traffic.panic(till.x, till.z, 45);
+    traffic.panic(till.x, till.z, 45, false);
     till.refill = now + TILL_REFILL;
   }
 

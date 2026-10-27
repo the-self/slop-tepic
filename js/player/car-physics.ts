@@ -97,7 +97,7 @@ export type BodyBox = [x: number, y: number, z: number, hx: number, hy: number, 
  * steering lock (rad), drive; the springs' frequency (Hz), the anti-roll bars' stiffness (N·m/rad per kg: ~0.1 lets a
  * road car lean ~3° a g in a corner, 0.6 holds a supercar nearly flat), a wheel's mass (kg); its centre of mass along
  * it (m) and how far it leans (rad); `rescue` false: never set back on its wheels; `sleeps`: Jolt may let it sleep
- * while still
+ * while still; `rays`: its wheels feel the ground along rays (cheaper than cylinders, rougher over a kerb)
  */
 interface VehicleDefBase {
   mass: number;
@@ -115,6 +115,7 @@ interface VehicleDefBase {
   maxLean?: number;
   rescue?: boolean;
   sleeps?: boolean;
+  rays?: boolean; // its wheels feel the ground along a ray each, not a cylinder: cheaper (a vehicle nobody rides)
 }
 /** A car's: the bonnet's height as a share of the body's, and the cabin's front & back as shares of the half length */
 export interface CarBodyDef extends VehicleDefBase {
@@ -763,7 +764,9 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
     Jolt.destroy(vs);
     // (the wheels found by casting a cylinder down each spring; its second argument the share of half its width that is
     // rounded off: a two-wheeler's tyres wholly round, so it rolls onto their shoulders as it leans; a car's square)
-    constraint.SetVehicleCollisionTester(new Jolt.VehicleCollisionTesterCastCylinder(LAYER_MOVING, two ? 1 : 0.05));
+    constraint.SetVehicleCollisionTester(def.rays
+      ? new Jolt.VehicleCollisionTesterRay(LAYER_MOVING)
+      : new Jolt.VehicleCollisionTesterCastCylinder(LAYER_MOVING, two ? 1 : 0.05));
     system.AddConstraint(constraint);
     const listener = new Jolt.VehicleConstraintStepListener(constraint);
     system.AddStepListener(listener);

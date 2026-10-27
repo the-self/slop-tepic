@@ -35,6 +35,9 @@ const CRASH_RANGE = 60;
 const CRASH_SPEED = 2;
 const MAX_CRASHED = 10;
 const CRASH_LOOKAHEAD = 0.06; // s ahead a crash is seen coming (the car is a body before it lands)
+// A car of the traffic rammed by a vehicle outside it (a patrol car: bumpBody) closing faster than this (m/s) is thrown
+// about in Jolt as well, near the player; slower, it is only shoved along its lane
+const RAM_SPEED = 4;
 const CRASH_STILL = 1.8; // s a crashed car lies still before it drives on or is left
 const CRASH_BRAKE = 6; // m/s² its driver brakes at (none left in it: it rolls)
 // Now and then a driver near the player looks at their phone and runs into the car ahead (mishaps.ts): the first
@@ -88,7 +91,7 @@ const ridden = (v: Vehicle): v is TwoWheeler => v.kit !== undefined;
 export {
   NUM_CARS, NUM_BUSES, NUM_PEDS, NUM_BIKES, NUM_MOTOS, KNOCK_SPEED, MASS, MASS_OF_BODY, massOf, DOWN_TIME, SURVIVE, LETHAL, GET_UP,
   DEAD_TIME, BODY_TIME,
-  CRASH_RANGE, CRASH_SPEED, MAX_CRASHED, CRASH_LOOKAHEAD, CRASH_STILL, CRASH_BRAKE, MISHAP_FIRST, MISHAP_EVERY, CAR_DRIVER, BUS_DRIVER,
+  CRASH_RANGE, CRASH_SPEED, RAM_SPEED, MAX_CRASHED, CRASH_LOOKAHEAD, CRASH_STILL, CRASH_BRAKE, MISHAP_FIRST, MISHAP_EVERY, CAR_DRIVER, BUS_DRIVER,
   BIKE_DRIVER, MOTO_DRIVER, LOOKAHEAD, STOP_CELL, VEHICLE_RADIUS, PED_RADIUS, NEAR_RADIUS, VEHICLE_SPAWN_DISTANCE,
   ROUTE_HEADWAY, PED_SPAWN_DISTANCE, LIVERIES, liveryOf, clamp, VEHICLE_KINDS, onRoad, onEdge, ridden
 };

@@ -4,6 +4,7 @@
 // menu gave it, input/keybindings.ts) does here, the menu's sound button, and the 250 ms telemetry (fps, speed,
 // altitude).
 import { keyBindings } from '../input/keybindings.ts';
+import type { BindAction } from '../input/keybindings.ts';
 import type { PlayerMode } from '../player/controllers.ts';
 import type { PromptAction } from './boarding.ts';
 import { setText, t } from '../i18n/i18n.ts';
@@ -104,10 +105,10 @@ export class Hud {
     this.location.replaceChildren(...nodes);
   }
 
-  /** What F (the board key, input/keybindings.ts) does here (`text`, '' for nothing); `action`, its word on the touch
-   * button */
-  showPrompt(text: string, action: PromptAction): void {
-    const state = `${action}:${keyBindings.label('board')}:${text}`; // (the key too: the menu may change it)
+  /** What F (the board key, input/keybindings.ts, or `key`'s) does here (`text`, '' for nothing); `action`, its word on
+   * the touch button */
+  showPrompt(text: string, action: PromptAction, key: BindAction = 'board'): void {
+    const state = `${action}:${keyBindings.label(key)}:${text}`; // (the key too: the menu may change it)
     if (state === this.promptState) return;
     this.promptState = state;
     if (this.boardButton) {
@@ -119,11 +120,11 @@ export class Hud {
     if (!this.prompt) return;
     this.prompt.hidden = !text;
     if (!text) return;
-    const key = document.createElement('kbd');
-    key.textContent = keyBindings.label('board');
+    const kbd = document.createElement('kbd');
+    kbd.textContent = keyBindings.label(key);
     const label = document.createElement('span');
     label.textContent = text;
-    this.prompt.replaceChildren(key, label);
+    this.prompt.replaceChildren(kbd, label);
   }
 
   showSound({ supported, enabled }: SoundState): void {
