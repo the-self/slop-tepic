@@ -676,6 +676,9 @@ async function initApp(): Promise<void> {
       cityBlocks.update(eye.x, eye.z);
       stores.update(eye.x, eye.z);
       carParks.update(eye.x, eye.z);
+      // (no parked car where another vehicle stands: the player's left standing, the other players')
+      for (const v of controllerManager.parkedVehicles()) carParks.clearAt(v.x, v.z);
+      for (const r of crimeSystem.remotes) if (!r.person) carParks.clearAt(r.x, r.z);
       cityBlocks.updateLights(cameraSystem.camera);
       streetDetails.update(cameraSystem.camera);
       powerLines.update(cameraSystem.camera.position);

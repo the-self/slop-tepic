@@ -5,7 +5,8 @@
 // the road paint, and the cars standing in some of the stalls. The cars are the traffic's own body shapes stretched to
 // real models (models/cars, by their rarity), drawn only round the camera: the full model near it, the ~250-triangle
 // stand-in further out, nothing past CAR_RADIUS. Each one stops the player like a wall (a collider of the city's), and
-// can be stolen (carNear, take: app/boarding.ts), the player's own car then taking its place.
+// can be stolen (carNear, take: app/boarding.ts), the player's own car then taking its place; one with another vehicle
+// standing in it is taken away too (clearAt: the player's car put back in the stall on a reload, a friend's who stole it).
 import * as THREE from 'three/webgpu';
 import { GEO } from './city-geodata.js';
 import { blockAt } from './city-config.ts';
@@ -425,8 +426,9 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     }
   }
 
-  /** The parked car whose body is nearest (x, z), within `reach` m of it (as the traffic's vehicleNear), or null */
-  function carNear(x: number, z: number, reach: number): NearParkedCar | null {
+  let found = Infinity; // m from the body of the car `nearest` last found
+  // The parked car whose body is nearest (x, z), within `reach` m of it (as the traffic's vehicleNear), or null
+  function nearest(x: number, z: number, reach: number): PlacedCar | null {
     let best: PlacedCar | null = null;
     let bestDistance = reach;
     const ix0 = Math.floor(x / CAR_CELL), iz0 = Math.floor(z / CAR_CELL);
@@ -448,7 +450,22 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
         }
       }
     }
-    return best ? { car: best, distance: bestDistance } : null;
+    found = bestDistance;
+    return best;
+  }
+  /** The parked car whose body is nearest (x, z), within `reach` m of it, and how far, or null */
+  function carNear(x: number, z: number, reach: number): NearParkedCar | null {
+    const car = nearest(x, z, reach);
+    return car ? { car, distance: found } : null;
+  }
+  /**
+   * Takes away the parked car whose body (x, z) is in: a vehicle stands in its stall. The player's own car put back
+   * where they left it, in the stall they stole it from (the parked cars come back on a reload), or another player's
+   * who drove it off (a theft isn't sent: every client parks the same cars)
+   */
+  function clearAt(x: number, z: number): void {
+    const car = nearest(x, z, 1e-3);
+    if (car) take(car);
   }
 
   /** Takes `car` off its stall for good (its instance and its wall gone): where it stood and its looks */
@@ -487,7 +504,8 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     rampAt,
     update,
     carNear,
-    take
+    take,
+    clearAt
   };
 }
 
