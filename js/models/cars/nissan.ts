@@ -5,14 +5,14 @@ import type { CarModel } from './index.ts';
 
 export const CARS: CarModel[] = [
   {
-    id: 'nissan-tsuru', name: 'Nisán Tsurito', body: 'taxi', class: 'economy', traffic: false, // the classic taxi
-    size: [4.32, 1.69, 1.38], mass: 1100, drive: 'fwd', power: [78, 5200], torque: [136, 4000], redline: 6500,
+    id: 'nissan-tsuru', glb: 'assets/models/cars/nissan-tsuru.glb', name: 'Nisán Tsurito', body: 'taxi', class: 'economy', traffic: false, // the classic taxi, its roof sign in its model
+    size: [4.33, 1.65, 1.39], mass: 1100, drive: 'fwd', power: [78, 5200], torque: [136, 4000], redline: 6500,
     gears: 5, top: 170, accel: 11.5, rarity: 0
   },
   {
-    // ...and the Tsurus that aren't taxis, still all over Tepic: drawn from a model made by hand (CC BY, README.md)
-    id: 'nissan-tsuru-particular', name: 'Nisán Tsurito', body: 'sedan', class: 'economy',
-    size: [4.32, 1.69, 1.38], mass: 1100, drive: 'fwd', power: [78, 5200], torque: [136, 4000], redline: 6500,
+    // ...and the Tsurus that aren't taxis, still all over Tepic: the same model, no sign (tools/models/blender)
+    id: 'nissan-tsuru-particular', glb: 'assets/models/cars/nissan-tsuru-particular.glb', name: 'Nisán Tsurito', body: 'sedan', class: 'economy',
+    size: [4.33, 1.65, 1.39], mass: 1100, drive: 'fwd', power: [78, 5200], torque: [136, 4000], redline: 6500,
     gears: 5, top: 170, accel: 11.5, rarity: 16, paints: [0xf2f2ee, 0xf2f2ee, 0xc8cdd2, 0x8c1c1f, 0x1f3a6b, 0x2a2d31, 0x6f7377]
   },
   {
