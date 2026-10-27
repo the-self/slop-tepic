@@ -1,14 +1,16 @@
 // js/sim/weapons.ts
-// The player's arsenal, GTA-style (fists, pistol, SMG, bazooka), and the ballistics the police and the gangs share:
+// The player's arsenal (fists, pistol, SMG, bazooka), and the ballistics the police and the gangs share:
 // fire rates, lock-on auto-aim, hit-scan rays against round bodies and boxes, blast fall-off, how often a shooter
 // hits. No three.js, so node --test imports it directly (tests/weapons.test.mjs).
 
 // rate: shots per second. damage: hit points off a 100-point body. range & blast: metres. rocket: m/s.
 // spread: radians either side of the aim. start: rounds carried at the start, pickup: rounds a dropped gun gives.
+import type { MessageKey } from '../i18n/i18n.ts';
+
 type WeaponId = 'fists' | 'pistol' | 'smg' | 'rifle' | 'bazooka';
 interface Weapon {
   id: WeaponId;
-  label: string;
+  label: MessageKey; // its name, in the player's language (i18n/)
   melee?: boolean;
   auto: boolean; // fires while the trigger is held
   rate: number; // shots/s
@@ -55,12 +57,12 @@ interface TurnedBox {
 
 // (each its own type, so WEAPONS.bazooka.rocket is known to be there)
 const WEAPONS = {
-  fists: { id: 'fists', label: 'Fists', melee: true, auto: false, rate: 2.6, damage: 20, range: 1.7, spread: 0, start: Infinity, pickup: 0 },
-  pistol: { id: 'pistol', label: 'Pistol', auto: false, rate: 4.5, damage: 34, range: 70, spread: 0.018, start: 68, pickup: 34 },
-  smg: { id: 'smg', label: 'SMG', auto: true, rate: 11, damage: 16, range: 55, spread: 0.05, start: 240, pickup: 90 },
+  fists: { id: 'fists', label: 'weapon.fists', melee: true, auto: false, rate: 2.6, damage: 20, range: 1.7, spread: 0, start: Infinity, pickup: 0 },
+  pistol: { id: 'pistol', label: 'weapon.pistol', auto: false, rate: 4.5, damage: 34, range: 70, spread: 0.018, start: 68, pickup: 34 },
+  smg: { id: 'smg', label: 'weapon.smg', auto: true, rate: 11, damage: 16, range: 55, spread: 0.05, start: 240, pickup: 90 },
   // (the cartel's: none to start with, taken off them)
-  rifle: { id: 'rifle', label: 'Rifle', auto: true, rate: 8, damage: 28, range: 85, spread: 0.028, start: 0, pickup: 60 },
-  bazooka: { id: 'bazooka', label: 'Bazooka', auto: false, rate: 0.9, damage: 220, range: 170, spread: 0.004, rocket: 48, blast: 8, start: 8, pickup: 4 }
+  rifle: { id: 'rifle', label: 'weapon.rifle', auto: true, rate: 8, damage: 28, range: 85, spread: 0.028, start: 0, pickup: 60 },
+  bazooka: { id: 'bazooka', label: 'weapon.bazooka', auto: false, rate: 0.9, damage: 220, range: 170, spread: 0.004, rocket: 48, blast: 8, start: 8, pickup: 4 }
 
 } satisfies Readonly<Record<WeaponId, Weapon>>;
 const WEAPON_ORDER: readonly WeaponId[] = ['fists', 'pistol', 'smg', 'rifle', 'bazooka'];

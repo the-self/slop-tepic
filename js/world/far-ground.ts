@@ -7,7 +7,7 @@ import type { CityBlock, PointXZ } from './city-config.ts';
 import type { Rect } from './lattice.ts';
 
 // js/world/far-ground.ts
-// The city's ground as seen from afar, the way GTA draws its LOD: beyond the streamed tiles (streaming.ts), where the
+// The city's ground as seen from afar, the way open-world games draw their far LOD: beyond the streamed tiles (streaming.ts), where the
 // road deck, the sidewalks, the lots and the parks are not laid, the floor under the buildings is painted with them
 // instead, from one texture of the detailed box: the asphalt between the blocks, the blocks' lots (green where they lie
 // open, earth & patios where they are built up: lot-greenery.ts openness), the car parks, the parks, the open country, the rivers and

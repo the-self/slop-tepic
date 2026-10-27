@@ -15,9 +15,10 @@ import type { Blips, SightCones } from '../sim/crime.ts';
 import { SIGHT } from '../sim/crime-rules.ts';
 import { keyBindings } from '../input/keybindings.ts';
 import type { Vector3 } from 'three/webgpu';
+import { onLocaleChange, t } from '../i18n/i18n.ts';
 
 // js/ui/city-map.ts
-// GTA 6-Style Live Radar Minimap + Full-Screen Interactive City Map.
+// Live Radar Minimap + Full-Screen Interactive City Map.
 // Synchronized 1:1 with the 3D world (1 unit = 1 m; x = east, z = south on the centro's street grid, GEO.frame.bearingDeg
 // east of true north; both maps turn it back, true north up, so they match every other map of Tepic). They draw the very geography the city is built
 // from (GEO, from OpenStreetMap & Overture Maps): the city outline, every curb island (block) with the building
@@ -527,7 +528,7 @@ function drawBeam(
   ctx.restore();
 }
 
-// Where the police can see the player while it is wanted, GTA-style: a beam like a torch's out of each of them, turning
+// Where the police can see the player while it is wanted: a beam like a torch's out of each of them, turning
 // with them, fading out at its reach inside a thin line, and a faint glow round them (right beside them); the helicopter's all round (it
 // looks down). Out of all of them, the stars start to go (crime-rules.ts Wanted).
 function drawPoliceSight(ctx: CanvasRenderingContext2D, v: MapView, police: PoliceSight | null | undefined): void {
@@ -688,7 +689,6 @@ class CityMapSystem {
     this.miniScale = RADAR_SCALE;
     this.miniCache = null; // { canvas, cx, cz, s, version }: the radar's ground layers, twice the radar's size
     const elCounts = document.getElementById('fullmap-counts');
-    if (elCounts) elCounts.textContent = `${ROAD_NAME_COUNT} streets · ${BLOCKS.length.toLocaleString('en-US')} blocks`;
 
     // (the map is drawn true north up, so its compass, index.html, points straight up)
 
@@ -702,7 +702,13 @@ class CityMapSystem {
     this.elHoverInfo = document.getElementById('fullmap-hover-info');
     this.elPlayerInfo = document.getElementById('fullmap-player-info');
     this.elSearchInput = document.getElementById('fullmap-search') as HTMLInputElement | null;
-    if (this.elSearchInput) this.elSearchInput.placeholder = `Search ${ROAD_NAME_COUNT} streets & landmarks…`;
+    // the counts and the search box's placeholder, in the player's language (again when it changes)
+    const showCounts = () => {
+      if (elCounts) elCounts.textContent = t('map.counts', { streets: ROAD_NAME_COUNT, blocks: BLOCKS.length.toLocaleString() });
+      if (this.elSearchInput) this.elSearchInput.placeholder = t('map.searchCount', { count: ROAD_NAME_COUNT });
+    };
+    showCounts();
+    onLocaleChange(showCounts);
 
     this.isFullMapOpen = false;
     // Full map viewport state (world metres; zoom in CSS pixels per metre)
@@ -832,7 +838,7 @@ class CityMapSystem {
           const wPos = this.screenToWorld(mx, my, rect.width, rect.height);
           this.hoverWorld = wPos;
           if (this.elHoverInfo) {
-            this.elHoverInfo.textContent = `${getLocationLabel(wPos.x, wPos.z)} · Click to teleport here`;
+            this.elHoverInfo.textContent = t('map.hover', { place: getLocationLabel(wPos.x, wPos.z) });
           }
         }
       });
@@ -1162,7 +1168,7 @@ class CityMapSystem {
   }
 
   // =========================================================================
-  // 1. GTA 6-STYLE LIVE RADAR MINIMAP (BOTTOM-LEFT HUD)
+  // 1. LIVE RADAR MINIMAP (BOTTOM-LEFT HUD)
   // =========================================================================
   renderMinimap(): void {
     if (!this.miniCtx || !this.miniCanvas) return;
@@ -1315,7 +1321,7 @@ class CityMapSystem {
 
     const ent = this.controllerManager.getActiveEntity();
     if (this.elPlayerInfo) {
-      const text = `You are at ${getLocationLabel(ent.position.x, ent.position.z)}`;
+      const text = t('map.youAreAt', { place: getLocationLabel(ent.position.x, ent.position.z) });
       if (text !== this.playerInfoText) {
         this.playerInfoText = text;
         this.elPlayerInfo.textContent = text;

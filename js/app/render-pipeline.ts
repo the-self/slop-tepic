@@ -3,7 +3,7 @@
 // screen-space reflections faded out on distant and matte surfaces so SSR spends its rays on visible glossy ones, and
 // the colour grade over them (render/post-processing.ts: bloom, filmic toning, the time of day's look).
 import * as THREE from 'three/webgpu';
-import { pass, mrt, output, normalView, positionView, metalness, roughness, vec2, smoothstep } from 'three/tsl';
+import { pass, mrt, output, normalView, positionView, metalness, roughness, vec2, vec4, smoothstep } from 'three/tsl';
 import { ssr } from 'three/addons/tsl/display/SSRNode.js';
 import { createPostProcessing } from '../render/post-processing.ts';
 import type { ColorGrade } from '../render/post-processing.ts';
@@ -19,12 +19,24 @@ export interface RenderPipeline {
 // Above this roughness a surface reflects nothing on screen (its reflections would only blur into noise)
 const MAX_SSR_ROUGHNESS = 0.75;
 
-export function createRenderPipeline(renderer: THREE.WebGPURenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera): RenderPipeline {
+/** withSSR: the graphics tier's screen-space reflections (app/quality.ts); without them the scene pass writes its colour
+ *  only */
+export function createRenderPipeline(renderer: THREE.WebGPURenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, withSSR = true): RenderPipeline {
   const scenePass = pass(scene, camera);
   // The multisampled colour attachments (output, normal, metalRough) only need resolving, never storing: discarding
   // them spares the GPU writing 3 x 4 samples per pixel to memory every frame (transient, memoryless attachments where
   // the browser supports them). The multisampled depth stays stored: SSR reads it.
   scenePass.renderTarget.storeMultisampledColorBuffer = false;
+  const scenePassColor = scenePass.getTextureNode('output');
+  if (!withSSR) {
+    // (a phone's tier: no reflections, and none of the normal & roughness attachments they would read, nor the
+    // multisampled depth stored past the pass: nothing samples it)
+    scenePass.renderTarget.storeMultisampledDepthBuffer = false;
+    const sceneMRT = mrt({ output });
+    scenePass.setMRT(sceneMRT);
+    const colorGrade = createPostProcessing(renderer, scenePassColor, vec4(0));
+    return { pipeline: new THREE.RenderPipeline(renderer, colorGrade.outputNode), scenePass, sceneMRT, colorGrade };
+  }
   const ssrFade = smoothstep(360.0, 180.0, positionView.z.negate());
   const sceneMRT = mrt({
     output,
@@ -35,7 +47,6 @@ export function createRenderPipeline(renderer: THREE.WebGPURenderer, scene: THRE
   sceneMRT.setBlendMode('metalRough', new THREE.BlendMode(THREE.MaterialBlending));
   scenePass.setMRT(sceneMRT);
 
-  const scenePassColor = scenePass.getTextureNode('output');
   const scenePassDepth = scenePass.getTextureNode('depth');
   const scenePassNormal = scenePass.getTextureNode('normal');
   const scenePassMetalRough = scenePass.getTextureNode('metalRough');

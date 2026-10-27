@@ -5,7 +5,14 @@
 // altitude).
 import { keyBindings } from '../input/keybindings.ts';
 import type { PlayerMode } from '../player/controllers.ts';
+import type { PromptAction } from './boarding.ts';
+import { setText, t } from '../i18n/i18n.ts';
+import type { MessageKey } from '../i18n/i18n.ts';
 
+// The touch button's word for what F would do
+const BOARD_LABELS: Readonly<Record<PromptAction, MessageKey>> = {
+  none: 'touch.board.board', board: 'touch.board.board', steal: 'touch.board.steal', exit: 'touch.board.exit', use: 'touch.board.use'
+};
 // Boosted top speeds in km/h (controllers.ts caps them; the car has its tachometer instead): the
 // speed meter's full scale
 const TOP_SPEED_KMH: Readonly<Record<PlayerMode, number>> = { person: 30, car: 200, cyclist: 48, helicopter: 187, moto: 110 };
@@ -83,7 +90,7 @@ export class Hud {
         streets = streets.slice(5);
         const near = document.createElement('span');
         near.className = 'location-near';
-        near.textContent = 'near';
+        setText(near, 'hud.near');
         row.appendChild(near);
       }
       for (const name of streets.split(' & ')) {
@@ -97,17 +104,17 @@ export class Hud {
     this.location.replaceChildren(...nodes);
   }
 
-  /** What F does here (`text`, '' for nothing), at the bottom of the screen and on the touch button */
-  showPrompt(text: string, onFoot: boolean): void {
-    const state = `${onFoot}:${keyBindings.label('board')}:${text}`; // (the key too: the menu may change it)
+  /** What F (the board key, input/keybindings.ts) does here (`text`, '' for nothing); `action`, its word on the touch
+   * button */
+  showPrompt(text: string, action: PromptAction): void {
+    const state = `${action}:${keyBindings.label('board')}:${text}`; // (the key too: the menu may change it)
     if (state === this.promptState) return;
     this.promptState = state;
     if (this.boardButton) {
       // the touch button: get in or take what is at hand, or get out
-      this.boardButton.hidden = onFoot && !text;
-      const label = this.boardButton.querySelector('[data-board-label]');
-      const first = text.split(' ')[0] ?? '';
-      if (label) label.textContent = !onFoot ? 'Bajar' : text.startsWith('Robar') || text.startsWith('Asaltar') ? 'Robar' : first === 'Subir' || !text ? 'Subir' : first;
+      this.boardButton.hidden = action === 'none';
+      const label = this.boardButton.querySelector<HTMLElement>('[data-board-label]');
+      if (label) setText(label, BOARD_LABELS[action]);
     }
     if (!this.prompt) return;
     this.prompt.hidden = !text;
@@ -124,10 +131,10 @@ export class Hud {
     if (!button) return;
     if (button instanceof HTMLButtonElement) button.disabled = !supported;
     button.setAttribute('aria-pressed', String(enabled));
-    button.title = supported ? `${enabled ? 'Mute' : 'Enable'} sound [N]` : 'Web Audio is unavailable';
+    button.title = t(!supported ? 'sound.unavailable' : enabled ? 'sound.muteTitle' : 'sound.enableTitle');
     button.querySelector('use')?.setAttribute('href', enabled ? '#i-sound' : '#i-sound-off');
-    const label = button.querySelector('[data-sound-label]');
-    if (label) label.textContent = enabled ? 'Sound on' : 'Sound off';
+    const label = button.querySelector<HTMLElement>('[data-sound-label]');
+    if (label) setText(label, enabled ? 'sound.on' : 'sound.off');
   }
 
   showTelemetry({ fps, mode, kmh, altitudeFt, boosting }: Telemetry): void {

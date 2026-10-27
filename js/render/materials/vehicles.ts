@@ -31,7 +31,7 @@ import { cityUniforms, _transparentEffectMRT } from './shared.ts';
 const _carPaintCache = new Map<number, THREE.MeshStandardNodeMaterial>();
 
 /**
- * GTA 6-Style Metallic Clearcoat Vehicle Paint TSL Material
+ * Metallic Clearcoat Vehicle Paint TSL Material
  */
 export function createCarPaintMaterial(baseHex = 0xffc218) {
   const cached = _carPaintCache.get(baseHex);

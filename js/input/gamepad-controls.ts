@@ -168,7 +168,7 @@ class GamepadControls {
     const held = (i: number) => pressed[i] && !this.suppressedButtons[i];
     // Capture edges before callbacks: changing mode or opening the map may synchronously call reset().
     const toggleMap = edge(9), closeMap = edge(1), menu = edge(8);
-    const board = edge(3); // Y: get in or out, as in GTA
+    const board = edge(3); // Y: get in or out
     let cycleCamera = Number(edge(5));
     const recenter = edge(11);
     const cycleWeapon = Number(edge(15)) - Number(edge(14)); // d-pad right / left

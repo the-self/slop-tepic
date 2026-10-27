@@ -12,8 +12,10 @@ import { POLICE, GANGS, NARCO } from '../crime-rules.ts';
 import type { AgentKind, NpcGun, Agent } from './types.ts';
 import { MAX_AGENTS, BODY_R, RUN, THIEF_RUN, WALK, DOWN_TIME, DEAD_TIME, DESPAWN, NPC_GUN, FOE_DAMAGE, FOE_RANGE, SKILL, clamp, rand, dummy } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
+import { t } from '../../i18n/i18n.ts';
 
 const TYRE_HIT = 0.08; // share of the rounds hitting the player's car that burst a tyre
+const REVIVED_HP = 35; // what someone the paramédicos brought round has left of their health
 
 // (a soldier, `army`, is one of the police: kind 'cop', in fatigues, with a rifle and more to them)
 export function spawnAgent(
@@ -87,7 +89,7 @@ export function kill(crime: CrimeSystem, a: Agent): void {
   // what they leave behind
   if (a.kind === 'thief' && a.money > 0) {
     crime.drop('money', a.x, a.z, a.money);
-    crime.toast('Get your money back!');
+    crime.toast(t('toast.getMoneyBack'));
     a.money = 0;
   } else if (a.kind === 'cop' && Math.random() < 0.7) {
     crime.drop(a.weapon === 'smg' || a.weapon === 'rifle' ? a.weapon : 'pistol', a.x, a.z);
@@ -111,6 +113,13 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
     const f = a.fallen;
     a.x = f.px;
     a.z = f.pz;
+    // brought round by the paramédicos (sim/emergency.ts): alive again, weak, and unarmed (what they had was dropped
+    // when they died: kill)
+    if (a.dead && f.revived) {
+      a.dead = false;
+      a.hp = REVIVED_HP;
+      a.weapon = null;
+    }
     if (!a.dead && f.rest > DOWN_TIME) {
       // back on their feet, and angry
       crime.ragdolls?.release(f);
@@ -214,7 +223,7 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
       const grab = crime.mode === 'person' ? dist < 1.5 && crime.pspeed < 3.5 : dist < 3.6 && crime.pspeed < 1.5 && crime.mode !== 'helicopter';
       a.arrest = grab ? a.arrest + dt : Math.max(0, a.arrest - dt);
       if (a.arrest > (crime.mode === 'person' ? 1.1 : 2.2)) {
-        crime.toast('Busted!');
+        crime.toast(t('toast.busted'));
         crime.down('busted');
       }
     }
@@ -261,7 +270,7 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
         if (take > 0) {
           crime.money -= take;
           a.money = take;
-          crime.toast(`A thief took $${take}! Catch the thief`);
+          crime.toast(t('toast.thief', { take }));
         }
         a.state = 'flee';
         a.t = 0;
@@ -270,7 +279,7 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
       goalYaw = Math.atan2(-dx, -dz);
       speed = THIEF_RUN;
       if (dist > 140 || a.t > 45) {
-        if (a.money) crime.toast('The thief got away');
+        if (a.money) crime.toast(t('toast.thiefGone'));
         crime.removeAgent(a);
         return;
       }

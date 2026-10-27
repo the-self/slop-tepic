@@ -173,8 +173,13 @@ body::after {
   z-index: 100;
   display: grid;
   place-items: center;
-  background: radial-gradient(120% 90% at 50% 38%, #1b1e24 0%, #0c0d10 55%, #060607 100%);
-  transition: opacity 0.6s ease, visibility 0.6s ease;
+  overflow: hidden;
+  padding: 24px 16px;
+  /* Tepic at dusk: the last of the sun low behind the hills, the night coming in overhead */
+  background:
+    radial-gradient(70% 55% at 50% 100%, rgba(255, 158, 64, 0.38) 0%, rgba(255, 158, 64, 0) 70%),
+    linear-gradient(180deg, #0d1020 0%, #1c1d3a 38%, #4a2c4e 66%, #b1573f 88%, #f08a3c 100%);
+  transition: opacity 0.7s ease, visibility 0.7s ease;
 }
 
 #loading-overlay.hidden {
@@ -183,34 +188,104 @@ body::after {
   pointer-events: none;
 }
 
+/* The skyline along the bottom: the Cerro de San Juan, the roofs and the Catedral's towers, slowly drifting */
+.loader-skyline {
+  position: absolute;
+  left: -4%;
+  right: -4%;
+  bottom: 0;
+  width: 108%;
+  height: 58vh;
+  min-height: 240px;
+  animation: skyline-drift 24s ease-in-out infinite alternate;
+}
+
+.loader-skyline .sky-stars { fill: rgba(255, 255, 255, 0.75); animation: stars-twinkle 4s ease-in-out infinite alternate; }
+.loader-skyline .sky-sierra { fill: #4a3050; opacity: 0.6; }
+.loader-skyline .sky-hill { fill: url(#hill-fill); }
+.loader-skyline .sky-cross { fill: #fff8ea; }
+.loader-skyline .sky-antenna { fill: none; stroke: #2a2338; stroke-width: 1.6; }
+.loader-skyline .sky-beacon { fill: #ff4b4b; animation: beacon-blink 1.6s steps(2, jump-none) infinite; }
+.loader-skyline .sky-city-lights { fill: #ffd27a; animation: lights-flicker 3.2s ease-in-out infinite alternate; }
+.loader-skyline .sky-town { fill: #110e18; }
+.loader-skyline .sky-palms { fill: #0d0b13; }
+.loader-skyline .palm-trunk { fill: none; stroke: #0d0b13; stroke-width: 3; }
+.loader-skyline .sky-windows { fill: rgba(255, 196, 110, 0.88); }
+
 .loader {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
+  width: min(440px, 100%);
+  margin-bottom: 14vh; /* (up off the skyline, so the Catedral's towers show under it) */
+  padding: 30px 28px 24px;
   text-align: center;
+  border-radius: 22px;
+  background: rgba(14, 14, 22, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 30px 80px -30px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
   animation: rise-in 0.8s var(--ease-out) both;
 }
 
-.mta-bullet.loader-bullet {
-  width: 56px;
-  height: 56px;
-  margin-bottom: 22px;
-  font-size: 21px;
+/* The logo: Tepic's big colourful letters, as on the sign in the Plaza, each its colour and pattern and stood out
+   in 3D (stacked drop shadows: a text-shadow would paint over a background clipped to the text) */
+.tepic-logo {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 0.02em;
+  font-family: var(--font-sans);
+  font-weight: 900;
+  line-height: 0.9;
+  letter-spacing: -0.02em;
 }
 
-.loader-title {
-  font-size: 34px;
-  font-weight: 650;
-  letter-spacing: -0.03em;
-  line-height: 1.1;
+.tepic-logo .tl {
+  display: inline-block;
+  color: var(--letter);
+  background: var(--pattern, none), var(--letter);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0.02em 0 var(--side)) drop-shadow(0 0.02em 0 var(--side)) drop-shadow(0 0.02em 0 var(--side))
+    drop-shadow(0 0.08em 0.06em rgba(0, 0, 0, 0.45));
+}
+
+.tl-t { --letter: #ee6f9e; --side: #a83a68; --pattern: repeating-linear-gradient(115deg, rgba(255, 255, 255, 0) 0 9px, rgba(255, 255, 255, 0.16) 9px 11px); transform: rotate(-4deg); }
+.tl-e { --letter: #f28a3a; --side: #b0561a; --pattern: radial-gradient(circle at 30% 35%, rgba(255, 236, 190, 0.35) 0 3px, transparent 4px) 0 0 / 14px 14px; transform: translateY(-0.04em); }
+.tl-p { --letter: #f5b63e; --side: #b77f16; --pattern: radial-gradient(circle, rgba(255, 255, 255, 0.22) 0 2px, transparent 3px) 0 0 / 10px 10px; transform: rotate(3deg); }
+.tl-i { --letter: #3cb6ad; --side: #1f7a73; --pattern: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0) 0 6px, rgba(255, 255, 255, 0.18) 6px 8px); transform: translateY(-0.02em); }
+.tl-c { --letter: #2f66d8; --side: #1a3d8f; --pattern: radial-gradient(120% 60% at 50% 100%, transparent 40%, rgba(150, 205, 255, 0.35) 41% 46%, transparent 47%) 0 0 / 22px 12px; font-size: 1.12em; transform: rotate(-6deg); }
+
+.loader-logo { font-size: 72px; }
+
+/* the tagline on the letters' blue plinth */
+.loader-tagline {
+  margin-top: 10px;
+  padding: 6px 18px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #2f62cf, #1f469e);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 6px 14px -6px rgba(0, 0, 0, 0.6);
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+
+.loader-progress {
+  width: 100%;
+  margin-top: 26px;
 }
 
 .loader-track {
   position: relative;
-  width: 240px;
-  height: 3px;
-  margin: 26px 0 14px;
-  border-radius: 3px;
+  width: 100%;
+  height: 8px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.1);
   overflow: hidden;
 }
@@ -219,7 +294,7 @@ body::after {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: var(--taxi);
+  background: linear-gradient(90deg, #ffb01a, var(--taxi) 60%, #ffe27a);
   transform-origin: left center;
   transform: scaleX(0);
   transition: transform 0.3s ease;
@@ -234,15 +309,139 @@ body::after {
   will-change: transform;
 }
 
-#loading-status {
-  font-size: 12.5px;
-  color: var(--text-3);
+.loader-status-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-2);
+  text-align: left;
   font-variant-numeric: tabular-nums;
+}
+
+.loader-percent {
+  flex: none;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.loader-tip {
+  width: 100%;
+  margin-top: 22px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  text-align: left;
+}
+
+.loader-tip figcaption {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--taxi);
+}
+
+.loader-tip p {
+  min-height: 2.9em;
+  margin-top: 5px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text);
+  transition: opacity 0.35s ease;
+}
+
+.loader-tip p.is-changing { opacity: 0; }
+
+.loader-keys {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 14px;
+  margin-top: 18px;
+  list-style: none;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.loader-keys li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.loader-keycaps {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.loader-keys kbd {
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  border-bottom: 2px solid rgba(0, 0, 0, 0.35);
+  font: 700 11px/1.4 var(--font-sans);
+  color: var(--text);
+}
+
+/* The language switch, top right of the loading screen */
+.loader-lang {
+  position: absolute;
+  top: max(16px, env(safe-area-inset-top));
+  right: max(16px, env(safe-area-inset-right));
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(14, 14, 22, 0.55);
+  color: var(--text);
+  font: 600 13px var(--font-sans);
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.loader-lang:hover { background: rgba(255, 194, 26, 0.18); border-color: rgba(255, 194, 26, 0.5); }
+.loader-lang .icon { width: 16px; height: 16px; }
+
+@media (max-height: 640px) {
+  .loader-keys { display: none; }
+  .loader { margin-bottom: 0; padding: 22px 20px 18px; }
+  .loader-logo { font-size: 56px; }
 }
 
 @keyframes loader-sweep {
   from { transform: translateX(-100%); }
   to { transform: translateX(290%); }
+}
+
+@keyframes skyline-drift {
+  from { transform: translateX(-1.5%); }
+  to { transform: translateX(1.5%); }
+}
+
+@keyframes stars-twinkle {
+  from { opacity: 0.45; }
+  to { opacity: 1; }
+}
+
+@keyframes beacon-blink {
+  from { opacity: 1; }
+  to { opacity: 0.15; }
+}
+
+@keyframes lights-flicker {
+  from { opacity: 0.7; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loader-skyline, .loader-skyline g { animation: none; }
 }
 
 @keyframes rise-in {

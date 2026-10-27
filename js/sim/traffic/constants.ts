@@ -19,7 +19,7 @@ const MASS = {
 const MASS_OF_BODY: Partial<Record<string, number>> = MASS;
 const massOf = (v: Vehicle): number => (v.bus ? MASS.bus : v.mass || MASS_OF_BODY[v.bodyType] || MASS.sedan);
 const DOWN_TIME = 9; // s a knocked-over cyclist lies still before getting up (out of sight, see spawnPed)
-// Someone on foot knocked over, GTA-style: how badly they bleed (ragdolls.ts bleedOf, from how hard they were hit: a
+// Someone on foot knocked over: how badly they bleed (ragdolls.ts bleedOf, from how hard they were hit: a
 // car at ~28 km/h or less, nothing worse than bruises) decides whether they get up. Under SURVIVE everyone does, after
 // GET_UP s, and runs off; over LETHAL nobody; between, fewer the harder. A body lies DEAD_TIME s, till out of sight
 // (BODY_TIME s at most; one an ambulance is coming for, till the paramédicos take it)

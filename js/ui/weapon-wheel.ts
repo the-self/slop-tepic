@@ -1,5 +1,5 @@
 // js/ui/weapon-wheel.ts
-// The weapon wheel, GTA-style, and the quick switch. Hold Tab (or LB on a gamepad, or tap the weapon on the HUD) and
+// The weapon wheel and the quick switch. Hold Tab (or LB on a gamepad, or tap the weapon on the HUD) and
 // the arsenal (sim/weapons.ts) opens round the middle of the screen, one wedge per weapon with its 3D picture
 // (ui/weapon-icons.ts) and its rounds; the one pointed at turns in the middle, with its name and its bars. Move the mouse
 // (or the right stick) towards a wedge, or scroll, and let go of Tab, or click it, to take it in hand; Esc closes it as
@@ -12,6 +12,8 @@ import { WEAPONS, WEAPON_ORDER, weaponStats } from '../sim/weapons.ts';
 import type { Arsenal, WeaponId, WeaponStats } from '../sim/weapons.ts';
 import { keyBindings } from '../input/keybindings.ts';
 import type { WeaponIcons } from './weapon-icons.ts';
+import { setText, t } from '../i18n/i18n.ts';
+import type { MessageKey } from '../i18n/i18n.ts';
 
 /** What the wheel uses of the CrimeSystem (sim/crime.ts) */
 export interface WheelCrime {
@@ -62,7 +64,7 @@ const SCROLL_REST = 0.25; // s without scrolling before a part-swipe is forgotte
 const SWITCH_GAP = 0.09; // s between weapons switched by scrolling (a trackpad's swipe runs on: one at a time)
 const STRIP_TIME = 1.6; // s the quick-switch strip stays
 const SPIN_FPS = 12;
-const STATS: readonly (readonly [keyof WeaponStats, string])[] = [['damage', 'Damage'], ['rate', 'Fire rate'], ['range', 'Range'], ['accuracy', 'Accuracy']];
+const STATS: readonly (readonly [keyof WeaponStats, MessageKey])[] = [['damage', 'wheel.damage'], ['rate', 'wheel.rate'], ['range', 'wheel.range'], ['accuracy', 'wheel.accuracy']];
 
 // The slot (0 at the top, clockwise) a pull of (dx, dy) screen px points at, of n
 function slotAt(dx: number, dy: number, n: number): number {
@@ -210,7 +212,7 @@ class WeaponWheel {
       ammo.className = 'wheel-ammo';
       const label = doc.createElement('span');
       label.className = 'wheel-label';
-      label.textContent = w.label;
+      setText(label, w.label);
       const key = doc.createElement('span');
       key.className = 'wheel-key';
       key.textContent = HINT[id] || '';
@@ -238,7 +240,7 @@ class WeaponWheel {
       const row = doc.createElement('div');
       row.className = 'wheel-stat';
       const label = doc.createElement('span');
-      label.textContent = text;
+      setText(label, text);
       const bar = doc.createElement('span');
       bar.className = 'wheel-bar';
       const fill = doc.createElement('i');
@@ -288,7 +290,7 @@ class WeaponWheel {
       const picture = this.picture(id, 'strip-icon');
       const label = this.doc.createElement('span');
       label.className = 'strip-label';
-      label.textContent = WEAPONS[id].label;
+      setText(label, WEAPONS[id].label);
       const ammo = this.doc.createElement('span');
       ammo.className = 'strip-ammo';
       tile.append(picture.el, label, ammo);
@@ -418,7 +420,7 @@ class WeaponWheel {
       s.rim.classList.toggle('is-pointed', key === id);
       s.slot.classList.toggle('is-pointed', key === id);
     }
-    this.centreName.textContent = WEAPONS[id].label;
+    this.centreName.textContent = t(WEAPONS[id].label);
     this.centreAmmo.textContent = this.roundsLine(id);
     const stats = weaponStats(id);
     for (const [key] of STATS) {
@@ -430,7 +432,7 @@ class WeaponWheel {
 
   roundsLine(id: WeaponId): string {
     const rounds = this.crime.arsenal.ammo[id];
-    return rounds === Infinity ? 'Melee' : `${rounds} rounds`;
+    return rounds === Infinity ? t('wheel.melee') : t('wheel.rounds', { n: rounds });
   }
 
   // The slots' rounds and which are empty or in hand

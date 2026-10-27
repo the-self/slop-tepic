@@ -5,6 +5,7 @@
 import { POLICE, GANGS, NARCO, gangTurf } from '../crime-rules.ts';
 import { MAX_AGENTS, MAX_TRUCKS, HEALTH_PICKUP, ARMOR_PICKUP, rand } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
+import { t as tr } from '../../i18n/i18n.ts'; // (t is the dispatch's timers here)
 
 export function dispatch(crime: CrimeSystem, dt: number): void {
   const t = crime.timers;
@@ -50,7 +51,7 @@ export function dispatch(crime: CrimeSystem, dt: number): void {
   if (t.patrols <= 0) {
     t.patrols = 0.5;
     const v = stars > 0 && crime.onStreet ? crime.trafficPatrolSees(crime.px, crime.pz, true) : null;
-    if (v && crime.takeOverPatrol(v)) crime.toast('A patrol car spotted you');
+    if (v && crime.takeOverPatrol(v)) crime.toast(tr('toast.patrol'));
   }
 
   // the helicopter, from four stars (another a while after one is shot down)
@@ -84,7 +85,7 @@ export function dispatch(crime: CrimeSystem, dt: number): void {
             a.idleYaw = Math.atan2(cx - x, cz - z);
           }
         }
-        if (crime.lastTurf !== turf) crime.toast(`${GANGS[turf].name} turf`);
+        if (crime.lastTurf !== turf) crime.toast(tr('toast.turf', { gang: GANGS[turf].name }));
         crime.lastTurf = turf;
       }
     } else if (turf < 0) {
@@ -98,7 +99,7 @@ export function dispatch(crime: CrimeSystem, dt: number): void {
     t.trucks = 7;
     let trucks = 0;
     for (const cr of crime.cruisers) if (cr.active && !cr.wreck && cr.faction === 'narco' && cr.state === 'chase') trucks++;
-    if (trucks < MAX_TRUCKS && crime.spawnCruiser('narco') && !trucks) crime.toast('The cartel is sending its people');
+    if (trucks < MAX_TRUCKS && crime.spawnCruiser('narco') && !trucks) crime.toast(tr('toast.cartel'));
   }
 
   // a thief now and then, after a player on foot with money on it

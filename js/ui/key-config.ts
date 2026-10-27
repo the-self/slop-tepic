@@ -1,11 +1,17 @@
 // js/ui/key-config.ts
 // The menu's Keys tab (app/menu.ts): every binding of input/keybindings.ts by group, each with its two keys as
 // buttons. Click one and press a key to bind it there (Esc leaves it as it was, Backspace or Delete takes it off); a key
-// that does something else too says so, and Reset puts the defaults back. Built with safe DOM APIs only.
+// that does something else too says so, and Reset puts the defaults back. Built with safe DOM APIs only, in the
+// player's language (built again when it changes).
 import { BIND_ACTIONS, BIND_ORDER, BIND_SLOTS, bindable, keyLabel } from '../input/keybindings.ts';
 import type { BindAction, BindSpec, KeyBindings } from '../input/keybindings.ts';
+import { onLocaleChange, t } from '../i18n/i18n.ts';
+import type { MessageKey } from '../i18n/i18n.ts';
 
-const GROUPS: readonly BindSpec['group'][] = ['Moving', 'Vehicles', 'Weapons', 'Game'];
+// The groups, in the tab's order, and their headings
+const GROUPS: readonly (readonly [BindSpec['group'], MessageKey])[] = [
+  ['moving', 'keys.group.moving'], ['vehicles', 'keys.group.vehicles'], ['weapons', 'keys.group.weapons'], ['game', 'keys.group.game']
+];
 
 export class KeyConfig {
   private readonly root: HTMLElement | null;
@@ -16,6 +22,7 @@ export class KeyConfig {
     this.root = root;
     this.bindings = bindings;
     bindings.onChange(() => { this.render(); });
+    onLocaleChange(() => { this.render(); });
     reset?.addEventListener('click', () => {
       this.listening = null;
       bindings.reset();
@@ -51,10 +58,10 @@ export class KeyConfig {
     const root = this.root;
     if (!root) return;
     const nodes: HTMLElement[] = [];
-    for (const group of GROUPS) {
+    for (const [group, heading] of GROUPS) {
       const title = document.createElement('h3');
       title.className = 'menu-title';
-      title.textContent = group;
+      title.textContent = t(heading);
       const rows = document.createElement('div');
       rows.className = 'key-rows';
       for (const action of BIND_ORDER) if (BIND_ACTIONS[action].group === group) rows.append(this.row(action));
@@ -68,7 +75,7 @@ export class KeyConfig {
     row.className = 'key-row';
     const name = document.createElement('span');
     name.className = 'key-name';
-    name.textContent = BIND_ACTIONS[action].label;
+    name.textContent = t(BIND_ACTIONS[action].label);
     const slots = document.createElement('span');
     slots.className = 'key-slots';
     const codes = this.bindings.get(action);
@@ -78,8 +85,8 @@ export class KeyConfig {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = waiting ? 'key-slot is-listening' : code ? 'key-slot' : 'key-slot is-empty';
-      button.textContent = waiting ? 'Press a key…' : code ? keyLabel(code) : '—';
-      button.title = waiting ? 'Esc: leave it · Backspace: no key' : code ? 'Click to change' : 'Click to add a key';
+      button.textContent = waiting ? t('keys.waiting') : code ? keyLabel(code) : '—';
+      button.title = t(waiting ? 'keys.waitingTitle' : code ? 'keys.change' : 'keys.add');
       button.addEventListener('click', () => {
         // (an empty slot fills the first free one: the keys stay main-first)
         this.listening = { action, slot: Math.min(slot, codes.length) };
@@ -94,7 +101,7 @@ export class KeyConfig {
     if (shared.size) {
       const also = document.createElement('span');
       also.className = 'key-also';
-      also.textContent = `Also: ${[...shared].map((other) => BIND_ACTIONS[other].label).join(', ')}`;
+      also.textContent = t('keys.also', { list: [...shared].map((other) => t(BIND_ACTIONS[other].label)).join(', ') });
       row.append(also);
     }
     return row;

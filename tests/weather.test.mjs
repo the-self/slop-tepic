@@ -50,7 +50,7 @@ test('Open-Meteo conditions are normalized to fractions, mm/h & metres', () => {
   assert.ok(Math.abs(w.recentRain - 2.3) < 1e-9);
   assert.equal(w.visibility, 6400);
   assert.equal(w.fetchedAt, 1234);
-  assert.equal(weatherLabel(w), 'Rain');
+  assert.equal(weatherLabel(w), 'weather.rain');
   assert.throws(() => parseOpenMeteo({}), /no current block/);
 });
 

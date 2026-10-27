@@ -1,7 +1,7 @@
 // tools/models/add-lods.mjs
 // A heavy car file's lighter levels of detail (20k triangles or more), for the game to draw further off (actors/vehicles/car-files.ts, the traffic's
 // render.ts): its body and its wheel simplified to about 30% and 10% of their triangles, as meshes of their own in the
-// same file ('lod1' & 'lod1_wheel', 'lod2' & 'lod2_wheel'), with the same material. As GTA V does (its cars have four
+// same file ('lod1' & 'lod1_wheel', 'lod2' & 'lod2_wheel'), with the same material. As big open-world games do (their cars have four
 // or five, by distance), so a car far off costs a tenth of one close by and doesn't jump to the plain body shape all at
 // once. Run on a prepared car (tools/models/prepare.mjs or prepare-made.mjs); again on the same file replaces its levels.
 //   node tools/models/add-lods.mjs assets/models/cars/<id>.glb [...more]

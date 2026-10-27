@@ -1,5 +1,5 @@
 // js/player/car-physics/aids.ts
-// The car's driver aids, a game's (as GTA's: the player steers with keys, all or nothing, and a kerb is no reason to
+// The car's driver aids, a game's (the player steers with keys, all or nothing, and a kerb is no reason to
 // end up on the roof): the steering held to what the front tyres grip, the stability control, the brakes' bias, the
 // roll and pitch held when the ground throws a side or an end up, and the speed a kerb costs. Pure numbers:
 // car-physics.ts applies them in Jolt, node --test checks them

@@ -31,7 +31,7 @@ export function syncOccupants(ctl: ThirdPersonControllerManager): void {
   moto.helmet.visible = onMoto;
 }
 
-// GTA-style boarding (F, main.ts): the player's own vehicle the pedestrian could get into, the nearest whose body
+// Boarding (F, main.ts): the player's own vehicle the pedestrian could get into, the nearest whose body
 // is within `reach` metres; { mode, distance } (and `left`: one of the cars left behind, leaveCarBehind) or null
 export function ownVehicleNear(ctl: ThirdPersonControllerManager, reach: number): { mode: VehicleMode; distance: number; left?: LeftCar } | null {
   const p = ctl.entities.person.position;
@@ -150,7 +150,7 @@ export function enterVehicle(ctl: ThirdPersonControllerManager, mode: PlayerMode
   return true;
 }
 
-// Getting out (F), GTA-style: at a walk the pedestrian steps out (exitVehicle); going faster than BAIL_SPEED the
+// Getting out (F): at a walk the pedestrian steps out (exitVehicle); going faster than BAIL_SPEED the
 // driver throws themself out of the door and tumbles along the road at about the speed it was going (a ragdoll, up
 // again once they have lain still), the car rolling on empty; a moto's or bicycle's rider is thrown off it
 export function leaveVehicle(ctl: ThirdPersonControllerManager): boolean {

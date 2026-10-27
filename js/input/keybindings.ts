@@ -2,10 +2,11 @@
 // The keyboard's bindings: which keys (KeyboardEvent.code, so they stay put whatever the layout) do what, the
 // defaults, and the player's own from the menu's Keys tab (ui/key-config.ts), remembered in localStorage. Every part of
 // the game that listens to a key asks here (controllers/input.ts, aim.ts, crime/player.ts, the weapon wheel, the map,
-// the chat, main.ts), so a key changed in the menu changes everywhere at once. Free of three.js and of imports, so
-// node --test runs it as it is.
+// the chat, main.ts), so a key changed in the menu changes everywhere at once. Free of three.js and of imports (but
+// the type of its labels' message keys, i18n/en.ts), so node --test runs it as it is.
 //
 // Some keys stay fixed: Esc (the menu), 1-4 (weapons), 5-0 (cameras) and the mouse.
+import type { MessageKey } from '../i18n/en.ts';
 
 /** A thing a key can be bound to */
 export type BindAction =
@@ -14,10 +15,10 @@ export type BindAction =
   | 'fire' | 'aim' | 'weaponWheel' | 'nextWeapon'
   | 'camera' | 'map' | 'cleanView' | 'sound' | 'chat';
 
-/** How the menu shows a binding: its name, the group it is listed under, and its default keys */
+/** How the menu shows a binding: its name (a message key, i18n/), the group it is listed under, its default keys */
 export interface BindSpec {
-  label: string;
-  group: 'Moving' | 'Vehicles' | 'Weapons' | 'Game';
+  label: MessageKey;
+  group: 'moving' | 'vehicles' | 'weapons' | 'game';
   keys: readonly string[];
 }
 
@@ -27,28 +28,28 @@ export const BIND_SLOTS = 2;
 // The defaults, as the game shipped them. Some keys do two things in two places (Space jumps on foot and is the
 // car's handbrake; E is the helicopter's climb and the gearbox's shift up): each mode reads only its own
 export const BIND_ACTIONS: Readonly<Record<BindAction, BindSpec>> = {
-  forward: { label: 'Forward / gas', group: 'Moving', keys: ['KeyW', 'ArrowUp'] },
-  backward: { label: 'Back / brake', group: 'Moving', keys: ['KeyS', 'ArrowDown'] },
-  left: { label: 'Left', group: 'Moving', keys: ['KeyA', 'ArrowLeft'] },
-  right: { label: 'Right', group: 'Moving', keys: ['KeyD', 'ArrowRight'] },
-  boost: { label: 'Sprint / nitro', group: 'Moving', keys: ['ShiftLeft', 'ShiftRight'] },
-  up: { label: 'Jump / helicopter up', group: 'Moving', keys: ['Space', 'KeyE'] },
-  down: { label: 'Helicopter down', group: 'Moving', keys: ['KeyQ', 'KeyC'] },
-  handbrake: { label: 'Handbrake', group: 'Vehicles', keys: ['Space'] },
-  shiftUp: { label: 'Gear up', group: 'Vehicles', keys: ['KeyE'] },
-  shiftDown: { label: 'Gear down', group: 'Vehicles', keys: ['KeyQ'] },
-  gearbox: { label: 'Automatic / manual', group: 'Vehicles', keys: ['KeyT'] },
-  board: { label: 'Get in / out · rob', group: 'Vehicles', keys: ['KeyF'] },
-  horn: { label: 'Horn', group: 'Vehicles', keys: ['KeyB'] },
-  fire: { label: 'Fire', group: 'Weapons', keys: ['KeyX'] },
-  aim: { label: 'Aim (on / off)', group: 'Weapons', keys: ['KeyZ'] },
-  weaponWheel: { label: 'Weapon wheel (hold)', group: 'Weapons', keys: ['Tab'] },
-  nextWeapon: { label: 'Next weapon (Shift: back)', group: 'Weapons', keys: ['KeyR'] },
-  camera: { label: 'Next camera (Shift: back)', group: 'Game', keys: ['KeyV'] },
-  map: { label: 'Map', group: 'Game', keys: ['KeyM'] },
-  cleanView: { label: 'Clean view', group: 'Game', keys: ['KeyH'] },
-  sound: { label: 'Sound on / off', group: 'Game', keys: ['KeyN'] },
-  chat: { label: 'Chat (multiplayer)', group: 'Game', keys: ['Enter'] }
+  forward: { label: 'bind.forward', group: 'moving', keys: ['KeyW', 'ArrowUp'] },
+  backward: { label: 'bind.backward', group: 'moving', keys: ['KeyS', 'ArrowDown'] },
+  left: { label: 'bind.left', group: 'moving', keys: ['KeyA', 'ArrowLeft'] },
+  right: { label: 'bind.right', group: 'moving', keys: ['KeyD', 'ArrowRight'] },
+  boost: { label: 'bind.boost', group: 'moving', keys: ['ShiftLeft', 'ShiftRight'] },
+  up: { label: 'bind.up', group: 'moving', keys: ['Space', 'KeyE'] },
+  down: { label: 'bind.down', group: 'moving', keys: ['KeyQ', 'KeyC'] },
+  handbrake: { label: 'bind.handbrake', group: 'vehicles', keys: ['Space'] },
+  shiftUp: { label: 'bind.shiftUp', group: 'vehicles', keys: ['KeyE'] },
+  shiftDown: { label: 'bind.shiftDown', group: 'vehicles', keys: ['KeyQ'] },
+  gearbox: { label: 'bind.gearbox', group: 'vehicles', keys: ['KeyT'] },
+  board: { label: 'bind.board', group: 'vehicles', keys: ['KeyF'] },
+  horn: { label: 'bind.horn', group: 'vehicles', keys: ['KeyB'] },
+  fire: { label: 'bind.fire', group: 'weapons', keys: ['KeyX'] },
+  aim: { label: 'bind.aim', group: 'weapons', keys: ['KeyZ'] },
+  weaponWheel: { label: 'bind.weaponWheel', group: 'weapons', keys: ['Tab'] },
+  nextWeapon: { label: 'bind.nextWeapon', group: 'weapons', keys: ['KeyR'] },
+  camera: { label: 'bind.camera', group: 'game', keys: ['KeyV'] },
+  map: { label: 'bind.map', group: 'game', keys: ['KeyM'] },
+  cleanView: { label: 'bind.cleanView', group: 'game', keys: ['KeyH'] },
+  sound: { label: 'bind.sound', group: 'game', keys: ['KeyN'] },
+  chat: { label: 'bind.chat', group: 'game', keys: ['Enter'] }
 };
 
 // (BIND_ACTIONS' keys are the actions)

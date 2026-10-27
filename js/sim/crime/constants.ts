@@ -11,7 +11,7 @@ const MAX_CRUISERS = 5;
 const MAX_TRUCKS = 2; // the cartel's
 const MAX_ARMY = 2; // the army's trucks
 const MAX_PICKUPS = 24;
-// What a pickup lying on the sidewalk gives (of 100): a first-aid kit half a life back, a vest a whole armour, as GTA's
+// What a pickup lying on the sidewalk gives (of 100): a first-aid kit half a life back, a vest a whole armour
 const HEALTH_PICKUP = 50;
 const ARMOR_PICKUP = 100;
 const PARKED_Y = -1000; // where unused meshes wait (still in the scene, so their pipelines compile at load)
@@ -32,7 +32,7 @@ const DRAW_TIME = 0.32; // s to put one weapon away and bring the next up (the a
 const RESPAWN_TIME = 4.2; // s on the WASTED / BUSTED screen
 const COP_SIGHT = 45; // m an officer sees the player from (a patrol car: 70)
 const CRUISER_SIGHT = 70;
-// rad either side of where they look that an officer (on foot or in a patrol car) sees across, GTA-style: a cone ahead of
+// rad either side of where they look that an officer (on foot or in a patrol car) sees across: a cone ahead of
 // them, not all round (the helicopter, looking down, sees all round)
 const COP_FOV = 0.75;
 const CRUISER_FOV = 0.6;

@@ -131,7 +131,8 @@ interface RagdollHandle {
   tracked: number;
   trackT: number;
   down?: boolean; // (traffic.ts: it has been told it lies on the ground)
-  awaiting?: boolean; // (sim/emergency.ts: an ambulance is on its way: they lie there till the paramédicos take them)
+  awaiting?: boolean; // (sim/emergency.ts: an ambulance is on its way: they lie there till the paramédicos see to them)
+  revived?: boolean; // (sim/emergency.ts: the paramédicos brought them round: dead or not, they get up)
 }
 interface Ragdolls {
   onSettle: ((h: RagdollHandle) => void) | null;

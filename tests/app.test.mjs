@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Boarding } from '../js/app/boarding.ts';
 import { playerStateKey, restorePlayer, savePlayer } from '../js/app/player-state.ts';
+import { setLocale, t } from '../js/i18n/i18n.ts';
+
+setLocale('es'); // (the prompts below in Spanish, whatever language Node says it speaks)
 
 const at = (x, z) => ({ x, y: 0, z });
 
@@ -46,6 +49,7 @@ function world({ mode = 'person', own = null, taken = null, parked = null, near 
 test('F on foot takes the traffic vehicle within reach: a patrol car is always a crime, any other one if the police see it', () => {
   const patrol = world({ taken: { isPolice: true } });
   assert.equal(patrol.boarding.prompt(), 'Robar la patrulla');
+  assert.equal(patrol.boarding.promptAction, 'steal'); // (the touch button's word)
   patrol.boarding.board();
   assert.deepEqual(patrol.calls, [['leaveCarBehind'], ['enter', 'car', { kind: 'car', police: true }], ['report', 'stealCop', true], ['sync']]);
 
@@ -91,12 +95,13 @@ test('a store\'s till pays out once, raises the alarm, then stays empty for ten 
   assert.ok(till.refill - performance.now() / 1000 > 599);
   calls.length = 0;
   boarding.board();
-  assert.deepEqual(calls, [['toast', 'The till is empty']]);
+  assert.deepEqual(calls, [['toast', 'La caja está vacía']]);
 });
 
 test('with nothing to board, F buys at a stand or goes through a door; in a vehicle it gets out', () => {
   const stand = world({ food: 'Comprar tacos', door: 'Entrar' });
   assert.equal(stand.boarding.prompt(), 'Comprar tacos');
+  assert.equal(stand.boarding.promptAction, 'use');
   stand.boarding.board();
   assert.deepEqual(stand.calls, [['buy']]);
   const door = world({ door: 'Entrar' });
@@ -105,6 +110,7 @@ test('with nothing to board, F buys at a stand or goes through a door; in a vehi
   assert.deepEqual(door.calls, [['act']]);
   const driving = world({ mode: 'car' });
   assert.equal(driving.boarding.prompt(), '');
+  assert.equal(driving.boarding.promptAction, 'exit');
   driving.boarding.board();
   assert.deepEqual(driving.calls, [['exit'], ['sync']]);
   const wasted = world({ taken: {}, state: 'wasted' });
@@ -142,4 +148,13 @@ test('the saved player comes back where each vehicle was, with its looks and mon
   store.set(key, 'not json');
   assert.deepEqual(restorePlayer(restoring, key), { mode: null, money: undefined }, 'and so is a broken one');
   delete globalThis.localStorage;
+});
+
+test('every language says the same prompts in its own words, and back again', () => {
+  setLocale('en');
+  assert.equal(world({ taken: { isPolice: true } }).boarding.prompt(), 'Steal the police car');
+  assert.equal(t('prompt.buy', { item: 'tacos', price: 25 }), 'Buy tacos ($25)');
+  setLocale('es');
+  assert.equal(world({ taken: { isPolice: true } }).boarding.prompt(), 'Robar la patrulla');
+  assert.equal(t('prompt.buy', { item: 'tacos', price: 25 }), 'Comprar tacos ($25)');
 });

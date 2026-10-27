@@ -1,5 +1,5 @@
 // js/player/aim.ts
-// Free aim on foot, GTA-style: hold the right mouse button (or press Z to toggle it, for a trackpad) and the camera
+// Free aim on foot: hold the right mouse button (or press Z to toggle it, for a trackpad) and the camera
 // comes in over the player's right shoulder (cameras.ts) with a crosshair in the middle of the screen. The mouse turns
 // the player and tilts the aim (pointer lock), the left button (or X) fires along the crosshair (crime.ts), and WASD
 // walks and strafes (controllers.ts). The crosshair turns red over someone or something the shot would hit.

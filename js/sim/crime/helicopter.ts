@@ -7,6 +7,7 @@ import { wrapAngle, hitChance } from '../weapons.ts';
 import type { Helicopter } from './types.ts';
 import { PARKED_Y, HELI_ALT, HELI_ORBIT, HELI_SPEED, HELI_HP, HELI_GUN, HELI_RESPAWN, SKILL, clamp, rand } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
+import { t } from '../../i18n/i18n.ts';
 
 // It comes in from ~240 m off, high, out of sight
 export function spawnHeli(crime: CrimeSystem): void {
@@ -25,7 +26,7 @@ export function spawnHeli(crime: CrimeSystem): void {
   h.cooldown = 3;
   h.burst = 0;
   h.spin = 0;
-  crime.toast('A police helicopter is after you');
+  crime.toast(t('toast.heli'));
 }
 
 export function removeHeli(h: Helicopter): void {
@@ -48,7 +49,7 @@ export function damageHeli(crime: CrimeSystem, damage: number, byPlayer: boolean
   crime.timers.heli = HELI_RESPAWN;
   if (byPlayer) {
     crime.report('killCop', true);
-    crime.toast('Helicopter down!');
+    crime.toast(t('toast.heliDown'));
   }
 }
 
