@@ -3,8 +3,10 @@ import { PersonCrowd, PersonRig } from '../sim/pedestrians.ts';
 import { isTypingInField } from '../world/city-config.ts';
 import { keyBindings } from '../input/keybindings.ts';
 import { PLAYER_PERSON } from '../player/controllers/constants.ts';
+import { RemoteCarFleet } from './remote-cars.ts';
 import {
   SEND_HZ,
+  MAX_UPDATE_EVERY,
   OP,
   CHAT_MAX,
   encodeHello,
@@ -44,9 +46,13 @@ import { onLocaleChange, setLabel, setText, t } from '../i18n/i18n.ts';
 const DEFAULT_REGION = 'nayarit'; // the map this checkout builds (Tepic); each city's map will name its own region
 const DEFAULT_PORT = 8787;
 const INTERP_DELAY_MS = 200; // two server ticks: a late packet still has a pose to blend toward
+// A far player's poses come every second or third tick (protocol.ts updateEvery): past its last one it goes on along
+// its heading at its speed, this long at most (then it is held, as before: it stopped, or the next pose is late)
+const EXTRAPOLATE_MS = MAX_UPDATE_EVERY * 120;
 const SNAP_DISTANCE = 60; // m between updates beyond which a player teleported instead of moving
 const KEEPALIVE_MS = 2000; // resend an unchanged pose this often
 const MAX_REMOTE_PEOPLE = 96; // walkers + cyclists' riders drawn by the shared crowd
+const MAX_REMOTE_CARS = 64; // cars drawn (net/remote-cars.ts): the server's view holds 64 players (VIEW_MAX)
 const LABEL_DISTANCE = 140; // m within which name tags show
 const RETRY_MAX_MS = 10000;
 const RIDE_REACH = 3.2; // m from a friend's car to get in
@@ -191,7 +197,7 @@ class RemotePlayer {
   push(t: number, s: MovedPlayer, tickMs: number): void {
     const last = this.samples.at(-1);
     if (last && Math.hypot(s.x - last.x, s.z - last.z) > SNAP_DISTANCE) this.samples.length = 0;
-    else if (last && t - last.t > tickMs * 2.5) {
+    else if (last && t - last.t > tickMs * (MAX_UPDATE_EVERY + 0.5)) {
       // it stood still (the server sent nothing): start the new motion from a fresh copy, not a minutes-long glide
       this.samples.push({ ...last, t: t - tickMs });
     }
@@ -199,15 +205,23 @@ class RemotePlayer {
     if (this.samples.length > 6) this.samples.shift();
   }
 
-  // Pose at renderTime: between the two samples around it, else held at the nearest end
+  // Pose at renderTime: between the two samples around it; past the last one, on along its heading at its speed for
+  // EXTRAPOLATE_MS (a far player's next pose is a tick or two later); else held at the nearest end
   sample(renderTime: number): RemotePose {
     const s = this.samples;
     const p = this.pose;
     if (s.length === 0) return p;
     let a = s[0];
     let b = s[0];
-    if (renderTime >= s[s.length - 1].t) {
-      a = b = s[s.length - 1];
+    const last = s[s.length - 1];
+    if (renderTime >= last.t) {
+      const ahead = Math.min(renderTime - last.t, EXTRAPOLATE_MS) / 1000;
+      p.x = last.x + Math.sin(last.heading) * last.speed * ahead;
+      p.y = last.y;
+      p.z = last.z + Math.cos(last.heading) * last.speed * ahead;
+      p.heading = last.heading;
+      p.speed = last.speed;
+      return p;
     } else {
       for (let i = 1; i < s.length; i++) {
         if (s[i].t >= renderTime) {
@@ -247,6 +261,7 @@ class Multiplayer {
   lastSentAt: number; // performance.now() ms
   nextSendAt: number;
   crowd: PersonCrowd;
+  cars: RemoteCarFleet; // the others' cars, instanced (net/remote-cars.ts)
   _tilt: GroundTilt;
   badge: HTMLDivElement;
   labels: HTMLDivElement;
@@ -311,6 +326,7 @@ class Multiplayer {
     this.crowd = new PersonCrowd(MAX_REMOTE_PEOPLE, { farDistance: 40, model: PLAYER_PERSON });
     this._tilt = { pitch: 0, roll: 0 };
     this.crowd.meshes.forEach((m) => scene.add(m));
+    this.cars = new RemoteCarFleet(scene, controllers.entities.car.mesh, MAX_REMOTE_CARS);
 
     this.badge = document.createElement('div');
     this.badge.className = 'mp-badge';
@@ -583,7 +599,8 @@ class Multiplayer {
     r.visual = null;
     r.mode = mode;
     const entity = this.controllers.entities[mode];
-    if (mode !== 'person' && entity) {
+    // (a car is an instance of the fleet's parts, placed each frame in update: no copy of its own)
+    if (mode !== 'person' && mode !== 'car' && entity) {
       r.visual = cloneVisual(entity);
       if (mode === 'cyclist' || mode === 'moto') r.leanPivot = counterpart(entity.mesh, r.visual, entity.leanPivot);
       if (mode === 'helicopter') {
@@ -626,6 +643,7 @@ class Multiplayer {
     const targets = this.targets;
     let n = 0;
     this.crowd.begin();
+    this.cars.begin(dt);
     for (const r of this.remotes.values()) {
       if (!r.mode || r.samples.length === 0) continue;
       const p = r.sample(renderTime);
@@ -647,16 +665,20 @@ class Multiplayer {
       t.halfL = body?.halfL ?? 0;
       t.height = body?.height ?? 1.85;
       const dist = Math.hypot(p.x - cam.position.x, p.z - cam.position.z);
+      if (r.mode === 'car') {
+        // lying on the slope under its wheels, as the local player's does (controllers.ts tiltToGround)
+        const tilt = this.controllers.groundTilt(p.x, p.z, p.heading, 1.35, 0.8, this._tilt);
+        this.cars.add(p.x, p.y, p.z, p.heading, tilt.pitch, tilt.roll);
+      }
       if (r.visual) {
         r.visual.position.set(p.x, p.y, p.z);
         r.visual.rotation.y = p.heading;
-        // a car or bicycle lies on the slope under its wheels, as the local player's does (controllers.ts tiltToGround)
-        if (r.mode === 'car' || r.mode === 'cyclist' || r.mode === 'moto') {
-          const car = r.mode === 'car';
-          const t = this.controllers.groundTilt(p.x, p.z, p.heading, car ? 1.35 : 0.55, car ? 0.8 : 0.3, this._tilt);
+        // a bicycle or moto pitches with the slope under its wheels (its lean is its own)
+        if (r.mode === 'cyclist' || r.mode === 'moto') {
+          const t = this.controllers.groundTilt(p.x, p.z, p.heading, 0.55, 0.3, this._tilt);
           r.visual.rotation.order = 'YXZ';
           r.visual.rotation.x = t.pitch;
-          r.visual.rotation.z = car ? t.roll : 0;
+          r.visual.rotation.z = 0;
         }
       }
       if (r.mode === 'person' && r.rig) {
@@ -678,6 +700,7 @@ class Multiplayer {
     }
     targets.length = n;
     this.crowd.end();
+    this.cars.end();
   }
 
   // The player killed (crime.state turned 'wasted'): the room hears it, and by whom when another player's hit was

@@ -26,7 +26,6 @@ import type { WebSocket } from 'ws';
 import { RoomManager } from './rooms.ts';
 import type { Room, RoomStats, RoomSummary } from './rooms.ts';
 import { hashPassword, checkPassword } from './passwords.ts';
-import { nearestInView } from './aoi.ts';
 import {
   PROTOCOL_VERSION,
   TICK_HZ,
@@ -40,6 +39,8 @@ import {
   encodeRoom,
   sanitizeTitle,
   encodeTick,
+  TickFrame,
+  updateEvery,
   encodeError,
   encodeChatLine,
   encodeShotSeen,
@@ -58,6 +59,9 @@ const CHAT_BURST = 5; // ...after a burst of this many
 const PASSWORD_FAILS = 10; // passwords a room checks a minute (from everyone) that aren't right before it refuses the rest
 const PASSWORD_WINDOW_MS = 60000;
 const ROOM_GRACE_MS = 120000; // a player's own room left empty waits this long for them to come back (a dropped connection)
+// Ticks between the times a client's view (who is nearest) is worked out again, staggered by its id: the nearest 64
+// change slowly, and finding them was most of a crowded tick. In between, the poses still go out every tick
+const VIEW_EVERY = 3;
 
 export interface ServerOptions {
   port?: number; // 0 picks a free one
@@ -81,6 +85,7 @@ export interface Player {
   joining: boolean; // its HELLO or CREATE is being checked (a password hashing): it says no other
   state: WirePose | null; // its latest pose, in wire units (cm)
   sent: Map<number, WirePose>; // id → the pose this client last received for that player (its local player list)
+  view: number[]; // the ids of the players it was last found to see (nearest first), worked out every VIEW_EVERY ticks
   alive: boolean; // answered the last ping
   budget: number; // messages left in its token bucket
   budgetAt: number; // ms (Date.now()) the bucket was last refilled
@@ -118,7 +123,7 @@ function createServer({
   log = console.log
 }: ServerOptions = {}): Promise<RunningServer> {
   // Poses stay in wire units (centimetres) server-side, so the grid's 250 m cells are 25 000 cm
-  const rooms = new RoomManager<Player>({ capacity, cellSize: 25000 });
+  const rooms = new RoomManager<Player>({ capacity, cellSize: 25000, unit: 100 });
   const players = new Map<number, Player>(); // id → player
   const load = { tickMs: 0, bytesPerTick: 0 }; // moving averages, reported by /health
   let lastId = 0;
@@ -224,6 +229,7 @@ function createServer({
       joining: false,
       state: null,
       sent: new Map(), // id → the pose this client last received for that player (its local player list)
+      view: [],
       alive: true,
       budget: MAX_MSGS_PER_SEC,
       budgetAt: Date.now(),
@@ -361,37 +367,50 @@ function createServer({
     });
   });
 
-  // One TICK frame per client: departures, newcomers (with names) and the poses that changed since it last heard
+  // One TICK frame per client: departures, newcomers (with names) and the poses that changed since it last heard, the
+  // farther ones less often (protocol.ts updateEvery). Nothing is allocated a client but its frame's bytes: the view is
+  // kept in the player's own array, who is in it marked in `inView` by a number new to each client
   const positions = new Map<number, WirePose>(); // reused per room: id → state
   const radiusCm = viewRadius * 100;
+  const frame = new TickFrame();
+  const inView = new Float64Array(65536); // id → the mark of the last client whose view it is in
+  let mark = 0;
+  let tickNo = 0;
   function tick() {
     const t0 = performance.now();
     let bytes = 0;
+    tickNo++;
     for (const room of rooms.rooms.values()) {
       positions.clear();
       for (const [id, pl] of room.players) if (pl.state) positions.set(id, pl.state);
       for (const p of room.players.values()) {
-        if (!p.state || p.ws.bufferedAmount > MAX_BUFFERED) continue;
-        const inView = nearestInView(room.grid, positions, p.id, radiusCm, viewMax);
-        const now = new Set(inView);
-        const gone: number[] = [];
-        for (const id of p.sent.keys()) if (!now.has(id)) gone.push(id);
-        for (const id of gone) p.sent.delete(id);
-        const info: [number, string][] = [];
-        const moved: [number, WirePose][] = [];
-        for (const id of inView) {
-          const st = positions.get(id);
-          if (!st) continue; // (inView only holds ids from positions)
-          const last = p.sent.get(id);
-          if (!last) info.push([id, room.players.get(id)?.name ?? '']); // (players in a room said hello: they have names)
-          if (last !== st) {
-            moved.push([id, st]);
-            p.sent.set(id, st);
-          }
+        const me = p.state;
+        if (!me || p.ws.bufferedAmount > MAX_BUFFERED) continue;
+        if (p.view.length === 0 || (tickNo + p.id) % VIEW_EVERY === 0) room.grid.nearest(p.id, positions, radiusCm, viewMax, p.view);
+        mark++;
+        for (const id of p.view) if (positions.has(id)) inView[id] = mark;
+        frame.begin(room.players.size);
+        for (const id of p.sent.keys()) {
+          if (inView[id] === mark) continue;
+          frame.gone(id);
+          p.sent.delete(id);
         }
-        const frame = encodeTick(room.players.size, gone, info, moved);
-        bytes += frame.byteLength;
-        send(p, frame);
+        for (const id of p.view) {
+          if (inView[id] === mark && !p.sent.has(id)) frame.info(id, room.players.get(id)?.name ?? ''); // (players in a room said hello: they have names)
+        }
+        for (const id of p.view) {
+          const st = positions.get(id);
+          if (!st) continue;
+          const last = p.sent.get(id);
+          if (last === st) continue;
+          // (a newcomer's pose goes at once; the others' as often as they are near)
+          if (last && (tickNo + id) % updateEvery((st.x - me.x) ** 2 + (st.z - me.z) ** 2) !== 0) continue;
+          frame.moved(id, st);
+          p.sent.set(id, st);
+        }
+        const bytesOut = frame.done();
+        bytes += bytesOut.byteLength;
+        send(p, bytesOut);
       }
     }
     load.tickMs += (performance.now() - t0 - load.tickMs) * 0.1;

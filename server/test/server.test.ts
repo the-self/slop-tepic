@@ -121,6 +121,45 @@ void test('players far apart or in other regions are out of view', async () => {
   }
 });
 
+void test('a near player\'s poses come every tick, a far one\'s every third (by updateEvery), however it moves', async () => {
+  // (ticked by hand: the timer's 100 s apart)
+  const server = await createServer({ port: 0, tickHz: 0.01, log: quiet });
+  try {
+    const [a, near, far] = [connect(server.port), connect(server.port), connect(server.port)];
+    await Promise.all([a.opened, near.opened, far.opened]);
+    a.ws.send(encodeHello('nayarit', 'A'));
+    near.ws.send(encodeHello('nayarit', 'Near'));
+    far.ws.send(encodeHello('nayarit', 'Far'));
+    const [wa, wn, wf] = await Promise.all([a, near, far].map((c) => c.next(OP.WELCOME)));
+    // (waits on what happened, not on a delay: a loaded machine only makes it slower)
+    const until = async (done: () => boolean) => {
+      for (let i = 0; i < 400 && !done(); i++) await new Promise((r) => setTimeout(r, 5));
+      assert.ok(done(), 'it came');
+    };
+    const at = (id: number) => server.players.get(id)?.state?.x;
+    let seenNear = 0, seenFar = 0;
+    for (let i = 0; i < 12; i++) {
+      a.ws.send(pose(0, 0));
+      near.ws.send(pose(50 + i, 0)); // 50 m off
+      far.ws.send(pose(600 + i, 0)); // 600 m off
+      await until(() => at(wa.id) === 0 && at(wn.id) === (50 + i) * 100 && at(wf.id) === (600 + i) * 100);
+      const before = a.frames.length;
+      server.tick();
+      await until(() => a.frames.slice(before).some((m) => m.op === OP.TICK));
+      for (const m of a.frames.slice(before)) {
+        if (m.op !== OP.TICK) continue;
+        if (m.moved.some((p) => p.id === wn.id)) seenNear++;
+        if (m.moved.some((p) => p.id === wf.id)) seenFar++;
+      }
+    }
+    assert.equal(seenNear, 12, 'every tick');
+    assert.ok(seenFar >= 4 && seenFar <= 5, `about a third: ${String(seenFar)} (its first pose at once, then every third)`);
+    for (const c of [a, near, far]) c.ws.close();
+  } finally {
+    await server.close();
+  }
+});
+
 void test('a full room opens a mirror; a wrong protocol version or region is refused', async () => {
   const server = await createServer({ port: 0, capacity: 1, log: quiet });
   try {

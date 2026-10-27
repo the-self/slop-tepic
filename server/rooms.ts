@@ -69,12 +69,14 @@ export interface RoomStats {
 class RoomManager<P extends { id: number }> {
   capacity: number;
   cellSize: number;
+  unit: number; // position units a metre
   rooms: Map<string, Room<P>>;
 
-  // cellSize is in the units of the positions the grid is fed (see server/aoi.ts)
-  constructor({ capacity = 200, cellSize = 250 }: { capacity?: number; cellSize?: number } = {}) {
+  // cellSize is in the units of the positions the grid is fed, `unit` of them a metre (see server/aoi.ts)
+  constructor({ capacity = 200, cellSize = 250, unit = 1 }: { capacity?: number; cellSize?: number; unit?: number } = {}) {
     this.capacity = capacity;
     this.cellSize = cellSize;
+    this.unit = unit;
     this.rooms = new Map(); // room id → room
   }
 
@@ -164,7 +166,7 @@ class RoomManager<P extends { id: number }> {
 
   private room(id: string, region: string, index: number, code: string, { title, password, sky, rules }: RoomOpening): Room<P> {
     return {
-      id, region, index, players: new Map(), grid: new SpatialGrid(this.cellSize), sky: { ...sky }, title, code, password,
+      id, region, index, players: new Map(), grid: new SpatialGrid(this.cellSize, this.unit), sky: { ...sky }, title, code, password,
       rules: { ...rules }, host: 0, fails: 0, failsAt: 0, emptyAt: 0
     };
   }
