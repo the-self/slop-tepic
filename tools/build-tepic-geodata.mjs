@@ -1432,6 +1432,8 @@ const HS = 8; // integers per house (see `houses` below)
 const KIND = { shop: 4, big: 8, strip: 16, coto: 32 };
 const COTO_SHIFT = 6;
 const houses = [];
+const floorsMapped = []; // per house: 1 its storeys mapped (OpenStreetMap's, through Overture or matched), 0 guessed
+const storeyTally = { overture: 0, osm: 0, noHouse: 0 };
 {
   const file = path.join(DATA, 'overture', 'buildings.geojsonl');
   const hashf = (a, b) => { const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return v - Math.floor(v); };
@@ -1564,14 +1566,52 @@ const houses = [];
         hallsOnLots++;
       }
       if (big) {
-        floors = p.num_floors ? Math.min(3, Math.round(p.num_floors)) : area > 6000 ? 3 : 2; // (a hall 6-9 m high)
+        // (a hall 6-9 m high; one whose floors are mapped, as many as it has)
+        if (!p.num_floors && !p.height) floors = area > 6000 ? 3 : 2;
         bigBoxes++;
       }
       // Ground floor shops: tagged commercial buildings, most of the centro, a few on every street
       const shop = big || strip || /commercial|retail|office|supermarket|hotel/.test(cls) || (bestD < 6 && (centro ? hr > 0.25 : hashf(cz, cx) < 0.12));
       houses.push(Math.round(cx * 10), Math.round(cz * 10), Math.round(w * 10), Math.round(d * 10), Math.round(th * 1000), floors,
         front + (shop ? KIND.shop : 0) + (big ? KIND.big : 0) + (strip ? KIND.strip : 0), 0);
+      floorsMapped.push(p.num_floors || p.height ? 1 : 0);
     }
+  }
+  // The storeys OpenStreetMap maps (building:levels, or height at 3 m a storey) on a building whose footprint Overture
+  // took from elsewhere (Microsoft's or Google's, without them): the house its centroid stands in, if none mapped yet
+  {
+    const HCELL = 20;
+    const cells = new Map();
+    for (let k = 0; k < houses.length; k += HS) {
+      const key = Math.floor(houses[k] / 10 / HCELL) * 100003 + Math.floor(houses[k + 1] / 10 / HCELL);
+      if (!cells.has(key)) cells.set(key, []);
+      cells.get(key).push(k);
+    }
+    const inHouse = (x, z) => {
+      const ci = Math.floor(x / HCELL), cj = Math.floor(z / HCELL);
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+        for (const k of cells.get((ci + a) * 100003 + cj + b) || []) {
+          const dx = x - houses[k] / 10, dz = z - houses[k + 1] / 10, th = houses[k + 4] / 1000;
+          if (Math.abs(dx * Math.cos(th) - dz * Math.sin(th)) <= houses[k + 2] / 20 && Math.abs(dx * Math.sin(th) + dz * Math.cos(th)) <= houses[k + 3] / 20) return k;
+        }
+      }
+      return -1;
+    };
+    for (const e of bldOSM.elements) {
+      const t = e.tags || {};
+      const levels = num(t['building:levels']), height = num(t.height);
+      if (!(levels >= 1) && !(height >= 2)) continue;
+      const ring = elemRings(e)[0];
+      if (!ring) continue;
+      const [x, z] = centroid(ring);
+      const k = inHouse(x, z);
+      if (k < 0) { storeyTally.noHouse++; continue; }
+      if (floorsMapped[k / HS]) { storeyTally.overture++; continue; }
+      houses[k + 5] = Math.min(12, Math.max(1, levels >= 1 ? Math.round(levels) : Math.round(height / 3)));
+      floorsMapped[k / HS] = 1;
+      storeyTally.osm++;
+    }
+    log(`storeys: ${floorsMapped.reduce((s2, v) => s2 + v, 0)} houses as mapped (${storeyTally.overture} of OpenStreetMap's through Overture, ${storeyTally.osm} matched by their footprint), ${storeyTally.noHouse} mapped on no house, the rest guessed by size & place`);
   }
   log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets, ${onCanal} on a canal through green, ${onLot} in a car park), ${bigBoxes} big boxes (${hallsOnLots} on a mapped car park)`);
 }
@@ -2797,6 +2837,18 @@ for (const o of BUILDING_OVERRIDES) {
   overrides.push([n, storeys, paint]);
 }
 if (BUILDING_OVERRIDES.length) log(`overrides: ${overrides.length} of ${BUILDING_OVERRIDES.length} pinned to a building`);
+// ...and every building whose storeys OpenStreetMap maps (5B): drawn whole at as many, the palette's paint (the game
+// would split a long one into houses of their own heights, and keep a house under four storeys)
+{
+  const pinned = new Set(overrides.map(([n]) => n));
+  let mapped = 0;
+  floorsMapped.forEach((m, n) => {
+    if (!m || pinned.has(n)) return;
+    overrides.push([n, houses[n * HS + 5], -1]);
+    mapped++;
+  });
+  log(`overrides: ${mapped} buildings drawn at their mapped storeys`);
+}
 
 // =====================================================================================================================
 // 6E. FOOTWAYS: the walks through the parks & plazas, the andadores between the houses, the pedestrian streets of the
