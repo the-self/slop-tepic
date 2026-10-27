@@ -68,6 +68,9 @@ function keyboardHarness(nyc = {}) {
     'js/actors/actor-models.ts': {},
     'js/actors/vehicles/car-files.ts': { loadCarFiles() {}, onCarFile() {}, carFile() {} },
     'js/sim/pedestrians.ts': {},
+    'js/world/park-floor.ts': { isRaisedPark: () => false, parkFloorAt: () => 0 },
+    // (the player's body loads in the browser; here the crowd's person stands in for it)
+    'js/actors/person-body.ts': { loadPersonBody: () => new Promise(() => {}) },
     'js/actors/vehicle-lights.ts': {},
     'js/player/drivetrain.ts': drivetrain,
     'js/player/vehicle-damage.ts': vehicleDamage,

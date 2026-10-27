@@ -21,6 +21,7 @@ import { openness } from './lot-greenery.ts';
 import { lampFinder } from './mapped-lamps.ts';
 import { cyclewayRuns, CYCLEWAY_HALF } from './medians.ts';
 import { insidePoly, insideRing, polyCover } from './rings.ts';
+import { PARK_WALK_Y as PARK_Y, PARK_BED_Y as BED_Y, isRaisedPark, offsetPolygonInward, parkBed } from './park-floor.ts';
 import type { Bounds, CityBlock, PointXZ } from './city-config.ts';
 import type { CyclewayPoint } from './medians.ts';
 import type { TileStreamer } from './streaming.ts';
@@ -208,59 +209,6 @@ function createFlatPolygonMesh(pts: PointXZ[], y: number, material: THREE.Materi
   const mesh = new THREE.Mesh(geo, material);
   mesh.receiveShadow = receiveShadow;
   return mesh;
-}
-
-/**
- * A simple polygon ([{x, z}], either winding, convex or not) offset inward by d with mitred corners (miters clamped
- * to 3d); null if it collapses
- */
-function offsetPolygonInward(pts: PointXZ[], d: number): PointXZ[] | null {
-  const n = pts.length;
-  if (n < 3) return null;
-  let area = 0;
-  for (let i = 0, j = n - 1; i < n; j = i++) area += pts[j].x * pts[i].z - pts[i].x * pts[j].z;
-  const s = area > 0 ? 1 : -1; // positive area: the inside lies left of each edge, i.e. along (-dz, dx)
-  const out: PointXZ[] = [];
-  for (let i = 0; i < n; i++) {
-    const p = pts[(i + n - 1) % n];
-    const q = pts[i];
-    const r = pts[(i + 1) % n];
-    let ax = q.x - p.x, az = q.z - p.z;
-    let bx = r.x - q.x, bz = r.z - q.z;
-    const la = Math.hypot(ax, az) || 1e-9;
-    const lb = Math.hypot(bx, bz) || 1e-9;
-    ax /= la; az /= la; bx /= lb; bz /= lb;
-    const n1x = -az * s, n1z = ax * s; // inward normals of the two edges
-    const n2x = -bz * s, n2z = bx * s;
-    let mx = n1x + n2x, mz = n1z + n2z;
-    const ml = Math.hypot(mx, mz);
-    if (ml < 1e-6) { out.push({ x: q.x + n1x * d, z: q.z + n1z * d }); continue; }
-    mx /= ml; mz /= ml;
-    const cos = mx * n1x + mz * n1z; // miter length = d / cos(half angle)
-    const len = Math.min(3 * d, d / Math.max(1e-3, cos));
-    out.push({ x: q.x + mx * len, z: q.z + mz * len });
-  }
-  let a2 = 0;
-  for (let i = 0, j = n - 1; i < n; j = i++) a2 += out[j].x * out[i].z - out[i].x * out[j].z;
-  return a2 * area > 0 && Math.abs(a2) < Math.abs(area) ? out : null;
-}
-
-// Whether two edges of a ring that don't share a corner cross (a C-shaped park round a lake, inset by more than its
-// arms are wide, folds over itself: its fill would span the lake)
-function crossesItself(pts: PointXZ[]): boolean {
-  const n = pts.length;
-  const side = (a: PointXZ, b: PointXZ, c: PointXZ) => (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x);
-  for (let i = 0; i < n; i++) {
-    const a = pts[i], b = pts[(i + 1) % n];
-    for (let j = i + 2; j < n; j++) {
-      if (i === 0 && j === n - 1) continue;
-      const c = pts[j], d = pts[(j + 1) % n];
-      if (Math.max(a.x, b.x) < Math.min(c.x, d.x) || Math.max(c.x, d.x) < Math.min(a.x, b.x)) continue;
-      if (Math.max(a.z, b.z) < Math.min(c.z, d.z) || Math.max(c.z, d.z) < Math.min(a.z, b.z)) continue;
-      if (side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0) return true;
-    }
-  }
-  return false;
 }
 
 /**
@@ -490,14 +438,13 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
 
   // 7. THE PARKS: every park block's curb island paved like a park walk, a granite-coped lawn inset from it under
   //    scattered trees, lampposts on the perimeter; the open country around the city as meadow
-  const PARK_Y = 0.26; // hex-paver walks (sidewalk tops are at 0.22)
-  const BED_Y = 0.41; // lawn top inside the granite bed copings
+  // (the walks at PARK_Y, the lawn at BED_Y: park-floor.ts, which the walker stands on)
   const PARK_COVER_BAND = 1.5; // m: the depth of the boxes an irregular park's footprint is made of (rings.ts polyCover)
   const prand = (x: number, z: number, k = 0) => {
     const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453;
     return s - Math.floor(s);
   };
-  const genericParks = BLOCKS.filter((b) => b.park > 0.6 && !b.median && !b.rural && b.area > 250);
+  const genericParks = BLOCKS.filter(isRaisedPark);
   // Open country between the roads around an inland city: meadow flush with the road, no walks, lamps or trees
   {
     const fieldGeos: THREE.BufferGeometry[] = [];
@@ -521,14 +468,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
     // roadways, and the traffic would lose the lanes beside it)
     if (b.rect) addFootprint((b.minX + b.maxX) * 0.5, (b.minZ + b.maxZ) * 0.5, b.maxX - b.minX, b.maxZ - b.minZ);
     else footprints.push(...polyCover(b.poly, PARK_COVER_BAND));
-    // (narrower where a wide one would fold over itself: a park round a lake; a narrow park's first inset is under
-    // the 0.75 m the retries stop at, and is tried all the same)
-    let bed: PointXZ[] | null = null;
-    const d0 = Math.min(5, Math.min(b.maxX - b.minX, b.maxZ - b.minZ) * 0.2);
-    for (let d = d0; !bed && (d === d0 || d >= 0.75); d /= 2) {
-      const inset = offsetPolygonInward(b.poly, d);
-      if (inset && !crossesItself(inset)) bed = inset;
-    }
+    const bed = parkBed(b);
     if (!bed) continue;
     group.add(createExtrudedPolygonMesh(bed, 0.2, BED_Y - 0.21, graniteMat, true, false));
     // the lawn inside the copings (the New York code merged its park lawns elsewhere, so Tepic's parks showed the bare

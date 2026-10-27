@@ -1,3 +1,9 @@
+// js/sim/emergency.ts
+// The emergency services: for a fire the bomberos set out from their station on Av. Insurgentes, two to four trucks;
+// for someone killed or a hard crash the Cruz Roja's ambulance from their base next door, or the nearest hospital's.
+// They drive across the city with their sirens (the patrol cars' driving: they are in crime.ts's pool of them), park
+// by the scene, their crews get down to work (the bomberos hose the fire down, the paramédicos see to the hurt), and
+// once it is over they drive back, out of the world again when out of sight or home.
 import * as THREE from 'three/webgpu';
 import { Bystanders, BYSTANDER_STYLES } from './bystanders.ts';
 import { FIRE_STATIONS, AMBULANCE_BASES, nearestStation } from './emergency/stations.ts';
@@ -7,13 +13,6 @@ import type { Station } from './emergency/stations.ts';
 import type { CrimeSystem } from './crime.ts';
 import type { Cruiser } from './crime/types.ts';
 import type { RagdollHandle } from './ragdolls.ts';
-
-// js/sim/emergency.ts
-// The emergency services: for a fire the bomberos set out from their station on Av. Insurgentes, two to four trucks;
-// for someone killed or a hard crash the Cruz Roja's ambulance from their base next door, or the nearest hospital's.
-// They drive across the city with their sirens (the patrol cars' driving: they are in crime.ts's pool of them), park
-// by the scene, their crews get down to work (the bomberos hose the fire down, the paramédicos see to the hurt), and
-// once it is over they drive back, out of the world again when out of sight or home.
 
 type Service = 'fire' | 'ambulance';
 interface XZ {

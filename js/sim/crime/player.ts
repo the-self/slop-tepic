@@ -2,6 +2,7 @@
 // The player in the street's crime (sim/crime.ts): its input (fire: X, the left button on foot (aim.ts),
 // the right button from a vehicle; touch & gamepad through controllers.keys.fire; weapons 1-4, R to cycle, Tab for the
 // wheel: ui/weapon-wheel.ts), firing, aiming and punching, getting hurt, and being WASTED or BUSTED.
+import * as THREE from 'three/webgpu';
 import type { Point3 } from '../ragdolls.ts';
 import type { Weapon, WeaponId } from '../weapons.ts';
 import type { Ped } from '../traffic.ts';
@@ -12,6 +13,10 @@ import type { DownKind, Agent, LockTarget } from './types.ts';
 import { PARKED_Y, DRAW_TIME, RESPAWN_TIME, clamp } from './constants.ts';
 import { isResponder } from './cruisers.ts';
 import type { CrimeSystem } from '../crime.ts';
+
+const _qHand = new THREE.Quaternion();
+const _qDown = new THREE.Quaternion();
+const _xAxis = new THREE.Vector3(1, 0, 0);
 
 export function bindInput(crime: CrimeSystem, canvas: HTMLElement | null): void {
   if (canvas) {
@@ -110,6 +115,9 @@ export function placePlayerGun(crime: CrimeSystem, w: Weapon): void {
     g.position.copy(p.rig.handPosition);
     g.position.y -= k * 0.12;
     g.rotation.set((1 - p.rig.aim) * 1.25 + k * 1.1, p.rig.aimYaw, 0, 'YXZ');
+    // (held in the hand as the player's body swings it, actors/person-body.ts; level along the aim once raised)
+    const turn = p.rig.handTurn;
+    if (turn) g.quaternion.slerp(_qHand.copy(turn).multiply(_qDown.setFromAxisAngle(_xAxis, 1.25 + k * 1.1)), 1 - p.rig.aim);
   }
 }
 
@@ -280,9 +288,10 @@ export function updateDown(crime: CrimeSystem, dt: number): void {
   p.rig.aim = 0;
   crime.placePlayerGun(crime.arsenal.weapon);
   if (crime.playerFall && crime.mode === 'person') {
-    // (its pose the ragdoll's)
+    // (its pose the ragdoll's; the player's body, once loaded, follows it instead: controllers/frame.ts)
     p.crowd.begin();
-    p.crowd.add(p.rig, 0);
+    if (p.body) p.body.follow(p.rig);
+    else p.crowd.add(p.rig, 0);
     p.crowd.end();
   }
   if (crime.stateTime < RESPAWN_TIME) return;

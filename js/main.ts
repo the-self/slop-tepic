@@ -38,6 +38,8 @@ import { Nightlife } from './world/nightlife.ts';
 import { Interiors } from './world/interiors.ts';
 import { Fires } from './sim/fires.ts';
 import { EmergencyServices } from './sim/emergency.ts';
+import { GasStations } from './sim/gas-stations.ts';
+import { FUEL_TANK } from './player/controllers/constants.ts';
 import { Scheduler } from './core/scheduler.ts';
 import type { FrameStep } from './core/scheduler.ts';
 import { EventBus } from './core/events.ts';
@@ -46,6 +48,8 @@ import { buildCity } from './app/city.ts';
 import { playerStateKey, restorePlayer, savePlayer } from './app/player-state.ts';
 import { createRenderPipeline } from './app/render-pipeline.ts';
 import { precompileShaders, warmUpFrame } from './app/shaders.ts';
+import { loadPersonBody } from './actors/person-body.ts';
+import { PLAYER_BODY } from './player/controllers/constants.ts';
 import { Hud, wirePopovers } from './app/hud.ts';
 import { createTeleport, wireTeleportButtons } from './app/teleport.ts';
 import { Boarding } from './app/boarding.ts';
@@ -67,6 +71,7 @@ interface GameEvents {
 const HARD_CRASH = 9; // m/s (~32 km/h) a crash is struck at for an ambulance to be called
 
 const isWeatherSample = (name: string | null): name is WeatherSampleName => name !== null && name in WEATHER_SAMPLES;
+const PERSON_WAIT = 8000; // ms the loading screen waits for the player's body (3 MB) before the shaders compile
 
 async function initApp(): Promise<void> {
   const params = new URLSearchParams(location.search);
@@ -236,7 +241,21 @@ async function initApp(): Promise<void> {
   trafficSystem.setSirens(emergency.sirens); // (the cars ahead of them pull over)
   // Burning wrecks, house fires, the dry season's quemas, and the bomberos who come for them (sim/fires.ts)
   const fires = new Fires({ scene, crime: crimeSystem, services: emergency, controllers: controllerManager, houses: GEO.houses, stride: GEO.houseStride || 8 });
-  crimeSystem.onExplosion = (x, y, z, radius) => { fires.onExplosion(x, y, z, radius); };
+  // Tepic's gas stations (sim/gas-stations.ts): the car fills up stopped by a pump; a pump shot, rammed or caught in a
+  // blast goes up
+  const gasStations = new GasStations({
+    scene, crime: crimeSystem, car: controllerManager.entities.car,
+    isSolidAt: (x, z, height, ground) => controllerManager.isSolidAt(x, z, height, ground),
+    groundAt: (x, z) => controllerManager.getGroundHeight(x, z, 'person'),
+    active: () => controllerManager.getActiveEntity(), activeMode: () => controllerManager.activeMode,
+    addColliders: (list) => { controllerManager.addColliders(list); },
+    ignite: (kind, x, z, size) => fires.ignite(kind, x, z, size)
+  });
+  controllerManager.onFuelOut = () => { crimeSystem.toast('Out of gas: fill up at a gas station'); };
+  crimeSystem.onExplosion = (x, y, z, radius) => {
+    fires.onExplosion(x, y, z, radius);
+    gasStations.onExplosion(x, y, z, radius);
+  };
   // Someone killed or badly hurt (shot dead, thrown hard) come to rest: an ambulance for them. Not for the player
   // (killed on foot or thrown out of a vehicle), who comes round at the hospital or gets up
   events.on('settle', (h) => {
@@ -307,10 +326,10 @@ async function initApp(): Promise<void> {
   // City-wide static geometry: chunk & distance-cull the small props, shadow stand-ins for the big casters
   // (render/scene-culling.ts)
   const named = (names: readonly string[]) => names.map((name) => scene.getObjectByName(name)).filter((o) => o !== undefined);
-  const cullingRoots = named(['CityGrid', 'CityBlocks', 'StreetDetails', 'Hills', 'Rivers', 'Bridges']);
+  const cullingRoots = named(['CityGrid', 'CityBlocks', 'StreetDetails', 'Hills', 'Rivers', 'Bridges', 'Bardas']);
   setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
   // ...whose world matrices never change again: rendering stops walking them (the loop updates the rest of the scene)
-  const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Airport', 'RoadMarkings', 'Pavements', 'Footways', 'Topes', 'StreamedTiles', 'BusStops', 'PowerLines', 'Pools', 'Furniture', 'Barriers'])
+  const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Airport', 'RoadMarkings', 'Pavements', 'Footways', 'Topes', 'StreamedTiles', 'BusStops', 'PowerLines', 'Pools', 'Furniture'])
     .filter((o) => o.parent === scene)];
   freezeStaticMatrices(scene, staticRoots);
   loading.mark('culling');
@@ -471,7 +490,8 @@ async function initApp(): Promise<void> {
     onTeleport: teleportTo
   });
   wireTeleportButtons(document.querySelectorAll('[data-teleport]'), TELEPORT_LOCATIONS, teleportTo, closePopovers);
-  mapSystem.setBlipSource(() => fires.blips(crimeSystem.blips())); // (the police, gangs, pickups & fires on the radar)
+  // (the police, gangs, pickups, fires & gas stations on the radar)
+  mapSystem.setBlipSource(() => gasStations.blips(fires.blips(crimeSystem.blips())));
   document.getElementById('btn-open-map')?.addEventListener('click', () => { mapSystem.toggleFullMap(true); });
 
   hudToggleBtn?.addEventListener('click', () => {
@@ -550,6 +570,12 @@ async function initApp(): Promise<void> {
     loading.mark(`tiles ${streamer.stats.shown}`);
   }
 
+  // The player's body (actors/person-body.ts) in before the shaders compile, so its pipelines are among them
+  // rather than built in play the frame it comes in; a slow connection waits PERSON_WAIT at most (it then comes in late)
+  loading.status('Dressing the player...');
+  await Promise.race([loadPersonBody(PLAYER_BODY).catch(() => null), new Promise((resolve) => setTimeout(resolve, PERSON_WAIT))]);
+  loading.mark('person');
+
   // The loading screen stays up while the shaders compile and until the first frame is on screen
   loading.status('Compiling Shaders & Render Pipelines...');
   await precompileShaders(renderer, scene, cameraSystem.camera, render, (done) => {
@@ -586,7 +612,8 @@ async function initApp(): Promise<void> {
       if (mode === 'car' || mode === 'moto') {
         const v = controllerManager.entities[mode];
         const engine = 'damage' in v ? 1 - v.damage.engine : 1; // (a moto has no engine damage)
-        tachometer.update(v.spec, v.drive, Math.round(Math.abs(v.speed) * 3.6), engine, engine <= 0, v.drive ? gearLabel(v.drive, v.spec) : '1');
+        const fuel = 'fuel' in v ? v.fuel / FUEL_TANK : 1; // (a moto runs on air)
+        tachometer.update(v.spec, v.drive, Math.round(Math.abs(v.speed) * 3.6), engine, engine <= 0 || fuel <= 0, v.drive ? gearLabel(v.drive, v.spec) : '1', fuel);
       }
     })
     .run('aim', ({ dt }) => {
@@ -632,6 +659,8 @@ async function initApp(): Promise<void> {
     })
     // the bomberos & ambulances on their way, at work, going back (sim/emergency.ts)
     .run('emergency', ({ dt }) => { emergency.update(dt, cameraSystem.camera); })
+    // pumps going up, the car filling up (sim/gas-stations.ts)
+    .run('gas stations', ({ dt }) => { gasStations.update(dt); })
     .run('hud', ({ dt, now }) => {
       stamina.update(dt, crimeSystem.state === 'play' ? controllerManager.sprintingMode() : null);
       crimeHud.update(crimeSystem, dt, stamina);
@@ -667,7 +696,7 @@ async function initApp(): Promise<void> {
   if (debug) {
     // Debugging handle for the console, only with ?debug in the URL
     Object.assign(window, { __slop: {
-      scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, emergency, controllerManager, trafficSystem,
+      scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, emergency, gasStations, controllerManager, trafficSystem,
       cameraSystem, streetDetails, cityGrid: city.cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl,
       weaponWheel, weaponIcons, scheduler, boarding, multiplayer: () => multiplayer
     } });

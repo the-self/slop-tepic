@@ -4,7 +4,7 @@
 import * as THREE from 'three/webgpu';
 import { createDamage } from '../vehicle-damage.ts';
 import { createStains } from '../car-blood.ts';
-import { LEFT_CARS, BAIL_SPEED } from './constants.ts';
+import { LEFT_CARS, BAIL_SPEED, FUEL_TANK } from './constants.ts';
 import { collisionBody, buildingContact } from './collisions.ts';
 import type { PlayerMode, VehicleMode, LeftCar, ParkedVehicle, TakenVehicle, CarEntity } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
@@ -80,7 +80,7 @@ export function leaveCarBehind(ctl: ThirdPersonControllerManager): void {
   // (and its model's material, whose paint & brake lamps are uniforms: the next car of its model gets another)
   if (c.look.model && c.modelBody?.visible && ctl._modelMats?.get(c.look.model) === c.modelBody.material) ctl._modelMats.delete(c.look.model);
   ctl.leftCars.push({
-    mesh, x, y, z, heading: c.heading, halfW: c.halfW, halfL: c.halfL, look: { ...c.look }, damage: c.damage,
+    mesh, x, y, z, heading: c.heading, halfW: c.halfW, halfL: c.halfL, look: { ...c.look }, damage: c.damage, fuel: c.fuel,
     dented: c.dented, kit: c.kit, stains: c.stains, material: c.bodyMesh.material,
     collider: { minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez, minY: y - 0.3, maxY: y + (c.kit?.wheels ? 3.0 : 1.5), obb: { cx: x, cz: z, hx, hz, cs, sn }, _order: 1e15 }
   });
@@ -117,6 +117,7 @@ export function takeLeftCar(ctl: ThirdPersonControllerManager, left: LeftCar): b
   c.position.set(left.x, left.y, left.z);
   c.heading = left.heading;
   c.damage = left.damage;
+  c.fuel = left.fuel;
   if (left.dented) {
     c.dented = left.dented;
     c.bodyMesh.geometry = left.dented.geometry;
@@ -132,7 +133,10 @@ export function enterVehicle(ctl: ThirdPersonControllerManager, mode: PlayerMode
   if (ctl.activeMode !== 'person' || mode === 'person' || ctl.entities.person.ragdoll) return false;
   const ent = ctl.entities[mode];
   if (taken) {
-    if (mode === 'car') ctl.setCarLook(taken.bodyType, taken.paint, taken.police, taken.model, taken.route);
+    if (mode === 'car') {
+      ctl.setCarLook(taken.bodyType, taken.paint, taken.police, taken.model, taken.route);
+      ctl.entities.car.fuel = FUEL_TANK * (0.25 + Math.random() * 0.6); // (somebody else's: however much they had)
+    }
     else if (mode === 'cyclist') ctl.setBikeColor(taken.color);
     else if (mode === 'moto') ctl.setMotoLook(taken.model, taken.paint);
     // just where it was: on the bridge's deck or down in the underpass it drove (from the road under it, or the

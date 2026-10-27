@@ -63,7 +63,9 @@ const BLIP_STYLES: Partial<Record<string, readonly [colour: string, radius: numb
   money: ['#6fe39a', 2.6], health: ['#ff6b6b', 3], armor: ['#7fb0ff', 3], pistol: ['#ffd24a', 2.6], smg: ['#ffa53a', 2.6],
   rifle: ['#d6e04a', 2.8], bazooka: ['#ff7a2a', 3.4],
   fire: ['#ff5a1f', 5], // (a fire burning, sim/fires.ts)
-  firetruck: ['#ff3b30', 4.4], ambulance: ['#ffffff', 4.2] // (the bomberos & the Cruz Roja on their way, sim/emergency.ts)
+  firetruck: ['#ff3b30', 4.4], ambulance: ['#ffffff', 4.2],
+  spikes: ['#ffd24a', 3.6], // (a police spike strip across the road, crime/spikes.ts)
+  fuel: ['#2fbf71', 2.6] // (a gas station, sim/gas-stations.ts) // (the bomberos & the Cruz Roja on their way, sim/emergency.ts)
 };
 const MAP_BASE = '#101511';
 

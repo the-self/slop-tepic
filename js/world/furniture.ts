@@ -1,8 +1,7 @@
 // js/world/furniture.ts
-// The street furniture & the gas stations OpenStreetMap maps (city-geodata.js `benches`, `fuel`): the parks' and
-// plazas' benches (steel legs, wooden slats and back) where they stand, along the street nearest them; and each gas
-// station's canopy over its forecourt, on its columns, with the pump islands under it. The canopies' columns, the
-// pumps and the benches stop the player. (The bins OpenStreetMap maps join street-details.ts' own, which knock over.)
+// The street furniture OpenStreetMap maps (city-geodata.js `benches`): the parks' and plazas' benches (steel legs,
+// wooden slats and back) where they stand, along the street nearest them; they stop the player. (The bins it maps join
+// street-details.ts' own, which knock over; its gas stations join Overture's in sim/gas-stations.ts.)
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GEO } from './city-geodata.js';
@@ -10,13 +9,10 @@ import { liftAt } from './ground.ts';
 import { surfaceY } from './footways.ts';
 import type { Collider } from './buildings.ts';
 
-const CANOPY_H = 5.6; // m to the canopy's underside
-const ISLAND_EVERY = 7; // m of canopy length per pump island
-
 // a box w x h x d centred at (x, y, z)
 const box = (w: number, h: number, d: number, x: number, y: number, z: number) => new THREE.BoxGeometry(w, h, d).translate(x, y, z);
 
-/** Draws the benches and the gas stations into `scene`: their colliders */
+/** Draws the benches into `scene`: their colliders */
 function buildFurniture(scene: THREE.Object3D): { colliders: Collider[] } {
   const group = new THREE.Group();
   group.name = 'Furniture';
@@ -53,40 +49,8 @@ function buildFurniture(scene: THREE.Object3D): { colliders: Collider[] } {
   instanced(wood, new THREE.MeshStandardNodeMaterial({ color: 0x8a5a33, roughness: 0.8 }), benchAt);
   instanced(frame, new THREE.MeshStandardNodeMaterial({ color: 0x2b2e31, roughness: 0.5, metalness: 0.6 }), benchAt);
 
-  // Gas stations: each canopy its own size (scaled boxes), its columns & pump islands per instance
-  const canopies: THREE.Matrix4[] = [], fascias: THREE.Matrix4[] = [], columns: THREE.Matrix4[] = [], islands: THREE.Matrix4[] = [], pumps: THREE.Matrix4[] = [];
-  const s = new THREE.Vector3(), at = new THREE.Vector3();
-  for (const [cx, cz, turn, len10, wid10] of GEO.fuel) {
-    const th = turn / 1000, L = len10 / 10, W = wid10 / 10;
-    const ux = Math.cos(th), uz = -Math.sin(th); // (along the canopy's length)
-    const vx = Math.sin(th), vz = Math.cos(th); // (across it)
-    const y = liftAt(cx, cz) + surfaceY(cx, cz);
-    q.setFromAxisAngle(up, th);
-    canopies.push(new THREE.Matrix4().compose(at.set(cx, y + CANOPY_H + 0.3, cz), q, s.set(L, 0.6, W)));
-    // (its coloured band round the edge: just under the roof's top, which hides it from above)
-    fascias.push(new THREE.Matrix4().compose(at.set(cx, y + CANOPY_H + 0.27, cz), q, s.set(L + 0.12, 0.5, W + 0.12)));
-    const n = Math.max(1, Math.floor(L / ISLAND_EVERY));
-    for (let i = 0; i < n; i++) {
-      const u = (i - (n - 1) / 2) * (L / n);
-      const ix = cx + ux * u, iz = cz + uz * u;
-      // the island across the canopy, a column at its middle, a pump either side of it
-      islands.push(new THREE.Matrix4().compose(at.set(ix, y + 0.1, iz), q, s.set(1.2, 0.2, Math.min(W - 2, 6))));
-      columns.push(new THREE.Matrix4().compose(at.set(ix, y + CANOPY_H / 2, iz), q, s.set(0.45, CANOPY_H, 0.45)));
-      collide(ix, iz, 0.6, Math.min(W - 2, 6) / 2, th, y, CANOPY_H);
-      for (const side of [-1, 1]) {
-        const off = side * Math.min(W / 2 - 1.5, 2);
-        pumps.push(new THREE.Matrix4().compose(at.set(ix + vx * off, y + 1.1, iz + vz * off), q, s.set(0.7, 1.8, 0.5)));
-      }
-    }
-  }
-  const unit = new THREE.BoxGeometry(1, 1, 1);
-  instanced(unit, new THREE.MeshStandardNodeMaterial({ color: 0xf2f2ee, roughness: 0.6 }), canopies);
-  instanced(unit.clone(), new THREE.MeshStandardNodeMaterial({ color: 0x1f7a3c, roughness: 0.45 }), fascias);
-  instanced(unit.clone(), new THREE.MeshStandardNodeMaterial({ color: 0xd8d8d2, roughness: 0.7 }), columns);
-  instanced(unit.clone(), new THREE.MeshStandardNodeMaterial({ color: 0xb9b5aa, roughness: 0.85 }), islands);
-  instanced(unit.clone(), new THREE.MeshStandardNodeMaterial({ color: 0xc8202a, roughness: 0.4, metalness: 0.2 }), pumps);
   scene.add(group);
-  console.info(`[furniture] ${benchAt.length} benches, ${GEO.fuel.length} gas stations (${pumps.length} pumps)`);
+  console.info(`[furniture] ${benchAt.length} benches`);
   return { colliders };
 }
 

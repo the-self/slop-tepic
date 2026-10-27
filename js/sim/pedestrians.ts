@@ -25,13 +25,21 @@ import {
 } from 'three/tsl';
 import type { Node, StorageBufferNode } from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { loadPersonFile } from '../actors/person-files.ts';
+import type { PersonFile } from '../actors/person-files.ts';
+import {
+  BONE, BONE_COUNT, THIGH, SHIN, ANKLE_H, HIP_X, UPPER_ARM, FOREARM, ARM_BIND_ABDUCTION, PELVIS_Y, HIP_Y, SIDES, LIMB, shoulderJoint,
+  torsoSkin, legSkin, armSkin, shoeSkin
+} from './person-skeleton.ts';
+import type { SkinWeights } from './person-skeleton.ts';
 
 // js/sim/pedestrians.ts
 // Skinned, procedurally animated New Yorkers: the sidewalk crowds (traffic.ts), the player's pedestrian and the
 // cyclist's rider (controllers.ts).
 // - One continuous lofted body (torso & neck, trouser legs, sleeves, hands, head, hair, shoes) skinned to a 15-bone
 //   skeleton, with bind-pose morphs for build (girth), female proportions and hair volume & length; a near and a far
-//   level of detail.
+//   level of detail. Or a person model (actors/person-files.ts: a Meshy person skinned to the same bones by
+//   tools/models/prepare-person.mjs), one fixed look, textured.
 // - A whole crowd is one instanced draw per level of detail: every person's bone transforms (quaternion, translation &
 //   scale) live in a storage buffer the vertex stage skins from, and a per-person seed dresses them (TSL material).
 // - PersonRig walks a body along whatever path its owner moves it on: footsteps are planted in the world (heel strike,
@@ -41,53 +49,10 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 //   with its feet together, steps up & down curbs, runs, jumps, and rides a bicycle (feet on the pedals).
 
 // ============================================================================
-// 1. SKELETON
+// 1. SKELETON (its bones and measures: person-skeleton.ts)
 // ============================================================================
-const BONE = {
-  PELVIS: 0,
-  CHEST: 1,
-  HEAD: 2,
-  UPPER_ARM_L: 3,
-  FOREARM_L: 4,
-  UPPER_ARM_R: 5,
-  FOREARM_R: 6,
-  THIGH_L: 7,
-  SHIN_L: 8,
-  FOOT_L: 9,
-  TOE_L: 10,
-  THIGH_R: 11,
-  SHIN_R: 12,
-  FOOT_R: 13,
-  TOE_R: 14
-};
-const BONE_COUNT = 15;
 // vec4s per person in the pose buffer: (quaternion) and (translation, scale) per bone, then (seed, female, girth, hair)
 const STRIDE = BONE_COUNT * 2 + 1;
-
-// Bind pose (metres, a 1.75 m person standing at the origin facing +Z, +X on their left): legs straight down, arms
-// hanging 8 degrees out from the body
-const THIGH = 0.42;
-const SHIN = 0.42;
-const ANKLE_H = 0.08;
-const HIP_X = 0.09;
-const UPPER_ARM = 0.3;
-const FOREARM = 0.255;
-const ARM_BIND_ABDUCTION = 0.14;
-const PELVIS_Y = 0.96;
-const HIP_Y = ANKLE_H + SHIN + THIGH;
-const SIDES = [1, -1] as const; // left (+X), right (-X)
-const LIMB = {
-  upperArm: [BONE.UPPER_ARM_L, BONE.UPPER_ARM_R],
-  forearm: [BONE.FOREARM_L, BONE.FOREARM_R],
-  thigh: [BONE.THIGH_L, BONE.THIGH_R],
-  shin: [BONE.SHIN_L, BONE.SHIN_R],
-  foot: [BONE.FOOT_L, BONE.FOOT_R],
-  toe: [BONE.TOE_L, BONE.TOE_R]
-};
-
-function shoulderJoint(female: boolean): [x: number, y: number, z: number] {
-  return female ? [0.165, 1.415, -0.015] : [0.185, 1.43, -0.015];
-}
 
 function bindJoints(female: boolean): THREE.Vector3[] {
   const sh = shoulderJoint(female);
@@ -114,8 +79,6 @@ const BIND = [bindJoints(false), bindJoints(true)];
 // ============================================================================
 const PART = { BODY: 0, LEG: 1, SHOE: 2, ARM: 3, HAND: 4, HEAD: 5, HAIR: 6, LONG_HAIR: 7 };
 
-/** Two bones a vertex is skinned to and the weight of the second */
-type SkinWeights = [boneA: number, boneB: number, weightB: number];
 /** A ring of a loft: the male base and the morph targets (female, more hair volume, long hair), the bones it follows
  *  and the axis girth pushes out from (none: girth leaves it be) */
 interface LoftRow {
@@ -350,15 +313,6 @@ const TORSO = {
   ]
 };
 
-function torsoSkin(y: number): SkinWeights {
-  if (y > 1.6) return [BONE.CHEST, BONE.HEAD, 1];
-  if (y > 1.56) return [BONE.CHEST, BONE.HEAD, 0.65];
-  if (y > 1.52) return [BONE.CHEST, BONE.HEAD, 0.2];
-  if (y > 1.15) return [BONE.CHEST, BONE.CHEST, 0];
-  if (y > 1.1) return [BONE.PELVIS, BONE.CHEST, 0.5];
-  if (y > 1.03) return [BONE.PELVIS, BONE.CHEST, 0.15];
-  return [BONE.PELVIS, BONE.PELVIS, 0];
-}
 
 // [y, rx, rzFront, rzBack, centreZ, keepInFarLod] around each leg's axis (x = +-HIP_X)
 const LEG = {
@@ -398,23 +352,6 @@ const LEG = {
   ]
 };
 
-function legSkin(y: number, k: number): SkinWeights {
-  const thigh = LIMB.thigh[k];
-  const shin = LIMB.shin[k];
-  const foot = LIMB.foot[k];
-  // the hip bends over 0.75-0.95 m, below the jacket's hem, so the thigh tops stay inside the pelvis
-  if (y > 0.95) return [BONE.PELVIS, thigh, 0.05];
-  if (y > 0.9) return [BONE.PELVIS, thigh, 0.3];
-  if (y > 0.84) return [BONE.PELVIS, thigh, 0.72];
-  if (y > 0.74) return [BONE.PELVIS, thigh, 0.93];
-  if (y > 0.55) return [thigh, thigh, 0];
-  if (y > 0.52) return [thigh, shin, 0.12];
-  if (y > 0.48) return [thigh, shin, 0.5];
-  if (y > 0.44) return [thigh, shin, 0.88];
-  if (y > 0.15) return [shin, shin, 0];
-  if (y > 0.115) return [shin, foot, 0.25];
-  return [shin, foot, 0.5];
-}
 
 // [distance along the arm from the shoulder, rx, rz, offset towards the body's side, offset forward, keepInFarLod]
 const ARM = [
@@ -446,18 +383,6 @@ const HAND = [
 ];
 const HAND_TWIST = 0.45; // relaxed hands: palms turned from facing the thighs towards the back
 
-function armSkin(d: number, k: number): SkinWeights {
-  const ua = LIMB.upperArm[k];
-  const fa = LIMB.forearm[k];
-  if (d < -0.03) return [BONE.CHEST, ua, 0.32];
-  if (d < 0) return [BONE.CHEST, ua, 0.6];
-  if (d < 0.06) return [BONE.CHEST, ua, 0.88];
-  if (d < 0.26) return [ua, ua, 0];
-  if (d < 0.29) return [ua, fa, 0.15];
-  if (d < 0.315) return [ua, fa, 0.5];
-  if (d < 0.36) return [ua, fa, 0.85];
-  return [fa, fa, 0];
-}
 
 // [y, rx, rzFront, rzBack, centreZ, keepInFarLod]
 const HEAD = {
@@ -575,14 +500,6 @@ function shoeRing(cx: number, z: number, hw: number, top: number, sole: number, 
   return out;
 }
 
-function shoeSkin(z: number, k: number): SkinWeights {
-  const foot = LIMB.foot[k];
-  const toe = LIMB.toe[k];
-  if (z < 0.07) return [foot, foot, 0];
-  if (z < 0.11) return [foot, toe, 0.12];
-  if (z < 0.15) return [foot, toe, 0.55];
-  return [toe, toe, 0];
-}
 
 const _geometryCache = new Map<number, THREE.BufferGeometry>();
 
@@ -780,6 +697,20 @@ function pickColorFromPalette(hexArray: readonly number[], tNode: Node<'float'>)
 // v rotated by unit quaternion q
 const qrot = (q: Node<'vec4'>, v: Node<'vec3'>) => v.add(cross(q.xyz, cross(q.xyz, v).add(v.mul(q.w))).mul(2.0));
 
+// (inside a vertex Fn) the bind-pose position p moved by the two bones `skin` names (x, y; z the weight of y) from the
+// instance's transforms at `base` in the pose buffer, and its normal n turned with them
+function skinned(pose: StorageBufferNode<'vec4'>, base: Node<'int'>, skin: Node<'vec4'>, p: Node<'vec3'>, n: Node<'vec3'>): Node<'vec3'> {
+  const w = skin.z;
+  const ia = base.add(int(skin.x).mul(2));
+  const ib = base.add(int(skin.y).mul(2));
+  const qa = pose.element(ia);
+  const ta = pose.element(ia.add(1));
+  const qb = pose.element(ib);
+  const tb = pose.element(ib.add(1));
+  normalLocal.assign(normalize(mix(qrot(qa, n), qrot(qb, n), w)));
+  return mix(qrot(qa, p).mul(ta.w).add(ta.xyz), qrot(qb, p).mul(tb.w).add(tb.xyz), w);
+}
+
 /**
  * Material for one crowd mesh. `pose` is its storage buffer (STRIDE vec4s per instance). The vertex stage morphs the
  * bind pose (girth, female, hair) and skins it with two bones; the fragment stage dresses the person from their seed:
@@ -800,16 +731,7 @@ function createPersonMaterial(pose: StorageBufferNode<'vec4'>): THREE.MeshStanda
       .add(vec3(extra.x, 0.0, extra.y).mul(info.z.sub(1.0)))
       .add(attribute('femaleDelta', 'vec3').mul(info.y))
       .add(attribute('hairDelta', 'vec3').mul(hairAmount));
-    const n = attribute('normal', 'vec3');
-    const w = skin.z;
-    const ia = base.add(int(skin.x).mul(2));
-    const ib = base.add(int(skin.y).mul(2));
-    const qa = pose.element(ia);
-    const ta = pose.element(ia.add(1));
-    const qb = pose.element(ib);
-    const tb = pose.element(ib.add(1));
-    normalLocal.assign(normalize(mix(qrot(qa, n), qrot(qb, n), w)));
-    return mix(qrot(qa, p).mul(ta.w).add(ta.xyz), qrot(qb, p).mul(tb.w).add(tb.xyz), w);
+    return skinned(pose, base, skin, p, attribute('normal', 'vec3'));
   })();
 
   const vInfo = varying(info, 'vPersonInfo');
@@ -937,6 +859,18 @@ function createPersonMaterial(pose: StorageBufferNode<'vec4'>): THREE.MeshStanda
   return mat;
 }
 
+/**
+ * Material for a crowd drawn as a person model (actors/person-files.ts): skinned as createPersonMaterial's, from the
+ * _SKIN each vertex carries, and coloured by the model's own texture. One fixed look: the seed, build and hair morphs
+ * don't reach it.
+ */
+function createModelPersonMaterial(pose: StorageBufferNode<'vec4'>, map: THREE.Texture): THREE.MeshStandardNodeMaterial {
+  const mat = new THREE.MeshStandardNodeMaterial({ map, metalness: 0, roughness: 0.85 });
+  const base = int(instanceIndex).mul(STRIDE);
+  mat.positionNode = Fn(() => skinned(pose, base, attribute('_skin', 'vec4'), attribute('position', 'vec3'), attribute('normal', 'vec3')))();
+  return mat;
+}
+
 // ============================================================================
 // 4. CROWD: ONE INSTANCED, SKINNED DRAW PER LEVEL OF DETAIL
 // ============================================================================
@@ -951,6 +885,8 @@ interface PersonCrowdOptions {
   /** m: people farther than this use the far level of detail */
   farDistance?: number;
   castShadow?: boolean;
+  /** a person model's file (actors/person-files.ts) to draw everyone as once it loads, in place of the lofted body */
+  model?: string;
 }
 
 class PersonCrowd {
@@ -962,7 +898,7 @@ class PersonCrowd {
    * @param maxCount - most people drawn at once
    * @param options - beyond farDistance (m) people use the far LOD
    */
-  constructor(maxCount: number, { farDistance = 34, castShadow = true }: PersonCrowdOptions = {}) {
+  constructor(maxCount: number, { farDistance = 34, castShadow = true, model }: PersonCrowdOptions = {}) {
     this.farDistance = farDistance;
     this.lods = [1, 0].map((detail): CrowdLod => {
       const pose = attributeArray(maxCount * STRIDE, 'vec4').toReadOnly();
@@ -975,6 +911,22 @@ class PersonCrowd {
       return { pose, mesh, count: 0, max: maxCount };
     });
     this.meshes = this.lods.map((l) => l.mesh);
+    if (model) {
+      loadPersonFile(model).then((file) => {
+        this.useModel(file);
+      }, (err: unknown) => {
+        console.warn(`[people] could not load ${model}`, err);
+      });
+    }
+  }
+
+  // Draws everyone as the model: its near body close by, its far level (or the near one) beyond farDistance
+  useModel(file: PersonFile): void {
+    this.lods.forEach((l, i) => {
+      l.mesh.geometry = i === 0 ? file.near : (file.far ?? file.near);
+      l.mesh.material.dispose();
+      l.mesh.material = createModelPersonMaterial(l.pose, file.map);
+    });
   }
 
   begin(): void {
@@ -1186,6 +1138,9 @@ class PersonRig {
   /** riding: the head's position and rotation (world space) */
   headPosition?: THREE.Vector3;
   headQuaternion?: THREE.Quaternion;
+  /** a body drawing this rig with clips of its own (actors/person-body.ts): its right hand's turn in the world, as the
+   * rig's right forearm would be turned to put the hand there (identity: hanging as in the bind pose) */
+  handTurn?: THREE.Quaternion;
 
   constructor({ seed = 0, scale = 1, female = false, girth = 1, hair = 0.2, armSwing = 1, stride = 1 }: PersonLooks = {}) {
     this.seed = seed;

@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { PersonCrowd, PersonRig } from '../sim/pedestrians.ts';
 import { isTypingInField } from '../world/city-config.ts';
+import { PLAYER_PERSON } from '../player/controllers/constants.ts';
 import {
   SEND_HZ,
   OP,
@@ -277,7 +278,8 @@ class Multiplayer {
     this.lastSentAt = 0;
     this.nextSendAt = 0;
 
-    this.crowd = new PersonCrowd(MAX_REMOTE_PEOPLE, { farDistance: 40 });
+    // (the others are drawn as everyone sees themselves: the player's person model, once it loads)
+    this.crowd = new PersonCrowd(MAX_REMOTE_PEOPLE, { farDistance: 40, model: PLAYER_PERSON });
     this._tilt = { pitch: 0, roll: 0 };
     this.crowd.meshes.forEach((m) => scene.add(m));
 

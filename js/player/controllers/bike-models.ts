@@ -148,7 +148,7 @@ export function createCyclistEntity(ctl: ThirdPersonControllerManager): CyclistE
   leanPivot.add(crankPivot);
 
   // Skinned rider (see pedestrians.ts), posed every frame with its hands on the grips and feet on the pedals; the
-  // helmet rides on its head
+  // helmet rides on its head (drawn as the player's body once it loads: frame.ts)
   const riderCrowd = new PersonCrowd(1, { farDistance: Infinity });
   riderCrowd.meshes.forEach((m) => ctl.scene.add(m));
   const riderRig = new PersonRig({ seed: 12.8, scale: 1.0, girth: 0.97, hair: 0.1 });

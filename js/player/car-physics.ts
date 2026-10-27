@@ -136,6 +136,7 @@ export interface CarStepInput {
   grip?: number;
   spinning?: boolean;
   assist?: boolean; // the stability control on (a car someone drives; never one thrown about in a crash)
+  flats?: number; // bit i: wheel i's tyre flat (shot, a spike strip): on its rim, it grips a fraction as well
 }
 /**
  * A wheel after the step: on the ground, its spin (rad), its steering (rad, + to its left), how far along its spring
@@ -221,7 +222,7 @@ export interface PhysicsVehicle {
   controller: Jolt.WheeledVehicleController;
   listener: Jolt.VehicleConstraintStepListener;
   tyres: Jolt.WheeledVehicleControllerCallbacksJS;
-  state: { grip: number; handbrake: boolean; spinning: boolean };
+  state: { grip: number; handbrake: boolean; spinning: boolean; flats: number };
   layout: WheelMount[];
   def: VehicleDef;
   shapes: Jolt.Shape[]; // its body with its rider, and (a two-wheeler) without
@@ -284,6 +285,8 @@ const MAX_LEAN = 0.82; // rad a two-wheeler leans over at most (~47°: a street 
 const LEAN_SPRING = 9; // its rider's hold on its lean, in what gravity topples it by (N·m a radian, per m·g·cg)...
 const LEAN_DAMPING = 1.6; // ...and on its leaning over (per rad/s)
 const YAW_HOLD = 0.4; // ...and on its swinging round on one wheel (per rad/s)
+const FLAT_LAT = 0.35; // share of a tyre's grip across it left on a flat (its rim on the road)
+const FLAT_LONG = 0.5; // ...and along it
 const STOPPIE = 0.2; // share of a moto's weight on its rear wheel under which its rider (its ABS) eases the brakes
 const TURN_SMOOTHING = 0.1; // s over which the rider feels how hard the tyres push the moto across
 const WHEELIE_FROM = 0.3; // rad of the moto's nose up where its rider starts to ease off the throttle...
@@ -750,15 +753,17 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
     // under a pulled handbrake (a moto's locked rear wheel), the driven ones giving way sideways while they spin (power
     // oversteer)
     const tyres = new Jolt.WheeledVehicleControllerCallbacksJS();
-    const state = { grip: 1, handbrake: false, spinning: false };
+    const state = { grip: 1, handbrake: false, spinning: false, flats: 0 };
     const drivenFront = def.drive !== 'rwd', drivenRear = def.drive !== 'fwd';
     tyres.OnTireMaxImpulseCallback = (index, outResult, suspensionImpulse, longFriction, latFriction) => {
       const w = layout[index];
-      let lat = latFriction * suspensionImpulse * state.grip;
+      // (a flat tyre, on its rim: a third of the grip across, half along)
+      const flat = (state.flats >> index) & 1;
+      let lat = latFriction * suspensionImpulse * state.grip * (flat ? FLAT_LAT : 1);
       if (!w.front && state.handbrake) lat *= two ? 0.55 : 0.42;
       if (state.spinning && (w.front ? drivenFront : drivenRear)) lat *= 0.72;
       const out = Jolt.wrapPointer(outResult, Jolt.TireMaxImpulseCallbackResult);
-      out.mLongitudinalImpulse = longFriction * suspensionImpulse * state.grip;
+      out.mLongitudinalImpulse = longFriction * suspensionImpulse * state.grip * (flat ? FLAT_LONG : 1);
       out.mLateralImpulse = lat;
     };
     tyres.SetWheeledVehicleController(controller);
@@ -1072,6 +1077,7 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
       v.state.grip = input?.grip ?? 1;
       v.state.handbrake = Boolean(input?.handbrake);
       v.state.spinning = Boolean(input?.spinning);
+      v.state.flats = input?.flats ?? 0;
       v.controller.SetDriverInput(0, steerOf(v, input), input?.hold ? 1 : 0, input?.handbrake || input?.hold ? 1 : 0);
       v.hit.speed = 0;
       v.hit.other = null;

@@ -64,6 +64,7 @@ function flagAttribute(geo: THREE.BufferGeometry, name: string, n: number) {
 // 3D spinning alloy wheels & tires (left & right, front & rear), exact 1:1 ground rolling, steering front wheels.
 // The wheel geometry is modelled at baseRadius (the sedan's 0.35 m car wheel), scaled to the vehicle's radius
 // (mid: the axles' middle ahead of the origin, m: a car model's file has its wheels where its maker put them)
+const FLAT = 0.74; // a flat tyre drawn this much of its size
 function placeWheels(ts: TrafficState, v: Vehicle, i: number, rotY: number, roll: number, radius: number, halfTrack: number, halfBase: number, leftInst: THREE.InstancedMesh, rightInst: THREE.InstancedMesh, baseRadius = 0.35, mid = 0): void {
   const sinY = Math.sin(rotY);
   const cosY = Math.cos(rotY);
@@ -74,14 +75,20 @@ function placeWheels(ts: TrafficState, v: Vehicle, i: number, rotY: number, roll
     const wz = mid + (w === 0 ? halfBase : -halfBase);
     const y = radius + (v.hy || 0) + wz * rise;
     ts.dummy.rotation.set(v.wheelSpin + w * 0.55, rotY + (w === 0 ? v.steer : 0), roll, 'YXZ');
-    ts.dummy.position.set(v.x - halfTrack * cosY + wz * sinY, y, v.z + halfTrack * sinY + wz * cosY);
+    // (a flat tyre: smaller, its rim down on the road. The left instance's wheels are on its right: flats' bits 2 & 3)
+    let flat = (v.flats >> (2 + w)) & 1;
+    ts.dummy.scale.setScalar(flat ? scale * FLAT : scale);
+    ts.dummy.position.set(v.x - halfTrack * cosY + wz * sinY, y - (flat ? radius * (1 - FLAT) : 0), v.z + halfTrack * sinY + wz * cosY);
     ts.dummy.updateMatrix();
     leftInst.setMatrixAt(i * 2 + w, ts.dummy.matrix);
 
-    ts.dummy.position.set(v.x + halfTrack * cosY + wz * sinY, y, v.z - halfTrack * sinY + wz * cosY);
+    flat = (v.flats >> w) & 1;
+    ts.dummy.scale.setScalar(flat ? scale * FLAT : scale);
+    ts.dummy.position.set(v.x + halfTrack * cosY + wz * sinY, y - (flat ? radius * (1 - FLAT) : 0), v.z - halfTrack * sinY + wz * cosY);
     ts.dummy.updateMatrix();
     rightInst.setMatrixAt(i * 2 + w, ts.dummy.matrix);
   }
+  ts.dummy.scale.setScalar(scale);
 }
 
 // Lamp state for the car & bus materials: brake lights while slowing down or standing, the turn signal on the side

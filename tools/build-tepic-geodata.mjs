@@ -1409,6 +1409,31 @@ for (const e of landOSM.elements) {
 }
 log(`${places.length} neighbourhoods, ${pois.length} points of interest`);
 
+// The gas stations (Overture Maps' places, basic_category gas_station, the surer ones): where each stands and its name.
+// One station's several entries (its shop, its pumps, a GasCard kiosk...) as one, the surest of them. The game lays its
+// pumps beside them (world/gas-stations.ts)
+const fuel = [];
+{
+  const file = path.join(DATA, 'overture', 'places.geojsonl');
+  const found = [];
+  if (fs.existsSync(file)) {
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      const f = JSON.parse(line);
+      const p = f.properties || {};
+      if (p.basic_category !== 'gas_station' || (p.confidence || 0) < 0.55 || !f.geometry || f.geometry.type !== 'Point') continue;
+      const [x, z] = toWorld(f.geometry.coordinates[0], f.geometry.coordinates[1]);
+      if (!inBox(x, z)) continue;
+      const name = ((p.names && p.names.primary) || 'Gasolinera').replace(/"/g, '').trim();
+      if (/vulcaniz|llant|refacc/i.test(name)) continue; // (a tyre shop filed as one)
+      found.push({ x, z, conf: p.confidence, name });
+    }
+  }
+  found.sort((a, b) => b.conf - a.conf);
+  for (const s of found) if (!fuel.some(([x, z]) => Math.hypot(x - s.x, z - s.z) < 70)) fuel.push([q(s.x), q(s.z), s.name]);
+}
+log(`${fuel.length} gas stations`);
+
 const landmarks = {};
 for (const e of bldOSM.elements) {
   const t = e.tags || {};
@@ -1617,6 +1642,23 @@ const storeyTally = { overture: 0, osm: 0, noHouse: 0 };
   log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets, ${onCanal} on a canal through green, ${onLot} in a car park), ${bigBoxes} big boxes (${hallsOnLots} on a mapped car park)`);
 }
 
+// The houses in 20 m cells: whether (x, z) lies in one, `pad` m round it (no driveway or wall through a building)
+const HC = 20;
+const houseCells = new Map();
+for (let k = 0; k < houses.length; k += HS) {
+  const cx = houses[k] / 10, cz = houses[k + 1] / 10, r = Math.hypot(houses[k + 2], houses[k + 3]) / 20;
+  for (let ix = Math.floor((cx - r) / HC); ix <= Math.floor((cx + r) / HC); ix++) {
+    for (let iz = Math.floor((cz - r) / HC); iz <= Math.floor((cz + r) / HC); iz++) {
+      const key = ix * 100003 + iz;
+      if (!houseCells.has(key)) houseCells.set(key, []);
+      houseCells.get(key).push(k);
+    }
+  }
+}
+const inHouse = (x, z, pad) => (houseCells.get(Math.floor(x / HC) * 100003 + Math.floor(z / HC)) || []).some((k) => {
+  const th = houses[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th), dx = x - houses[k] / 10, dz = z - houses[k + 1] / 10;
+  return Math.abs(cs * dx - sn * dz) < houses[k + 2] / 20 + pad && Math.abs(sn * dx + cs * dz) < houses[k + 3] / 20 + pad;
+});
 // --- Car parks' entrances: where a lot opens onto the street ---------------------------------------------------------
 // Where a service road or aisle that runs through a lot (OSM highway=service: the parking aisles, the driveways, the
 // plazas' access roads) leaves the lot's block onto the street: the point on the curb it crosses (found to a few cm
@@ -1634,23 +1676,6 @@ const storeyTally = { overture: 0, osm: 0, noHouse: 0 };
     if (!pieces.has(lot.lab)) pieces.set(lot.lab, []);
     pieces.get(lot.lab).push(lot);
   }
-  // the houses in 20 m cells: no driveway through a building
-  const HC = 20;
-  const houseCells = new Map();
-  for (let k = 0; k < houses.length; k += HS) {
-    const cx = houses[k] / 10, cz = houses[k + 1] / 10, r = Math.hypot(houses[k + 2], houses[k + 3]) / 20;
-    for (let ix = Math.floor((cx - r) / HC); ix <= Math.floor((cx + r) / HC); ix++) {
-      for (let iz = Math.floor((cz - r) / HC); iz <= Math.floor((cz + r) / HC); iz++) {
-        const key = ix * 100003 + iz;
-        if (!houseCells.has(key)) houseCells.set(key, []);
-        houseCells.get(key).push(k);
-      }
-    }
-  }
-  const inHouse = (x, z, pad) => (houseCells.get(Math.floor(x / HC) * 100003 + Math.floor(z / HC)) || []).some((k) => {
-    const th = houses[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th), dx = x - houses[k] / 10, dz = z - houses[k + 1] / 10;
-    return Math.abs(cs * dx - sn * dz) < houses[k + 2] / 20 + pad && Math.abs(sn * dx + cs * dz) < houses[k + 3] / 20 + pad;
-  });
   // the drivable roadways (drivePieces) in 50 m cells: a street, not a footpath's or a river's gap between the blocks
   const RC = 50;
   const roadCells = new Map();
@@ -1769,6 +1794,44 @@ const storeyTally = { overture: 0, osm: 0, noHouse: 0 };
   }
   log(`car parks: ${found} entrances from the street where OSM maps them, ${made} more on the sides facing a street, ` +
     `${parkingLots.filter((p) => !p.entrances.length).length} lots with none (facing no street)`);
+}
+
+// --- Walls: OpenStreetMap's barrier=wall & fence ways, the bardas round the ranchos, the schools, the lienzos ---------
+// As mapped (the land download's and the details' (6G), each way once; a retaining wall as a wall), cut where they
+// cross a roadway (a wall mapped across the street's mouth, a gate's gap) or a building (a house built against it: its
+// own walls stand there): [kind (0 a wall, 1 a fence), height (m, 0: unmapped), flat points]. The game draws them
+// (js/world/bardas.ts), and walls the big open plots OSM has none round
+const osmWalls = [];
+{
+  let cut = 0;
+  const seen = new Set();
+  for (const e of [...landOSM.elements, ...detailsOSM.elements]) {
+    const t = e.tags || {};
+    if (e.type !== 'way' || !/^(wall|fence|retaining_wall)$/.test(t.barrier || '') || !e.geometry || seen.has(e.id)) continue;
+    seen.add(e.id);
+    const kind = t.barrier === 'fence' ? 1 : 0;
+    const height = Math.min(6, Math.max(0, num(t.height) || 0));
+    const pts = e.geometry.map((g) => toWorld(g.lon, g.lat));
+    // sampled every metre: a piece is kept where its middle is on a block, out of the buildings
+    let chain = [];
+    const flush = () => {
+      if (chain.length > 1) osmWalls.push([kind, height, flat(rdp(chain, 0.15))]);
+      chain = [];
+    };
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+      const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az)));
+      for (let k = 0; k < n; k++) {
+        const x0 = ax + ((bx - ax) * k) / n, z0 = az + ((bz - az) * k) / n, x1 = ax + ((bx - ax) * (k + 1)) / n, z1 = az + ((bz - az) * (k + 1)) / n;
+        const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+        if (!inBox(mx, mz) || !labAt(mx, mz) || inHouse(mx, mz, -0.2)) { cut++; flush(); continue; }
+        if (!chain.length) chain.push([x0, z0]);
+        chain.push([x1, z1]);
+      }
+    }
+    flush();
+  }
+  log(`walls: ${osmWalls.length} pieces of wall & fence from OSM (${Math.round(osmWalls.reduce((t, w) => { let L = 0; for (let i = 2; i + 1 < w[2].length; i += 2) L += Math.hypot(w[2][i] - w[2][i - 2], w[2][i + 1] - w[2][i - 1]); return t + L; }, 0) / 1000)} km), ${cut} m cut off the streets & buildings`);
 }
 
 // =====================================================================================================================
@@ -2296,8 +2359,24 @@ const { ground = null, ...terrainGrid } = (() => {
     const i = Math.round((houses[k] / 10 - TX0) / CELL), j = Math.round((houses[k + 1] / 10 - TZ0) / CELL);
     if (i >= 0 && j >= 0 && i < TW && j < TH) houseCount[j * TW + i]++;
   }
-  // (a chapel or antennas on a summit don't make it town: four buildings to a cell do)
-  const built = houseCount.map((n) => (n >= 4 ? 1 : 0));
+  let missing = 0;
+  for (let j = 0; j < TH; j++) {
+    for (let i = 0; i < TW; i++) {
+      const e = elevation(...toLonLat(TX0 + i * CELL, TZ0 + j * CELL));
+      if (Number.isFinite(e)) E[j * TW + i] = e;
+      else { E[j * TW + i] = NaN; missing++; }
+    }
+  }
+  // fill tiles we don't have with the mean
+  let sum = 0, cnt = 0;
+  for (const e of E) if (Number.isFinite(e)) { sum += e; cnt++; }
+  for (let k = 0; k < E.length; k++) if (!Number.isFinite(E[k])) E[k] = sum / cnt;
+  // (a chapel or antennas on a summit don't make it town: four buildings to a cell do, at the valley's height. The
+  // masts on Cerro de San Juan's summit, 2,240 m, are four to a cell 1,300 m over the town: taken for town, its floor
+  // climbed to the summit and the whole cerro stood on it, a crater at its top)
+  const builtE = Float32Array.from(E.filter((e, k) => houseCount[k] >= 4)).sort();
+  const builtTop = (builtE.length ? builtE[builtE.length >> 1] : sum / cnt) + 300;
+  const built = houseCount.map((n, k) => (n >= 4 && E[k] < builtTop ? 1 : 0));
   const dilate = (src, r) => {
     const dst = new Uint8Array(src.length);
     for (let j = 0; j < TH; j++) for (let i = 0; i < TW; i++) {
@@ -2334,14 +2413,9 @@ const { ground = null, ...terrainGrid } = (() => {
     }
   }
   const roadAt = (x, z) => { const k = cellAt(x, z); return k >= 0 && lab[k] === 0 && !lakeCell[k]; }; // (off the raster, or a lake: no road)
-  let missing = 0;
   for (let j = 0; j < TH; j++) {
     for (let i = 0; i < TW; i++) {
       const x = TX0 + i * CELL, z = TZ0 + j * CELL;
-      const [lon, lat] = toLonLat(x, z);
-      let e = elevation(lon, lat);
-      if (!Number.isFinite(e)) { e = NaN; missing++; }
-      E[j * TW + i] = e;
       // the city: built-up cells, and streets near them (a 4 x 4 sample of the cell)
       let road = 0;
       if (builtArea[j * TW + i]) {
@@ -2350,10 +2424,6 @@ const { ground = null, ...terrainGrid } = (() => {
       U[j * TW + i] = builtNear[j * TW + i] || road >= 3 ? 1 : 0;
     }
   }
-  // fill tiles we don't have with the mean
-  let sum = 0, cnt = 0;
-  for (const e of E) if (Number.isFinite(e)) { sum += e; cnt++; }
-  for (let k = 0; k < E.length; k++) if (!Number.isFinite(E[k])) E[k] = sum / cnt;
   // separable box blur (3 passes ~ a Gaussian of sigma ~ r cells) over a w x h grid, the hills' by default
   const blur = (src, r, w = TW, h = TH, passes = 3) => {
     let a = Float32Array.from(src), b = new Float32Array(src.length);
@@ -2378,16 +2448,13 @@ const { ground = null, ...terrainGrid } = (() => {
     return a;
   };
   const smooth = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
-  // The hills' heights h (m) over the valley floor, the floor being the elevation of the city cells U (1) nearby (near,
-  // far: the blurred floor & its weights; D: metres to the city)
-  const shape = (U) => {
-    const EU = E.map((e, k) => e * U[k]);
-    const near = [blur(EU, 7), blur(U, 7)];
-    const far = [blur(EU, 30), blur(U, 30)];
+  // the city's mean elevation (m), and the distance (m) to the city: a two-pass chamfer
+  const cityMean = (U) => {
     let usum = 0, ucnt = 0;
     for (let k = 0; k < E.length; k++) if (U[k]) { usum += E[k]; ucnt++; }
-    const floorMean = ucnt ? usum / ucnt : sum / cnt;
-    // distance (m) to the city: two-pass chamfer
+    return ucnt ? usum / ucnt : sum / cnt;
+  };
+  const cityDistance = (U) => {
     const D = new Float32Array(TW * TH).fill(1e9);
     for (let k = 0; k < D.length; k++) if (U[k]) D[k] = 0;
     const DG = CELL * Math.SQRT2;
@@ -2409,6 +2476,16 @@ const { ground = null, ...terrainGrid } = (() => {
         if (i > 0) D[k] = Math.min(D[k], D[k + TW - 1] + DG);
       }
     }
+    return D;
+  };
+  // A first guess at the hills' heights h (m) over the valley floor, the floor being the elevation of the city cells U
+  // (1) nearby: enough to pick the streets to bring down, the hills' own heights being reckoned below over the town's
+  // ground
+  const firstGuess = (U) => {
+    const EU = E.map((e, k) => e * U[k]);
+    const near = [blur(EU, 7), blur(U, 7)];
+    const far = [blur(EU, 30), blur(U, 30)];
+    const floorMean = cityMean(U), D = cityDistance(U);
     const h = new Float32Array(TW * TH);
     for (let j = 0; j < TH; j++) for (let i = 0; i < TW; i++) {
       const k = j * TW + i;
@@ -2420,30 +2497,21 @@ const { ground = null, ...terrainGrid } = (() => {
       const edge = Math.min(i, j, TW - 1 - i, TH - 1 - j) * CELL;
       h[k] *= smooth(0, 2500, edge);
     }
-    return { h, near, far, D, floorMean };
+    return h;
   };
   // The streets in town and out to 450 m from it under up to 30 m of hill join the valley floor (the colonias' streets
   // up the lomas, the boulevards past empty lots: a cut sloping back ~20° over the next 75-150 m); the ones deeper in a
   // hill stay under it rather than cut a canyon into the cerro
-  const h0 = shape(U).h;
+  const h0 = firstGuess(U);
   let lifted = 0;
   for (let k = 0; k < U.length; k++) if (!U[k] && roadV[k] && outskirts[k] && h0[k] < 30) { U[k] = 1; lifted++; }
-  const { h: hills, near, far, D, floorMean } = shape(U);
-  const out = new Int16Array(TW * TH);
-  let peak = 0;
-  for (let k = 0; k < hills.length; k++) {
-    let h = hills[k];
-    // out in the country a road cuts through the low rises (up to 8 m) instead of under them; the highways over the
-    // sierra stay where they are
-    if (roadV[k] && h < 8) h = 0;
-    out[k] = Math.round(Math.min(3200, h) * 10);
-    if (h > peak) peak = h;
-  }
-  // The lakes in the box (4) lie on the valley floor: the low rises under them (up to LAKE_HILL m) taken off, as under
-  // the streets (every corner of a cell they reach into); a pond higher up a hill stays on it (flags 4: its water laid
-  // on the hillside, js/world/terrain.ts)
+  const D = cityDistance(U), floorMean = cityMean(U);
+  // The lakes in the box (4) lie on the valley floor: the low rises under them (up to LAKE_HILL m, by the first guess
+  // at the hills) taken off below, as under the streets (every corner of a cell they reach into); a pond higher up a
+  // hill stays on it (flags 4: its water laid on the hillside, js/world/terrain.ts)
   const LAKE_HILL = 30;
   let lakesUp = 0;
+  const lakeCorners = [];
   for (const l of lakes) {
     if (l.flags & 2) continue;
     const corners = new Set();
@@ -2456,16 +2524,15 @@ const { ground = null, ...terrainGrid } = (() => {
     for (let z = bb.z0; z <= bb.z1; z += CELL / 4) for (let x = bb.x0; x <= bb.x1; x += CELL / 4) if (inRing(l.shore, x, z)) mark(x, z);
     for (const [x, z] of l.shore) mark(x, z);
     let top = 0;
-    for (const k of corners) top = Math.max(top, out[k] / 10);
+    for (const k of corners) top = Math.max(top, h0[k]);
     if (top >= LAKE_HILL) { l.flags |= 4; lakesUp++; continue; }
-    for (const k of corners) out[k] = 0;
+    lakeCorners.push(corners);
   }
   // The ground under the town (js/world/ground.js): the city's own elevation on a 37.5 m grid (about the elevation
-  // tiles' own ~38 m pixels), its lone spikes taken off and lightly blurred: SRTM measures roofs & treetops, and what's
-  // wanted is a street's grade, not each house, but a wide blur flattened the town's short steep streets into long
-  // gentle rises. Like the hills'
-  // floor it is the built-up cells' elevation only (a normalised blur), so a hill beside a street doesn't lift it, and
-  // away from the city (and towards the grid's edge) it eases to the city's mean, the floor the hills stand on now. Its
+  // tiles' own ~38 m pixels), its lone spikes taken off: SRTM measures roofs & treetops, and what's wanted is a street's
+  // grade, not each house, but any blur flattened the town's short steep streets into long gentle rises. Off the town
+  // it is the built-up cells' elevation further round (a normalised blur), and away from the city (and towards the
+  // grid's edge) it eases to the city's mean: the floor the hills stand on, whatever rises over it being theirs. Its
   // cells halve the hills' 75 m ones, so the world laid on the ground is cut along one lattice for both
   // (lattice.js clipToLattice).
   // Heights are over the datum, the lowest point of the town (built-up cells in BOX), so its ground is never under y = 0
@@ -2487,22 +2554,31 @@ const { ground = null, ...terrainGrid } = (() => {
     GU[k] = coarse(U, x, z);
     GD[k] = coarse(D, x, z);
   }
-  // the roofs & treetops standing out of the ground one pixel at a time taken off (a 3 x 3 median), then a light blur
+  // the roofs & treetops standing out of the ground one pixel at a time taken off (a 3 x 3 median), in town of its
+  // built-up nodes only, so a hill beside a street doesn't lift it
   const median = new Float32Array(GE.length);
   const around = new Float32Array(9);
   for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
+    const town = GU[j * GW + i] >= 0.5;
     let n = 0;
-    for (let b = -1; b <= 1; b++) for (let a = -1; a <= 1; a++) around[n++] = GE[Math.min(GH - 1, Math.max(0, j + b)) * GW + Math.min(GW - 1, Math.max(0, i + a))];
-    median[j * GW + i] = around.sort()[4];
+    for (let b = -1; b <= 1; b++) for (let a = -1; a <= 1; a++) {
+      const k = Math.min(GH - 1, Math.max(0, j + b)) * GW + Math.min(GW - 1, Math.max(0, i + a));
+      if (!town || GU[k] >= 0.5) around[n++] = GE[k];
+    }
+    median[j * GW + i] = around.subarray(0, n).sort()[n >> 1];
   }
   const GEU = median.map((e, k) => e * GU[k]);
-  const gNear = [blur(GEU, 1, GW, GH, 1), blur(GU, 1, GW, GH, 1)]; // (one pass over 3 x 3 cells, σ ~ 30 m)
   const gFar = [blur(GEU, 13, GW, GH), blur(GU, 13, GW, GH)]; // (~500 m)
   const GF = new Float32Array(GW * GH);
   for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
     const k = j * GW + i;
-    const wN = gNear[1][k], wF = gFar[1][k];
-    const f = wN > 0.05 ? gNear[0][k] / wN : wF > 0.01 ? gFar[0][k] / wF : floorMean;
+    // in town its own elevation, the roofs taken off and no more: a blur over even three cells took a third off the
+    // grade of the steep streets (José María Mercado's pitch by the railway, ~20%, came out 12%). So it stays out to
+    // 150 m from the town, where the hills (reckoned over this floor) have faded in, and only then eases into the
+    // blurred floor of the built-up cells further round: a colonia up a cerro doesn't end in a step down to the valley
+    const wF = gFar[1][k];
+    const far = wF > 0.01 ? gFar[0][k] / wF : floorMean;
+    const f = far + (median[k] - far) * (1 - smooth(150, 300, GD[k]));
     const edge = Math.min(i, j, GW - 1 - i, GH - 1 - j) * GCELL;
     GF[k] = f + (floorMean - f) * Math.max(smooth(300, GMARGIN, GD[k]), 1 - smooth(0, GEDGE, edge));
   }
@@ -2514,6 +2590,7 @@ const { ground = null, ...terrainGrid } = (() => {
     return (GF[k] * (1 - tx) + GF[k + 1] * tx) * (1 - tz) + (GF[k + GW] * (1 - tx) + GF[k + GW + 1] * tx) * tz;
   };
   let lakeNodes = 0;
+  const lakeGround = new Uint8Array(GW * GH); // (its nodes under a lake: kept level, not evened with the hills below)
   for (const l of lakes) {
     if (l.flags & 6) continue;
     const rim = [];
@@ -2529,6 +2606,7 @@ const { ground = null, ...terrainGrid } = (() => {
       for (let i = Math.max(0, Math.ceil((bb.x0 - GX0) / GCELL)); i <= Math.min(GW - 1, Math.floor((bb.x1 - GX0) / GCELL)); i++) {
         if (!inRing(l.shore, GX0 + i * GCELL, GZ0 + j * GCELL)) continue;
         GF[j * GW + i] = level;
+        lakeGround[j * GW + i] = 1;
         lakeNodes++;
       }
     }
@@ -2557,9 +2635,61 @@ const { ground = null, ...terrainGrid } = (() => {
     const h00 = groundOut[k], h10 = groundOut[k + 1], h01 = groundOut[k + GW], h11 = groundOut[k + GW + 1];
     return (tx + tz <= 1 ? h00 + (h10 - h00) * tx + (h01 - h00) * tz : h11 + (h01 - h11) * (1 - tx) + (h10 - h11) * (1 - tz)) / 10;
   };
+  // The hills' heights (m) over the very floor the game stands them on: the town's ground just made, and beyond its
+  // grid the floor it eases to. The game draws a hill at that floor plus its height, so the two add up to the real
+  // elevation; measured over a floor of their own (a wider blur of the city's elevation), the hills stood tens to
+  // hundreds of metres off wherever the two floors parted, the more the further from the centro
+  const groundFloor = Math.round((floorMean - datum) * 10) / 10;
+  // (the hills' nodes are every other node of the town's grid, which starts on one of theirs)
+  const gi0 = Math.round((TX0 - GX0) / GCELL), gj0 = Math.round((TZ0 - GZ0) / GCELL);
+  const hillFloor = (i, j) => {
+    const gi = gi0 + 2 * i, gj = gj0 + 2 * j;
+    return datum + (gi >= 0 && gj >= 0 && gi < GW && gj < GH ? groundOut[gj * GW + gi] / 10 : groundFloor);
+  };
+  // a hill e m high at (x, z), d m from the city: faded in away from it, and out at the edge of the grid
+  const hillOver = (e, x, z, d) => {
+    const edge = Math.min(x - TX0, z - TZ0, TX0 + (TW - 1) * CELL - x, TZ0 + (TH - 1) * CELL - z);
+    return Math.max(0, e) * smooth(15, 150, d) * smooth(0, 2500, edge);
+  };
+  const out = new Int16Array(TW * TH);
+  let peak = 0;
+  for (let j = 0; j < TH; j++) for (let i = 0; i < TW; i++) {
+    const k = j * TW + i, x = TX0 + i * CELL, z = TZ0 + j * CELL;
+    let h = hillOver(E[k] - hillFloor(i, j), x, z, D[k]);
+    // out in the country a road cuts through the low rises (up to 8 m) instead of under them; the highways over the
+    // sierra stay where they are
+    if (roadV[k] && h < 8) h = 0;
+    out[k] = Math.round(Math.min(3200, h) * 10);
+    if (h > peak) peak = h;
+  }
+  // (and none under the lakes on the valley floor)
+  for (const corners of lakeCorners) for (const k of corners) out[k] = 0;
+  // Between the hills' nodes the game adds their 75 m triangles to the town's 37.5 m ones (ground.js), which bend at
+  // the nodes halfway: those are set so the two add up to the floor and its hill there too, or the bends of the town's
+  // floor came out as humps & dips of up to 20-30 m on the hillsides (a street up Cerro de la Cruz at 53% for 8%)
+  const hillAt = (x, z) => {
+    const fx = (x - TX0) / CELL, fz = (z - TZ0) / CELL;
+    if (!(fx >= 0 && fz >= 0 && fx < TW - 1 && fz < TH - 1)) return 0;
+    const i = Math.floor(fx), j = Math.floor(fz), tx = fx - i, tz = fz - j, k = j * TW + i;
+    const h00 = out[k], h10 = out[k + 1], h01 = out[k + TW], h11 = out[k + TW + 1];
+    return (tx + tz <= 1 ? h00 + (h10 - h00) * tx + (h01 - h00) * tz : h11 + (h01 - h11) * (1 - tx) + (h10 - h11) * (1 - tz)) / 10;
+  };
+  let evened = 0;
+  for (let gj = 0; gj < GH; gj++) for (let gi = 0; gi < GW; gi++) {
+    // (the grid's border stays on the far floor it meets)
+    if ((gi - gi0) % 2 === 0 && (gj - gj0) % 2 === 0 || !gi || !gj || gi === GW - 1 || gj === GH - 1) continue;
+    const k = gj * GW + gi, x = GX0 + gi * GCELL, z = GZ0 + gj * GCELL;
+    if (lakeGround[k]) continue;
+    const floor = datum + groundOut[k] / 10, hill = hillAt(x, z);
+    const h = hillOver(GE[k] - floor, x, z, coarse(D, x, z));
+    // (the town's ground, and the roads cutting through the low rises, as they are)
+    if (hill < 0.15 && h < 8) continue;
+    groundOut[k] = Math.round((Math.max(datum, floor + h - hill) - datum) * 10);
+    evened++;
+  }
   {
     // the grades the town's streets get: drivable ways, sampled every 10 m, in the built-up city
-    const grades = [];
+    const grades = [], real = [];
     let top = 0;
     for (const w of ways) {
       if (!DRIVE.has(w.tags.highway)) continue;
@@ -2572,16 +2702,18 @@ const { ground = null, ...terrainGrid } = (() => {
           const x1 = ax + (bx - ax) * (s + 10) / len, z1 = az + (bz - az) * (s + 10) / len;
           if (coarse(U, x0, z0) < 0.5 || !inBox(x0, z0)) continue;
           grades.push(Math.abs(gAt(x1, z1) - gAt(x0, z0)) / 10);
+          real.push(Math.abs(elevation(...toLonLat(x1, z1)) - elevation(...toLonLat(x0, z0))) / 10);
           top = Math.max(top, gAt(x0, z0));
         }
       }
     }
     grades.sort((a, b) => a - b);
-    const pc = (q) => (grades[Math.floor(q * (grades.length - 1))] * 100).toFixed(1);
+    real.sort((a, b) => a - b);
+    const pc = (q, g = grades) => (g[Math.floor(q * (g.length - 1))] * 100).toFixed(1);
     const [dLon, dLat] = toLonLat(...datumAt);
-    log(`ground: ${GW} x ${GH} cells of ${GCELL} m, datum ${datum} m a.s.l. (at ${dLat.toFixed(4)},${dLon.toFixed(4)}), town up to ${top.toFixed(0)} m over it, plaza ${gAt(0, 0).toFixed(1)} m; street grades p50 ${pc(0.5)}%, p90 ${pc(0.9)}%, p99 ${pc(0.99)}%, max ${pc(1)}%`);
+    log(`ground: ${GW} x ${GH} cells of ${GCELL} m, datum ${datum} m a.s.l. (at ${dLat.toFixed(4)},${dLon.toFixed(4)}), town up to ${top.toFixed(0)} m over it, plaza ${gAt(0, 0).toFixed(1)} m; street grades p50 ${pc(0.5)}%, p90 ${pc(0.9)}%, p99 ${pc(0.99)}%, max ${pc(1)}% (the elevation data's own: p50 ${pc(0.5, real)}%, p90 ${pc(0.9, real)}%, p99 ${pc(0.99, real)}%)`);
   }
-  const ground = { x0: GX0, z0: GZ0, cell: GCELL, w: GW, h: GH, datum, floor: Math.round((floorMean - datum) * 10) / 10, data: Buffer.from(groundOut.buffer).toString('base64') };
+  const ground = { x0: GX0, z0: GZ0, cell: GCELL, w: GW, h: GH, datum, floor: groundFloor, data: Buffer.from(groundOut.buffer).toString('base64') };
 
   // the cross on Cerro de la Cruz
   const crossPoi = (poisOSM.elements || []).find((e) => e.tags && /cerro de la cruz/i.test(e.tags.name || ''));
@@ -2621,12 +2753,10 @@ const { ground = null, ...terrainGrid } = (() => {
   if (process.env.TERRAIN_DEBUG) {
     for (const [name, x, z] of [['cross', ...(cross || [0, 0])], ['san juan', -3900, 1400], ['plaza', 0, 0]]) {
       const i = Math.round((x - TX0) / CELL), j = Math.round((z - TZ0) / CELL), k = j * TW + i;
-      const wN = near[1][k], wF = far[1][k];
-      const base = wN > 0.05 ? near[0][k] / wN : wF > 0.01 ? far[0][k] / wF : floorMean;
-      log(`  ${name}: elevation ${E[k].toFixed(0)}, floor ${base.toFixed(0)}, urban ${U[k]}, ${D[k].toFixed(0)} m from the city, height ${out[k] / 10}`);
+      log(`  ${name}: elevation ${E[k].toFixed(0)}, floor ${hillFloor(i, j).toFixed(0)}, urban ${U[k]}, ${D[k].toFixed(0)} m from the city, height ${out[k] / 10}`);
     }
   }
-  log(`terrain: ${lifted} grid points under streets brought down to the valley floor`);
+  log(`terrain: ${lifted} grid points under streets brought down to the valley floor, ${evened} of the town's grid evened with the hills'`);
   log(`terrain: ${TW} x ${TH} cells of ${CELL} m, highest ${Math.round(peak)} m over the valley floor (${Math.round(floorMean)} m a.s.l.), ${missing} cells off the tiles`);
   return { x0: TX0, z0: TZ0, cell: CELL, w: TW, h: TH, floor: Math.round(floorMean), data: Buffer.from(out.buffer).toString('base64'), cross, paths, ground };
 })();
@@ -2880,8 +3010,8 @@ const footways = [];
 
 // =====================================================================================================================
 // 6F. STREET FURNITURE & THE GAS STATIONS (osm_tepic_details.json): the benches & the bins where OpenStreetMap has them,
-//     each square to the street nearest it; the gas stations' canopies over their pumps, from each station's outline
-//     (or, mapped as a point, a canopy of the usual size square to the street by it)
+//     each square to the street nearest it; and the gas stations OpenStreetMap maps (by their outline's middle, or
+//     their point) that Overture's (`fuel`, 1) hasn't, joining them
 // =====================================================================================================================
 // the direction (unit, the way it is drawn) of the roadway nearest (x, z) within a cell or so, or null
 const roadDirAt = (x, z) => {
@@ -2900,11 +3030,11 @@ const roadDirAt = (x, z) => {
 };
 // a turn θ (mrad) whose local x runs along (ux, uz): R_y(θ) takes x to (cos θ, -sin θ)
 const turnAlong = ([ux, uz]) => Math.round(Math.atan2(-uz, ux) * 1000);
-const benches = [], bins = [], fuel = [];
+const benches = [], bins = [];
 {
-  const tally = { benches: 0, bins: 0, fuelWays: 0, fuelNodes: 0, fuelSame: 0 };
-  const FUEL_SAME = 45; // m: a station's point by its own outline is the same station
-  const fuelWays = [];
+  const tally = { benches: 0, bins: 0, fuel: 0, fuelKnown: 0 };
+  const FUEL_SAME = 70; // m: a station this near one already listed is that one (as Overture's own entries are)
+  const stations = [];
   for (const e of detailsOSM.elements) {
     const t = e.tags || {};
     if (e.type === 'node' && (t.amenity === 'bench' || t.amenity === 'waste_basket')) {
@@ -2912,51 +3042,19 @@ const benches = [], bins = [], fuel = [];
       if (!inBox(x, z)) continue;
       if (t.amenity === 'bench') { benches.push(q(x), q(z), turnAlong(roadDirAt(x, z) || [1, 0])); tally.benches++; }
       else { bins.push(q(x), q(z)); tally.bins++; }
-    } else if (e.type === 'way' && t.amenity === 'fuel' && e.geometry) {
-      const ring = e.geometry.map((g) => toWorld(g.lon, g.lat));
-      const r = minAreaRect(ring);
-      if (!r || !inBox(r.cx, r.cz)) continue;
-      // the canopy over the forecourt: about half the lot's length and width, within a canopy's sizes
-      const L = Math.min(30, Math.max(12, r.w * 0.55)), Wd = Math.min(16, Math.max(8, r.d * 0.5));
-      fuel.push([q(r.cx), q(r.cz), Math.round(r.th * 1000), Math.round(L * 10), Math.round(Wd * 10)]);
-      fuelWays.push([r.cx, r.cz]);
-      tally.fuelWays++;
+    } else if (t.amenity === 'fuel') {
+      // (an outline by its middle, first: a station's point inside its own outline is the same station)
+      const p = e.type === 'way' && e.geometry ? centroid(e.geometry.map((g) => toWorld(g.lon, g.lat))) : e.type === 'node' ? toWorld(e.lon, e.lat) : null;
+      if (p && inBox(p[0], p[1])) stations.push({ x: p[0], z: p[1], way: e.type === 'way', name: (t.name || t.brand || 'Gasolinera').replace(/"/g, '').trim() });
     }
   }
-  for (const e of detailsOSM.elements) {
-    if (e.type !== 'node' || e.tags?.amenity !== 'fuel') continue;
-    const [x, z] = toWorld(e.lon, e.lat);
-    if (!inBox(x, z)) continue;
-    if (fuelWays.some(([cx, cz]) => Math.hypot(cx - x, cz - z) < FUEL_SAME)) { tally.fuelSame++; continue; }
-    fuel.push([q(x), q(z), turnAlong(roadDirAt(x, z) || [1, 0]), 180, 100]);
-    tally.fuelNodes++;
+  stations.sort((a, b) => Number(b.way) - Number(a.way));
+  for (const st of stations) {
+    if (fuel.some(([x, z]) => Math.hypot(x - st.x, z - st.z) < FUEL_SAME)) { tally.fuelKnown++; continue; }
+    fuel.push([q(st.x), q(st.z), st.name]);
+    tally.fuel++;
   }
-  log(`street furniture: ${tally.benches} benches, ${tally.bins} bins; gas stations: ${tally.fuelWays} by their outline, ${tally.fuelNodes} by their point (${tally.fuelSame} points of the same)`);
-}
-
-// =====================================================================================================================
-// 6G. WALLS & FENCES (OSM barrier=wall | fence | retaining_wall, osm_tepic_land.json & osm_tepic_details.json): the
-//     bardas round the lots, the schools & the plants, the fences of the fields and the railings: [kind (0 a plastered
-//     barda, 1 a stone or brick wall, 2 a chain-link or wire fence, 3 an iron railing, 4 a retaining wall), flat points]
-//     each, cut to the box (js/world/barriers.ts stands them up; they stop the player)
-// =====================================================================================================================
-const barriers = [];
-{
-  const tally = [0, 0, 0, 0, 0];
-  const seenIds = new Set();
-  for (const e of [...landOSM.elements, ...detailsOSM.elements]) {
-    const t = e.tags || {};
-    if (e.type !== 'way' || !e.geometry || !/^(wall|fence|retaining_wall)$/.test(t.barrier || '') || seenIds.has(e.id)) continue;
-    seenIds.add(e.id);
-    const kind = t.barrier === 'retaining_wall' ? 4
-      : t.barrier === 'wall' ? (/stone|brick/.test(`${t.material || ''} ${t.wall || ''}`) ? 1 : 0)
-        : /railing|bars|metal/.test(`${t.fence_type || ''} ${t.material || ''}`) ? 3 : 2;
-    for (const piece of clipChain(e.geometry.map((g) => toWorld(g.lon, g.lat)))) {
-      barriers.push([kind, flat(rdp(piece, 0.3))]);
-      tally[kind]++;
-    }
-  }
-  log(`walls & fences: ${tally[0]} bardas, ${tally[1]} stone & brick walls, ${tally[2]} fences, ${tally[3]} railings, ${tally[4]} retaining walls`);
+  log(`street furniture: ${tally.benches} benches, ${tally.bins} bins; gas stations: ${tally.fuel} more from OpenStreetMap (${tally.fuelKnown} Overture has, or the same twice), ${fuel.length} in all`);
 }
 
 // =====================================================================================================================
@@ -3006,6 +3104,8 @@ const GEO = {
   points: {},
   places,
   pois,
+  // The gas stations (5): [x, z (m), name]
+  fuel,
   teleports,
   // Real buildings (Overture Maps), 8 integers each: centre x, z (dm), width, depth (dm, local x / z), turn θ
   // (mrad, world = c + R_y(θ)·local), storeys, front side (0 w, 1 e, 2 n, 3 s of the local frame) + KIND bits (4 a shop, 8 a big box, 16 a strip plaza, 32 a coto's house, its number + 1 from bit 6 up), sign
@@ -3059,10 +3159,9 @@ const GEO = {
   // Street furniture (6F): benches [x, z, turn (mrad, the seat along the street)], bins [x, z], flat
   benches,
   bins,
-  // Gas stations' canopies (6F): [x, z (m), turn (mrad: its length along (cos θ, -sin θ)), length, width (dm)]
-  fuel,
-  // Walls & fences (6G): [kind (0 barda, 1 stone or brick wall, 2 fence, 3 railing, 4 retaining wall), flat points]
-  barriers
+  // Walls & fences as OpenStreetMap maps them, off the streets & buildings: [kind (0 wall, 1 fence), height (m, 0
+  // unmapped), flat points]
+  walls: osmWalls
 };
 
 const json = JSON.stringify(GEO);

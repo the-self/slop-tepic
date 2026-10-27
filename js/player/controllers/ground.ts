@@ -1,7 +1,9 @@
 // js/player/controllers/ground.ts
-// The ground under the player: the terrain, the town's floor, a bridge's deck, an interior's floor, the curbs a
-// walker stands on (and the driveways' ramps over them), the tilt under a vehicle, and the hills too steep to walk up
+// The ground under the player: the terrain, the town's floor, a bridge's deck, an interior's floor, the curbs and the
+// parks' raised walks and lawns a walker stands on (and the driveways' ramps over the curbs), the tilt under a vehicle,
+// and the hills too steep to walk up
 import { ISLAND_BOUNDS, blockAt } from '../../world/city-config.ts';
+import { isRaisedPark, parkFloorAt } from '../../world/park-floor.ts';
 import type { PlayerMode, PlayerEntity, PlayerRoom, GroundQuery } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
 
@@ -9,6 +11,14 @@ import type { ThirdPersonControllerManager } from '../controllers.ts';
 export function isPointOnSidewalk(x: number, z: number): boolean {
   const b = blockAt(x, z);
   return !!b && !(b.park > 0.6 && !b.median);
+}
+
+// How high a walker stands over the town's floor at (x, z): a raised park's walk or lawn (park-floor.ts), a curb
+// island's sidewalk, or nothing (the street, a park too small to be raised)
+export function curbLift(ctl: ThirdPersonControllerManager, x: number, z: number): number {
+  if (ctl.isPointOnSidewalk(x, z)) return ISLAND_BOUNDS.sidewalkHeight;
+  const b = blockAt(x, z);
+  return b && isRaisedPark(b) ? parkFloorAt(b, x, z) : 0;
 }
 
 // Into (a room: { minX, maxX, minZ, maxZ, floorAt(x, z, fromY), colliders }) or out of (null) an interior
@@ -33,8 +43,7 @@ export function getGroundHeight(ctl: ThirdPersonControllerManager, x: number, z:
     if (ground < town - 0.01) return ground;
     // (up a driveway's ramp where the curb drops: car-parks.ts)
     const ramp = ctl.rampAt ? ctl.rampAt(x, z) : -1;
-    const curb = ramp >= 0 ? ramp : ctl.isPointOnSidewalk(x, z) ? ISLAND_BOUNDS.sidewalkHeight : 0.0;
-    return town + Math.max(curb, ground - town);
+    return town + Math.max(ramp >= 0 ? ramp : curbLift(ctl, x, z), ground - town);
   }
   return ground;
 }

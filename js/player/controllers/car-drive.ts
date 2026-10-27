@@ -5,7 +5,7 @@ import { createDriveState, stepDrive } from '../drivetrain.ts';
 import { enginePower } from '../vehicle-damage.ts';
 import { wash } from '../car-blood.ts';
 import { suspensionOf, steerLimit } from '../car-physics.ts';
-import { EJECT_SPEED } from './constants.ts';
+import { EJECT_SPEED, FUEL_IDLE, FUEL_BURN } from './constants.ts';
 import type { DriveInput, DriveSpec, DriveState } from '../drivetrain.ts';
 import type { CarDamage } from '../vehicle-damage.ts';
 import type { CarBodyDef, CarPhysics, PhysicsVehicle, VehicleOut } from '../car-physics.ts';
@@ -15,6 +15,11 @@ import type { ThirdPersonControllerManager } from '../controllers.ts';
 const STEER_IN = 5; // 1/s the wheels turn towards the lock asked (~0.2 s)...
 const STEER_BACK = 10; // ...and back towards the middle
 const SLIDE = 0.05; // rad (~3°) of sideways slide before the steering catches it
+// A flat tyre (shot, a spike strip: CarDamage flats): a front one pulls the steering FLAT_PULL rad its way; each drags
+// FLAT_DRAG m/s² against its going (four of them: a crawl); drawn squashed by FLAT_SINK of its radius
+const FLAT_PULL = 0.03;
+const FLAT_SINK = 0.18;
+const FLAT_DRAG = 0.9;
 
 // The car: a rigid body on its sprung wheels in Jolt Physics (car-physics.ts, set up by main.ts before the first
 // frame). Before the world's step (stepVehicles): what the traffic did to it since the last one carried over, and
@@ -73,9 +78,20 @@ export function driveCar(ctl: ThirdPersonControllerManager, dt: number, driving:
   // in a flood: over ~0.55 m the water is in the air intake and the engine dies until it is out of it
   const water = ctl.waterAt && !c.flying ? ctl.waterAt(c.position.x, c.position.z) : 0;
   c.drowned = water > 0.55;
-  input.power = c.drowned ? 0 : enginePower(dmg);
+  // its fuel burnt driving (with the engine running: someone in it); none left, the engine dies (world/gas-stations.ts)
+  if (driving && c.fuel > 0) {
+    c.fuel = Math.max(0, c.fuel - dt * (FUEL_IDLE + FUEL_BURN * throttle));
+    if (c.fuel <= 0) ctl.onFuelOut?.();
+  }
+  input.power = c.drowned || c.fuel <= 0 ? 0 : enginePower(dmg);
   input.grip = ctl.roadGrip * (water > 0.15 ? 0.75 : 1);
-  const force = ctl.driveForce(d, spec, input, u, water, dt);
+  let force = ctl.driveForce(d, spec, input, u, water, dt);
+  // a flat tyre's rim dragging on the road: FLAT_DRAG m/s² each, against its going (no more than stops it)
+  if (dmg.flats) {
+    let n = 0;
+    for (let b = dmg.flats; b; b >>= 1) n += b & 1;
+    force -= Math.sign(u) * Math.min(Math.abs(u) * spec.mass / dt, spec.mass * FLAT_DRAG * n);
+  }
 
   let steerInput = 0;
   if (driving && ctl.keys.left) steerInput = Number(ctl.keys.left);
@@ -90,7 +106,10 @@ export function driveCar(ctl: ThirdPersonControllerManager, dt: number, driving:
   const target = Math.max(-spec.steerLock, Math.min(spec.steerLock, steerInput * lock + catchIt));
   const back = Math.abs(target) < Math.abs(c.steerAngle) || target * c.steerAngle < 0;
   c.steerAngle += (target - c.steerAngle) * Math.min(1, dt * (back ? STEER_BACK : STEER_IN));
-  const steer = c.steerAngle + dmg.pull * Math.min(1, Math.abs(u) / 5);
+  // (a flat front tyre drags its side back: the car pulls that way)
+  let flatPull = 0;
+  if (dmg.flats) c.wheels.forEach((w, i) => { if (w.isFront && (dmg.flats >> i) & 1) flatPull += w.side * FLAT_PULL; });
+  const steer = c.steerAngle + (dmg.pull + flatPull) * Math.min(1, Math.abs(u) / 5);
 
   const body = v.out;
   const before = (c.before ??= { vx: 0, vy: 0, vz: 0 });
@@ -105,6 +124,7 @@ export function driveCar(ctl: ThirdPersonControllerManager, dt: number, driving:
   go.grip = spec.grip * input.grip;
   go.spinning = d.wheelspin;
   go.assist = driving; // (the stability control: car-physics.ts stabilise, off while the handbrake swings it round)
+  go.flats = dmg.flats;
   const frame = (c.frame ??= { throttle: 0, steer: 0, water: 0 });
   frame.throttle = throttle;
   frame.steer = steer;
@@ -185,10 +205,22 @@ export function carMoved(ctl: ThirdPersonControllerManager, dt: number, driving:
   if (o.bump > 0.3) c.cameraKick = Math.max(c.cameraKick || 0, Math.min(0.6, o.bump / 5));
 
   // the wheels: on their springs, steered, rolling
+  const flats = c.damage.flats;
   o.wheels.forEach((w, i) => {
     const wheel = c.wheels[i] as CarWheel | undefined; // (Jolt's may outnumber the drawn ones)
     if (!wheel) return;
-    wheel.steerPivot.position.y = w.y;
+    // a flat tyre squashed under the rim, sparks off the rim on the road at speed
+    const flat = (flats >> i) & 1;
+    const r = wheel.restY ?? 0.33;
+    wheel.steerPivot.position.y = w.y - (flat ? r * FLAT_SINK : 0);
+    wheel.steerPivot.scale.y = flat ? 1 - FLAT_SINK : 1;
+    if (flat && w.contact && Math.abs(c.speed) > 6 && Math.random() < dt * 12) {
+      const p = wheel.steerPivot.position;
+      c.lastCollisionSpark = {
+        x: c.position.x + p.x * cs + p.z * sn, y: 0.12, z: c.position.z - p.x * sn + p.z * cs,
+        nx: -sn * Math.sign(c.speed), nz: -cs * Math.sign(c.speed), speed: Math.abs(c.speed) * 0.4
+      };
+    }
     wheel.tire.rotation.x = w.spin;
     if (wheel.isFront) wheel.steerPivot.rotation.y = steer;
   });

@@ -1,9 +1,9 @@
 // js/app/city.ts
 // Builds the city into the scene, in the order its parts depend on each other: the streamed ground (tiles laid round
 // the camera by workers, world/streaming.ts; ?stream=0 lays all of them at start-up), the streets, the floor painted
-// beyond the tiles, the hills, the rivers, the landmarks, the blocks and stores, the car parks, the street details, the
-// traffic on the road network, the paint, the pavements, the airport and the overpasses; and gathers what the player
-// collides with.
+// beyond the tiles, the hills, the rivers, the landmarks, the blocks and stores, the car parks, the bardas, the street
+// details, the traffic on the road network, the paint, the pavements, the airport and the overpasses; and gathers what
+// the player collides with.
 import type * as THREE from 'three/webgpu';
 import { color } from 'three/tsl';
 import { ISLAND_BOUNDS } from '../world/city-config.ts';
@@ -31,7 +31,7 @@ import { buildPowerLines } from '../world/power-lines.ts';
 import { buildPools } from '../world/pools.ts';
 import { buildFootways } from '../world/footways.ts';
 import { buildFurniture } from '../world/furniture.ts';
-import { buildBarriers } from '../world/barriers.ts';
+import { buildBardas } from '../world/bardas.ts';
 import { GEO } from '../world/city-geodata.js';
 import type { Collider } from '../world/buildings.ts';
 
@@ -83,8 +83,12 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   buildPools(scene);
   mark('carParks');
   const colliders: Collider[] = [...landmarkColliders, ...modelColliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...cityGrid.colliders];
+  // The bardas round the big open plots (the canchas, the ranchos, the vacant lots), not across a car park
+  const bardas = buildBardas(scene, carParks.keepsOpen);
+  mark('bardas');
   // (one by one, like the bridges' below)
   for (const c of carParks.colliders) colliders.push(c);
+  for (const c of bardas.colliders) colliders.push(c);
 
   // (no yard tree in a store's hall or a car park)
   const streetDetails = buildStreetDetails(scene, [...stores.reserves, carParks]);
@@ -119,10 +123,8 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   // The high-voltage lines over the valley & the hills; their towers in the town stop the player
   const powerLines = buildPowerLines(scene);
   for (const c of powerLines.colliders) colliders.push(c);
-  // The benches & the gas stations OpenStreetMap maps (their columns, pumps & benches stop the player)
+  // The benches OpenStreetMap maps (they stop the player)
   for (const c of buildFurniture(scene).colliders) colliders.push(c);
-  // The walls & fences OpenStreetMap maps: they stop the player
-  for (const c of buildBarriers(scene).colliders) colliders.push(c);
   mark('bridges');
   return { streamer, cityGrid, farGround, rivers, cityBlocks, stores, carParks, streetDetails, powerLines, traffic, highwayTraffic, bridges, colliders };
 }

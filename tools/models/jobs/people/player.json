@@ -1,0 +1,38 @@
+{
+  "note": "The player (assets/models/people/player.glb). Run through the meshy MCP server: text-to-image (the front view), image-to-image with that task as the reference (the back), then multi-image-to-3d on front + back in that order. A third, side-profile view was tried first and spoiled the model: an arm held out to the side shows as hanging straight down in profile, and Meshy made one arm reach forward and the other back. 27 credits of images (the profile included) + 35 for each model (Ultra geometry, 4K texture). Then: node tools/models/prepare-person.mjs model.glb assets/models/people/player.glb",
+  "imageModel": "nano-banana-pro",
+  "imageOptions": {
+    "aspect_ratio": "3:4",
+    "pose_mode": "a-pose",
+    "remove_background": true
+  },
+  "prompt": "Photo-real full-body 3D character reference of an ordinary Mexican man from Tepic, Nayarit, about 35 years old, average medium build, 1.72 m tall, warm brown skin, short neat black hair, clean-shaven, natural friendly neutral face with closed mouth and eyes open looking straight ahead. Wearing a plain heather-grey crew-neck cotton t-shirt with no print, mid-blue denim jeans with a dark brown belt, and plain white low-top sneakers with white soles. No logos, no text, no accessories, no watch, no glasses, no hat. Standing in a clean symmetric A-pose: arms straight and held about 40 degrees away from the body, palms facing the thighs, fingers relaxed together, legs straight with feet hip-width apart pointing forward. Pure front view, camera at chest height, orthographic-like, the whole body from the top of the head to the soles of the shoes in frame and centered with a small margin. Plain pure white background, soft even shadowless studio light, realistic fabric folds and skin detail.",
+  "views": [
+    "The exact same man (same short black hair, same skin, same plain heather-grey t-shirt, same blue jeans and dark brown belt, same white sneakers, same proportions and the same symmetric A-pose with arms about 40 degrees out from the body) seen straight from behind, a pure back view at chest height, orthographic-like, showing the back of his head and neat short hair, the back of the t-shirt, the jeans' back pockets and the heels of the sneakers, the whole body from head to soles in frame and centered. No logos, no text. Plain pure white background, soft even shadowless studio light."
+  ],
+  "model": {
+    "ai_model": "meshy-7.1",
+    "should_texture": true,
+    "texture_resolution": "4k",
+    "geometry_resolution": "2k",
+    "enable_pbr": false,
+    "should_remesh": true,
+    "target_polycount": 60000,
+    "topology": "triangle",
+    "image_enhancement": false,
+    "remove_lighting": true,
+    "pose_mode": "a-pose"
+  },
+  "prepare": "--faces 30000 --far 3000 --texture 2048",
+  "rigged": {
+    "note": "assets/models/people/player-rigged.glb: meshy_rig on the multi-image task (5 credits; walking and running come with it), then meshy_animate with the library clips below (3 credits each). Idle (0), Punch Combo (198) and Gunshot Reaction (177) were bought too and are left out: Idle fidgets and turns round, and nothing plays the other two yet. Then: node tools/models/prepare-rigged-person.mjs Character_output.glb assets/models/people/player-rigged.glb walk=walking.glb run=running.glb idle=idle3.glb walk_back=clips.glb:Walk_Backward_inplace jump=clips.glb:Regular_Jump strafe=clips.glb:Walk_Left_with_Gun_inplace walk_back_gun=clips.glb:Walk_Backward_with_Gun_1_inplace",
+    "height_meters": 1.75,
+    "clips": {
+      "idle": 243,
+      "walk_back": 679,
+      "jump": 466,
+      "strafe": 694,
+      "walk_back_gun": 686
+    }
+  }
+}

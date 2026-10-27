@@ -249,6 +249,10 @@ export type ParkingEntrance = [x: number, z: number, angle: number, width: numbe
  *  its entrances]. */
 export type ParkingLot = [name: string, surface: ParkingSurface, theta: number, ring: FlatPoints, entrances: ParkingEntrance[]];
 
+/** A wall or fence as OpenStreetMap maps it (barrier=wall | fence), cut off the streets & buildings: [kind (0 a wall,
+ *  1 a fence), height (m, 0 unmapped), flat points]. */
+export type OsmWall = [kind: 0 | 1, height: number, pts: FlatPoints];
+
 export interface CityGeodata {
   version: number;
   frame: GeoFrame;
@@ -279,6 +283,8 @@ export interface CityGeodata {
   points: Record<string, never>;
   places: Place[];
   pois: Poi[];
+  /** The gas stations (Overture Maps' places, and the ones only OpenStreetMap maps): where each stands (m) and its name. */
+  fuel: [x: number, z: number, name: string][];
   teleports: Record<string, Teleport>;
   /** Integers per house in `houses` (8). */
   houseStride: number;
@@ -323,11 +329,7 @@ export interface CityGeodata {
   benches: number[];
   /** Bins OpenStreetMap maps, 2 numbers each: x, z (m). */
   bins: number[];
-  /** Gas stations' canopies: [x, z (m), turn (mrad: its length along (cos θ, -sin θ)), length, width (dm)]. */
-  fuel: [x: number, z: number, turn: number, length: number, width: number][];
-  /** Walls & fences: [kind (0 a plastered barda, 1 a stone or brick wall, 2 a chain-link or wire fence, 3 an iron
-   *  railing, 4 a retaining wall), flat points]. */
-  barriers: [kind: 0 | 1 | 2 | 3 | 4, pts: FlatPoints][];
+  walls: OsmWall[];
 }
 
 export declare const GEO: CityGeodata;

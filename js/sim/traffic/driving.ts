@@ -158,6 +158,7 @@ function accelerate(ts: TrafficState, v: DrivenVehicle, dt: number): void {
   worst = Math.min(worst, curbBrake(ts, v), crossingBrake(ts, v));
   if (v.sirenNear) cap = Math.min(cap, 3); // (pulled over for a siren: crawling)
   cap = Math.min(cap, topeCap(v)); // (easing over a tope)
+  if (v.flats) cap = Math.min(cap, LIMP); // (on a flat tyre)
   const acc = Math.min(freeAcc(ts, v) + worst, (cap - v.speed) * 2);
   v.acc = clamp(acc, -9 * ts.roadGrip, v.driver.a);
   // a driver looking at their phone (mishaps.ts) drives on as on a free road
@@ -192,6 +193,12 @@ function dodge(v: DrivenVehicle): void {
   v.swerve = goRight ? toRight : toLeft;
 }
 
+const LIMP = 3.5; // m/s a car goes at on a flat tyre
+// m to the right of its lane centre v pulls over to: its wheels a hand off the curb from the curb lane, else over in its
+// lane
+const curbRoom = (v: DrivenVehicle): number =>
+  v.lane === v.edge.lanes.length - 1 ? clamp(v.edge.half - v.edge.lanes[v.lane] - v.halfWidth - 0.35, 0, 2.4) : 0.7;
+
 // A siren close behind (a fire truck or ambulance on its way, sim/emergency.ts) going v's way: v pulls over to the
 // right (to the curb from the curb lane, else over in its lane) and crawls till it has gone by (accelerate)
 function giveWay(ts: TrafficState, v: DrivenVehicle): void {
@@ -203,8 +210,7 @@ function giveWay(ts: TrafficState, v: DrivenVehicle): void {
     const along = dx * fx + dz * fz;
     if (along < 0 || along > 45 || Math.abs(dx * fz - dz * fx) > 6 || v.tx * fx + v.tz * fz < 0.5) continue;
     v.sirenNear = true;
-    const e = v.edge;
-    v.pullOver = v.lane === e.lanes.length - 1 ? clamp(e.half - e.lanes[v.lane] - v.halfWidth - 0.35, 0, 2.4) : 0.7;
+    v.pullOver = curbRoom(v);
     return;
   }
 }
@@ -219,6 +225,8 @@ function drive(ts: TrafficState, v: DrivenVehicle, dt: number): void {
   curbside(ts, v, dt);
   if (ts.sirens.length) giveWay(ts, v);
   else v.sirenNear = false;
+  // a flat tyre: over to the curb, limping (accelerate)
+  if (v.flats && !v.conn) v.pullOver = curbRoom(v);
   accelerate(ts, v, dt);
   const speed = v.speed;
   v.speed = Math.max(0, v.speed + v.acc * dt);

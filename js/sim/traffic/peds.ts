@@ -2,6 +2,7 @@
 // The sidewalk pedestrians (340, see pedestrians.ts): made, stood on their ground, drawn, and knocked down by the
 // player's car or bicycle (mayhem.ts)
 import { blockAt } from '../../world/city-config.ts';
+import { isRaisedPark, parkFloorAt } from '../../world/park-floor.ts';
 import { PersonCrowd, PersonRig } from '../pedestrians.ts';
 import { boxHit } from '../mayhem.ts';
 import type { BoxContact } from '../mayhem.ts';
@@ -94,8 +95,9 @@ function pedGround(ts: TrafficState, p: Ped, x: number, z: number): number {
   if (lift) return hill + Math.max(SIDEWALK_Y, lift);
   if (p.bail || p.ride) {
     // off its tracks (an ejected driver, someone stepping on or off a camión): in the road, or up on the curb island
-    // it walks onto
+    // or the raised park (park-floor.ts) it walks onto
     const b = blockAt(x, z);
+    if (b && isRaisedPark(b)) return parkFloorAt(b, x, z) + hill;
     return (b && !(b.park > 0.6 && !b.median) ? SIDEWALK_Y : 0) + hill;
   }
   if (p.foot) {
