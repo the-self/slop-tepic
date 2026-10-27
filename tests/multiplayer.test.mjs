@@ -14,6 +14,8 @@ import {
   encodeShot,
   encodeHit,
   encodeDown,
+  encodeSky,
+  encodeSkySet,
   decodeClient,
   encodeWelcome,
   encodeTick,
@@ -77,6 +79,16 @@ test('a TICK frame carries departures, newcomers and only the moved poses', () =
   assert.deepEqual(decodeServer(encodeWelcome(65535, 200, 10, 'nayarit#2')), { op: OP.WELCOME, id: 65535, capacity: 200, tickHz: 10, room: 'nayarit#2' });
   assert.deepEqual(decodeServer(encodeError('version')), { op: OP.ERROR, code: 'version' });
   assert.equal(decodeServer(frame.subarray(0, frame.length - 3)), null, 'truncated tick');
+});
+
+test('the room\'s sky travels as two indices; unknown names go as the real sky, unknown indices are dropped', () => {
+  assert.deepEqual(decodeClient(encodeSky('twilight', 'fog')), { op: OP.SKY, sky: { time: 3, weather: 6 } });
+  assert.deepEqual(decodeClient(encodeSky('dawn', 'snow')), { op: OP.SKY, sky: { time: 0, weather: 0 } });
+  assert.equal(decodeClient(new Uint8Array([OP.SKY, 5, 0])), null, 'no such time of day');
+  assert.equal(decodeClient(new Uint8Array([OP.SKY, 0, 7])), null, 'no such weather');
+  assert.deepEqual(decodeServer(encodeSkySet(12, { time: 4, weather: 5 })), { op: OP.SKY_SET, from: 12, time: 'midnight', weather: 'storm' });
+  assert.deepEqual(decodeServer(encodeSkySet(0, { time: 200, weather: 200 })), { op: OP.SKY_SET, from: 0, time: 'live', weather: 'live' },
+    'a newer server\'s sky: the real one');
 });
 
 test('a full view of 64 moving players fits in about 1.2 KB per tick', () => {

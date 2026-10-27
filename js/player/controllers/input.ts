@@ -1,32 +1,33 @@
 // js/player/controllers/input.ts
-// The player's controls: the keyboard bound once, the touch and gamepad inputs blended with it (the strongest
-// wins, a held key over an analog one), cleared when the window loses focus; and whether the player is sprinting
+// The player's controls: the keyboard bound once (its keys the menu's, input/keybindings.ts, re-read whenever the
+// player changes one), the touch and gamepad inputs blended with it (the strongest wins, a held key over an analog
+// one), cleared when the window loses focus; and whether the player is sprinting
 import { isTypingInField } from '../../world/city-config.ts';
+import { keyBindings } from '../../input/keybindings.ts';
 import type { SprintMode } from '../stats.ts';
 import type { KeyValue, InputAction, InputSource } from './types.ts';
 import type { ThirdPersonControllerManager } from '../controllers.ts';
 
+// The actions the keyboard drives here (the car's handbrake & gearbox share keys with jumping and the helicopter's
+// collective by default: each mode reads its own)
+const KEY_ACTIONS: readonly InputAction[] = [
+  'forward', 'backward', 'left', 'right', 'up', 'down', 'boost', 'handbrake', 'shiftUp', 'shiftDown', 'gearbox', 'fire'
+];
+
 export function bindKeyboard(ctl: ThirdPersonControllerManager): void {
-  const bindings: Record<InputAction, string[]> = {
-    forward: ['KeyW', 'ArrowUp'],
-    backward: ['KeyS', 'ArrowDown'],
-    left: ['KeyA', 'ArrowLeft'],
-    right: ['KeyD', 'ArrowRight'],
-    up: ['Space', 'KeyE'],
-    down: ['KeyQ', 'KeyC'],
-    boost: ['ShiftLeft', 'ShiftRight'],
-    // the car's handbrake & gearbox share keys with jumping and the helicopter's collective
-    handbrake: ['Space'],
-    shiftUp: ['KeyE'],
-    shiftDown: ['KeyQ'],
-    gearbox: ['KeyT'],
-    fire: ['KeyX']
-  };
   const actionsByCode = new Map<string, InputAction[]>();
-  // (bindings' keys are the actions)
-  for (const [action, codes] of Object.entries(bindings) as [InputAction, string[]][]) {
-    for (const code of codes) actionsByCode.set(code, [...(actionsByCode.get(code) ?? []), action]);
-  }
+  const mapKeys = () => {
+    actionsByCode.clear();
+    for (const action of KEY_ACTIONS) {
+      for (const code of keyBindings.get(action)) actionsByCode.set(code, [...(actionsByCode.get(code) ?? []), action]);
+    }
+  };
+  mapKeys();
+  // (a key changed in the menu: nothing held stays held under its old meaning)
+  keyBindings.onChange(() => {
+    mapKeys();
+    resetInput(ctl);
+  });
   ctl._pressedCodes = new Set();
   ctl._keyboardKeys = {};
   ctl._touchKeys = {};
@@ -39,7 +40,7 @@ export function bindKeyboard(ctl: ThirdPersonControllerManager): void {
     else ctl._pressedCodes.delete(e.code);
     for (const action of actions) {
       // Releasing one binding must not cancel another key held for the same action.
-      ctl._keyboardKeys[action] = bindings[action].some((code) => ctl._pressedCodes.has(code));
+      ctl._keyboardKeys[action] = keyBindings.get(action).some((code) => ctl._pressedCodes.has(code));
       ctl._blendInput(action);
     }
   };

@@ -9,10 +9,12 @@ import type { Ped } from '../traffic.ts';
 import { throwVelocity } from '../ragdolls.ts';
 import { WEAPONS, Arsenal, pickTarget, wrapAngle } from '../weapons.ts';
 import { isTypingInField } from '../../world/city-config.ts';
+import { keyBindings } from '../../input/keybindings.ts';
 import type { DownKind, Agent, LockTarget } from './types.ts';
 import { PARKED_Y, DRAW_TIME, RESPAWN_TIME, clamp } from './constants.ts';
 import { isResponder } from './cruisers.ts';
 import type { CrimeSystem } from '../crime.ts';
+import { t } from '../../i18n/i18n.ts';
 
 const _qHand = new THREE.Quaternion();
 const _qDown = new THREE.Quaternion();
@@ -35,7 +37,7 @@ export function bindInput(crime: CrimeSystem, canvas: HTMLElement | null): void 
     // 3 switches between the SMG and the rifle (once one has been taken off the cartel)
     if (pick === 'smg' && crime.arsenal.has('rifle') && (crime.arsenal.current === 'smg' || !crime.arsenal.has('smg'))) pick = 'rifle';
     if (pick) crime.selectWeapon(pick);
-    else if (e.code === 'KeyR') crime.cycleWeapon(e.shiftKey ? -1 : 1);
+    else if (keyBindings.is('nextWeapon', e.code)) crime.cycleWeapon(e.shiftKey ? -1 : 1);
   });
 }
 
@@ -307,13 +309,13 @@ export function updateDown(crime: CrimeSystem, dt: number): void {
   if (kind === 'wasted') {
     const fee = Math.min(crime.money, 100);
     crime.money -= fee;
-    crime.toast(fee ? `Hospital bill: $${fee}` : 'Back on your feet');
+    crime.toast(fee ? t('toast.hospital', { fee }) : t('toast.backUp'));
   } else {
     // arrested: the guns are taken, and a bribe
     const fee = Math.min(crime.money, 150);
     crime.money -= fee;
     crime.arsenal = new Arsenal({ pistol: 17, smg: 0, bazooka: 0 });
-    crime.toast(`Your guns were taken${fee ? `, and $${fee}` : ''}`);
+    crime.toast(fee ? t('toast.gunsTakenFee', { fee }) : t('toast.gunsTaken'));
   }
   crime.wanted.clear();
   // a fresh start: the police and the gangs forget the player (no cartel trucks after it from the hospital)

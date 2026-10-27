@@ -1,6 +1,6 @@
 // js/input/gamepad-controls.ts
 // A standard-mapping gamepad: the sticks drive and look, the triggers are the throttle and brake (or the collective),
-// the buttons board, fire, change the camera and the weapon, and LB held opens the weapon wheel.
+// the buttons board, fire, change the camera and the weapon, LB held opens the weapon wheel, and Back the menu.
 import { isTypingInField } from '../world/city-config.ts';
 import type { ThirdPersonControllerManager } from '../player/controllers.ts';
 import type { CameraSystem } from '../player/cameras.ts';
@@ -14,6 +14,8 @@ export type WheelPhase = 'open' | 'close' | 'cancel' | 'aim';
 export interface GamepadCallbacks {
   onToggleMap?: () => void;
   onCloseMap?: () => void;
+  /** Back / View: the game menu (app/menu.ts), as Esc */
+  onMenu?: () => void;
   onBoard?: () => void;
   onCycleCamera?: (step: number) => void;
   onCycleWeapon?: (step: number) => void;
@@ -165,8 +167,8 @@ class GamepadControls {
     const edge = (i: number) => pressed[i] && !this.previousButtons[i] && !this.suppressedButtons[i];
     const held = (i: number) => pressed[i] && !this.suppressedButtons[i];
     // Capture edges before callbacks: changing mode or opening the map may synchronously call reset().
-    const toggleMap = edge(9), closeMap = edge(1);
-    const board = edge(3); // Y: get in or out, as in GTA
+    const toggleMap = edge(9), closeMap = edge(1), menu = edge(8);
+    const board = edge(3); // Y: get in or out
     let cycleCamera = Number(edge(5));
     const recenter = edge(11);
     const cycleWeapon = Number(edge(15)) - Number(edge(14)); // d-pad right / left
@@ -187,10 +189,15 @@ class GamepadControls {
       this.callbacks.onToggleMap?.();
       return;
     }
+    if (menu) {
+      this.controller.clearGamepadInput();
+      this.callbacks.onMenu?.();
+      return;
+    }
     if (!this.enabled) {
       this.controller.clearGamepadInput();
       this.cancelWheel();
-      for (let i = 0; i < BUTTON_COUNT; i++) if (i !== 1 && i !== 9) this.suppressedButtons[i] = pressed[i];
+      for (let i = 0; i < BUTTON_COUNT; i++) if (i !== 1 && i !== 8 && i !== 9) this.suppressedButtons[i] = pressed[i];
       if (closeMap) this.callbacks.onCloseMap?.();
       return;
     }

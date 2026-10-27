@@ -12,6 +12,7 @@
 //   SHOT   u8 op, i32 × 3 from, i32 × 3 to (cm), str weapon, u8 flags      a shot the player fired (flags: 1 rocket)
 //   HIT    u8 op, u16 target, u8 damage                                    the player's shot, blow or blast struck a player
 //   DOWN   u8 op, u16 killer (0: nobody)                                   the player was killed
+//   SKY    u8 op, u8 time, u8 weather                                      the player set the room's sky (SKY_TIMES, SKY_WEATHERS)
 // server → client
 //   WELCOME u8 op, u16 id, u16 capacity, u8 tickHz, str room
 //   TICK    u8 op, u16 players in room,
@@ -22,16 +23,23 @@
 //   CHAT    u8 op, u16 from (0: the server), str name, str text            to everyone in the room
 //   SHOT    u8 op, u16 from, i32 × 3 from, i32 × 3 to (cm), str weapon, u8 flags   to those who have the shooter in view
 //   HURT    u8 op, u16 from, u8 damage                                     to the player struck
+//   SKY_SET u8 op, u16 from (0: the room's, on joining), u8 time, u8 weather   to everyone in the room
 // str = u8 byte length + UTF-8 bytes
 //
 // Shots are the shooter's to judge (its client traces them against the others' poses and says whom they hit), as
 // befits a game among friends: the server only checks that the target is in the same room and within reach.
+// The sky (the time of day and the weather) is the room's: whoever changes it changes it for everyone in the room,
+// and a newcomer gets the room's on joining.
 
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 4;
 const SEND_HZ = 10; // client pose updates per second
 const TICK_HZ = 10; // server ticks per second (OSRS runs 600 ms ticks; driving needs 100 ms)
 // (new modes go at the end: older clients' indices hold). A passenger travels at its driver's pose, inside its car
 const MODES = ['person', 'car', 'cyclist', 'helicopter', 'moto', 'passenger'] as const;
+// The room's sky: the time of day (render/lighting.ts's presets, 'live' the real clock) and the weather ('live' the
+// real conditions from Open-Meteo, the rest world/weather.ts's WEATHER_SAMPLES). New ones go at the end, as with MODES
+const SKY_TIMES = ['live', 'golden', 'midday', 'twilight', 'midnight'] as const;
+const SKY_WEATHERS = ['live', 'clear', 'cloudy', 'overcast', 'rain', 'storm', 'fog'] as const;
 const NAME_MAX = 24; // characters
 const CHAT_MAX = 140; // characters in a chat line
 const WEAPON_MAX = 16; // characters in a weapon's id
@@ -50,18 +58,27 @@ const OP = {
   SHOT: 4,
   HIT: 5,
   DOWN: 6,
+  SKY: 7,
   // server → client
   WELCOME: 101,
   TICK: 102,
   ERROR: 103,
   CHAT_LINE: 104,
   SHOT_SEEN: 105,
-  HURT: 106
+  HURT: 106,
+  SKY_SET: 107
 } as const;
 
 /** A player mode as it travels on the wire (its index in MODES) */
 export type Mode = (typeof MODES)[number];
 export type Op = (typeof OP)[keyof typeof OP];
+export type SkyTime = (typeof SKY_TIMES)[number];
+export type SkyWeather = (typeof SKY_WEATHERS)[number];
+/** The room's sky in wire units: indices in SKY_TIMES and SKY_WEATHERS */
+export interface WireSky {
+  time: number;
+  weather: number;
+}
 
 /** A pose in wire units: x/y/z in centimetres, h in 1/65536 turns, m the MODES index, s the speed in dm/s */
 export interface WirePose {
@@ -119,7 +136,11 @@ export interface DownMessage {
   op: typeof OP.DOWN;
   killer: number; // 0: nobody
 }
-export type ClientMessage = HelloMessage | StateMessage | ChatMessage | ShotMessage | HitMessage | DownMessage;
+export interface SkyMessage {
+  op: typeof OP.SKY;
+  sky: WireSky;
+}
+export type ClientMessage = HelloMessage | StateMessage | ChatMessage | ShotMessage | HitMessage | DownMessage | SkyMessage;
 
 // server → client, decoded by the client in metres / radians / m/s
 export interface WelcomeMessage {
@@ -183,7 +204,14 @@ export interface HurtMessage {
   from: number;
   damage: number; // hit points
 }
-export type ServerMessage = WelcomeMessage | ErrorMessage | TickMessage | ChatLineMessage | ShotSeenMessage | HurtMessage;
+/** The room's sky, set by player `from` (0: as the room had it when this client joined) */
+export interface SkySetMessage {
+  op: typeof OP.SKY_SET;
+  from: number;
+  time: SkyTime;
+  weather: SkyWeather;
+}
+export type ServerMessage = WelcomeMessage | ErrorMessage | TickMessage | ChatLineMessage | ShotSeenMessage | HurtMessage | SkySetMessage;
 
 /** What decodeClient / decodeServer read: a whole frame, as a byte view or its buffer */
 export type FrameData = Uint8Array | ArrayBuffer;
@@ -324,6 +352,8 @@ function encodeHello(region: string, name?: string | null): Uint8Array<ArrayBuff
 
 // MODES widened to plain strings, so any mode name can be looked up (an unknown one goes as MODES[0])
 const MODE_NAMES: readonly string[] = MODES;
+const SKY_TIME_NAMES: readonly string[] = SKY_TIMES;
+const SKY_WEATHER_NAMES: readonly string[] = SKY_WEATHERS;
 
 // A player entity ({ position, heading, speed }) in a MODES mode → STATE frame (18 bytes)
 function encodeState(entity: PoseSource, mode: string): Uint8Array<ArrayBuffer> {
@@ -370,6 +400,15 @@ function encodeDown(killer: number): Uint8Array<ArrayBuffer> {
   return w.done();
 }
 
+// The player set the room's sky (an unknown name goes as 'live')
+function encodeSky(time: string, weather: string): Uint8Array<ArrayBuffer> {
+  const w = new Writer(3);
+  w.u8(OP.SKY);
+  w.u8(Math.max(0, SKY_TIME_NAMES.indexOf(time)));
+  w.u8(Math.max(0, SKY_WEATHER_NAMES.indexOf(weather)));
+  return w.done();
+}
+
 // Server side: one client frame → { op, ... } or null when malformed / out of range
 function decodeClient(data: FrameData | null | undefined): ClientMessage | null {
   try {
@@ -394,6 +433,10 @@ function decodeClient(data: FrameData | null | undefined): ClientMessage | null 
       return target && damage <= DAMAGE_MAX ? { op, target, damage } : null;
     }
     if (op === OP.DOWN) return { op, killer: r.u16() };
+    if (op === OP.SKY) {
+      const sky = { time: r.u8(), weather: r.u8() };
+      return sky.time < SKY_TIMES.length && sky.weather < SKY_WEATHERS.length ? { op, sky } : null;
+    }
     return null;
   } catch {
     return null;
@@ -472,6 +515,16 @@ function encodeHurt(from: number, damage: number): Uint8Array<ArrayBuffer> {
   return w.done();
 }
 
+// The room's sky (wire indices), set by player `from` (0: sent to a newcomer as the room has it)
+function encodeSkySet(from: number, sky: WireSky): Uint8Array<ArrayBuffer> {
+  const w = new Writer(5);
+  w.u8(OP.SKY_SET);
+  w.u16(from);
+  w.u8(sky.time);
+  w.u8(sky.weather);
+  return w.done();
+}
+
 // Client side: one server frame → { op, ... } in metres / radians / m/s, or null when malformed
 function decodeServer(data: FrameData): ServerMessage | null {
   try {
@@ -486,6 +539,8 @@ function decodeServer(data: FrameData): ServerMessage | null {
       return { op, from, shot: { ox: s.ox / 100, oy: s.oy / 100, oz: s.oz / 100, ex: s.ex / 100, ey: s.ey / 100, ez: s.ez / 100, weapon: s.weapon, rocket: (s.flags & SHOT_ROCKET) !== 0 } };
     }
     if (op === OP.HURT) return { op, from: r.u16(), damage: r.u8() };
+    // (a newer server's sky this client doesn't know → 'live')
+    if (op === OP.SKY_SET) return { op, from: r.u16(), time: SKY_TIMES.at(r.u8()) ?? 'live', weather: SKY_WEATHERS.at(r.u8()) ?? 'live' };
     if (op !== OP.TICK) return null;
     const roomPlayers = r.u16();
     const gone: number[] = [];
@@ -510,6 +565,8 @@ export {
   SEND_HZ,
   TICK_HZ,
   MODES,
+  SKY_TIMES,
+  SKY_WEATHERS,
   NAME_MAX,
   CHAT_MAX,
   HIT_REACH,
@@ -526,6 +583,7 @@ export {
   encodeShot,
   encodeHit,
   encodeDown,
+  encodeSky,
   decodeClient,
   encodeWelcome,
   encodeTick,
@@ -533,5 +591,6 @@ export {
   encodeChatLine,
   encodeShotSeen,
   encodeHurt,
+  encodeSkySet,
   decodeServer
 };

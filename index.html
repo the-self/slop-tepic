@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Slop Tepic</title>
+  <title data-i18n="page.title">Tepic · Ciudad Abierta</title>
   <link rel="icon" href="data:," />
-  <meta name="description" content="Slop Tepic: simulación 3D estilo GTA de Tepic, Nayarit, con Three.js WebGPURenderer y TSL. Calles, colonias y parques reales de OpenStreetMap, navegación en tercera persona (a pie, coche, bici y helicóptero) y 11 cámaras cinematográficas." />
+  <meta name="description" data-i18n-content="page.description" content="Un mundo abierto de Tepic, Nayarit, a escala real: sus calles, colonias y parques de verdad, a pie, en coche, en bici y en helicóptero, en tu navegador." />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
   <!-- three.js dev branch (builds committed to mrdoob/three.js@dev, served by jsDelivr); Jolt Physics for the player's
        car (player/car-physics.js, MIT) -->
@@ -27,7 +27,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&amp;family=Overpass:wght@600;700&amp;display=swap" />
-  <link rel="stylesheet" href="./css/style.css?v=20261026-fuel" />
+  <link rel="stylesheet" href="./css/style.css?v=20261027-menu-i18n" />
 </head>
 <body>
   <!-- Icon sprite (24 × 24 stroke icons, drawn in currentColor) -->
@@ -57,6 +57,8 @@
       <symbol id="i-locate" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.4"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/><path d="M12 2.5v3.1M12 18.4v3.1M2.5 12h3.1M18.4 12h3.1"/></symbol>
       <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></symbol>
       <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m20 20-4.6-4.6"/></symbol>
+      <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4.5 7h15M4.5 12h15M4.5 17h15"/></symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2M12 3.4c2.4 2.4 3.6 5.3 3.6 8.6s-1.2 6.2-3.6 8.6c-2.4-2.4-3.6-5.3-3.6-8.6S9.6 5.8 12 3.4z"/></symbol>
       <symbol id="i-close" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/></symbol>
       <!-- the weapon wheel's (ui/weapon-wheel.js): filled side views, the barrel to the right -->
       <symbol id="w-fists" viewBox="0 0 48 24"><path fill="currentColor" stroke="none" d="M15 7.5c0-1.6 1.3-2.8 2.9-2.8h11.4c1.5 0 2.7 1.2 2.7 2.7v.6c1.8.2 3.2 1.7 3.2 3.5v3.4c0 3.2-2.6 5.8-5.8 5.8h-6.9c-3.3 0-6-2.3-6.6-5.4L15 12V7.5zm3.2.1v3.6h3.2V7.6h-3.2zm4.6 0v3.6H26V7.6h-3.2zm4.6 0v3.6h3.2V7.6h-3.2z"/></symbol>
@@ -67,78 +69,88 @@
     </defs>
   </svg>
 
-  <!-- Loading Screen -->
+  <!-- Loading Screen (app/loading.ts): the city at dusk behind, the bar, a tip and the main keys -->
   <div id="loading-overlay" role="status" aria-live="polite">
+    <svg class="loader-skyline" viewBox="0 0 1200 300" preserveAspectRatio="xMidYMax slice" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="hill-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#3b2c4f"/><stop offset="1" stop-color="#1d1828"/>
+        </linearGradient>
+        <filter id="cross-glow" x="-200%" y="-100%" width="500%" height="300%">
+          <feGaussianBlur stdDeviation="2.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <g class="sky-stars"><circle cx="936" cy="77" r="1.5"/><circle cx="935" cy="71" r="1"/><circle cx="388" cy="108" r="1.5"/><circle cx="391" cy="18" r="1.5"/><circle cx="631" cy="24" r="0.8"/><circle cx="1113" cy="109" r="0.8"/><circle cx="821" cy="63" r="1"/><circle cx="40" cy="73" r="0.8"/><circle cx="131" cy="10" r="1"/><circle cx="505" cy="82" r="0.8"/><circle cx="960" cy="47" r="1.5"/><circle cx="410" cy="72" r="1"/><circle cx="612" cy="69" r="0.8"/><circle cx="184" cy="64" r="1.2"/><circle cx="843" cy="76" r="0.8"/><circle cx="530" cy="46" r="1"/><circle cx="1060" cy="42" r="0.8"/><circle cx="153" cy="78" r="0.8"/><circle cx="830" cy="19" r="1.2"/><circle cx="801" cy="14" r="0.8"/><circle cx="11" cy="33" r="1"/><circle cx="117" cy="66" r="1.5"/><circle cx="823" cy="59" r="0.8"/><circle cx="1169" cy="86" r="1"/><circle cx="562" cy="49" r="0.8"/><circle cx="647" cy="48" r="0.8"/><circle cx="849" cy="103" r="0.8"/><circle cx="285" cy="37" r="0.8"/><circle cx="32" cy="13" r="1.5"/><circle cx="1007" cy="28" r="1"/><circle cx="926" cy="71" r="1"/><circle cx="278" cy="59" r="1.5"/><circle cx="248" cy="56" r="1.5"/><circle cx="445" cy="6" r="1.2"/><circle cx="632" cy="8" r="1"/><circle cx="393" cy="56" r="0.8"/><circle cx="96" cy="24" r="1"/><circle cx="914" cy="39" r="0.8"/><circle cx="683" cy="43" r="1.5"/><circle cx="160" cy="15" r="0.8"/><circle cx="437" cy="80" r="1"/><circle cx="41" cy="82" r="1.2"/><circle cx="771" cy="85" r="1.5"/><circle cx="270" cy="81" r="1.5"/><circle cx="1186" cy="23" r="1.5"/><circle cx="384" cy="86" r="1"/><circle cx="646" cy="35" r="1"/><circle cx="398" cy="26" r="1"/><circle cx="805" cy="67" r="0.8"/><circle cx="873" cy="12" r="0.8"/></g>
+      <path class="sky-sierra" d="M0 200 C120 186 220 178 330 184 C450 190 540 172 650 178 C780 186 880 164 1000 170 C1090 174 1150 168 1200 172 V300 H0 Z"/>
+      <!-- the Cerro de la Cruz over the town to the north, its white cross lit on the summit -->
+      <path class="sky-hill" d="M-10 236 C40 224 100 196 160 160 C210 130 250 110 286 106 C300 104 316 104 330 108 C380 120 430 158 490 188 C540 212 600 224 680 230 L760 232 V300 H-10 Z"/>
+      <g class="sky-cross" filter="url(#cross-glow)"><rect x="305.5" y="74" width="5" height="32" rx="1"/><rect x="298" y="82" width="20" height="5" rx="1"/></g>
+      <!-- the Cerro Microondas and its antennas, their red lights blinking -->
+      <path class="sky-hill" d="M700 234 C780 226 860 194 930 162 C960 150 990 146 1010 150 C1060 160 1110 186 1160 204 C1180 211 1200 214 1210 216 V300 H700 Z"/>
+      <g class="sky-antenna"><path d="M972 150 V96 M968 150 l4 -54 l4 54 M1018 152 V112 M1014 152 l4 -40 l4 40"/></g>
+      <g class="sky-beacon"><circle cx="972" cy="95" r="2.4"/><circle cx="1018" cy="111" r="2.4"/></g>
+      <g class="sky-city-lights"><circle cx="131" cy="217" r="1"/><circle cx="286" cy="202" r="1"/><circle cx="505" cy="234" r="1"/><circle cx="352" cy="149" r="1.3"/><circle cx="1173" cy="224" r="1"/><circle cx="671" cy="235" r="1.3"/><circle cx="89" cy="221" r="0.8"/><circle cx="899" cy="196" r="1"/><circle cx="535" cy="226" r="0.8"/><circle cx="338" cy="184" r="0.8"/><circle cx="111" cy="212" r="1"/><circle cx="1177" cy="232" r="1.3"/><circle cx="626" cy="235" r="1.3"/><circle cx="42" cy="232" r="1"/><circle cx="841" cy="235" r="0.8"/><circle cx="718" cy="227" r="0.8"/><circle cx="877" cy="214" r="0.8"/><circle cx="90" cy="227" r="1.3"/><circle cx="53" cy="236" r="1.3"/><circle cx="844" cy="232" r="1"/><circle cx="422" cy="215" r="0.8"/><circle cx="1045" cy="198" r="0.8"/><circle cx="1036" cy="207" r="1.3"/><circle cx="795" cy="233" r="0.8"/><circle cx="731" cy="227" r="1.3"/><circle cx="139" cy="204" r="1"/><circle cx="874" cy="217" r="1.3"/><circle cx="833" cy="228" r="1"/><circle cx="1006" cy="170" r="1.3"/><circle cx="36" cy="232" r="1"/><circle cx="27" cy="236" r="0.8"/><circle cx="597" cy="232" r="1"/><circle cx="307" cy="121" r="1"/><circle cx="172" cy="212" r="1.3"/><circle cx="204" cy="228" r="1.3"/><circle cx="1116" cy="218" r="0.8"/><circle cx="392" cy="208" r="0.8"/><circle cx="761" cy="234" r="0.8"/><circle cx="1056" cy="198" r="1.3"/><circle cx="1105" cy="204" r="0.8"/><circle cx="596" cy="234" r="0.8"/><circle cx="853" cy="235" r="1"/><circle cx="986" cy="173" r="1"/><circle cx="330" cy="147" r="1"/><circle cx="459" cy="215" r="1.3"/><circle cx="378" cy="221" r="1.3"/><circle cx="543" cy="228" r="0.8"/><circle cx="334" cy="192" r="1.3"/><circle cx="850" cy="227" r="1"/><circle cx="779" cy="232" r="1.3"/><circle cx="163" cy="205" r="0.8"/><circle cx="923" cy="197" r="0.8"/><circle cx="956" cy="235" r="0.8"/><circle cx="536" cy="232" r="1.3"/><circle cx="768" cy="230" r="0.8"/><circle cx="821" cy="227" r="1"/><circle cx="307" cy="203" r="1"/><circle cx="642" cy="226" r="0.8"/><circle cx="327" cy="161" r="1.3"/><circle cx="1136" cy="222" r="0.8"/><circle cx="472" cy="228" r="0.8"/><circle cx="105" cy="234" r="1.3"/><circle cx="466" cy="214" r="0.8"/><circle cx="751" cy="235" r="1"/><circle cx="660" cy="233" r="1.3"/><circle cx="956" cy="232" r="1"/><circle cx="392" cy="234" r="0.8"/><circle cx="866" cy="231" r="1.3"/><circle cx="1109" cy="202" r="0.8"/><circle cx="1080" cy="235" r="1"/><circle cx="644" cy="234" r="1"/><circle cx="314" cy="203" r="0.8"/><circle cx="418" cy="173" r="1"/><circle cx="410" cy="193" r="1"/><circle cx="585" cy="226" r="0.8"/><circle cx="515" cy="219" r="1.3"/><circle cx="402" cy="219" r="0.8"/><circle cx="565" cy="236" r="1.3"/><circle cx="622" cy="233" r="1"/><circle cx="1135" cy="222" r="1.3"/><circle cx="103" cy="217" r="1.3"/><circle cx="671" cy="234" r="1.3"/><circle cx="767" cy="231" r="1.3"/><circle cx="308" cy="198" r="1.3"/><circle cx="250" cy="220" r="1.3"/><circle cx="629" cy="232" r="0.8"/><circle cx="493" cy="213" r="0.8"/><circle cx="726" cy="226" r="0.8"/><circle cx="619" cy="230" r="1.3"/><circle cx="146" cy="193" r="0.8"/><circle cx="79" cy="229" r="1"/><circle cx="1105" cy="228" r="1"/><circle cx="323" cy="176" r="0.8"/><circle cx="408" cy="228" r="1"/><circle cx="630" cy="227" r="1"/><circle cx="741" cy="235" r="0.8"/><circle cx="843" cy="236" r="0.8"/><circle cx="233" cy="160" r="1.3"/><circle cx="341" cy="206" r="0.8"/><circle cx="744" cy="227" r="1.3"/><circle cx="699" cy="235" r="1.3"/><circle cx="301" cy="142" r="1.3"/><circle cx="1054" cy="175" r="1.3"/><circle cx="496" cy="224" r="0.8"/><circle cx="646" cy="235" r="1.3"/><circle cx="766" cy="231" r="1.3"/><circle cx="734" cy="235" r="0.8"/><circle cx="1098" cy="220" r="1"/><circle cx="1083" cy="201" r="1"/><circle cx="1069" cy="190" r="0.8"/><circle cx="1065" cy="186" r="0.8"/><circle cx="159" cy="186" r="1"/><circle cx="116" cy="231" r="1"/><circle cx="652" cy="233" r="0.8"/><circle cx="483" cy="226" r="0.8"/><circle cx="115" cy="223" r="1"/><circle cx="1094" cy="235" r="0.8"/><circle cx="846" cy="229" r="1"/><circle cx="603" cy="233" r="0.8"/><circle cx="963" cy="201" r="0.8"/><circle cx="45" cy="234" r="1.3"/><circle cx="1086" cy="210" r="0.8"/><circle cx="221" cy="162" r="0.8"/><circle cx="1188" cy="235" r="0.8"/><circle cx="696" cy="227" r="1.3"/><circle cx="554" cy="235" r="1"/><circle cx="469" cy="214" r="1"/><circle cx="516" cy="229" r="0.8"/><circle cx="761" cy="226" r="0.8"/><circle cx="218" cy="186" r="1.3"/><circle cx="444" cy="232" r="1.3"/><circle cx="198" cy="197" r="0.8"/><circle cx="388" cy="156" r="1.3"/><circle cx="1051" cy="230" r="1"/><circle cx="684" cy="228" r="1.3"/><circle cx="1179" cy="234" r="1"/><circle cx="335" cy="137" r="1.3"/><circle cx="934" cy="225" r="1"/><circle cx="160" cy="199" r="1.3"/><circle cx="834" cy="232" r="0.8"/><circle cx="487" cy="228" r="0.8"/><circle cx="957" cy="190" r="0.8"/><circle cx="13" cy="230" r="1.3"/><circle cx="1083" cy="188" r="1"/><circle cx="1134" cy="227" r="1"/><circle cx="259" cy="171" r="0.8"/><circle cx="640" cy="230" r="1"/><circle cx="771" cy="233" r="1"/><circle cx="1176" cy="224" r="1.3"/><circle cx="130" cy="207" r="1"/><circle cx="482" cy="206" r="0.8"/><circle cx="778" cy="226" r="1"/><circle cx="301" cy="225" r="1.3"/><circle cx="649" cy="230" r="1.3"/><circle cx="682" cy="236" r="1.3"/><circle cx="533" cy="232" r="1.3"/><circle cx="717" cy="234" r="0.8"/><circle cx="464" cy="233" r="1"/><circle cx="566" cy="228" r="1"/><circle cx="650" cy="232" r="1"/><circle cx="1134" cy="220" r="1.3"/><circle cx="478" cy="213" r="1.3"/><circle cx="343" cy="198" r="1.3"/><circle cx="1115" cy="224" r="1.3"/><circle cx="355" cy="133" r="0.8"/><circle cx="703" cy="232" r="1"/><circle cx="906" cy="208" r="1"/><circle cx="898" cy="196" r="1.3"/><circle cx="1133" cy="210" r="0.8"/><circle cx="515" cy="227" r="0.8"/><circle cx="55" cy="229" r="1.3"/><circle cx="1091" cy="196" r="0.8"/><circle cx="724" cy="227" r="1.3"/><circle cx="501" cy="216" r="0.8"/><circle cx="428" cy="183" r="1"/><circle cx="531" cy="232" r="1"/><circle cx="721" cy="232" r="1.3"/><circle cx="503" cy="231" r="1.3"/><circle cx="978" cy="175" r="1"/><circle cx="881" cy="210" r="0.8"/><circle cx="604" cy="229" r="1.3"/><circle cx="750" cy="230" r="1"/><circle cx="732" cy="233" r="1.3"/><circle cx="710" cy="232" r="0.8"/><circle cx="228" cy="164" r="1.3"/><circle cx="1099" cy="231" r="0.8"/><circle cx="754" cy="226" r="1"/><circle cx="510" cy="229" r="0.8"/><circle cx="267" cy="155" r="0.8"/><circle cx="1095" cy="198" r="0.8"/><circle cx="757" cy="230" r="1"/><circle cx="425" cy="193" r="1"/><circle cx="894" cy="229" r="0.8"/><circle cx="963" cy="199" r="1.3"/><circle cx="1006" cy="219" r="1"/><circle cx="509" cy="222" r="0.8"/><circle cx="443" cy="217" r="1.3"/><circle cx="390" cy="197" r="1.3"/><circle cx="991" cy="177" r="1.3"/><circle cx="443" cy="188" r="1"/><circle cx="94" cy="217" r="1.3"/><circle cx="682" cy="234" r="1"/><circle cx="359" cy="213" r="0.8"/><circle cx="372" cy="227" r="1.3"/><circle cx="98" cy="220" r="1.3"/><circle cx="917" cy="202" r="0.8"/><circle cx="263" cy="198" r="1"/><circle cx="440" cy="187" r="1.3"/><circle cx="529" cy="231" r="1.3"/><circle cx="1096" cy="211" r="1"/><circle cx="550" cy="231" r="1.3"/><circle cx="1074" cy="195" r="1"/><circle cx="994" cy="166" r="1.3"/><circle cx="475" cy="214" r="0.8"/><circle cx="887" cy="213" r="1"/><circle cx="649" cy="234" r="1.3"/><circle cx="213" cy="156" r="1"/><circle cx="1057" cy="192" r="0.8"/><circle cx="265" cy="131" r="0.8"/><circle cx="681" cy="236" r="1.3"/><circle cx="1010" cy="195" r="1.3"/><circle cx="656" cy="234" r="0.8"/><circle cx="401" cy="178" r="0.8"/><circle cx="1079" cy="188" r="1.3"/><circle cx="784" cy="227" r="1.3"/><circle cx="506" cy="230" r="1"/><circle cx="918" cy="211" r="1"/><circle cx="473" cy="212" r="1"/><circle cx="807" cy="232" r="1.3"/><circle cx="966" cy="173" r="1.3"/><circle cx="1098" cy="210" r="1.3"/><circle cx="419" cy="168" r="1"/><circle cx="1001" cy="228" r="1.3"/><circle cx="768" cy="231" r="1.3"/><circle cx="12" cy="227" r="1"/><circle cx="1099" cy="203" r="0.8"/><circle cx="1189" cy="231" r="0.8"/><circle cx="385" cy="181" r="1.3"/><circle cx="350" cy="233" r="0.8"/><circle cx="566" cy="233" r="1"/></g>
+      <!-- the town ahead: the Palacio de Gobierno and its dome, the Catedral and its two towers, the palms -->
+      <path class="sky-town" d="M0 252 h44 v-14 h38 v10 h46 v-22 h30 v18 h36 V300 H0 Z
+        M190 300 V262 h92 v-14 c0 -12 6 -20 13 -22 v-8 h4 v8 c7 2 13 10 13 22 v14 h92 V300 Z
+        M390 300 V250 h40 v-12 h34 v16 h44 v-20 h40 V300 Z
+        M548 300 V218 l7 -6 V190 l8 -30 l8 30 V212 l7 6 V226 h40 l12 -16 l12 16 h40 V218 l7 -6 V190 l8 -30 l8 30 V212 l7 6 V300 Z
+        M700 300 V246 h48 v-18 h40 v14 h56 v-24 h34 v20 h60 v-12 h50 v22 h44 v-16 h40 v20 h50 v-26 h34 v20 H1200 V300 Z"/>
+      <g class="sky-town"><rect x="561.6" y="146" width="2.8" height="16"/><rect x="557" y="150" width="12" height="2.6"/><rect x="687.6" y="146" width="2.8" height="16"/><rect x="683" y="150" width="12" height="2.6"/></g>
+      <g class="sky-palms"><path d="M150 300 q-3 -31 1 -62" class="palm-trunk"/><path d="M151 238 q-14 -2 -22 8 q10 -10 22 -8 q-10 -12 -20 -10 q12 2 20 10 q4 -14 16 -16 q-10 6 -16 16 q12 -6 22 2 q-12 -4 -22 -2 z"/><path d="M176 300 q-3 -25 1 -50" class="palm-trunk"/><path d="M177 250 q-14 -2 -22 8 q10 -10 22 -8 q-10 -12 -20 -10 q12 2 20 10 q4 -14 16 -16 q-10 6 -16 16 q12 -6 22 2 q-12 -4 -22 -2 z"/><path d="M412 300 q-3 -29 1 -58" class="palm-trunk"/><path d="M413 242 q-14 -2 -22 8 q10 -10 22 -8 q-10 -12 -20 -10 q12 2 20 10 q4 -14 16 -16 q-10 6 -16 16 q12 -6 22 2 q-12 -4 -22 -2 z"/><path d="M520 300 q-3 -33 1 -66" class="palm-trunk"/><path d="M521 234 q-14 -2 -22 8 q10 -10 22 -8 q-10 -12 -20 -10 q12 2 20 10 q4 -14 16 -16 q-10 6 -16 16 q12 -6 22 2 q-12 -4 -22 -2 z"/><path d="M760 300 q-3 -30 1 -60" class="palm-trunk"/><path d="M761 240 q-14 -2 -22 8 q10 -10 22 -8 q-10 -12 -20 -10 q12 2 20 10 q4 -14 16 -16 q-10 6 -16 16 q12 -6 22 2 q-12 -4 -22 -2 z"/><path d="M1120 300 q-3 -32 1 -64" class="palm-trunk"/><path d="M1121 236 q-14 -2 -22 8 q10 -10 22 -8 q-10 -12 -20 -10 q12 2 20 10 q4 -14 16 -16 q-10 6 -16 16 q12 -6 22 2 q-12 -4 -22 -2 z"/><path d="M1146 300 q-3 -26 1 -52" class="palm-trunk"/><path d="M1147 248 q-14 -2 -22 8 q10 -10 22 -8 q-10 -12 -20 -10 q12 2 20 10 q4 -14 16 -16 q-10 6 -16 16 q12 -6 22 2 q-12 -4 -22 -2 z"/></g>
+      <g class="sky-windows"><rect x="831" y="265" width="3.5" height="4.5"/><rect x="996" y="277" width="3.5" height="4.5"/><rect x="1171" y="284" width="3.5" height="4.5"/><rect x="81" y="276" width="3.5" height="4.5"/><rect x="966" y="264" width="3.5" height="4.5"/><rect x="26" y="285" width="3.5" height="4.5"/><rect x="751" y="280" width="3.5" height="4.5"/><rect x="1026" y="279" width="3.5" height="4.5"/><rect x="51" y="278" width="3.5" height="4.5"/><rect x="406" y="271" width="3.5" height="4.5"/><rect x="141" y="262" width="3.5" height="4.5"/><rect x="461" y="287" width="3.5" height="4.5"/><rect x="756" y="268" width="3.5" height="4.5"/><rect x="771" y="275" width="3.5" height="4.5"/><rect x="921" y="268" width="3.5" height="4.5"/><rect x="766" y="283" width="3.5" height="4.5"/><rect x="1111" y="264" width="3.5" height="4.5"/><rect x="521" y="287" width="3.5" height="4.5"/><rect x="971" y="288" width="3.5" height="4.5"/><rect x="401" y="276" width="3.5" height="4.5"/><rect x="806" y="268" width="3.5" height="4.5"/><rect x="706" y="263" width="3.5" height="4.5"/><rect x="1016" y="279" width="3.5" height="4.5"/><rect x="1041" y="275" width="3.5" height="4.5"/><rect x="441" y="278" width="3.5" height="4.5"/><rect x="851" y="277" width="3.5" height="4.5"/><rect x="1011" y="267" width="3.5" height="4.5"/><rect x="121" y="288" width="3.5" height="4.5"/><rect x="1141" y="271" width="3.5" height="4.5"/><rect x="516" y="272" width="3.5" height="4.5"/><rect x="66" y="271" width="3.5" height="4.5"/><rect x="1101" y="274" width="3.5" height="4.5"/><rect x="176" y="264" width="3.5" height="4.5"/><rect x="496" y="279" width="3.5" height="4.5"/><rect x="76" y="271" width="3.5" height="4.5"/><rect x="846" y="276" width="3.5" height="4.5"/><rect x="1091" y="283" width="3.5" height="4.5"/><rect x="16" y="284" width="3.5" height="4.5"/><rect x="1076" y="264" width="3.5" height="4.5"/><rect x="481" y="273" width="3.5" height="4.5"/><rect x="541" y="264" width="3.5" height="4.5"/><rect x="781" y="283" width="3.5" height="4.5"/><rect x="536" y="266" width="3.5" height="4.5"/><rect x="866" y="265" width="3.5" height="4.5"/><rect x="416" y="283" width="3.5" height="4.5"/><rect x="1001" y="274" width="3.5" height="4.5"/><rect x="926" y="283" width="3.5" height="4.5"/><rect x="171" y="276" width="3.5" height="4.5"/><rect x="821" y="285" width="3.5" height="4.5"/><rect x="796" y="287" width="3.5" height="4.5"/><rect x="836" y="288" width="3.5" height="4.5"/><rect x="71" y="265" width="3.5" height="4.5"/><rect x="736" y="282" width="3.5" height="4.5"/><rect x="1176" y="276" width="3.5" height="4.5"/><rect x="6" y="262" width="3.5" height="4.5"/><rect x="826" y="274" width="3.5" height="4.5"/><rect x="166" y="284" width="3.5" height="4.5"/><rect x="111" y="284" width="3.5" height="4.5"/><rect x="456" y="277" width="3.5" height="4.5"/><rect x="931" y="269" width="3.5" height="4.5"/><path d="M206 280 v-9 a3 3 0 0 1 6 0 v9 z"/><path d="M220 280 v-9 a3 3 0 0 1 6 0 v9 z"/><path d="M234 280 v-9 a3 3 0 0 1 6 0 v9 z"/><path d="M248 280 v-9 a3 3 0 0 1 6 0 v9 z"/><path d="M262 280 v-9 a3 3 0 0 1 6 0 v9 z"/><path d="M276 280 v-9 a3 3 0 0 1 6 0 v9 z"/><path d="M304 280 v-9 a3 3 0 0 1 6 0 v9 z"/><path d="M318 280 v-9 a3 3 0 0 1 6 0 v9 z"/><path d="M332 280 v-9 a3 3 0 0 1 6 0 v9 z"/><path d="M346 280 v-9 a3 3 0 0 1 6 0 v9 z"/><path d="M360 280 v-9 a3 3 0 0 1 6 0 v9 z"/><path d="M374 280 v-9 a3 3 0 0 1 6 0 v9 z"/><circle cx="623" cy="244" r="7"/><path d="M556 300 v-26 a7 7 0 0 1 14 0 v26 z M682 300 v-26 a7 7 0 0 1 14 0 v26 z M612 300 v-30 a11 11 0 0 1 22 0 v30 z"/></g>
+    </svg>
+    <button id="loader-lang" class="loader-lang" type="button" title="Idioma: español · cambiarlo" data-i18n-title="lang.switch">
+      <svg class="icon" aria-hidden="true"><use href="#i-globe"/></svg><span data-i18n="lang.name">Español</span>
+    </button>
     <div class="loader">
-      <span class="mta-bullet loader-bullet" aria-hidden="true">TP</span>
-      <div class="loader-title">Slop Tepic</div>
-      <div class="loader-track is-indeterminate" aria-hidden="true"><span id="loading-progress" class="loader-fill"></span></div>
-      <div id="loading-status">Initializing WebGPURenderer &amp; TSL Shaders...</div>
+      <h1 class="tepic-logo loader-logo" aria-label="Tepic"><span class="tl tl-t" aria-hidden="true">T</span><span class="tl tl-e" aria-hidden="true">E</span><span class="tl tl-p" aria-hidden="true">P</span><span class="tl tl-i" aria-hidden="true">I</span><span class="tl tl-c" aria-hidden="true">C</span></h1>
+      <p class="loader-tagline" data-i18n="game.tagline">Ciudad abierta · Nayarit</p>
+      <div class="loader-progress">
+        <div class="loader-track is-indeterminate" aria-hidden="true"><span id="loading-progress" class="loader-fill"></span></div>
+        <div class="loader-status-row">
+          <span id="loading-status" data-i18n="loading.start">Preparando todo…</span>
+          <span id="loading-percent" class="loader-percent"></span>
+        </div>
+      </div>
+      <figure class="loader-tip">
+        <figcaption data-i18n="loading.tip">Consejo</figcaption>
+        <p id="loading-tip"></p>
+      </figure>
+      <ul class="loader-keys" aria-hidden="true">
+        <li><span class="loader-keycaps"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span data-i18n="loading.ctl.move">Caminar / manejar</span></li>
+        <li><span class="loader-keycaps"><kbd>F</kbd></span><span data-i18n="loading.ctl.board">Subir, robar, bajar</span></li>
+        <li><span class="loader-keycaps"><kbd>M</kbd></span><span data-i18n="loading.ctl.map">Mapa</span></li>
+        <li><span class="loader-keycaps"><kbd>V</kbd></span><span data-i18n="loading.ctl.camera">Cámara</span></li>
+        <li><span class="loader-keycaps"><kbd>Tab</kbd></span><span data-i18n="loading.ctl.weapons">Armas</span></li>
+      </ul>
     </div>
   </div>
 
   <!-- 3D WebGPU Viewport Container -->
-  <main id="canvas-container" aria-label="3D Interactive Slop Tepic Viewport"></main>
+  <main id="canvas-container" aria-label="Tepic en 3D" data-i18n-label="viewport.label"></main>
 
-  <!-- Top-Left: Brand & Renderer Telemetry -->
+  <!-- Top-Left: the frame rate (and, in multiplayer, the room's status under it) -->
   <header class="hud hud-top-left">
-    <div class="panel brand">
-      <span class="mta-bullet" aria-hidden="true">TP</span>
-      <div class="brand-titles">
-        <div class="brand-heading">
-          <h1>Slop Tepic</h1>
-        </div>
-        <div class="brand-subtitle">three.js · WebGPU · TSL · <span id="hud-fps" class="fps-ok">60</span> fps</div>
-      </div>
-    </div>
+    <div class="panel fps-meter" title="Cuadros por segundo" data-i18n-title="hud.fps"><span id="hud-fps" class="fps-ok">60</span><span class="fps-unit">FPS</span></div>
   </header>
 
-  <!-- Top-Right Toolbar: Time of Day, Teleport, Map & Clean View -->
+  <!-- Top-Right, on touch screens only: the menu (Esc on a keyboard) -->
   <div class="hud hud-top-right">
-    <div id="hud-toolbar" class="panel toolbar">
-      <div class="time-switch" role="group" aria-label="Atmosphere &amp; time of day">
-        <button id="time-live" class="time-btn" data-time="live" type="button" title="Live · real sun &amp; weather in Tepic · Weather data by Open-Meteo.com">
-          <svg class="icon" aria-hidden="true"><use href="#i-live"/></svg><span class="seg-label">Live</span>
-        </button>
-        <button id="time-golden" class="time-btn" data-time="golden" type="button" title="Golden Hour">
-          <svg class="icon" aria-hidden="true"><use href="#i-golden"/></svg><span class="seg-label">Golden Hour</span>
-        </button>
-        <button id="time-midday" class="time-btn" data-time="midday" type="button" title="Sunny Midday">
-          <svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg><span class="seg-label">Midday</span>
-        </button>
-        <button id="time-twilight" class="time-btn" data-time="twilight" type="button" title="Blue Hour">
-          <svg class="icon" aria-hidden="true"><use href="#i-twilight"/></svg><span class="seg-label">Blue Hour</span>
-        </button>
-        <button id="time-midnight" class="time-btn" data-time="midnight" type="button" title="Night 23:00">
-          <svg class="icon" aria-hidden="true"><use href="#i-moon"/></svg><span class="seg-label">Night</span>
-        </button>
-      </div>
-      <span class="toolbar-divider" aria-hidden="true"></span>
-      <button id="btn-teleport" class="tool-btn" type="button" popovertarget="teleport-popover" title="Teleport the active player">
-        <svg class="icon" aria-hidden="true"><use href="#i-pin"/></svg><span class="tool-label">Teleport</span><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg>
-      </button>
-      <button id="btn-open-map" class="tool-btn" type="button" title="Mapa completo de Tepic [M]">
-        <svg class="icon" aria-hidden="true"><use href="#i-map"/></svg><span class="tool-label">Map</span><kbd>M</kbd>
-      </button>
-      <span class="toolbar-divider" aria-hidden="true"></span>
-      <button id="btn-sound" class="tool-btn icon-only" type="button" title="Mute sound [N]" aria-label="Mute sound" aria-pressed="true">
-        <svg class="icon" aria-hidden="true"><use href="#i-sound"/></svg>
-      </button>
-      <button id="btn-toggle-hud" class="tool-btn icon-only" type="button" title="Clean view: hide the HUD [H]" aria-label="Hide HUD" aria-pressed="false">
-        <svg class="icon icon-hide" aria-hidden="true"><use href="#i-eye"/></svg><svg class="icon icon-show" aria-hidden="true"><use href="#i-eye-off"/></svg>
-      </button>
-    </div>
+    <button id="btn-menu" class="panel tool-btn icon-only menu-btn" type="button" title="Menú [Esc]" aria-label="Menú" data-i18n-title="menu.button" data-i18n-label="menu.title">
+      <svg class="icon" aria-hidden="true"><use href="#i-menu"/></svg>
+    </button>
   </div>
 
-  <!-- Under the toolbar: wanted level, health & armour, money, the weapon in hand (crime.js, crime-hud.js) -->
+  <!-- Top right: wanted level, health & armour, money, the weapon in hand (crime.js, crime-hud.js) -->
   <div class="hud hud-crime">
-    <section id="hud-crime" class="panel crime-card" aria-label="Status">
-      <div id="hud-weapon" class="crime-weapon" title="Weapons [Tab · scroll]"><span id="hud-weapon-icon" class="crime-weapon-icon" aria-hidden="true"><img alt="" hidden /><svg viewBox="0 0 48 24"><use href="#w-pistol"/></svg></span><span id="hud-weapon-name">Pistol</span><span id="hud-ammo" class="crime-ammo">68</span></div>
+    <section id="hud-crime" class="panel crime-card" aria-label="Estado" data-i18n-label="crime.status">
+      <div id="hud-weapon" class="crime-weapon" title="Armas [Tab · rueda]" data-i18n-title="crime.weaponTitle"><span id="hud-weapon-icon" class="crime-weapon-icon" aria-hidden="true"><img alt="" hidden /><svg viewBox="0 0 48 24"><use href="#w-pistol"/></svg></span><span id="hud-weapon-name">Pistola</span><span id="hud-ammo" class="crime-ammo">68</span></div>
       <div id="hud-money" class="crime-money">$250</div>
       <div class="crime-bar crime-health" aria-hidden="true"><span id="hud-health"></span></div>
       <div id="hud-stamina-row" class="crime-bar crime-stamina" aria-hidden="true" hidden><span id="hud-stamina"></span></div>
       <div id="hud-armor-row" class="crime-bar crime-armor" aria-hidden="true" hidden><span id="hud-armor"></span></div>
-      <div id="hud-wanted" class="wanted" role="img" aria-label="Wanted level: 0 of 5">
+      <div id="hud-wanted" class="wanted" role="img" aria-label="Nivel de búsqueda: 0 de 5">
         <span class="wanted-star" aria-hidden="true">★</span><span class="wanted-star" aria-hidden="true">★</span><span class="wanted-star" aria-hidden="true">★</span><span class="wanted-star" aria-hidden="true">★</span><span class="wanted-star" aria-hidden="true">★</span>
       </div>
     </section>
@@ -150,46 +162,30 @@
   <div id="hud-hurt" class="hurt-vignette" aria-hidden="true"></div>
   <!-- Free aim's crosshair (player/aim.js) and the weapon wheel (ui/weapon-wheel.js, its pictures ui/weapon-icons.js) -->
   <div id="hud-crosshair" class="crosshair" aria-hidden="true" hidden><span></span></div>
-  <div id="weapon-wheel" class="weapon-wheel" aria-label="Weapons" hidden></div>
+  <div id="weapon-wheel" class="weapon-wheel" aria-label="Armas" data-i18n-label="weapons.label" hidden></div>
 
-  <!-- Teleport Destinations (native popover: light-dismiss & Esc) -->
-  <div id="teleport-popover" class="popover" popover data-side="below" data-anchor="hud-toolbar" aria-label="Teleport the active player">
-    <div class="pop-title">Teleport to</div>
-    <button id="tp-plaza" class="pop-item tp-btn" data-teleport="plaza" type="button"><span class="pop-name">Plaza Principal y Catedral</span><span class="pop-sub">Av. México · Centro Histórico</span></button>
-    <button id="tp-alameda" class="pop-item tp-btn" data-teleport="alameda" type="button"><span class="pop-name">La Alameda</span><span class="pop-sub">Parque Juan Escutia · Centro</span></button>
-    <button id="tp-loma" class="pop-item tp-btn" data-teleport="loma" type="button"><span class="pop-name">Parque La Loma</span><span class="pop-sub">Av. Insurgentes · La Loma</span></button>
-    <button id="tp-mercado" class="pop-item tp-btn" data-teleport="mercado" type="button"><span class="pop-name">Mercado Morelos</span><span class="pop-sub">Centro Histórico</span></button>
-    <button id="tp-uan" class="pop-item tp-btn" data-teleport="uan" type="button"><span class="pop-name">Estadio de Béisbol UAN</span><span class="pop-sub">Ciudad de la Cultura</span></button>
-    <button id="tp-central" class="pop-item tp-btn" data-teleport="central" type="button"><span class="pop-name">Central de Autobuses</span><span class="pop-sub">Av. Insurgentes · Ciudad del Valle</span></button>
-    <button id="tp-estacion" class="pop-item tp-btn" data-teleport="estacion" type="button"><span class="pop-name">Antigua estación del tren</span><span class="pop-sub">Ferrocarril</span></button>
-    <button id="tp-juventud" class="pop-item tp-btn" data-teleport="juventud" type="button"><span class="pop-name">Parque Lineal Juventud</span><span class="pop-sub">Colonia Juventud</span></button>
-    <button id="tp-xalisco" class="pop-item tp-btn" data-teleport="xalisco" type="button"><span class="pop-name">Xalisco Centro</span><span class="pop-sub">Plaza Benito Juárez · Xalisco</span></button>
-    <button id="tp-bonaterra" class="pop-item tp-btn" data-teleport="bonaterra" type="button"><span class="pop-name">Bonaterra</span><span class="pop-sub">Libramiento · Bonaterra</span></button>
-    <button id="tp-aeropuerto" class="pop-item tp-btn" data-teleport="aeropuerto" type="button"><span class="pop-name">Aeropuerto de Tepic</span><span class="pop-sub">Terminal · Pantanal</span></button>
-  </div>
 
   <!-- Bottom-Left: Street-Name Signs & Live Radar Minimap -->
   <div class="hud hud-bottom-left">
     <div id="hud-location" class="location" aria-live="off"></div>
-    <aside id="minimap-card" class="panel radar" aria-label="Radar de calles de Tepic" title="Abrir el mapa completo de Tepic [M]">
+    <aside id="minimap-card" class="panel radar" aria-label="Radar de calles de Tepic" title="Abrir el mapa completo de Tepic [M]" data-i18n-label="radar.label" data-i18n-title="radar.title">
       <canvas id="minimap-canvas"></canvas>
       <span class="radar-north" aria-hidden="true">N</span>
       <kbd class="radar-key">M</kbd>
     </aside>
   </div>
 
-  <!-- Bottom-Center: What F would do here (get in, take a car or bicycle, get out) & Controls Guide -->
+  <!-- Bottom-Center: What F would do here (get in, take a car or bicycle, get out) -->
   <footer class="hud hud-bottom-center">
     <div id="hud-prompt" class="panel action-prompt" aria-live="polite" hidden></div>
-    <div id="hud-controls-hint" class="controls-hint"></div>
   </footer>
 
-  <!-- Bottom-Right: Speed Cluster & Camera Switcher -->
+  <!-- Bottom-Right: Speed Cluster -->
   <div class="hud hud-bottom-right">
-    <section id="hud-cluster" class="panel cluster" aria-label="Vehicle telemetry and camera">
+    <section id="hud-cluster" class="panel cluster" aria-label="Tablero del vehículo" data-i18n-label="cluster.label">
       <div class="gauge">
         <div class="gauge-top">
-          <span id="hud-active-mode" class="gauge-label">Taxi de Tepic</span>
+          <span id="hud-active-mode" class="gauge-label">Peatón</span>
           <span class="gauge-alt"><span class="gauge-alt-label">Alt</span> <span id="hud-altitude">0</span> ft</span>
         </div>
         <div class="gauge-speed"><span id="hud-speed">0</span><span class="gauge-unit">km/h</span></div>
@@ -197,68 +193,138 @@
         <!-- The car's rev counter, gear, gearbox, nitro & engine (js/ui/tachometer.js), only while driving -->
         <div id="hud-tacho" class="tacho"></div>
       </div>
-      <div id="camera-switch" class="camera-switch">
-        <button id="cam-prev" class="icon-btn" type="button" title="Previous camera" aria-label="Previous camera">
-          <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"/></svg>
-        </button>
-        <button id="cam-menu-btn" class="camera-current" type="button" popovertarget="camera-popover" title="All cameras [V cycles]">
-          <svg class="icon" aria-hidden="true"><use href="#i-camera"/></svg><span id="hud-active-camera">3rd-Person Chase</span><kbd>V</kbd>
-        </button>
-        <button id="cam-next" class="icon-btn" type="button" title="Next camera [V]" aria-label="Next camera">
-          <svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>
-        </button>
-      </div>
     </section>
   </div>
 
   <!-- Touch input stays available in clean view; the map temporarily suspends it. -->
-  <section id="touch-controls" aria-label="Touch controls" hidden>
+  <section id="touch-controls" aria-label="Controles táctiles" data-i18n-label="touch.label" hidden>
     <div class="touch-movement">
-      <div id="touch-stick" role="group" aria-label="Movement joystick: drag up or down to move, left or right to turn">
+      <div id="touch-stick" role="group" aria-label="Joystick: arrastra arriba o abajo para moverte, a los lados para girar" data-i18n-label="touch.stick">
         <span class="touch-stick-axis" aria-hidden="true"></span>
         <span id="touch-stick-knob" aria-hidden="true"></span>
       </div>
-      <span class="touch-caption">Move &amp; steer</span>
+      <span class="touch-caption" data-i18n="touch.move">Moverse y girar</span>
     </div>
-    <p class="touch-look-hint">Drag to look · Pinch to zoom</p>
-    <div class="touch-actions" role="group" aria-label="Hold to perform an action">
-      <button class="touch-action" data-touch-action="up" type="button" aria-label="Jump" aria-pressed="false" hidden>
-        <span aria-hidden="true">↑</span><span data-touch-label="up">Jump</span>
+    <p class="touch-look-hint" data-i18n="touch.look">Arrastra para mirar · Pellizca para acercar</p>
+    <div class="touch-actions" role="group" aria-label="Mantén presionado para hacer una acción" data-i18n-label="touch.actions">
+      <button class="touch-action" data-touch-action="up" type="button" aria-label="Saltar" aria-pressed="false" hidden>
+        <span aria-hidden="true">↑</span><span data-touch-label="up">Saltar</span>
       </button>
-      <button class="touch-action" data-touch-action="down" type="button" aria-label="Descend" aria-pressed="false" hidden>
-        <span aria-hidden="true">↓</span><span data-touch-label="down">Descend</span>
+      <button class="touch-action" data-touch-action="down" type="button" aria-label="Descender" aria-pressed="false" hidden>
+        <span aria-hidden="true">↓</span><span data-touch-label="down">Descender</span>
       </button>
-      <button class="touch-action touch-boost" data-touch-action="boost" type="button" aria-label="Boost" aria-pressed="false">
-        <span aria-hidden="true">↟</span><span data-touch-label="boost">Boost</span>
+      <button class="touch-action touch-boost" data-touch-action="boost" type="button" aria-label="Correr" aria-pressed="false">
+        <span aria-hidden="true">↟</span><span data-touch-label="boost">Correr</span>
       </button>
-      <button class="touch-action touch-fire" data-touch-action="fire" type="button" aria-label="Fire" aria-pressed="false">
-        <span aria-hidden="true">✹</span><span data-touch-label="fire">Fire</span>
+      <button class="touch-action touch-fire" data-touch-action="fire" type="button" aria-label="Disparar" aria-pressed="false">
+        <span aria-hidden="true">✹</span><span data-touch-label="fire">Disparar</span>
       </button>
-      <button id="touch-board" class="touch-action touch-board" type="button" aria-label="Subir, robar o bajar" hidden>
+      <button id="touch-board" class="touch-action touch-board" type="button" aria-label="Subir, robar o bajar" data-i18n-label="touch.board" hidden>
         <span aria-hidden="true">⇄</span><span data-board-label>Subir</span>
       </button>
     </div>
   </section>
 
-  <!-- All Cameras: 3 Follow Cameras + 7 Scenic Vantage Cameras + Auto-Director Drone -->
-  <div id="camera-popover" class="popover" popover data-side="above" data-anchor="hud-cluster" data-align="hud-cluster" aria-label="Multiple Camera Angles">
-    <div class="pop-title">Follow</div>
-    <button id="cam-chase" class="pop-item cam-btn active" data-camera="chase" type="button"><span class="pop-name">3rd-Person Chase</span><kbd>5</kbd></button>
-    <button id="cam-action" class="pop-item cam-btn" data-camera="action" type="button"><span class="pop-name">Low-Angle Action</span><kbd>6</kbd></button>
-    <button id="cam-pov" class="pop-item cam-btn" data-camera="pov" type="button"><span class="pop-name">First-Person / Cockpit</span><kbd>7</kbd></button>
-    <div class="pop-title">Scenic</div>
-    <button id="cam-centralPark" class="pop-item cam-btn" data-camera="centralPark" type="button"><span class="pop-name">Parque La Loma</span></button>
-    <button id="cam-fifthAve" class="pop-item cam-btn" data-camera="fifthAve" type="button"><span class="pop-name">Plaza Principal y Catedral</span><kbd>8</kbd></button>
-    <button id="cam-timesSquare" class="pop-item cam-btn" data-camera="timesSquare" type="button"><span class="pop-name">La Alameda</span><kbd>9</kbd></button>
-    <button id="cam-chryslerGCT" class="pop-item cam-btn" data-camera="chryslerGCT" type="button"><span class="pop-name">Estadio UAN</span><kbd>0</kbd></button>
-    <button id="cam-observatory" class="pop-item cam-btn" data-camera="observatory" type="button"><span class="pop-name">Mirador sobre el centro</span></button>
-    <button id="cam-bryantPark" class="pop-item cam-btn" data-camera="bryantPark" type="button"><span class="pop-name">Mercado Morelos</span></button>
-    <button id="cam-waterfront" class="pop-item cam-btn" data-camera="waterfront" type="button"><span class="pop-name">Antigua estación</span></button>
-    <button id="cam-drone" class="pop-item cam-btn" data-camera="drone" type="button"><span class="pop-name">Auto-Director Aerial</span></button>
+
+  <!-- The menu [Esc] (app/menu.ts): the time of day & weather (the room's in multiplayer), cameras, teleports, settings
+       and the keys -->
+  <div id="game-menu" class="game-menu" hidden>
+    <div class="game-menu-backdrop" data-menu-close></div>
+    <section class="panel game-menu-panel" role="dialog" aria-modal="true" aria-labelledby="game-menu-title">
+      <header class="game-menu-head">
+        <h2 id="game-menu-title" data-i18n="menu.title">Menú</h2>
+        <button id="menu-resume" class="tool-btn" type="button" data-menu-close><span data-i18n="menu.resume">Continuar</span><kbd>Esc</kbd></button>
+      </header>
+      <nav class="menu-tabs" role="tablist" aria-label="Menú" data-i18n-label="menu.title">
+        <button class="menu-tab" role="tab" type="button" data-tab="sky" aria-selected="true" data-i18n="menu.tab.weather">Clima</button>
+        <button class="menu-tab" role="tab" type="button" data-tab="camera" aria-selected="false" data-i18n="menu.tab.camera">Cámara</button>
+        <button class="menu-tab" role="tab" type="button" data-tab="teleport" aria-selected="false" data-i18n="menu.tab.teleport">Ir a</button>
+        <button class="menu-tab" role="tab" type="button" data-tab="settings" aria-selected="false" data-i18n="menu.tab.settings">Ajustes</button>
+        <button class="menu-tab" role="tab" type="button" data-tab="keys" aria-selected="false" data-i18n="menu.tab.keys">Teclas</button>
+        <span class="menu-tabs-hint" aria-hidden="true"><kbd>Q</kbd><kbd>E</kbd></span>
+      </nav>
+      <div class="game-menu-body">
+        <div class="menu-page" role="tabpanel" data-page="sky">
+          <h3 class="menu-title" data-i18n="menu.time">Hora del día</h3>
+          <div class="menu-chips" role="group" aria-label="Hora del día" data-i18n-label="menu.time">
+            <button class="menu-chip" id="time-live" data-time="live" type="button"><svg class="icon" aria-hidden="true"><use href="#i-live"/></svg><span data-i18n="menu.realTime">Hora real</span></button>
+            <button class="menu-chip" data-time="golden" type="button"><svg class="icon" aria-hidden="true"><use href="#i-golden"/></svg><span data-i18n="time.golden">Hora dorada</span></button>
+            <button class="menu-chip" data-time="midday" type="button"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg><span data-i18n="time.midday">Mediodía</span></button>
+            <button class="menu-chip" data-time="twilight" type="button"><svg class="icon" aria-hidden="true"><use href="#i-twilight"/></svg><span data-i18n="time.twilight">Hora azul</span></button>
+            <button class="menu-chip" data-time="midnight" type="button"><svg class="icon" aria-hidden="true"><use href="#i-moon"/></svg><span data-i18n="time.night">Noche</span></button>
+          </div>
+          <h3 class="menu-title" data-i18n="menu.weather">Clima</h3>
+          <div id="menu-weather" class="menu-chips" role="group" aria-label="Clima" data-i18n-label="menu.weather">
+            <button class="menu-chip" data-weather="live" type="button"><span data-i18n="menu.realWeather">Clima real</span></button>
+            <button class="menu-chip" data-weather="clear" type="button"><span data-i18n="weather.clear">Despejado</span></button>
+            <button class="menu-chip" data-weather="cloudy" type="button"><span data-i18n="menu.cloudy">Nublado</span></button>
+            <button class="menu-chip" data-weather="overcast" type="button"><span data-i18n="weather.overcast">Cubierto</span></button>
+            <button class="menu-chip" data-weather="rain" type="button"><span data-i18n="weather.rain">Lluvia</span></button>
+            <button class="menu-chip" data-weather="storm" type="button"><span data-i18n="menu.storm">Tormenta</span></button>
+            <button class="menu-chip" data-weather="fog" type="button"><span data-i18n="weather.fog">Niebla</span></button>
+          </div>
+          <p id="menu-live-info" class="menu-note">Tepic</p>
+          <p id="menu-sky-note" class="menu-note"></p>
+        </div>
+        <div class="menu-page" role="tabpanel" data-page="camera" hidden>
+          <h3 class="menu-title"><span data-i18n="menu.tab.camera">Cámara</span> <kbd data-key="camera">V</kbd></h3>
+          <div class="menu-list menu-list-2">
+            <button id="cam-chase" class="menu-item cam-btn active" data-camera="chase" type="button"><span class="pop-name" data-i18n="camera.chase">Tercera persona</span><kbd>5</kbd></button>
+            <button id="cam-action" class="menu-item cam-btn" data-camera="action" type="button"><span class="pop-name" data-i18n="camera.action">Ángulo bajo</span><kbd>6</kbd></button>
+            <button id="cam-pov" class="menu-item cam-btn" data-camera="pov" type="button"><span class="pop-name" data-i18n="camera.pov">Primera persona / cabina</span><kbd>7</kbd></button>
+            <button id="cam-centralPark" class="menu-item cam-btn" data-camera="centralPark" type="button"><span class="pop-name">Parque La Loma</span></button>
+            <button id="cam-fifthAve" class="menu-item cam-btn" data-camera="fifthAve" type="button"><span class="pop-name">Plaza Principal y Catedral</span><kbd>8</kbd></button>
+            <button id="cam-timesSquare" class="menu-item cam-btn" data-camera="timesSquare" type="button"><span class="pop-name">La Alameda</span><kbd>9</kbd></button>
+            <button id="cam-chryslerGCT" class="menu-item cam-btn" data-camera="chryslerGCT" type="button"><span class="pop-name">Estadio UAN</span><kbd>0</kbd></button>
+            <button id="cam-observatory" class="menu-item cam-btn" data-camera="observatory" type="button"><span class="pop-name" data-i18n="camera.observatory">Mirador sobre el centro</span></button>
+            <button id="cam-bryantPark" class="menu-item cam-btn" data-camera="bryantPark" type="button"><span class="pop-name">Mercado Morelos</span></button>
+            <button id="cam-waterfront" class="menu-item cam-btn" data-camera="waterfront" type="button"><span class="pop-name">Antigua estación</span></button>
+            <button id="cam-drone" class="menu-item cam-btn" data-camera="drone" type="button"><span class="pop-name" data-i18n="camera.drone">Director aéreo automático</span></button>
+          </div>
+        </div>
+        <div class="menu-page" role="tabpanel" data-page="teleport" hidden>
+          <h3 class="menu-title" data-i18n="teleport.title">Ir a</h3>
+          <div class="menu-list menu-list-2">
+            <button id="tp-plaza" class="menu-item tp-btn" data-teleport="plaza" type="button"><span class="pop-name">Plaza Principal y Catedral</span><span class="pop-sub">Av. México · Centro Histórico</span></button>
+            <button id="tp-alameda" class="menu-item tp-btn" data-teleport="alameda" type="button"><span class="pop-name">La Alameda</span><span class="pop-sub">Parque Juan Escutia · Centro</span></button>
+            <button id="tp-loma" class="menu-item tp-btn" data-teleport="loma" type="button"><span class="pop-name">Parque La Loma</span><span class="pop-sub">Av. Insurgentes · La Loma</span></button>
+            <button id="tp-mercado" class="menu-item tp-btn" data-teleport="mercado" type="button"><span class="pop-name">Mercado Morelos</span><span class="pop-sub">Centro Histórico</span></button>
+            <button id="tp-uan" class="menu-item tp-btn" data-teleport="uan" type="button"><span class="pop-name">Estadio de Béisbol UAN</span><span class="pop-sub">Ciudad de la Cultura</span></button>
+            <button id="tp-central" class="menu-item tp-btn" data-teleport="central" type="button"><span class="pop-name">Central de Autobuses</span><span class="pop-sub">Av. Insurgentes · Ciudad del Valle</span></button>
+            <button id="tp-estacion" class="menu-item tp-btn" data-teleport="estacion" type="button"><span class="pop-name">Antigua estación del tren</span><span class="pop-sub">Ferrocarril</span></button>
+            <button id="tp-juventud" class="menu-item tp-btn" data-teleport="juventud" type="button"><span class="pop-name">Parque Lineal Juventud</span><span class="pop-sub">Colonia Juventud</span></button>
+            <button id="tp-xalisco" class="menu-item tp-btn" data-teleport="xalisco" type="button"><span class="pop-name">Xalisco Centro</span><span class="pop-sub">Plaza Benito Juárez · Xalisco</span></button>
+            <button id="tp-bonaterra" class="menu-item tp-btn" data-teleport="bonaterra" type="button"><span class="pop-name">Bonaterra</span><span class="pop-sub">Libramiento · Bonaterra</span></button>
+            <button id="tp-aeropuerto" class="menu-item tp-btn" data-teleport="aeropuerto" type="button"><span class="pop-name">Aeropuerto de Tepic</span><span class="pop-sub">Terminal · Pantanal</span></button>
+          </div>
+        </div>
+        <div class="menu-page" role="tabpanel" data-page="settings" hidden>
+          <h3 class="menu-title" data-i18n="menu.tab.settings">Ajustes</h3>
+          <div class="menu-chips">
+            <button id="btn-sound" class="menu-chip" type="button" aria-pressed="true"><svg class="icon" aria-hidden="true"><use href="#i-sound"/></svg><span data-sound-label data-i18n="sound.on">Sonido activado</span><kbd data-key="sound">N</kbd></button>
+            <button id="btn-toggle-hud" class="menu-chip" type="button" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-eye-off"/></svg><span data-i18n="menu.cleanView">Vista limpia</span><kbd data-key="cleanView">H</kbd></button>
+            <button id="btn-open-map" class="menu-chip" type="button"><svg class="icon" aria-hidden="true"><use href="#i-map"/></svg><span data-i18n="tool.map">Mapa</span><kbd data-key="map">M</kbd></button>
+          </div>
+          <h3 class="menu-title" data-i18n="menu.language">Idioma</h3>
+          <div class="menu-chips">
+            <button id="btn-lang" class="menu-chip" type="button" title="Idioma: español · cambiarlo" data-i18n-title="lang.switch"><svg class="icon" aria-hidden="true"><use href="#i-globe"/></svg><span data-i18n="lang.name">Español</span></button>
+          </div>
+        </div>
+        <div class="menu-page" role="tabpanel" data-page="keys" hidden>
+          <div class="key-head">
+            <p class="menu-note" data-i18n="keys.help">Haz clic en una tecla y presiona la nueva · Esc la deja igual · Retroceso la quita</p>
+            <button id="keys-reset" class="menu-chip" type="button" data-i18n="keys.reset">Restablecer</button>
+          </div>
+          <!-- the bindings (ui/key-config.ts, input/keybindings.ts) -->
+          <div id="key-config"></div>
+          <p class="menu-note" data-i18n="keys.fixed">Fijas: Esc menú · 1–4 armas · 5–0 cámaras · el mouse mira, el botón izquierdo dispara y el derecho apunta</p>
+        </div>
+      </div>
+    </section>
   </div>
 
   <!-- Full-Screen Interactive City Street Map ([M]) -->
-  <section id="fullmap-modal" class="fullmap-modal hidden" role="dialog" aria-modal="true" aria-label="Mapa interactivo de Tepic">
+  <section id="fullmap-modal" class="fullmap-modal hidden" role="dialog" aria-modal="true" aria-label="Mapa interactivo de Tepic" data-i18n-label="map.label">
     <div id="fullmap-canvas-wrap" class="fullmap-canvas-wrap">
       <canvas id="fullmap-canvas"></canvas>
     </div>
@@ -267,21 +333,21 @@
       <div class="panel fullmap-title">
         <span class="mta-bullet" aria-hidden="true">TP</span>
         <div>
-          <h2>Atlas de Tepic</h2>
-          <p id="fullmap-player-info" class="fullmap-subtitle">You are at the Plaza Principal</p>
+          <h2 data-i18n="map.title">Atlas de Tepic</h2>
+          <p id="fullmap-player-info" class="fullmap-subtitle" data-i18n="map.youAreAtStart">Estás en la Plaza Principal</p>
         </div>
       </div>
       <label class="panel fullmap-search-wrap">
         <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
-        <input id="fullmap-search" class="fullmap-search" type="text" placeholder="Search streets &amp; landmarks — Insurgentes, Juárez, Allende…" aria-label="Search street or landmark" autocomplete="off" spellcheck="false" />
+        <input id="fullmap-search" class="fullmap-search" type="text" placeholder="Busca calles y lugares — Insurgentes, Juárez, Allende…" aria-label="Buscar una calle o un lugar" data-i18n-label="map.searchLabel" autocomplete="off" spellcheck="false" />
       </label>
-      <button id="close-fullmap-btn" class="panel tool-btn fullmap-close" type="button" title="Close map [M / Esc]">
-        <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg><span class="tool-label">Close</span><kbd>Esc</kbd>
+      <button id="close-fullmap-btn" class="panel tool-btn fullmap-close" type="button" title="Cerrar el mapa [M / Esc]" data-i18n-title="map.closeTitle">
+        <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg><span class="tool-label" data-i18n="map.close">Cerrar</span><kbd>Esc</kbd>
       </button>
     </div>
 
     <div class="map-controls">
-      <div class="panel map-compass" title="Norte verdadero · la traza del centro de Tepic gira 25° al este">
+      <div class="panel map-compass" title="Norte verdadero · la traza del centro de Tepic gira 25° al este" data-i18n-title="map.compass">
         <svg viewBox="0 0 44 44" aria-hidden="true">
           <g id="map-compass-needle">
             <path d="M22 9.5 25.6 22h-7.2z" fill="#f05a4f"/>
@@ -291,25 +357,25 @@
         </svg>
       </div>
       <div class="panel map-zoom">
-        <button id="map-zoom-in" class="icon-btn" type="button" title="Zoom in" aria-label="Zoom in"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
-        <button id="map-zoom-out" class="icon-btn" type="button" title="Zoom out" aria-label="Zoom out"><svg class="icon" aria-hidden="true"><use href="#i-minus"/></svg></button>
+        <button id="map-zoom-in" class="icon-btn" type="button" title="Acercar" aria-label="Acercar" data-i18n-title="map.zoomIn" data-i18n-label="map.zoomIn"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
+        <button id="map-zoom-out" class="icon-btn" type="button" title="Alejar" aria-label="Alejar" data-i18n-title="map.zoomOut" data-i18n-label="map.zoomOut"><svg class="icon" aria-hidden="true"><use href="#i-minus"/></svg></button>
       </div>
       <div class="panel map-zoom">
-        <button id="map-center-player" class="icon-btn" type="button" title="Street view around you" aria-label="Center on player"><svg class="icon" aria-hidden="true"><use href="#i-locate"/></svg></button>
-        <button id="map-view-all" class="icon-btn" type="button" title="Todo Tepic" aria-label="Ver todo Tepic"><svg class="icon" aria-hidden="true"><use href="#i-fit"/></svg></button>
+        <button id="map-center-player" class="icon-btn" type="button" title="Vista de calle a tu alrededor" aria-label="Centrar en el jugador" data-i18n-title="map.centerTitle" data-i18n-label="map.centerLabel"><svg class="icon" aria-hidden="true"><use href="#i-locate"/></svg></button>
+        <button id="map-view-all" class="icon-btn" type="button" title="Todo Tepic" aria-label="Ver todo Tepic" data-i18n-title="map.allTitle" data-i18n-label="map.allLabel"><svg class="icon" aria-hidden="true"><use href="#i-fit"/></svg></button>
       </div>
     </div>
 
     <div class="fullmap-footer">
       <div class="panel fullmap-status">
-        <span id="fullmap-hover-info">Click anywhere to teleport · Drag to pan · Scroll to zoom</span>
+        <span id="fullmap-hover-info" data-i18n="map.hint">Haz clic donde sea para teletransportarte · Arrastra para moverte · Rueda para acercar</span>
       </div>
     </div>
 
     <div class="panel fullmap-legend">
-      <span class="legend-item"><span class="legend-swatch player-swatch"></span>You</span>
-      <span class="legend-item"><span class="legend-swatch landmark-swatch"></span>Landmark</span>
-      <span class="legend-item"><span class="legend-swatch bridge-swatch"></span>Highway</span>
+      <span class="legend-item"><span class="legend-swatch player-swatch"></span><span data-i18n="map.you">Tú</span></span>
+      <span class="legend-item"><span class="legend-swatch landmark-swatch"></span><span data-i18n="map.landmark">Lugar emblemático</span></span>
+      <span class="legend-item"><span class="legend-swatch bridge-swatch"></span><span data-i18n="map.highway">Carretera</span></span>
       <span id="fullmap-counts" class="legend-counts"></span>
     </div>
   </section>

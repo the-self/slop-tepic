@@ -1,5 +1,5 @@
 // js/player/aim.ts
-// Free aim on foot, GTA-style: hold the right mouse button (or press Z to toggle it, for a trackpad) and the camera
+// Free aim on foot: hold the right mouse button (or press Z to toggle it, for a trackpad) and the camera
 // comes in over the player's right shoulder (cameras.ts) with a crosshair in the middle of the screen. The mouse turns
 // the player and tilts the aim (pointer lock), the left button (or X) fires along the crosshair (crime.ts), and WASD
 // walks and strafes (controllers.ts). The crosshair turns red over someone or something the shot would hit.
@@ -7,6 +7,7 @@
 // from the hip then, at whoever is ahead (crime.ts' lock-on).
 // No three.js: only the DOM, the controllers' person entity and its keys.
 
+import { keyBindings } from '../input/keybindings.ts';
 import type { ThirdPersonControllerManager } from './controllers.ts';
 
 /** What the aim uses of the game's canvas: some browsers have no pointer lock, or a requestPointerLock returning nothing */
@@ -103,7 +104,7 @@ class AimControl {
       if (doc.hidden) this.release();
     });
     window.addEventListener('keydown', (e) => {
-      if (e.code !== 'KeyZ' || e.repeat || e.metaKey || e.ctrlKey || e.altKey || isTyping(e)) return;
+      if (!keyBindings.is('aim', e.code) || e.repeat || e.metaKey || e.ctrlKey || e.altKey || isTyping(e)) return;
       this.toggled = !this.toggled;
       if (this.toggled && onFoot()) this.lock();
     });

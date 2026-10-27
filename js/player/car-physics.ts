@@ -284,7 +284,7 @@ const SPRING_HZ = 1.4; // the suspension's natural frequency (a road car's 1.2-1
 const SPRING_DAMPING = 0.55;
 // m of suspension travel, unless a wheel says otherwise: the springs' sag (~0.13 m) of it below rest, the rest of it
 // bump, ~0.19 m. With 0.09 m of bump a 22 cm kerb taken at 60 km/h slammed the springs into their stops, and the car
-// flew a metre and rolled over; now the springs take most of it, and it hops (as GTA's do)
+// flew a metre and rolled over; now the springs take most of it, and it hops
 const TRAVEL = 0.36;
 const FLIP_RESCUE = 2.5; // s a car is on its roof or side, all but stopped, before it is set back on its wheels
 const MAX_LEAN = 0.82; // rad a two-wheeler leans over at most (~47°: a street bike's tyres & pegs)
@@ -934,7 +934,7 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
 
   // A driven car's stability control (overTurn): turning faster than its front wheels steer it, as its tail steps out
   // under power, lifting off or braking in a turn, a torque about its up takes the excess off (a real one brakes a
-  // wheel; a game's turns the body, as GTA's)
+  // wheel; a game's turns the body)
   function stabilise(v: PhysicsVehicle, out: VehicleOut, h: number): void {
     if (out.uy < 0.5) return; // (on its side or roof: nothing to hold)
     let steer = 0, fronts = 0;

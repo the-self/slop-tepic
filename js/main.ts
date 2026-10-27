@@ -4,10 +4,13 @@
 // steps them every frame through the Scheduler (core/scheduler.ts) in the order written down at "The frame loop" below.
 import * as THREE from 'three/webgpu';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
+import { cycleLocale, onLocaleChange, t, tName, translatePage, setText } from './i18n/i18n.ts';
 import { CITY, getLocationLabel, isTypingInField, ROADS, CITY_LANDMARKS, TELEPORT_LOCATIONS, HOSPITALS } from './world/city-config.ts';
 import { ThirdPersonControllerManager } from './player/controllers.ts';
 import { Stamina, struckDamage, hardness, crashDamage, walletAmount, nearest, CRASH_GRACE } from './player/stats.ts';
-import { TouchControls } from './input/touch-controls.ts';
+import { TouchControls, TOUCH_SCREEN } from './input/touch-controls.ts';
+import { keyBindings, keyLabel, isBindAction } from './input/keybindings.ts';
+import { KeyConfig } from './ui/key-config.ts';
 import { GamepadControls } from './input/gamepad-controls.ts';
 import { CameraSystem, CAMERA_PRESETS } from './player/cameras.ts';
 import { LightingSystem } from './render/lighting.ts';
@@ -48,10 +51,12 @@ import { LoadingScreen } from './app/loading.ts';
 import { buildCity } from './app/city.ts';
 import { playerStateKey, restorePlayer, savePlayer } from './app/player-state.ts';
 import { createRenderPipeline } from './app/render-pipeline.ts';
+import { pickQuality } from './app/quality.ts';
 import { precompileShaders, warmUpFrame } from './app/shaders.ts';
 import { loadPersonBody } from './actors/person-body.ts';
 import { PLAYER_BODY } from './player/controllers/constants.ts';
-import { Hud, wirePopovers } from './app/hud.ts';
+import { Hud } from './app/hud.ts';
+import { GameMenu } from './app/menu.ts';
 import { createTeleport, wireTeleportButtons } from './app/teleport.ts';
 import { Boarding } from './app/boarding.ts';
 import { WeatherEffects } from './app/weather-effects.ts';
@@ -59,6 +64,8 @@ import type { CollisionImpact } from './audio/audio-sources.ts';
 import type { AmbientSource } from './audio/audio-ambience.ts';
 import type { Multiplayer } from './net/multiplayer.ts';
 import type { WeatherSampleName } from './world/weather.ts';
+import { SKY_TIMES, SKY_WEATHERS } from '../shared/protocol.ts';
+import type { SkyTime, SkyWeather } from '../shared/protocol.ts';
 import type { CameraPresetId } from './player/cameras.ts';
 
 /** What the game's systems tell each other without importing each other (core/events.ts) */
@@ -75,6 +82,11 @@ const HARD_CRASH = 9; // m/s (~32 km/h) a crash is struck at for an ambulance to
 const SHOCK_DAMAGE = 22; // health a fallen line's shock takes at its worst (a few and you are down)
 
 const isWeatherSample = (name: string | null): name is WeatherSampleName => name !== null && name in WEATHER_SAMPLES;
+// (SKY_TIMES & SKY_WEATHERS widened to plain strings, to check a stored or clicked name against them)
+const SKY_TIME_NAMES: readonly string[] = SKY_TIMES;
+const SKY_WEATHER_NAMES: readonly string[] = SKY_WEATHERS;
+const isSkyTime = (name: string | null): name is SkyTime => name !== null && SKY_TIME_NAMES.includes(name);
+const isSkyWeather = (name: string | null): name is SkyWeather => name !== null && SKY_WEATHER_NAMES.includes(name);
 const PERSON_WAIT = 8000; // ms the loading screen waits for the player's body (3 MB) before the shaders compile
 
 async function initApp(): Promise<void> {
@@ -84,8 +96,12 @@ async function initApp(): Promise<void> {
   if (debug) THREE.Node.captureStackTrace = true;
   const container = document.getElementById('canvas-container');
   if (!container) throw new Error('The page has no #canvas-container');
+  translatePage(document); // (the page's static text, in the player's language)
   const loading = new LoadingScreen();
-  loading.status(`Initializing Three.js r${THREE.REVISION} WebGPURenderer & TSL Shaders...`);
+  // The graphics tier: 'low' on a touch screen (the same the touch controls show on), or as ?quality=low|high asks
+  // (app/quality.ts)
+  const quality = pickQuality(params.get('quality'), window.matchMedia(TOUCH_SCREEN).matches);
+  loading.status('loading.renderer', { revision: THREE.REVISION });
 
   // 1. The WebGPURenderer, with a 32-bit float reversed depth buffer
   const renderer = new THREE.WebGPURenderer({
@@ -109,7 +125,7 @@ async function initApp(): Promise<void> {
 
   // 2. The scene: the physical sky, PMREM IBL and the 4096² shadow cascades (render/lighting.ts)
   const scene = new THREE.Scene();
-  const lightingSystem = new LightingSystem(scene, renderer);
+  const lightingSystem = new LightingSystem(scene, renderer, quality.shadowMapSize);
   // Rain falling round the camera, and the water it leaves on the roads (Live weather only: the fixed times of day
   // stay dry)
   const rain = createRain(scene, lightingSystem.uNightFactor);
@@ -117,7 +133,7 @@ async function initApp(): Promise<void> {
   loading.mark('lighting');
 
   // 3. The city: streets, hills, landmarks, blocks, street details & traffic
-  loading.status(`Construyendo ${CITY.city || 'la ciudad'}: calles, manzanas y colonias...`);
+  loading.status('loading.city', { city: CITY.city || t('loading.cityFallback') });
   const city = buildCity(scene, { stream: params.get('stream') !== '0', mark: (label) => { loading.mark(label); } });
   const { streamer, rivers, cityBlocks, stores, carParks, streetDetails, powerLines, traffic: trafficSystem, highwayTraffic, colliders } = city;
 
@@ -157,7 +173,7 @@ async function initApp(): Promise<void> {
     });
     controllerManager.setCarPhysics(physics);
   } catch (err) {
-    loading.status('The car physics (Jolt Physics) could not load: check the connection and reload');
+    loading.status('loading.physicsFailed');
     throw err;
   }
   // Who is hit, shot or thrown falls as a body (sim/ragdolls.ts), in the car's world; a pool of blood spreads under
@@ -255,7 +271,7 @@ async function initApp(): Promise<void> {
     addColliders: (list) => { controllerManager.addColliders(list); },
     ignite: (kind, x, z, size) => fires.ignite(kind, x, z, size)
   });
-  controllerManager.onFuelOut = () => { crimeSystem.toast('Out of gas: fill up at a gas station'); };
+  controllerManager.onFuelOut = () => { crimeSystem.toast(t('toast.outOfGas')); };
   crimeSystem.onExplosion = (x, y, z, radius) => {
     fires.onExplosion(x, y, z, radius);
     gasStations.onExplosion(x, y, z, radius);
@@ -284,7 +300,7 @@ async function initApp(): Promise<void> {
   };
   const crimeHud = new CrimeHud();
   // The weapon wheel, held open with Tab (ui/weapon-wheel.ts): the game runs slowed meanwhile. On foot the mouse wheel
-  // switches weapons, GTA-style (Alt + the wheel, or a pinch, still zooms the camera); in a vehicle it zooms.
+  // switches weapons (Alt + the wheel, or a pinch, still zooms the camera); in a vehicle it zooms.
   const scrollSwitches = (e: WheelEvent) => !e.altKey && !e.ctrlKey && controllerManager.activeMode === 'person' && crimeSystem.state === 'play';
   const weaponWheel = new WeaponWheel(crimeSystem, { aim: aimControl, canvas: renderer.domElement, canScroll: scrollSwitches });
   cameraSystem.wheelZooms = (e) => !scrollSwitches(e);
@@ -337,8 +353,9 @@ async function initApp(): Promise<void> {
   // City-wide static geometry: chunk & distance-cull the small props, shadow stand-ins for the big casters
   // (render/scene-culling.ts)
   const named = (names: readonly string[]) => names.map((name) => scene.getObjectByName(name)).filter((o) => o !== undefined);
-  const cullingRoots = named(['CityGrid', 'CityBlocks', 'StreetDetails', 'Hills', 'Rivers', 'Bridges', 'Bardas']);
-  setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
+  // (the high-voltage towers too: 884 of them, 960 triangles each, were drawn whole in the view and both cascades)
+  const cullingRoots = named(['CityGrid', 'CityBlocks', 'StreetDetails', 'Hills', 'Rivers', 'Bridges', 'Bardas', 'PowerLines']);
+  setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow, quality.propDistance);
   // ...whose world matrices never change again: rendering stops walking them (the loop updates the rest of the scene)
   const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Airport', 'RoadMarkings', 'Pavements', 'Footways', 'Topes', 'StreamedTiles', 'BusStops', 'PowerLines', 'Pools', 'Furniture'])
     .filter((o) => o.parent === scene)];
@@ -357,17 +374,18 @@ async function initApp(): Promise<void> {
   }
 
   // 5. The render pipeline: the scene pass, half-res screen-space reflections, bloom & the colour grade
-  const render = createRenderPipeline(renderer, scene, cameraSystem.camera);
+  const render = createRenderPipeline(renderer, scene, cameraSystem.camera, quality.ssr);
   const { colorGrade } = render;
 
   // 6. The HUD's controls (safe DOM APIs only: textContent, classList, addEventListener)
   const cameraButtons = document.querySelectorAll('[data-camera]');
   const timeButtons = document.querySelectorAll('[data-time]');
+  const weatherButtons = document.querySelectorAll('[data-weather]');
   const hudToggleBtn = document.getElementById('btn-toggle-hud');
   const boardButton = document.getElementById('touch-board');
   const tachometer = new Tachometer(document.getElementById('hud-tacho'));
-  const liveButton = document.getElementById('time-live');
-  const liveLabel = liveButton?.querySelector('.seg-label') ?? null;
+  const liveInfo = document.getElementById('menu-live-info');
+  const skyNote = document.getElementById('menu-sky-note');
 
   // Live time of day: the real sun & weather over the weather location (world/weather.ts). ?live-time=<ISO date>
   // starts the clock elsewhere & ?live-weather=<clear|cloudy|overcast|rain|storm|fog> pins the conditions, to preview them
@@ -377,20 +395,26 @@ async function initApp(): Promise<void> {
     lightingSystem.liveClock = () => new Date(liveStart + performance.now() - t0);
   }
   const heldWeather = params.get('live-weather');
-  if (isWeatherSample(heldWeather)) lightingSystem.weather.hold(WEATHER_SAMPLES[heldWeather]);
-  lightingSystem.onLiveChange = (state) => {
-    colorGrade.applyMix(state.blend.a, state.blend.b, state.blend.t, state.block);
-    if (!liveButton) return;
+  // the menu's line under the weather: the place, the time there and its weather (in the player's language: shown
+  // again when it changes)
+  let liveShown: Parameters<NonNullable<typeof lightingSystem.onLiveChange>>[0] | null = null;
+  const showLive = (state: NonNullable<typeof liveShown>) => {
+    liveShown = state;
+    if (!liveInfo || lightingSystem.activePresetId !== 'live') return;
     const w = state.weather;
-    const t = w.temperature;
-    const temp = state.live && t !== null && Number.isFinite(t) ? ` ${Math.round(t)}°` : '';
-    if (liveLabel) liveLabel.textContent = `${state.location.name}${temp}`;
+    const temperature = w.temperature;
+    const temp = state.live && temperature !== null && Number.isFinite(temperature) ? ` · ${Math.round(temperature)}°` : '';
     let clock = '';
     try {
-      clock = lightingSystem.liveClock().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: state.location.timeZone });
+      clock = ` ${lightingSystem.liveClock().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: state.location.timeZone })}`;
     } catch { /* unknown time zone */ }
-    const sky = state.live ? weatherLabel(w) : state.loading ? 'Loading weather…' : 'Weather unavailable, clear sky';
-    liveButton.title = `Live · ${state.location.name} ${clock} · ${sky} · Weather data by Open-Meteo.com`;
+    const sky = t(state.live ? weatherLabel(w) : state.loading ? 'time.liveLoading' : 'time.liveUnavailable');
+    const source = lightingSystem.weather.held ? '' : t('menu.liveSource');
+    liveInfo.textContent = `${state.location.name}${clock} · ${sky}${temp}${source}`;
+  };
+  lightingSystem.onLiveChange = (state) => {
+    colorGrade.applyMix(state.blend.a, state.blend.b, state.blend.t, state.block);
+    showLive(state);
   };
   const gamepadControls = new GamepadControls(controllerManager, cameraSystem, {
     onBoard: () => { boarding.board(); },
@@ -402,17 +426,27 @@ async function initApp(): Promise<void> {
       else if (action === 'aim') weaponWheel.stick(x ?? 0, y ?? 0);
       else weaponWheel.close(action === 'close');
     },
-    onToggleMap: () => { mapSystem.toggleFullMap(!mapSystem.isFullMapOpen); },
-    onCloseMap: () => { mapSystem.toggleFullMap(false); }
+    onToggleMap: () => {
+      menu.toggle(false);
+      mapSystem.toggleFullMap(!mapSystem.isFullMapOpen);
+    },
+    onCloseMap: () => {
+      mapSystem.toggleFullMap(false);
+      menu.toggle(false);
+    },
+    onMenu: () => { if (!mapSystem.isFullMapOpen) menu.toggle(!menu.isOpen); }
   });
 
   // The HUD follows whatever the player is in now (on foot, or the vehicle it got into)
+  // the mode's name (the vehicle's)
+  function showMode() {
+    hud.showMode(controllerManager.activeMode, tName(controllerManager.getActiveEntity().label));
+  }
   function syncMode() {
     const mode = controllerManager.activeMode;
     touchControls.setMode(mode);
     gamepadControls.reset();
-    const ent = controllerManager.getActiveEntity();
-    hud.showMode(mode, ent.label, 'spec' in ent && ent.spec.nitro);
+    showMode();
     // If currently on a static scenic camera, switch to 3rd-Person Chase so user sees their selected character/vehicle
     if (cameraSystem.getActivePreset().category !== 'follow') selectCamera('chase', false);
   }
@@ -432,41 +466,78 @@ async function initApp(): Promise<void> {
     cameraButtons.forEach((btn) => {
       btn.classList.toggle('active', btn.getAttribute('data-camera') === camId);
     });
-    hud.showCamera(cameraSystem.getActivePreset().name);
   }
 
-  // Steps through CAMERA_PRESETS (V / Shift+V, and the arrows either side of the camera name)
+  // Steps through CAMERA_PRESETS (V / Shift+V, the pad's RB)
   function cycleCamera(step: number) {
     const n = CAMERA_PRESETS.length;
     const idx = CAMERA_PRESETS.findIndex((p) => p.id === cameraSystem.activePresetId);
     selectCamera(CAMERA_PRESETS[(idx + step + n) % n].id, true);
   }
 
-  function selectTime(timeId: string) {
-    lightingSystem.applyPreset(timeId);
+  // The sky: the time of day (a preset, or Live's real clock) and the weather (Live's real conditions, or a sample of
+  // world/weather.ts held). The weather shows under Live only: the fixed times of day are dry, clear presets
+  const sky: { time: SkyTime; weather: SkyWeather } = { time: 'live', weather: 'live' };
+  let skyShown = false;
+  function showSky(time: SkyTime, weather: SkyWeather) {
+    if (!skyShown || weather !== sky.weather) lightingSystem.setWeather(weather === 'live' ? null : WEATHER_SAMPLES[weather]);
+    lightingSystem.applyPreset(time);
     // Live grades itself through onLiveChange as the sun moves
     if (lightingSystem.activePresetId !== 'live') colorGrade.applyPreset(lightingSystem.activePresetId);
-    try {
-      localStorage.setItem('time-of-day', lightingSystem.activePresetId);
-    } catch { /* Storage may be disabled. */ }
-    timeButtons.forEach((btn) => {
-      btn.classList.toggle('active', btn.getAttribute('data-time') === timeId);
+    sky.time = time;
+    sky.weather = weather;
+    skyShown = true;
+    timeButtons.forEach((btn) => { btn.classList.toggle('active', btn.getAttribute('data-time') === time); });
+    weatherButtons.forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-weather') === weather);
+      if (btn instanceof HTMLButtonElement) btn.disabled = time !== 'live';
     });
+    showSkyInfo();
+  }
+  // The line under the weather: Live's (the place, the hour, the sky: onLiveChange writes it as it changes), or why the
+  // weather is greyed out
+  function showSkyInfo() {
+    if (sky.time === 'live') {
+      if (liveShown) showLive(liveShown);
+    } else if (liveInfo) {
+      liveInfo.textContent = t('menu.weatherNeedsReal');
+    }
+  }
+  // The menu's choice: in a multiplayer room it goes to everyone there and shows when the server passes it back (one
+  // sky for the whole room); alone it shows now and is remembered for next time
+  function pickSky(time: SkyTime, weather: SkyWeather) {
+    if (multiplayer?.setSky(time, weather)) return;
+    showSky(time, weather);
+    try {
+      localStorage.setItem('time-of-day', time);
+      localStorage.setItem('weather', weather);
+    } catch { /* Storage may be disabled. */ }
+  }
+  // ...and whose sky it is: this player's alone, or (once a multiplayer room has sent its own) the room's
+  let skyShared = false;
+  function showSkyNote() {
+    if (skyNote) skyNote.textContent = t(skyShared ? 'menu.skyShared' : 'menu.skyLocal');
   }
 
-  const closePopovers = wirePopovers();
   const isCameraId = (id: string | null): id is CameraPresetId => CAMERA_PRESETS.some((p) => p.id === id);
   cameraButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-camera');
       if (isCameraId(id)) selectCamera(id, true);
-      closePopovers();
+      menu.toggle(false);
     });
   });
-  document.getElementById('cam-prev')?.addEventListener('click', () => { cycleCamera(-1); });
-  document.getElementById('cam-next')?.addEventListener('click', () => { cycleCamera(1); });
   timeButtons.forEach((btn) => {
-    btn.addEventListener('click', () => { selectTime(btn.getAttribute('data-time') ?? 'live'); });
+    btn.addEventListener('click', () => {
+      const time = btn.getAttribute('data-time');
+      if (isSkyTime(time)) pickSky(time, sky.weather);
+    });
+  });
+  weatherButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const weather = btn.getAttribute('data-weather');
+      if (isSkyWeather(weather)) pickSky(sky.time, weather);
+    });
   });
 
   // No browser context menu in the game (text fields keep theirs): right-click or macOS Ctrl+click opened it, and
@@ -495,40 +566,84 @@ async function initApp(): Promise<void> {
       gamepadControls.setEnabled(!open);
       const mapHint = document.getElementById('fullmap-hover-info');
       if (open && touchControls.available && mapHint) {
-        mapHint.textContent = 'Tap to teleport · Drag to pan · Use + / − to zoom';
+        setText(mapHint, 'map.hintTouch');
       }
     },
     onTeleport: teleportTo
   });
-  wireTeleportButtons(document.querySelectorAll('[data-teleport]'), TELEPORT_LOCATIONS, teleportTo, closePopovers);
+  // The menu [Esc] (app/menu.ts): the game's input waits while it is open, as it does under the map. Its Keys tab
+  // rebinds the keyboard (ui/key-config.ts); the keycaps shown elsewhere in the menu follow
+  const keyConfig = new KeyConfig(document.getElementById('key-config'), keyBindings, document.getElementById('keys-reset'));
+  const menu = new GameMenu({
+    onToggle: (open) => {
+      keyConfig.cancel();
+      controllerManager.resetInput();
+      touchControls.setEnabled(!open);
+      gamepadControls.setEnabled(!open);
+    },
+    busy: () => mapSystem.isFullMapOpen || weaponWheel.isOpen,
+    onKey: (e) => keyConfig.handleKey(e)
+  });
+  // (the menu's keycaps: kbd[data-key="<binding>"])
+  const showKeycaps = () => {
+    for (const kbd of document.querySelectorAll<HTMLElement>('kbd[data-key]')) {
+      const action = kbd.dataset.key;
+      const code = isBindAction(action) ? keyBindings.get(action).at(0) : undefined;
+      kbd.textContent = code ? keyLabel(code) : '';
+      kbd.hidden = !code;
+    }
+  };
+  keyBindings.onChange(showKeycaps);
+  showKeycaps();
+  document.getElementById('btn-menu')?.addEventListener('click', () => { menu.toggle(true); });
+  wireTeleportButtons(document.querySelectorAll('[data-teleport]'), TELEPORT_LOCATIONS, teleportTo, () => { menu.toggle(false); });
   // (the police, gangs, pickups, fires & gas stations on the radar)
   mapSystem.setBlipSource(() => gasStations.blips(fires.blips(crimeSystem.blips())));
   mapSystem.setPolice(crimeSystem); // (where the police can see the player, on both maps)
-  document.getElementById('btn-open-map')?.addEventListener('click', () => { mapSystem.toggleFullMap(true); });
-
-  hudToggleBtn?.addEventListener('click', () => {
-    document.body.classList.toggle('hud-minimized');
-    const isMin = document.body.classList.contains('hud-minimized');
-    hudToggleBtn.setAttribute('aria-pressed', String(isMin));
-    hudToggleBtn.setAttribute('aria-label', isMin ? 'Show HUD' : 'Hide HUD');
-    hudToggleBtn.title = isMin ? 'Show the HUD [H]' : 'Clean view: hide the HUD [H]';
-    if (isMin) closePopovers();
+  document.getElementById('btn-open-map')?.addEventListener('click', () => {
+    menu.toggle(false);
+    mapSystem.toggleFullMap(true);
   });
 
-  // Global keyboard shortcuts for getting in & out (F), cameras (V / 5-0), and HUD (H)
+  const showHudToggle = () => {
+    if (!hudToggleBtn) return;
+    const isMin = document.body.classList.contains('hud-minimized');
+    hudToggleBtn.setAttribute('aria-pressed', String(isMin));
+    hudToggleBtn.title = t(isMin ? 'hud.showTitle' : 'hud.hideTitle');
+  };
+  showHudToggle();
+  hudToggleBtn?.addEventListener('click', () => {
+    document.body.classList.toggle('hud-minimized');
+    showHudToggle();
+  });
+
+  // The language (the menu's Settings, and the loading screen's button): every text the HUD keeps is shown again in
+  // the new language
+  document.getElementById('btn-lang')?.addEventListener('click', cycleLocale);
+  onLocaleChange(() => {
+    showMode();
+    hud.showSound(audioSystem);
+    showHudToggle();
+    showSkyInfo();
+    showSkyNote();
+  });
+
+  // Global keyboard shortcuts (their keys the menu's, input/keybindings.ts): getting in & out, cameras (and 5-0), the
+  // clean view, sound and the horn
   const CAMERA_KEYS: Readonly<Partial<Record<string, CameraPresetId>>> = {
     Digit5: 'chase', Digit6: 'action', Digit7: 'pov', Digit8: 'fifthAve', Digit9: 'timesSquare', Digit0: 'chryslerGCT'
   };
   window.addEventListener('keydown', (e) => {
     if (isTypingInField(e)) return;
+    if (e.code === 'Tab') e.preventDefault(); // (in play Tab never hops the focus onto a button Space would then press)
     const plain = !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey;
     const camera = CAMERA_KEYS[e.code];
     if (camera) selectCamera(camera, true);
-    else if (e.code === 'KeyF' && plain) boarding.board();
-    else if (e.code === 'KeyV') cycleCamera(e.shiftKey ? -1 : 1);
-    else if (e.code === 'KeyH') hudToggleBtn?.click();
-    else if (e.code === 'KeyN' && plain) audioSystem.setEnabled(!audioSystem.enabled);
-    else if (e.code === 'KeyB' && plain && !mapSystem.isFullMapOpen) audioSystem.honk(controllerManager.getActiveEntity());
+    else if (keyBindings.is('board', e.code) && plain) boarding.board();
+    else if (keyBindings.is('camera', e.code)) cycleCamera(e.shiftKey ? -1 : 1);
+    else if (keyBindings.is('cleanView', e.code)) hudToggleBtn?.click();
+    else if (keyBindings.is('sound', e.code) && plain) audioSystem.setEnabled(!audioSystem.enabled);
+    else if (keyBindings.is('horn', e.code) && plain && !mapSystem.isFullMapOpen) audioSystem.honk(controllerManager.getActiveEntity());
   });
 
   window.addEventListener('resize', () => {
@@ -543,11 +658,15 @@ async function initApp(): Promise<void> {
   // Initialize the UI and chase camera around the player, on foot.
   syncMode();
   selectCamera('chase', true);
+  // The sky this player left last time (?live-weather=<sample> holds one for a preview); a multiplayer room's replaces it
   let savedTime: string | null = null;
+  let savedWeather: string | null = null;
   try {
     savedTime = localStorage.getItem('time-of-day');
+    savedWeather = localStorage.getItem('weather');
   } catch { /* Storage may be disabled. */ }
-  selectTime(savedTime !== null && [...timeButtons].some((btn) => btn.getAttribute('data-time') === savedTime) ? savedTime : 'live');
+  showSky(isSkyTime(savedTime) ? savedTime : 'live', isWeatherSample(heldWeather) ? heldWeather : isSkyWeather(savedWeather) ? savedWeather : 'live');
+  showSkyNote();
   // Multiplayer (?multiplayer=1, see net/multiplayer.ts) loads only when asked for, so single-player pays nothing
   let multiplayer: Multiplayer | null = null;
   if (params.has('multiplayer')) {
@@ -559,7 +678,13 @@ async function initApp(): Promise<void> {
           return;
         }
         multiplayer = new Multiplayer({
-          scene, controllers: controllerManager, camera: cameraSystem.camera, crime: crimeSystem, cameras: cameraSystem, ...options
+          scene, controllers: controllerManager, camera: cameraSystem.camera, crime: crimeSystem, cameras: cameraSystem, ...options,
+          // (the room's sky, everyone's: on joining, and whenever someone in the room changes it)
+          onSky: (time, weather) => {
+            showSky(time, weather);
+            skyShared = true;
+            showSkyNote();
+          }
         });
         boarding.ride = multiplayer; // (F by a friend's car: in with them)
       })
@@ -572,7 +697,7 @@ async function initApp(): Promise<void> {
   let streamWarmup: THREE.Group | null = null;
   let warmupMeshes: THREE.Mesh[] = [];
   if (streamer) {
-    loading.status('Laying the streets around you...');
+    loading.status('loading.tiles');
     const here = controllerManager.getActiveEntity().position;
     await streamer.preload(here.x, here.z);
     streamWarmup = new THREE.Group();
@@ -584,14 +709,13 @@ async function initApp(): Promise<void> {
 
   // The player's body (actors/person-body.ts) in before the shaders compile, so its pipelines are among them
   // rather than built in play the frame it comes in; a slow connection waits PERSON_WAIT at most (it then comes in late)
-  loading.status('Dressing the player...');
+  loading.status('loading.player');
   await Promise.race([loadPersonBody(PLAYER_BODY).catch(() => null), new Promise((resolve) => setTimeout(resolve, PERSON_WAIT))]);
   loading.mark('person');
 
   // The loading screen stays up while the shaders compile and until the first frame is on screen
-  loading.status('Compiling Shaders & Render Pipelines...');
+  loading.status('loading.shaders');
   await precompileShaders(renderer, scene, cameraSystem.camera, render, (done) => {
-    loading.status(`Compiling Shaders & Render Pipelines... ${Math.round(done * 100)}%`);
     loading.progress(done);
   }, () => { loading.mark('postFX'); });
   loading.mark('compile');
@@ -718,7 +842,7 @@ async function initApp(): Promise<void> {
     Object.assign(window, { __slop: {
       scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, emergency, gasStations, controllerManager, trafficSystem,
       cameraSystem, streetDetails, cityGrid: city.cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl,
-      weaponWheel, weaponIcons, scheduler, boarding, multiplayer: () => multiplayer
+      weaponWheel, weaponIcons, scheduler, boarding, quality, multiplayer: () => multiplayer
     } });
   }
 
@@ -804,7 +928,7 @@ async function initApp(): Promise<void> {
       // The street corner of the player on the follow cameras, of the camera itself on the scenic ones
       const where = cameraSystem.getActivePreset().category === 'follow' ? entity.position : cameraSystem.currentPos;
       hud.showLocation(getLocationLabel(where.x, where.z));
-      hud.showPrompt(boarding.prompt(), controllerManager.activeMode === 'person');
+      hud.showPrompt(boarding.prompt(), boarding.promptAction);
     }
   });
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { PersonCrowd, PersonRig } from '../sim/pedestrians.ts';
 import { isTypingInField } from '../world/city-config.ts';
+import { keyBindings } from '../input/keybindings.ts';
 import { PLAYER_PERSON } from '../player/controllers/constants.ts';
 import {
   SEND_HZ,
@@ -12,11 +13,13 @@ import {
   encodeShot,
   encodeHit,
   encodeDown,
+  encodeSky,
   decodeServer
 } from '../../shared/protocol.ts';
-import type { Mode, MovedPlayer, PoseSource, ServerMessage, Shot } from '../../shared/protocol.ts';
+import type { Mode, MovedPlayer, PoseSource, ServerMessage, Shot, SkyTime, SkyWeather } from '../../shared/protocol.ts';
 import type { CrimeSystem, RemoteTarget } from '../sim/crime.ts';
 import type { CarEntity, PersonEntity, PlayerEntity } from '../player/controllers.ts';
+import { onLocaleChange, setLabel, setText, t } from '../i18n/i18n.ts';
 
 // js/net/multiplayer.ts
 // Browser side of the room server (server/index.ts), loaded only with ?multiplayer=1 (see main.ts). Sends the active
@@ -24,7 +27,8 @@ import type { CarEntity, PersonEntity, PlayerEntity } from '../player/controller
 // INTERP_DELAY_MS in the past, interpolating between the poses it received so 10 Hz updates look smooth. And what the
 // players do to each other: a chat (Enter), shots seen and heard, the hits the player's shots, blows and blasts land
 // on the others (sim/crime.ts traces them against their poses) and theirs on the player, who killed whom, and riding
-// in a friend's car (F by it: the camera rides along, and F again gets out).
+// in a friend's car (F by it: the camera rides along, and F again gets out). The sky is the room's: the time of day
+// and weather picked in the menu (app/menu.ts) go to everyone in it, and the room's arrives on joining.
 //
 //   ?multiplayer=1               connect (to the page's own server, tools/play.ts; ws://<host>:8787 from localhost)
 //   &mp-server=wss://host/path   another server
@@ -106,6 +110,8 @@ export interface MultiplayerOptions {
   url: string; // ws:// or wss://
   region?: string;
   name?: string;
+  /** the room's sky changed (or, on joining, is what it is): the time of day & weather to show */
+  onSky?: ((time: SkyTime, weather: SkyWeather) => void) | null;
 }
 
 export type MultiplayerStatus = 'connecting' | 'online' | 'offline' | 'error';
@@ -249,13 +255,15 @@ class Multiplayer {
   chat: HTMLDivElement;
   chatLog: HTMLDivElement;
   chatInput: HTMLInputElement;
+  onSky: ((time: SkyTime, weather: SkyWeather) => void) | null;
 
-  constructor({ scene, controllers, camera, crime = null, cameras = null, url, region = DEFAULT_REGION, name = '' }: MultiplayerOptions) {
+  constructor({ scene, controllers, camera, crime = null, cameras = null, url, region = DEFAULT_REGION, name = '', onSky = null }: MultiplayerOptions) {
     this.scene = scene;
     this.controllers = controllers;
     this.camera = camera;
     this.crime = crime;
     this.cameras = cameras;
+    this.onSky = onSky;
     this.targets = [];
     this.lastHurtBy = 0;
     this.lastHurtAt = -Infinity;
@@ -289,9 +297,10 @@ class Multiplayer {
     this.labels = document.createElement('div');
     this.labels.className = 'mp-labels';
     document.body.append(this.labels);
-    // under the brand panel, top left, so it never collides with the toolbar
+    // under the frame rate, top left
     (document.querySelector('.hud-top-left') ?? document.body).append(this.badge);
     this.renderBadge();
+    onLocaleChange(() => { this.renderBadge(); }); // (in the new language)
     [this.chat, this.chatLog, this.chatInput] = this.buildChat();
     if (crime) {
       crime.remotes = this.targets;
@@ -306,6 +315,17 @@ class Multiplayer {
     if (this.ws?.readyState === WebSocket.OPEN && this.status === 'online') this.ws.send(frame);
   }
 
+  get online(): boolean {
+    return this.status === 'online';
+  }
+
+  // Sets the room's sky for everyone in it; false when not in a room (the change stays this player's)
+  setSky(time: SkyTime, weather: SkyWeather): boolean {
+    if (!this.online) return false;
+    this.sendFrame(encodeSky(time, weather));
+    return true;
+  }
+
   // The chat: the lines said in the room (bottom left), and a field Enter opens (Enter again says it, Esc lets it go)
   buildChat(): [HTMLDivElement, HTMLDivElement, HTMLInputElement] {
     const chat = document.createElement('div');
@@ -318,13 +338,14 @@ class Multiplayer {
     input.className = 'mp-chat-input';
     input.type = 'text';
     input.maxLength = CHAT_MAX;
-    input.placeholder = 'Escribe y pulsa Enter · Esc para cerrar';
-    input.setAttribute('aria-label', 'Chat');
+    input.dataset.i18nPlaceholder = 'mp.chatPlaceholder';
+    input.placeholder = t('mp.chatPlaceholder');
+    setLabel(input, 'mp.chat');
     input.hidden = true;
     const button = document.createElement('button');
     button.className = 'mp-chat-btn';
     button.type = 'button';
-    button.textContent = 'Chat';
+    setText(button, 'mp.chat');
     chat.append(log, input, button);
     // over the minimap, bottom left (in the HUD's column there)
     (document.querySelector('.hud-bottom-left') ?? document.body).prepend(chat);
@@ -342,7 +363,7 @@ class Multiplayer {
     };
     button.addEventListener('click', open);
     window.addEventListener('keydown', (e) => {
-      if (e.code !== 'Enter' || !input.hidden || isTypingInField(e)) return;
+      if (!keyBindings.is('chat', e.code) || !input.hidden || isTypingInField(e)) return;
       e.preventDefault();
       open();
     });
@@ -365,7 +386,7 @@ class Multiplayer {
     if (from) {
       const who = document.createElement('span');
       who.className = 'mp-chat-name';
-      who.textContent = from === this.id ? `${name} (tú)` : name;
+      who.textContent = from === this.id ? t('mp.you', { name }) : name;
       line.append(who, document.createTextNode(` ${text}`));
     } else {
       line.textContent = text;
@@ -433,6 +454,10 @@ class Multiplayer {
     }
     if (msg.op === OP.SHOT_SEEN) {
       this.crime?.showShot(msg.shot);
+      return;
+    }
+    if (msg.op === OP.SKY_SET) {
+      this.onSky?.(msg.time, msg.weather);
       return;
     }
     if (msg.op === OP.HURT) {
@@ -618,7 +643,7 @@ class Multiplayer {
       this.cameras.follow = this.ride;
       this.cameras.resetForTeleport();
     }
-    this.crime?.toast(`En el coche de ${r.name} · F para bajar`);
+    this.crime?.toast(t('toast.rideIn', { name: r.name }));
   }
 
   // Out of the car: the walker stands at its right-hand door (where the car is now), the camera back on it
@@ -696,10 +721,10 @@ class Multiplayer {
 
   renderBadge(detail = ''): void {
     const text = {
-      connecting: 'Connecting…',
-      online: `Online · ${this.room} · ${this.roomPlayers} ${this.roomPlayers === 1 ? 'player' : 'players'}`,
-      offline: 'Offline · reconnecting…',
-      error: `Multiplayer error${detail ? `: ${detail}` : ''}`
+      connecting: t('mp.connecting'),
+      online: t(this.roomPlayers === 1 ? 'mp.onlineOne' : 'mp.online', { room: this.room, count: this.roomPlayers }),
+      offline: t('mp.offline'),
+      error: detail ? t('mp.errorDetail', { detail }) : t('mp.error')
     }[this.status];
     if (this.badge.textContent !== text) this.badge.textContent = text;
     this.badge.dataset.status = this.status;
@@ -726,7 +751,7 @@ function multiplayerOptions(search = location.search, host = location.hostname, 
   }
   // the first time, asked for (the others see it over the player's head)
   if (!name && typeof window.prompt === 'function') {
-    name = (window.prompt('¿Cómo te llamas? Los demás lo verán sobre tu cabeza.') ?? '').trim();
+    name = (window.prompt(t('mp.askName')) ?? '').trim();
     try {
       if (name) localStorage.setItem(NAME_KEY, name);
     } catch {

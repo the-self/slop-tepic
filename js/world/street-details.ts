@@ -221,20 +221,22 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
     ))
   ].map((g) => g.toNonIndexed()));
   const signalLensGeo = mergeGeometries(LENS_Y.flatMap((ly) => bothFaces(new THREE.CircleGeometry(LENS_R, 18).translate(0, ly, HEAD_D / 2 + 0.004))));
-  // Cobra-head luminaire on the end of the arm: flattened grey housing, flat lens underneath
-  const lampHousingGeo = new THREE.SphereGeometry(1, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(0.7, 0.2, 0.3);
-  const lampLensGeo = new THREE.CircleGeometry(1, 16).rotateX(Math.PI / 2).scale(0.6, 1, 0.24).translate(0, -0.005, 0);
+  // Cobra-head luminaire on the end of the arm: flattened grey housing, flat lens underneath (70 & 10 triangles: there
+  // are ~62k of them, and at 14 x 8 segments they were 13M triangles over the city, ~1M in a street-level view)
+  const lampHousingGeo = new THREE.SphereGeometry(1, 10, 4, 0, Math.PI * 2, 0, Math.PI / 2).scale(0.7, 0.2, 0.3);
+  const lampLensGeo = new THREE.CircleGeometry(1, 10).rotateX(Math.PI / 2).scale(0.6, 1, 0.24).translate(0, -0.005, 0);
   // The centro's cast-iron farol, painted dark green: a fluted base, a slender shaft, a swan-neck arm curving out over
   // the sidewalk (local +x, turned towards the street) and a bell lantern hanging from it, its glass lit at night
   const SWAN = { x: 0.82, y: 3.62 }; // where the lantern hangs (its glass's centre)
+  // (236 triangles: the swan neck's 3.5 cm tube needs no more than 4 sides)
   const pedLampPostGeo = mergeGeometries([
-    new THREE.CylinderGeometry(0.11, 0.16, 0.85, 10).translate(0, 0.425, 0),
-    new THREE.CylinderGeometry(0.065, 0.085, 3.35, 10).translate(0, 2.52, 0),
-    new THREE.TorusGeometry(0.42, 0.035, 6, 12, Math.PI * 0.6).rotateZ(Math.PI * 0.2).translate(0.42, 3.95, 0),
-    new THREE.SphereGeometry(0.07, 8, 6).translate(0, 4.22, 0),
+    new THREE.CylinderGeometry(0.11, 0.16, 0.85, 8).translate(0, 0.425, 0),
+    new THREE.CylinderGeometry(0.065, 0.085, 3.35, 8).translate(0, 2.52, 0),
+    new THREE.TorusGeometry(0.42, 0.035, 4, 8, Math.PI * 0.6).rotateZ(Math.PI * 0.2).translate(0.42, 3.95, 0),
+    new THREE.SphereGeometry(0.07, 6, 4).translate(0, 4.22, 0),
     new THREE.CylinderGeometry(0.018, 0.018, 0.22, 6).translate(SWAN.x, SWAN.y + 0.43, 0),
-    new THREE.ConeGeometry(0.24, 0.2, 12).translate(SWAN.x, SWAN.y + 0.24, 0),
-    new THREE.CylinderGeometry(0.06, 0.1, 0.06, 12).translate(SWAN.x, SWAN.y - 0.2, 0)
+    new THREE.ConeGeometry(0.24, 0.2, 8).translate(SWAN.x, SWAN.y + 0.24, 0),
+    new THREE.CylinderGeometry(0.06, 0.1, 0.06, 8).translate(SWAN.x, SWAN.y - 0.2, 0)
   ].map((g) => g.toNonIndexed()));
   const pedGlobeGeo = new THREE.CylinderGeometry(0.17, 0.12, 0.34, 12).translate(SWAN.x, SWAN.y, 0);
   // the farol's turn: its arm (local +x) over the street, whose outward normal is (ox, oz)

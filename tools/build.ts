@@ -49,7 +49,7 @@ if (serve) {
   const context = await esbuild.context(options);
   await context.watch();
   const { hosts } = await context.serve({ servedir: '.', port });
-  console.log(`Slop Tepic on http://${hosts[0] === '0.0.0.0' ? 'localhost' : hosts[0]}:${port}`);
+  console.log(`Tepic on http://${hosts[0] === '0.0.0.0' ? 'localhost' : hosts[0]}:${port}`);
 } else {
   await esbuild.build(options);
 }

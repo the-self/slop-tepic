@@ -35,7 +35,7 @@ export interface CarFileLevel {
 }
 
 /** A car file's levels of detail by distance from the camera (m): its own to the first, its lighter ones (CarFile
- * `lods`) to the next, as GTA V's cars change at 15, 30, 60 & 120 m (the traffic's plain body shape takes over beyond
+ * `lods`) to the next, as open-world games' cars change at about 15, 30, 60 & 120 m (the traffic's plain body shape takes over beyond
  * sim/traffic/render.ts CAR_PROXY_DISTANCE) */
 export const MODEL_LOD_DISTANCES = [25, 50];
 

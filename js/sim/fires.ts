@@ -4,6 +4,7 @@ import type { GunfireFX } from './gunfire-fx.ts';
 import type { EmergencyCall } from './emergency.ts';
 import type { AmbientSource } from '../audio/audio-ambience.ts';
 import type { ThirdPersonControllerManager } from '../player/controllers.ts';
+import { t } from '../i18n/i18n.ts';
 
 // js/sim/fires.ts
 // Fires: a car burning after a blast, a house on fire now and then somewhere near, and in the dry season (March to
@@ -124,7 +125,7 @@ class Fires {
       const hx = x + Math.cos(a * 0.785) * 4, hz = z + Math.sin(a * 0.785) * 4;
       if (c.isSolidAt(hx, hz, 3, c.getGroundHeight(hx, hz, 'car'))) {
         const f = this.ignite('house', hx, hz);
-        if (f) this.crime.toast('¡Se incendió una casa!');
+        if (f) this.crime.toast(t('toast.houseFire'));
         break;
       }
     }
@@ -165,7 +166,7 @@ class Fires {
         const f = this.ignite('house', h.x, h.z);
         if (f) {
           f.roof = h.roof;
-          crime.toast(`Incendio: ${getLocationLabel(h.x, h.z)}`);
+          crime.toast(t('toast.fireAt', { place: getLocationLabel(h.x, h.z) }));
         }
       }
     }

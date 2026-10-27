@@ -3,6 +3,7 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const test = require('node:test');
 const { loadModule } = require('./helpers/module.cjs');
+const { i18n } = require('./helpers/i18n.cjs');
 
 const source = readFileSync(join(__dirname, '../js/input/touch-controls.ts'), 'utf8');
 
@@ -14,6 +15,7 @@ function element(attributes = {}) {
   return {
     hidden: false,
     textContent: '',
+    dataset: {},
     classList: {
       add: (name) => classes.add(name),
       remove: (name) => classes.delete(name),
@@ -59,7 +61,7 @@ function harness({ coarse = true, mode = 'person' } = {}) {
     setTouchInput(action, value) { input[action] = value; },
     clearTouchInput() { for (const action of Object.keys(input)) input[action] = 0; }
   };
-  const { TouchControls } = loadModule(source, { globals: { window, document } });
+  const { TouchControls } = loadModule(source, { globals: { window, document }, imports: { '../i18n/i18n.ts': i18n } });
   const controls = new TouchControls(controller);
   return { controls, window, document, media, root, stick, knob, buttons, labels, input };
 }

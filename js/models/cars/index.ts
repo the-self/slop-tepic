@@ -23,7 +23,7 @@ export type CarClass = 'economy' | 'family' | 'truck' | 'premium' | 'sport' | 's
 /** A car (or motorcycle) model's real figures: README.md says what each field means */
 export interface CarModel {
   id: string; // unique, `make-model`
-  name: string; // what the HUD shows
+  name: string; // what the HUD shows: a joke on the make's name (README.md), or a message key (i18n/)
   body: CarBody;
   class: CarClass;
   size: [length: number, width: number, height: number]; // m
@@ -62,7 +62,7 @@ const POLICE_MODEL = modelById('dodge-charger-pursuit');
 // 810 N·m from 1200 rpm, 17 t gross); this one, ~11.5 t with its passengers, is what the player drives off in after
 // taking one off its route. Never drawn into the car traffic: the buses run as buses (traffic.ts)
 const BUS_MODEL: CarModel = {
-  id: 'mercedes-boxer-of', name: 'Mercedes-Benz Boxer OF 1722', body: 'bus', class: 'truck', traffic: false, rarity: 0,
+  id: 'mercedes-boxer-of', name: 'Merceditas Boxeador OF 1722', body: 'bus', class: 'truck', traffic: false, rarity: 0,
   size: [11.6, 2.6, 3.0], mass: 11500, drive: 'rwd', power: [160, 2200], torque: [810, 1400], redline: 2600,
   gears: 6, top: 90, limited: true, wheelRadius: 0.48
 };

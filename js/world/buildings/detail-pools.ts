@@ -136,10 +136,11 @@ function createDetailPools(group: THREE.Group, unitBox: THREE.BoxGeometry): Deta
   group.add(hvacInst);
 
   // 3B. Black polyethylene water tanks (tinacos) on the Mexican houses' flat roofs: ribbed drum, domed lid, a cap
+  // (134 triangles: up to MAX_TINACOS of them round the camera, all drawn in the view & both cascades)
   const tinacoGeo = mergeGeometries([
-    new THREE.CylinderGeometry(0.56, 0.6, 1.25, 14).translate(0, 0.625, 0),
-    new THREE.SphereGeometry(0.56, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.35, 1).translate(0, 1.25, 0),
-    new THREE.CylinderGeometry(0.2, 0.2, 0.08, 10).translate(0, 1.47, 0),
+    new THREE.CylinderGeometry(0.56, 0.6, 1.25, 10).translate(0, 0.625, 0),
+    new THREE.SphereGeometry(0.56, 10, 3, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.35, 1).translate(0, 1.25, 0),
+    new THREE.CylinderGeometry(0.2, 0.2, 0.08, 8).translate(0, 1.47, 0),
     new THREE.BoxGeometry(0.9, 0.12, 0.9).translate(0, 0.06, 0)
   ].map((g) => g.toNonIndexed()));
   const tinacoInst = new THREE.InstancedMesh(tinacoGeo, new THREE.MeshStandardNodeMaterial({ color: 0x17181a, roughness: 0.55 }), MAX_TINACOS);

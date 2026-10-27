@@ -1,9 +1,10 @@
 // js/sim/emergency.ts
 // The emergency services: for a fire the bomberos set out from their station on Av. Insurgentes, two to four trucks;
-// for someone killed or a hard crash the Cruz Roja's ambulance from their base next door, or the nearest hospital's.
-// They drive across the city with their sirens (the patrol cars' driving: they are in crime.ts's pool of them), park
-// by the scene, their crews get down to work (the bomberos hose the fire down, the paramédicos see to the hurt), and
-// once it is over they drive back, out of the world again when out of sight or home.
+// for someone killed or a hard crash the Cruz Roja's ambulance from their base next door, or the nearest hospital's,
+// there a minute or two after the call. They drive across the city with their sirens (the patrol cars' driving: they
+// are in crime.ts's pool of them), park by the scene, their crews get down to work (the bomberos hose the fire down,
+// the paramédicos bring the hurt round one by one: they get up and walk off), and once it is over they drive back, out
+// of the world again when out of sight or home.
 import * as THREE from 'three/webgpu';
 import { Bystanders, BYSTANDER_STYLES } from './bystanders.ts';
 import { FIRE_STATIONS, AMBULANCE_BASES, nearestStation } from './emergency/stations.ts';
@@ -13,6 +14,7 @@ import type { Station } from './emergency/stations.ts';
 import type { CrimeSystem } from './crime.ts';
 import type { Cruiser } from './crime/types.ts';
 import type { RagdollHandle } from './ragdolls.ts';
+import { t } from '../i18n/i18n.ts';
 
 type Service = 'fire' | 'ambulance';
 interface XZ {
@@ -23,7 +25,8 @@ interface XZ {
  * A call for help at (x, z) (m): which service, how many units it wants, how far from its middle the trouble reaches
  * (m: a fire's size), whether it still needs them (the fire burning, the hurt not seen to yet), s since it was made
  * (negative: not yet, someone is still dialling), the units sent, how many are at work on it (fires.ts: the hoses), s
- * since it was closed; the bodies lying there for the paramédicos (they wait for them: RagdollHandle awaiting)
+ * since it was closed; the bodies lying there for the paramédicos (they wait for them: RagdollHandle awaiting), how
+ * many they have brought round and s on the one they see to now; s after it was made its ambulance is to be there by
  */
 interface EmergencyCall extends XZ {
   service: Service;
@@ -35,11 +38,15 @@ interface EmergencyCall extends XZ {
   working: number;
   closedT: number;
   bodies: RagdollHandle[];
+  treated: number;
+  treatT: number;
+  due: number;
 }
 /**
  * A fire truck or ambulance: its vehicle (a Cruiser in crime.ts's pool), its station, the call it answers; idle in its
  * station, waiting to set out (t < 0), on its way, at work at the scene, or going back; t s in that phase, its place
- * among the call's units (where it parks), s it has stood stuck behind the traffic
+ * among the call's units (where it parks), s it has stood stuck behind the traffic, the nearest it has come to the
+ * scene (m) and s since it last came nearer
  */
 interface Responder {
   cr: Cruiser;
@@ -50,6 +57,8 @@ interface Responder {
   t: number;
   slot: number;
   blocked: number;
+  closest: number;
+  closeT: number;
 }
 interface EmergencyOptions {
   scene: THREE.Object3D;
@@ -63,15 +72,28 @@ const SPEED: Readonly<Record<Service, number>> = { fire: 17, ambulance: 20 }; //
 const BACK_SPEED = 12; // m/s going back, no hurry
 const STAGGER = 3; // s between the trucks of one call setting out
 const AMBULANCE_DELAY: [number, number] = [4, 9]; // s before someone has called the 911
+const AMBULANCE_ARRIVES: [number, number] = [60, 110]; // s from the call to the ambulance there (a minute or two)
+const ROAD_FACTOR = 1.4; // the road's length over the crow's flight across Tepic's grid (a first guess, before the route)
+const CITY_SPEED = 10; // m/s an ambulance makes good along its route, sirens on (slowed at the crossings, by the traffic)
 const SAME_SCENE = 45; // m: a call this near an open one is the same
-const WORK_TIME = 30; // s the paramédicos take
+const WORK_TIME = 30; // s the paramédicos stay at least
+const TREAT_TIME = 14; // s the paramédicos take to bring one round
 const LINGER = 12; // s the bomberos stay once the fire is out
 const GONE = 320; // m from the camera going back: out of sight, back in its station
+const LATE = 15; // s past when it should have been there that a held-up ambulance gets through (headStart)
+const UNSEEN = 160; // m from the camera nothing is seen to jump (the player is mostly at the scene)
+const LAST_STRETCH = 230; // m of its route a late ambulance is still seen to drive, once it has got through
+const PARK_NEAR = 30; // m from the hurt an ambulance that can get no nearer parks (they lie in a park, a plaza)
 const GIVE_UP = 300; // s on its way before it gives up (stuck somewhere: across the city takes 3 at most)
 const CREW = 3; // bomberos per truck
 const PARAMEDICS = 2;
 
 const rnd = (a: number, b: number): number => a + Math.random() * (b - a);
+// Whether there were bodies and every one is gone from the street (a loop, not a closure: this runs every frame)
+const allGone = (bodies: readonly RagdollHandle[]): boolean => {
+  for (const b of bodies) if (!b.released) return false;
+  return bodies.length > 0;
+};
 
 class EmergencyServices {
   crime: CrimeSystem;
@@ -94,7 +116,7 @@ class EmergencyServices {
     crime.cruisers.push(...vehicles);
     this.units = vehicles.map((cr): Responder => ({
       cr, service: cr.faction === 'fire' ? 'fire' : 'ambulance', home: (cr.faction === 'fire' ? FIRE_STATIONS : AMBULANCE_BASES)[0],
-      call: null, phase: 'idle', t: 0, slot: 0, blocked: 0
+      call: null, phase: 'idle', t: 0, slot: 0, blocked: 0, closest: Infinity, closeT: 0
     }));
     this.calls = [];
     this.junctions = new Set(crime.nodes.filter((_, i) => crime.links[i].length >= 3));
@@ -103,19 +125,29 @@ class EmergencyServices {
 
   /** The bomberos called to a fire at (x, z) `size` m across: `want` trucks (more set out as others come free) */
   callFire(x: number, z: number, size: number, want: number): EmergencyCall {
-    const call: EmergencyCall = { service: 'fire', x, z, want, reach: size * 0.5, open: true, t: 0, units: [], working: 0, closedT: 0, bodies: [] };
+    const call: EmergencyCall = {
+      service: 'fire', x, z, want, reach: size * 0.5, open: true, t: 0, units: [], working: 0, closedT: 0, bodies: [], treated: 0, treatT: 0, due: Infinity
+    };
     this.calls.push(call);
     return call;
   }
 
   /**
-   * An ambulance called for someone hurt at (x, z): a few seconds on, unless one is already called nearby. `body`: their
-   * body, which lies there till the paramédicos take it
+   * An ambulance called for someone hurt at (x, z), unless one is already called nearby: there a minute or two on
+   * (`due`), from the base nearest it, setting out as late as that allows (a few seconds on, someone having dialled);
+   * from a base too far for that, it is one already out on the streets, on its way along its route (headStart).
+   * `body`: their body, which lies there till the paramédicos bring them round
    */
   callAmbulance(x: number, z: number, body: RagdollHandle | null = null): EmergencyCall {
     let call = this.calls.find((c) => c.service === 'ambulance' && c.open && Math.hypot(c.x - x, c.z - z) < SAME_SCENE);
     if (!call) {
-      call = { service: 'ambulance', x, z, want: 1, reach: 0, open: true, t: -rnd(...AMBULANCE_DELAY), units: [], working: 0, closedT: 0, bodies: [] };
+      const base = nearestStation(AMBULANCE_BASES, x, z);
+      const due = rnd(...AMBULANCE_ARRIVES), dial = rnd(...AMBULANCE_DELAY);
+      const road = base ? (Math.hypot(base.x - x, base.z - z) * ROAD_FACTOR) : 0; // m, a first guess
+      const delay = Math.max(dial, due - road / CITY_SPEED);
+      call = {
+        service: 'ambulance', x, z, want: 1, reach: 0, open: true, t: -delay, units: [], working: 0, closedT: 0, bodies: [], treated: 0, treatT: 0, due
+      };
       this.calls.push(call);
     }
     if (body) {
@@ -132,7 +164,7 @@ class EmergencyServices {
     for (const u of this.units) {
       if (call.units.length >= call.want) break;
       if (u.service !== call.service || u.phase !== 'idle') continue;
-      Object.assign(u, { call, home, phase: 'wait', t: -call.units.length * STAGGER, slot: call.units.length });
+      Object.assign(u, { call, home, phase: 'wait', t: -call.units.length * STAGGER, slot: call.units.length, closest: Infinity, closeT: 0 });
       call.units.push(u);
     }
   }
@@ -156,6 +188,8 @@ class EmergencyServices {
       if (!c.open) c.closedT += dt;
       // (nobody came for a hurt in two minutes: they were taken some other way)
       if (c.service === 'ambulance' && c.open && !c.units.length && c.t > 120) c.open = false;
+      // (the bodies it was called for all gone from the street, taken out of the world: nobody left to see to)
+      if (c.service === 'ambulance' && c.open && allGone(c.bodies)) c.open = false;
       if (c.open && c.t >= 0 && c.units.length < c.want) this.assign(c);
       // closed: the bodies taken away (or, nobody having come, left to the traffic & the police to clear)
       if (!c.open && c.bodies.length) {
@@ -198,8 +232,10 @@ class EmergencyServices {
           if (setOut(this, u, call.x, call.z)) {
             u.phase = 'go';
             u.t = 0;
+            // (its route longer than it can drive by when it is due: one already out on the streets, on its way)
+            if (call.service === 'ambulance') this.headStart(u, call, (call.due - call.t) * CITY_SPEED, camera);
             const p = this.crime.player.position;
-            if (u.slot === 0 && call.service === 'fire' && Math.hypot(p.x - call.x, p.z - call.z) < 800) this.crime.toast('The bomberos are on their way');
+            if (u.slot === 0 && call.service === 'fire' && Math.hypot(p.x - call.x, p.z - call.z) < 800) this.crime.toast(t('toast.firefighters'));
           } else {
             // (no way there: nobody can get to it)
             call.open = false;
@@ -220,10 +256,22 @@ class EmergencyServices {
           this.goBack(u);
           return;
         }
+        // (held up past when it should have been there: out of sight, it gets through the rest but the last stretch)
+        if (call.service === 'ambulance' && call.t > call.due + LATE) this.headStart(u, call, LAST_STRETCH, camera);
         // the trucks park one behind another short of the fire; the ambulance by the hurt
         const stop = call.service === 'fire' ? call.reach + 7 + u.slot * 10 : 4;
         const d = driveTo(this, u, dt, call.x, call.z, stop, SPEED[u.service]);
-        if (d <= stop + 1.5 || (d < stop + 12 && Math.abs(cr.speed) < 0.5 && u.t > 5)) {
+        if (d < u.closest - 0.5) {
+          u.closest = d;
+          u.closeT = 0;
+        } else {
+          u.closeT += dt;
+        }
+        // (an ambulance on the last leg of its route that can't get nearer the hurt, off the road, parks as near as it
+        // got: they walk the rest. Not one going by on its way round: it comes nearer again)
+        const lastLeg = !cr.path || cr.pathI >= cr.path.length - 1;
+        const stuckNear = call.service === 'ambulance' && lastLeg && d < PARK_NEAR && u.closeT > 3;
+        if (d <= stop + 1.5 || (d < stop + 12 && Math.abs(cr.speed) < 0.5 && u.t > 5) || stuckNear) {
           u.phase = 'work';
           u.t = 0;
         }
@@ -241,8 +289,22 @@ class EmergencyServices {
           const p = this.crime.player.position;
           if (!call.open && (call.closedT > LINGER || Math.hypot(p.x - cr.x, p.z - cr.z) > 200)) this.goBack(u);
         } else {
-          if (u.t > 2) this.paramedics(k, call, camera);
-          if (u.t > WORK_TIME) {
+          // the paramédicos see to the hurt one by one, and bring each round: they get up (traffic/peds.ts, crime/agents.ts)
+          // (passing over those gone from the street meanwhile)
+          while (call.bodies.at(call.treated)?.released) call.treated++;
+          const b = call.bodies.at(call.treated);
+          if (u.t > 2) {
+            this.paramedics(k, b, call, camera);
+            if (b) call.treatT += dt;
+          }
+          if (b && call.treatT > TREAT_TIME) {
+            b.revived = true;
+            call.treated++;
+            call.treatT = 0;
+            const p = this.crime.player.position;
+            if (Math.hypot(p.x - b.px, p.z - b.pz) < 60) this.crime.toast('The paramédicos brought them round');
+          }
+          if (u.t > WORK_TIME && call.treated >= call.bodies.length) {
             call.open = false;
             this.goBack(u);
           }
@@ -256,6 +318,37 @@ class EmergencyServices {
           u.phase = 'idle';
         }
       }
+    }
+  }
+
+  /**
+   * An ambulance with more of its route ahead than `reach` m (setting out from a base across the city, held up on its
+   * way in a jam that won't clear for its siren or a street it can't get round) is put on along it, out of the player's
+   * sight, to the crossing from which reach m or so of it is left, where it is seen coming the rest of the way
+   */
+  headStart(u: Responder, call: EmergencyCall, reach: number, camera: { position: XZ }): void {
+    const cr = u.cr, path = cr.path;
+    if (!path) return;
+    const cam = camera.position;
+    if (Math.hypot(cr.x - cam.x, cr.z - cam.z) < UNSEEN) return; // (where the player sees it: it comes on as it can)
+    // the route still ahead of each crossing on it (m), back from the scene
+    let left = Math.hypot(call.x - (path.at(-1)?.x ?? cr.x), call.z - (path.at(-1)?.z ?? cr.z));
+    for (let i = path.length - 1; i > cr.pathI; i--) {
+      const p = path[i], q = path[i - 1];
+      const before = left + Math.hypot(p.x - q.x, p.z - q.z); // (from q on)
+      if (before > reach && left <= reach) {
+        // p is the farthest crossing within reach: on from there, unless the player would see it appear there
+        if (Math.hypot(p.x - cam.x, p.z - cam.z) < UNSEEN) return;
+        const next = path.at(i + 1) ?? call; // (on the leg from it to the next: cruisers.ts follows path[pathI - 1] to path[pathI])
+        Object.assign(cr, {
+          x: p.x, z: p.z, heading: Math.atan2(next.x - p.x, next.z - p.z), speed: 0, vx: 0, vz: 0, pathI: Math.min(i + 1, path.length - 1),
+          stuckT: 0, stuckCount: 0, reverseT: 0, checkX: p.x, checkZ: p.z
+        });
+        cr.y = this.crime.groundAt(cr.x, cr.z);
+        cr.mesh.position.set(cr.x, cr.y, cr.z);
+        return;
+      }
+      left = before;
     }
   }
 
@@ -289,10 +382,9 @@ class EmergencyServices {
     }
   }
 
-  // The paramédicos seeing to the hurt: either side of the first of them (where they were called to, if none lies
-  // there now), facing them
-  paramedics(k: number, call: EmergencyCall, camera: { position: XZ }): void {
-    const b = call.bodies.at(0);
+  // The paramédicos seeing to the hurt: either side of `b`, the one they see to now (where they were called to, if
+  // none lies there), facing them
+  paramedics(k: number, b: RagdollHandle | undefined, call: EmergencyCall, camera: { position: XZ }): void {
     const cx = b ? b.px : call.x, cz = b ? b.pz : call.z;
     for (let j = 0; j < PARAMEDICS; j++) {
       const a = j * Math.PI + k;
