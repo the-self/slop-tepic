@@ -6,6 +6,7 @@ import { blockAt } from './city-config.ts';
 import { cityUniforms } from '../render/tsl-materials.ts';
 import { liftAt, landHeight } from './ground.ts';
 import { MODEL_RESERVES, geoToWorld } from './landmark-models.ts';
+import { UAN_RESERVE } from './uan.ts';
 import type { LotReserve } from './landmark-models.ts';
 import type { Collider } from './buildings.ts';
 
@@ -186,8 +187,9 @@ function churchRect(C: CatedralFrame, [x0, x1, z0, z1]: Rect, margin = 0): LotRe
   };
 }
 
-// Lots the generic houses keep off: { contains(x, z) } (and those of the landmarks made as 3D models)
-const LANDMARK_RESERVES: LotReserve[] = [...MODEL_RESERVES];
+// Lots the generic houses keep off: { contains(x, z) } (and those of the landmarks made as 3D models, and the UAN's
+// grounds: its buildings are uan.ts's)
+const LANDMARK_RESERVES: LotReserve[] = [...MODEL_RESERVES, UAN_RESERVE];
 if (CATEDRAL) {
   const C = CATEDRAL;
   // OpenStreetMap's outline (the houses behind the casona stay: its oriented box took them in too), the atrium, and the
