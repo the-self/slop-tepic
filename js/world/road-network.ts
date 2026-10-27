@@ -326,6 +326,12 @@ const CHORD_STRAY = 0.5; // m a centreline street's edge (a chord between statio
 const CROSSWALK = 2.5; // depth between an intersection box and its stop lines
 const SIGNAL_CLEAR = 26; // m from a street's junctions a signal along it stands for a stop of its own (8.)
 const SHORE_MARGIN = 6;
+// A signalised junction drawn as several (4.): links under SPLIT_LINK m between nodes within SPLIT_SIGNAL m of a traffic
+// signal make one junction, at most SPLIT_SPAN m across
+const SPLIT_LINK = 25;
+const SPLIT_SIGNAL = 12;
+const SPLIT_SPAN = 60;
+const ALONG = 0.94; // cos of the widest angle (20°) at which a road at a junction runs along another's line
 
 function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly Footprint[]): RoadNetwork {
   // 1. Spatial hash of ground footprints: curbs bound the roads, everything else also blocks pedestrians
@@ -629,10 +635,62 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
       if (n && hit > n * 0.5) continue;
       links.push({ a, b, name: RG.names[ni], minor: minor === 1, w, lanes, dir, pts, len });
     }
-    // Junctions a few metres apart (divided roads, offset corners) are one: collapse links under 14 m
+    // Junctions a few metres apart (divided roads, offset corners) are one: collapse links under 14 m. So is a signalised
+    // junction OpenStreetMap draws as several, a node with lights of its own where each carriageway crosses another
+    // (Av. Tecnológico's four carriageways across Lagos del Country's two, 20 m apart): links under SPLIT_LINK between
+    // nodes by a signal collapse too, as long as the junction they make stays within SPLIT_SPAN across. Left as several,
+    // the traffic stopped at every light of it, and whoever was caught between two when they changed waited out the
+    // other phase there: a ring of queues that never cleared.
     const parent = pos.map((_, i) => i);
     const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
     for (const l of links) if (l.len < 14) parent[find(l.a)] = find(l.b);
+    {
+      const sig = RG.signals;
+      const cells = new Map<number, number[]>();
+      for (let i = 0; i + 1 < sig.length; i += 2) {
+        const key = Math.floor(sig[i] / 32) * 100003 + Math.floor(sig[i + 1] / 32);
+        let list = cells.get(key);
+        if (!list) cells.set(key, (list = []));
+        list.push(sig[i], sig[i + 1]);
+      }
+      const bySignal = (i: number) => {
+        const { x, z } = pos[i];
+        for (let ix = Math.floor((x - SPLIT_SIGNAL) / 32); ix <= Math.floor((x + SPLIT_SIGNAL) / 32); ix++) {
+          for (let iz = Math.floor((z - SPLIT_SIGNAL) / 32); iz <= Math.floor((z + SPLIT_SIGNAL) / 32); iz++) {
+            const list = cells.get(ix * 100003 + iz) ?? [];
+            for (let k = 0; k < list.length; k += 2) if (Math.hypot(list[k] - x, list[k + 1] - z) < SPLIT_SIGNAL) return true;
+          }
+        }
+        return false;
+      };
+      // each junction's extent so far: its root -> [min x, min z, max x, max z]
+      const extent = new Map<number, [number, number, number, number]>();
+      const boxOf = (r: number) => {
+        let b = extent.get(r);
+        if (!b) {
+          b = [Infinity, Infinity, -Infinity, -Infinity];
+          for (let i = 0; i < pos.length; i++) {
+            if (find(i) !== r) continue;
+            b[0] = Math.min(b[0], pos[i].x);
+            b[1] = Math.min(b[1], pos[i].z);
+            b[2] = Math.max(b[2], pos[i].x);
+            b[3] = Math.max(b[3], pos[i].z);
+          }
+          extent.set(r, b);
+        }
+        return b;
+      };
+      for (const l of links) {
+        if (l.len >= SPLIT_LINK || l.len < 14) continue;
+        const ra = find(l.a), rb = find(l.b);
+        if (ra === rb || !bySignal(l.a) || !bySignal(l.b)) continue;
+        const a = boxOf(ra), b = boxOf(rb);
+        const box: [number, number, number, number] = [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+        if (Math.hypot(box[2] - box[0], box[3] - box[1]) > SPLIT_SPAN) continue;
+        parent[ra] = rb;
+        extent.set(rb, box);
+      }
+    }
     const sum = new Map<number, { x: number; z: number; n: number }>();
     const counted = new Set<number>();
     for (const l of links) {
@@ -1411,7 +1469,14 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
       groups = 2;
     }
     roads.sort((p, q) => q.rank - p.rank);
-    for (const r of roads) if (r.group < 0) r.group = groups++;
+    for (const r of roads) {
+      if (r.group >= 0) continue;
+      // off the grid, a road along one already grouped is another carriageway of it, left unpaired (Av. Tecnológico runs
+      // four abreast across Lagos del Country): it runs with it, not across it in the box nor on the other phase
+      const along = n.general ? roads.find((q) => q.group >= 0 && r.members.every((m) =>
+        q.members.some((o) => Math.abs(m.ux * o.ux + m.uz * o.uz) > ALONG))) : undefined;
+      r.group = along ? along.group : groups++;
+    }
     for (const r of roads) for (const m of r.members) m.group = r.group;
     n.groupCount = Math.max(2, groups);
   }
