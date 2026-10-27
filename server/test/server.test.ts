@@ -6,7 +6,7 @@ import type { Health } from '../index.ts';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { OP, PROTOCOL_VERSION, encodeHello, encodeState, encodeChat, encodeShot, encodeHit, encodeDown, decodeServer } from '../../shared/protocol.ts';
+import { OP, PROTOCOL_VERSION, encodeHello, encodeState, encodeChat, encodeShot, encodeHit, encodeDown, encodeSky, decodeServer } from '../../shared/protocol.ts';
 import type { ServerMessage } from '../../shared/protocol.ts';
 
 const quiet = () => { /* the tests don't print the joins & leaves */ };
@@ -228,6 +228,35 @@ void test('a shot goes to those who see the shooter; a hit reaches its target wi
     assert.ok(!far.frames.some((m) => m.op === OP.SHOT_SEEN || m.op === OP.HURT), 'Far neither saw the shot nor was hit');
     assert.ok(!a.frames.some((m) => m.op === OP.SHOT_SEEN || m.op === OP.HURT), 'the shooter hears nothing back');
     for (const c of [a, b, far]) c.ws.close();
+  } finally {
+    await server.close();
+  }
+});
+
+void test('the sky is the room\'s: a newcomer gets it, a change reaches everyone in the room and no other room', async () => {
+  const server = await createServer({ port: 0, tickHz: 20, viewRadius: 500, log: quiet });
+  try {
+    const { a, b, far, ids } = await threePlayers(server.port);
+    assert.deepEqual(await a.next(OP.SKY_SET), { op: OP.SKY_SET, from: 0, time: 'live', weather: 'live' }, 'a new room starts on the real sky');
+    a.ws.send(encodeSky('midnight', 'rain'));
+    const set = await far.next(OP.SKY_SET, (m) => m.from === ids.a);
+    assert.deepEqual(set, { op: OP.SKY_SET, from: ids.a, time: 'midnight', weather: 'rain' }, 'out of view, still in the room');
+    await a.next(OP.SKY_SET, (m) => m.from === ids.a); // (the one who changed it hears it back: one order for everyone)
+    assert.deepEqual(await b.next(OP.CHAT_LINE, (m) => m.from === 0), { op: OP.CHAT_LINE, from: 0, name: '', text: 'Ana cambió el clima' });
+    const late = connect(server.port);
+    await late.opened;
+    late.ws.send(encodeHello('nayarit', 'Late'));
+    await late.next(OP.WELCOME);
+    assert.deepEqual(await late.next(OP.SKY_SET), { op: OP.SKY_SET, from: 0, time: 'midnight', weather: 'rain' }, 'joining, the room\'s sky');
+    const other = connect(server.port);
+    await other.opened;
+    other.ws.send(encodeHello('jalisco', 'Otro'));
+    assert.deepEqual(await other.next(OP.SKY_SET), { op: OP.SKY_SET, from: 0, time: 'live', weather: 'live' }, 'another region keeps its own');
+    const bad = new Uint8Array([OP.SKY, 99, 0]);
+    b.ws.send(bad); // (no such time of day: dropped)
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(b.frames.filter((m) => m.op === OP.SKY_SET).length, 2, 'the room\'s on joining, and Ana\'s change');
+    for (const c of [a, b, far, late, other]) c.ws.close();
   } finally {
     await server.close();
   }

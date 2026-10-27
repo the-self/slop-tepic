@@ -7,6 +7,7 @@
 // from the hip then, at whoever is ahead (crime.ts' lock-on).
 // No three.js: only the DOM, the controllers' person entity and its keys.
 
+import { keyBindings } from '../input/keybindings.ts';
 import type { ThirdPersonControllerManager } from './controllers.ts';
 
 /** What the aim uses of the game's canvas: some browsers have no pointer lock, or a requestPointerLock returning nothing */
@@ -103,7 +104,7 @@ class AimControl {
       if (doc.hidden) this.release();
     });
     window.addEventListener('keydown', (e) => {
-      if (e.code !== 'KeyZ' || e.repeat || e.metaKey || e.ctrlKey || e.altKey || isTyping(e)) return;
+      if (!keyBindings.is('aim', e.code) || e.repeat || e.metaKey || e.ctrlKey || e.altKey || isTyping(e)) return;
       this.toggled = !this.toggled;
       if (this.toggled && onFoot()) this.lock();
     });

@@ -206,6 +206,10 @@ class LiveWeather {
   pending: Promise<boolean> | null;
   /** ms since the epoch */
   nextAttempt: number;
+  /** true while hold() pins the conditions */
+  held = false;
+  /** the fetch hold() set aside, for release() */
+  heldFetch: FetchLike | null = null;
 
   constructor(location = WEATHER_LOCATION,
     { fetchImpl = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null, storage }: { fetchImpl?: FetchLike | null; storage?: StorageLike | null } = {}) {
@@ -254,6 +258,7 @@ class LiveWeather {
         return res.json();
       })
       .then((json) => {
+        if (this.held) return false; // (pinned while the request was out: the real conditions wait for release())
         this.current = parseOpenMeteo(json as OpenMeteoResponse);
         this.live = true;
         this.nextAttempt = Date.now() + REFRESH_MS;
@@ -277,9 +282,23 @@ class LiveWeather {
 
   // Pins the conditions (no more fetching), e.g. to WEATHER_SAMPLES.storm
   hold(conditions: Partial<Weather>): void {
+    if (!this.held) this.heldFetch = this.fetchImpl;
+    this.held = true;
     this.fetchImpl = null;
     this.current = { ...CLEAR_WEATHER, ...conditions, fetchedAt: Date.now() };
     this.live = true;
+  }
+
+  // Lets go of held conditions: back to the real ones, the cached first, then fresh
+  release(): void {
+    if (!this.held) return;
+    this.held = false;
+    this.fetchImpl = this.heldFetch;
+    this.heldFetch = null;
+    this.current = { ...CLEAR_WEATHER };
+    this.live = false;
+    this.nextAttempt = 0;
+    this.restoreCache();
   }
 
   sun(date = new Date()): SunPosition {

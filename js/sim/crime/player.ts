@@ -9,6 +9,7 @@ import type { Ped } from '../traffic.ts';
 import { throwVelocity } from '../ragdolls.ts';
 import { WEAPONS, Arsenal, pickTarget, wrapAngle } from '../weapons.ts';
 import { isTypingInField } from '../../world/city-config.ts';
+import { keyBindings } from '../../input/keybindings.ts';
 import type { DownKind, Agent, LockTarget } from './types.ts';
 import { PARKED_Y, DRAW_TIME, RESPAWN_TIME, clamp } from './constants.ts';
 import { isResponder } from './cruisers.ts';
@@ -35,7 +36,7 @@ export function bindInput(crime: CrimeSystem, canvas: HTMLElement | null): void 
     // 3 switches between the SMG and the rifle (once one has been taken off the cartel)
     if (pick === 'smg' && crime.arsenal.has('rifle') && (crime.arsenal.current === 'smg' || !crime.arsenal.has('smg'))) pick = 'rifle';
     if (pick) crime.selectWeapon(pick);
-    else if (e.code === 'KeyR') crime.cycleWeapon(e.shiftKey ? -1 : 1);
+    else if (keyBindings.is('nextWeapon', e.code)) crime.cycleWeapon(e.shiftKey ? -1 : 1);
   });
 }
 

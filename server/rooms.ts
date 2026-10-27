@@ -4,6 +4,7 @@
 // empty rooms are dropped, so busy regions split instead of overflowing while quiet ones stay together.
 
 import { SpatialGrid } from './aoi.ts';
+import type { WireSky } from '../shared/protocol.ts';
 
 /** A room of one region: `id` is "<region>#<index>", index 1 being the first, the others its mirrors */
 export interface Room<P> {
@@ -12,6 +13,8 @@ export interface Room<P> {
   index: number;
   players: Map<number, P>;
   grid: SpatialGrid;
+  /** the time of day & weather everyone in the room sees (wire indices; a new room starts on the real ones, 0 & 0) */
+  sky: WireSky;
 }
 
 export interface RoomStats {
@@ -51,7 +54,7 @@ class RoomManager<P extends { id: number }> {
   open(region: string): Room<P> {
     let index = 1;
     while (this.rooms.has(`${region}#${index}`)) index++;
-    const room: Room<P> = { id: `${region}#${index}`, region, index, players: new Map(), grid: new SpatialGrid(this.cellSize) };
+    const room: Room<P> = { id: `${region}#${index}`, region, index, players: new Map(), grid: new SpatialGrid(this.cellSize), sky: { time: 0, weather: 0 } };
     this.rooms.set(room.id, room);
     return room;
   }
