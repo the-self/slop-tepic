@@ -226,7 +226,7 @@ class CityAudioSystem {
   acoustics: CityAcoustics;
   onStateChange: () => void;
   context: AudioContext | null;
-  /** Set by main.ts once the city is up: nothing sounds before */
+  /** Set by app/frame-loop.ts once the city is up: nothing sounds before */
   ready: boolean;
   disposed: boolean;
   supported: boolean;

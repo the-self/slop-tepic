@@ -56,7 +56,7 @@ class CrimeHud {
   shown: Record<string, unknown>; // what each part last showed
   toastTime: number; // s the message showing has left
   money: number | null; // the money shown, counting towards the real figure
-  icons: WeaponIcons | null; // ui/weapon-icons.ts, set by main.ts
+  icons: WeaponIcons | null; // ui/weapon-icons.ts, set by app/install/crime.ts
 
   constructor(doc = document) {
     const root = doc.getElementById('hud-crime');

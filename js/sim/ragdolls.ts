@@ -336,8 +336,8 @@ function poseFromParts(pose: Float32Array, base: ArrayLike<number>, rot0: readon
  * The ragdolls in the world of `physics` (player/car-physics.ts createCarPhysics). spawn(rig, { vx, vy, vz, bleed })
  * throws a PersonRig from its pose as it stands (its pose array then follows the physics); the handle it returns has
  * px, py, pz (the pelvis), x0, z0 (where it was thrown from), rest (s it has lain still) and settled; release(handle)
- * lets it go. `onSettle(handle)` is called as one comes to rest (main.ts: a pool of blood under someone hit hard, and
- * their smear back to where they were struck).
+ * lets it go. `onSettle(handle)` is called as one comes to rest (app/install/player.ts & city-life.ts: a pool of blood
+ * under someone hit hard, and their smear back to where they were struck).
  */
 function createRagdolls(physics: RagdollPhysics): Ragdolls {
   const { Jolt, system, bodies, layers } = physics.world;

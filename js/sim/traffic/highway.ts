@@ -384,7 +384,7 @@ function createHighwayTraffic(scene: THREE.Scene, laneSpecs: HighwayLaneSpec[]) 
     }
     // Upload just the instances in use (the buffers hold every car of the kind), and nothing for empty meshes, which
     // are hidden too (an empty instanced mesh still costs a render object update in every pass). They stay visible
-    // for the first couple of frames so that the shader precompile & warm-up frame (main.ts) see all of them.
+    // for the first couple of frames so that the shader precompile & warm-up frame (app/frame-loop.ts) see all of them.
     const hideEmpty = ++updates > 2;
     for (const kind of KINDS) {
       for (const mesh of meshes[kind]) {

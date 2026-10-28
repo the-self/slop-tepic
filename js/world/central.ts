@@ -21,10 +21,9 @@ import {
   createCoachMaterial, createCoachNameMaterial,
   standingBox as box // (a box w × h × d (m) standing on y, centred on (u, v) of the frame)
 } from '../actors/actor-models.ts';
-import type { Collider } from './buildings.ts';
 import type { TileStreamer } from './streaming.ts';
 import type { LotReserve } from './landmark-models.ts';
-import type { MapBlock } from '../ui/city-map.ts';
+import type { Collider, Footprint } from './buildings.ts';
 
 /** The lines that leave from the Central, their names as the game letters them (parodies, as the stores'), and their
  *  liveries: the body, the two swooshes (0xrrggbb), the name's ink & edge (CSS) */
@@ -338,7 +337,8 @@ function buildCentral(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addLa
 
   // its hall's footprint, as the maps draw the buildings
   const corners = [[u0, v0 - PORTAL], [u1, v0 - PORTAL], [u1, v1 + CANOPY], [u0, v1 + CANOPY]].map(([u, v]) => centralAt(u, v));
-  const map: MapBlock = { footprints: [{
+  // (what the maps read of a block: ui/city-map.ts MapBlock)
+  const map: { footprints: Footprint[] } = { footprints: [{
     x0: Math.min(...corners.map((p) => p.x)), x1: Math.max(...corners.map((p) => p.x)),
     z0: Math.min(...corners.map((p) => p.z)), z1: Math.max(...corners.map((p) => p.z)), h: RIDGE, tone: 0.3, pts: corners
   }] };

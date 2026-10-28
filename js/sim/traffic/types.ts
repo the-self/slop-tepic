@@ -525,7 +525,7 @@ interface TrafficPlayerEntity {
   vehicle?: object | null;
 }
 
-/** A vehicle of the player's left standing (main.ts setParked): drivers stop behind it */
+/** A vehicle of the player's left standing (app/frame-loop.ts setParked): drivers stop behind it */
 interface ParkedVehicle {
   x: number;
   z: number;

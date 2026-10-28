@@ -1,13 +1,14 @@
 // js/world/cfe-sparks.ts
 // The CFE's lines down in the street (cfe-network.ts): where the primaries' broken ends lie they arc, in bursts of
 // sparks (a pool of streaks flying, bouncing on the street and dying), a blue-white flash lighting the street at night
-// (a light of street-details.ts' pool, `flash`) and a crackle (`listener`: main.ts' audio), sparser as the minutes go
-// by till the line is dead; whoever walks into one is shocked. A pole's transformer going up is a bang: a fountain of
-// sparks off its top, a flash, a blast heard across the colonia.
+// (a light of street-details.ts' pool, `flash`) and a crackle (`listener`, on the bus: app/install/audio.ts), sparser
+// as the minutes go by till the line is dead; whoever walks into one is shocked. A pole's transformer going up is a
+// bang: a fountain of sparks off its top, a flash, a blast heard across the colonia.
 import * as THREE from 'three/webgpu';
 import { color } from 'three/tsl';
 
-/** What a line down does that others hear or feel (main.ts): an arc's crackle, a transformer's bang, a shock to the
+/** What a line down does that others hear or feel (on the bus, app/game.ts): an arc's crackle, a transformer's bang, a
+ * shock to the
  *  player (`strength` 0..1 of the worst) */
 interface PowerFault {
   type: 'arc' | 'bang' | 'shock';
