@@ -28,7 +28,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
     audio, crime, crimeHud, weaponWheel, weaponIcons, venues, streetFood, floods, nightlife, rooms, emergency, fires, gasStations, forumLife,
     render, gamepad, boarding, map, net, remoteCars
   } = game;
-  const { streamer, cityBlocks, stores, carParks, streetDetails, powerLines, traffic, highwayTraffic } = city;
+  const { streamer, cityBlocks, stores, carParks, central, deliveries, streetDetails, powerLines, traffic, highwayTraffic } = city;
 
   // The saved player: every 5 s in play (the 'hud' system below), and on leaving the page or hiding it
   const save = () => { savePlayer(controllers, stateKey, crime.money, rooms.inside?.venue ?? null); };
@@ -78,6 +78,10 @@ export async function startFrameLoop(game: Game): Promise<void> {
   let weekday = new Date().getDay();
   let nextPlayerSave = 0;
   let warmedUp = false; // see the first frame below
+  // a vehicle standing within r m of (x, z): the player's left standing, another player's (no tráiler pulls in on it)
+  const vehicleNear = (x: number, z: number, r: number) =>
+    controllers.parkedVehicles().some((v) => Math.hypot(v.x - x, v.z - z) < r) ||
+    crime.remotes.some((o) => !o.person && Math.hypot(o.x - x, o.z - z) < r);
   const scheduler = new Scheduler({ profile: debug })
     .run('gamepad', ({ dt }) => { gamepad.update(dt); })
     .run('player', ({ frameDt, elapsed }) => {
@@ -162,6 +166,9 @@ export async function startFrameLoop(game: Game): Promise<void> {
       cityBlocks.update(eye.x, eye.z);
       stores.update(eye.x, eye.z);
       carParks.update(eye.x, eye.z);
+      central.update(eye.x, eye.z);
+      // the tráilers at the supermarkets' docks in the small hours (world/delivery-trucks.ts)
+      deliveries.update(lighting.hourOfDay, eye.x, eye.z, vehicleNear);
       // (no parked car where another vehicle stands: the player's left standing, the other players')
       for (const v of controllers.parkedVehicles()) carParks.clearAt(v.x, v.z);
       for (const r of crime.remotes) if (!r.person) carParks.clearAt(r.x, r.z);
@@ -187,6 +194,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
     // Debugging handle for the console, only with ?debug in the URL
     Object.assign(window, { __slop: {
       scene, renderer, streamer, streetFood, venues, forum: forumLife, floods, nightlife, interiors: rooms, fires, emergency, gasStations, controllerManager: controllers,
+      deliveries,
       trafficSystem: traffic, cameraSystem: cameras, streetDetails, cityGrid: city.cityGrid, cityBlocks, mapSystem: map, audioSystem: audio,
       crimeSystem: crime, stamina, aimControl: aim, weaponWheel, weaponIcons, scheduler, boarding, quality, multiplayer: () => net.current
     } });
