@@ -2,7 +2,7 @@
 // The traffic's own crashes, rare: now and then (MISHAP_EVERY) a driver near the player, in sight of it, looks down at
 // their phone a few seconds short of a car stopped ahead (the back of a queue at a light), doesn't brake (driving.ts)
 // and runs into it. Both go into Jolt (crashes.ts), which takes the crash from there; the collision it reports brings the
-// ambulance (main.ts, sim/emergency.ts).
+// ambulance (app/install/city-life.ts, sim/emergency.ts).
 import { CRASH_RANGE, MISHAP_EVERY, onRoad } from './constants.ts';
 import type { Car } from './types.ts';
 import type { TrafficState } from './state.ts';

@@ -3,7 +3,7 @@
 // the arsenal (sim/weapons.ts) opens round the middle of the screen, one wedge per weapon with its 3D picture
 // (ui/weapon-icons.ts) and its rounds; the one pointed at turns in the middle, with its name and its bars. Move the mouse
 // (or the right stick) towards a wedge, or scroll, and let go of Tab, or click it, to take it in hand; Esc closes it as
-// it was. The game runs slowed while it is open (main.ts scales the frame by timeScale).
+// it was. The game runs slowed while it is open (app/frame-loop.ts scales the frame by timeScale).
 // Closed, the mouse wheel on foot switches to the next or previous weapon with rounds (as do R and the d-pad), and a
 // strip of the arsenal shows under the HUD for a moment whenever the weapon in hand changes.
 // Safe DOM APIs only; text changes only when the rounds do.

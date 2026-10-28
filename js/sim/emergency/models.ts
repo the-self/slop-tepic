@@ -5,7 +5,10 @@
 // shoves the traffic, is shot at and wails as a patrol car does.
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { BODY_SPECS, buildCarGeometry, createLoftedCarMaterial, buildLightbarGeometry, createLightbarMaterial } from '../../actors/actor-models.ts';
+import {
+  BODY_SPECS, buildCarGeometry, createLoftedCarMaterial, buildLightbarGeometry, createLightbarMaterial,
+  standingBox as box // (a box w × h × d (m) standing on y, centred on (x, z))
+} from '../../actors/actor-models.ts';
 import { createContactShadowMaterial } from '../../render/tsl-materials.ts';
 import { CRUISER_HP, PARKED_Y } from '../crime/constants.ts';
 import type { Cruiser } from '../crime/types.ts';
@@ -13,10 +16,6 @@ import type { Cruiser } from '../crime/types.ts';
 // Their sizes (half width & length, m) and weights (kg): a pumper of ~8.6 m and 14 t, a van ambulance of ~5 m
 const TRUCK = { halfW: 1.25, halfL: 4.3, mass: 14000 };
 const AMBULANCE = { halfW: 0.95, halfL: 2.5, mass: 3500 };
-
-// A box w × h × d (m) standing on y, centred on (x, z), unindexed so the boxes merge
-const box = (w: number, h: number, d: number, x: number, y: number, z: number) =>
-  new THREE.BoxGeometry(w, h, d).translate(x, y + h / 2, z).toNonIndexed();
 
 function responder(
   faction: 'fire' | 'ambulance', root: THREE.Group, tiltPivot: THREE.Group, bodyMesh: THREE.Mesh, paint: THREE.Material, lightbar: THREE.Mesh,

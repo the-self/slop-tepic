@@ -378,7 +378,7 @@ class StreetFood {
     }
   }
 
-  // What F would do here (main.ts updatePrompt): "Comprar tacos al pastor ($45)"
+  // What F would do here (app/boarding.ts prompt): "Comprar tacos al pastor ($45)"
   prompt() {
     const s = this.nearest;
     return s ? t('prompt.buy', { item: s.spec.item, price: s.spec.price }) : '';

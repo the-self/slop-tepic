@@ -1,6 +1,6 @@
 // js/sim/traffic/carjacking.ts
-// CARJACKING: the player on foot takes a car or a bicycle (F, main.ts), and its driver is left in the street, to run off
-// or walk back to a sidewalk
+// CARJACKING: the player on foot takes a car or a bicycle (F, app/boarding.ts), and its driver is left in the street,
+// to run off or walk back to a sidewalk
 import * as THREE from 'three/webgpu';
 import { BUS_MODEL } from '../../models/cars/index.ts';
 import { roundBox } from '../weapons.ts';

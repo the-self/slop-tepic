@@ -31,13 +31,13 @@ import { onLocaleChange, setLabel, setText, t } from '../i18n/i18n.ts';
 // js/net/multiplayer.ts
 // (Which room it plays in is the lobby's, net/lobby.ts: the region's public rooms, a friend's by its code, or the
 // player's own, whose host alone sets its sky and its rules: police, PvP.)
-// Browser side of the room server (server/index.ts), loaded only with ?multiplayer=1 (see main.ts). Sends the active
-// player's pose SEND_HZ times a second, keeps a local list of the players the server says are in view, and draws them
-// INTERP_DELAY_MS in the past, interpolating between the poses it received so 10 Hz updates look smooth. And what the
-// players do to each other: a chat (Enter), shots seen and heard, the hits the player's shots, blows and blasts land
-// on the others (sim/crime.ts traces them against their poses) and theirs on the player, who killed whom, and riding
-// in a friend's car (F by it: the camera rides along, and F again gets out). The sky is the room's: the time of day
-// and weather picked in the menu (app/menu.ts) go to everyone in it, and the room's arrives on joining.
+// Browser side of the room server (server/index.ts), loaded only with ?multiplayer=1 (see app/install/multiplayer.ts).
+// Sends the active player's pose SEND_HZ times a second, keeps a local list of the players the server says are in view,
+// and draws them INTERP_DELAY_MS in the past, interpolating between the poses it received so 10 Hz updates look smooth.
+// And what the players do to each other: a chat (Enter), shots seen and heard, the hits the player's shots, blows and
+// blasts land on the others (sim/crime.ts traces them against their poses) and theirs on the player, who killed whom,
+// and riding in a friend's car (F by it: the camera rides along, and F again gets out). The sky is the room's: the time
+// of day and weather picked in the menu (app/menu.ts) go to everyone in it, and the room's arrives on joining.
 //
 //   ?multiplayer=1               connect (to the page's own server, tools/play.ts; ws://<host>:8787 from localhost)
 //   &mp-server=wss://host/path   another server
@@ -124,7 +124,7 @@ export interface MultiplayerOptions {
   /** the room's sky changed (or, on joining, is what it is): the time of day & weather to show */
   onSky?: ((time: SkyTime, weather: SkyWeather) => void) | null;
   entry?: RoomEntry; // the room to go into (default: the region's public rooms)
-  /** the others' cars, made before the shaders compiled (main.ts: their pipelines among them); else its own */
+  /** the others' cars, made before the shaders compiled (install/multiplayer.ts, their pipelines too); else its own */
   cars?: RemoteCarFleet | null;
 }
 
@@ -285,11 +285,12 @@ class Multiplayer {
   /** the room the player is in (WELCOME; null till then): its sky as the room last set it */
   current: (CurrentRoom & { hostId: number }) | null;
   roomsButton: HTMLButtonElement;
-  /** the room's rules arrived or changed: the police are main.ts's to apply (PvP is this module's) */
+  /** the room's rules arrived or changed: app/install/multiplayer.ts applies the police (PvP is this module's) */
   onRules: ((rules: RoomRules) => void) | null;
-  /** the server turned the player away from the room ('room', 'password', 'roomfull', 'wait'): main.ts reopens the lobby */
+  /** the server turned the player away from the room ('room', 'password', 'roomfull', 'wait'):
+   *  app/install/multiplayer.ts reopens the lobby */
   onRejected: ((code: string) => void) | null;
-  /** the HUD's Rooms button: main.ts opens the lobby */
+  /** the HUD's Rooms button: app/install/multiplayer.ts opens the lobby */
   onLobby: (() => void) | null;
 
   constructor({ scene, controllers, camera, crime = null, cameras = null, url, region = DEFAULT_REGION, name = '', onSky = null, entry = { kind: 'public' }, cars = null }: MultiplayerOptions) {
@@ -380,7 +381,8 @@ class Multiplayer {
     return true;
   }
 
-  // The room's rules: PvP here (with it off, the player's shots pass through the others), the police main.ts's
+  // The room's rules: PvP here (with it off, the player's shots pass through the others), the police
+  // app/install/multiplayer.ts's
   applyRules(rules: RoomRules, announce: boolean): void {
     if (this.crime) this.crime.remotes = rules.pvp ? this.targets : NO_TARGETS;
     this.onRules?.(rules);
@@ -543,7 +545,7 @@ class Multiplayer {
     }
     if (msg.op === OP.ERROR) {
       // a version mismatch or a rejected region won't fix itself by retrying, nor a room that turned the player away
-      // (main.ts reopens the lobby with why)
+      // (app/install/multiplayer.ts reopens the lobby with why)
       if (msg.code === 'version' || msg.code === 'region' || REJECTIONS.has(msg.code)) this.stopped = true;
       this.status = 'error';
       this.renderBadge(msg.code);

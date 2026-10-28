@@ -27,8 +27,8 @@ function reportCollision(ts: TrafficState, a: unknown, b: unknown, x: number, y:
   ts.collisionListener(ts.collisionEvent);
 }
 
-// What stands in the road that isn't the traffic's (main.ts: the player's vehicles left there, the patrol cars),
-// and the cars thrown about in a crash (crashedStep): all of it steered round, as `parked`
+// What stands in the road that isn't the traffic's (app/frame-loop.ts: the player's vehicles left there, the patrol
+// cars), and the cars thrown about in a crash (crashedStep): all of it steered round, as `parked`
 function setParked(ts: TrafficState, list: ParkedVehicle[] | null): void {
   ts.parkedOutside = Array.isArray(list) ? list : [];
 }
@@ -36,9 +36,9 @@ function setParked(ts: TrafficState, list: ParkedVehicle[] | null): void {
 function setSirens(ts: TrafficState, list: readonly SirenSource[]): void {
   ts.sirens = list;
 }
-// The weather on the street (main.ts, from weather.ts RoadWater): on a wet road drivers keep further back, go a
-// little slower and take the bends slower (the tyres' grip, wetGrip), and nobody brakes as hard; in the rain people
-// hurry and don't stop to chat
+// The weather on the street (app/weather-effects.ts, from weather.ts RoadWater): on a wet road drivers keep further
+// back, go a little slower and take the bends slower (the tyres' grip, wetGrip), and nobody brakes as hard; in the rain
+// people hurry and don't stop to chat
 function setRoadWater(ts: TrafficState, wet: number, rain: number, grip = 1 - 0.3 * wet): void {
   ts.roadGrip = grip;
   ts.caution = 1 - 0.12 * wet;
@@ -46,17 +46,17 @@ function setRoadWater(ts: TrafficState, wet: number, rain: number, grip = 1 - 0.
   ts.rainNow = rain;
 }
 
-// Where walls stand (main.ts hands over the player's building colliders): knocked bodies bounce off them
+// Where walls stand (app/install/player.ts hands over the player's building colliders): knocked bodies bounce off them
 function setSolidQuery(ts: TrafficState, fn: SolidQuery | null): void {
   ts.solidAt = typeof fn === 'function' ? fn : null;
 }
-// Where a building's wall stands (main.ts: solidAt without the poles & bollards), for the people walking the
-// sidewalks: a turned building whose lot reaches over its sidewalk turns them round instead of letting them through
+// Where a building's wall stands (app/install/player.ts: solidAt without the poles & bollards), for the people walking
+// the sidewalks: a turned building whose lot reaches over its sidewalk turns them round instead of letting them through
 function setWallQuery(ts: TrafficState, fn: SolidQuery | null): void {
   ts.wallAt = typeof fn === 'function' ? fn : null;
 }
 
-// The people thrown about (sim/ragdolls.ts, main.ts)
+// The people thrown about (sim/ragdolls.ts, app/install/player.ts)
 function setRagdolls(ts: TrafficState, r: Ragdolls | null): void {
   ts.ragdolls = r;
 }

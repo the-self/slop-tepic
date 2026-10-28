@@ -35,7 +35,7 @@ export function emitSmoke(ctl: ThirdPersonControllerManager, c: CarEntity | Moto
 }
 
 // `count` puffs at (x, y, z) from something moving at (vx, vz): the player's car, or a damaged one in the traffic
-// (traffic.ts setSmokeEmitter, main.ts)
+// (traffic.ts setSmokeEmitter, app/install/player.ts)
 export function puffSmoke(ctl: ThirdPersonControllerManager, x: number, y: number, z: number, vx: number, vz: number, count: number, shade: number, size: number): void {
   const sm = ctl.smoke;
   sm.carry += count;

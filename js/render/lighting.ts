@@ -614,7 +614,7 @@ class LightingSystem {
   }
 
   // Lightning: the sky and everything under it light up white for a moment, flicker once or twice and fade within a
-  // second (strength 0..1, a near strike 1). main.ts fires it during thunderstorms
+  // second (strength 0..1, a near strike 1). app/weather-effects.ts fires it during thunderstorms
   flash(strength = 1): void {
     this.flashStart = performance.now();
     this.flashStrength = strength;

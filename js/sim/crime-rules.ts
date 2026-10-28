@@ -24,7 +24,7 @@ const CRIME_HEAT = {
   killCop: 170,
   explosion: 45,
   stealCop: 60,
-  robbery: 70 // a store's till (main.ts): two stars, the staff call the police
+  robbery: 70 // a store's till (app/boarding.ts): two stars, the staff call the police
 };
 // A crime Wanted.report() knows
 type CrimeKind = keyof typeof CRIME_HEAT;

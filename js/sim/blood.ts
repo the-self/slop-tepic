@@ -2,12 +2,12 @@ import * as THREE from 'three/webgpu';
 import { createBloodPoolMaterial } from '../render/tsl-materials.ts';
 
 // js/sim/blood.ts
-// Pools of blood under the people hit hard or killed (main.ts, as their ragdolls settle, sim/ragdolls.ts), and the
-// smears a body run down leaves on the ground from where it was struck to where it came to rest: one instanced mesh of
-// flat quads lying on the ground's slope, a pool spreading over a few seconds (fast at first, as blood does, then
-// slowing) to a size set by how bad the hit was, a smear at once, each outline its own (bloodSeed). The oldest pool is
-// taken for a new one once all POOLS are down, the oldest smear piece once all SMEARS are (each from its own share of
-// the instances). Nothing is allocated per pool.
+// Pools of blood under the people hit hard or killed (app/install/player.ts, as their ragdolls settle,
+// sim/ragdolls.ts), and the smears a body run down leaves on the ground from where it was struck to where it came to
+// rest: one instanced mesh of flat quads lying on the ground's slope, a pool spreading over a few seconds (fast at
+// first, as blood does, then slowing) to a size set by how bad the hit was, a smear at once, each outline its own
+// (bloodSeed). The oldest pool is taken for a new one once all POOLS are down, the oldest smear piece once all SMEARS
+// are (each from its own share of the instances). Nothing is allocated per pool.
 
 const POOLS = 64;
 const SMEARS = 72; // smear pieces (a dozen trails)

@@ -31,7 +31,7 @@ export function syncOccupants(ctl: ThirdPersonControllerManager): void {
   moto.helmet.visible = onMoto;
 }
 
-// Boarding (F, main.ts): the player's own vehicle the pedestrian could get into, the nearest whose body
+// Boarding (F, app/boarding.ts): the player's own vehicle the pedestrian could get into, the nearest whose body
 // is within `reach` metres; { mode, distance } (and `left`: one of the cars left behind, leaveCarBehind) or null
 export function ownVehicleNear(ctl: ThirdPersonControllerManager, reach: number): { mode: VehicleMode; distance: number; left?: LeftCar } | null {
   const p = ctl.entities.person.position;
@@ -57,9 +57,10 @@ export function ownVehicleNear(ctl: ThirdPersonControllerManager, reach: number)
   return best;
 }
 
-// The player takes another car (main.ts board) and leaves theirs where it stands: a still copy of it as it is (its
-// model, paint, dents, a camión's parts), which the traffic stops behind, the player bumps into and can get back into
-// (takeLeftCar). The copy keeps the car's dented body and camión parts: the car is given new ones with its next look
+// The player takes another car (app/boarding.ts board) and leaves theirs where it stands: a still copy of it as it is
+// (its model, paint, dents, a camión's parts), which the traffic stops behind, the player bumps into and can get back
+// into (takeLeftCar). The copy keeps the car's dented body and camión parts: the car is given new ones with its next
+// look
 export function leaveCarBehind(ctl: ThirdPersonControllerManager): void {
   const c = ctl.entities.car;
   const mesh = c.mesh.clone(true); // (sharing the geometries & materials)
