@@ -1,0 +1,12 @@
+{
+  "headlamp": "light",
+  "lamp": "lamp",
+  "lampbright": "lamp",
+  "amber": "amber",
+  "white": "white",
+  "gloss": "trim",
+  "pocket": "trim",
+  "housing": "own",
+  "reflector": "light",
+  "bowl": "chrome"
+}

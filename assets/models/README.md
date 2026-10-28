@@ -62,6 +62,11 @@ crop the neighbours, scale it to a known height, and simplify it.
   Mexico built it), modelled by script in Blender (`tools/models/blender/nissan-tsuru.py`, `--taxi` for the sign) from
   its real sizes and photographs, then prepared with `tools/models/prepare-made.mjs`
   (`tools/models/jobs/cars/nissan-tsuru*.made.json`). Our own work, no third party's.
+- `cars/nissan-versa.glb` (N18), `cars/nissan-march.glb` (K13), `cars/nissan-np300.glb` (the single cab, D23),
+  `cars/chevrolet-aveo.glb` (2018–23) and `cars/volkswagen-gol.glb` (G7): modelled by script in Blender
+  (`tools/models/blender/<id>.py`) from their real sizes and photographs on Wikimedia Commons (each one's are named in
+  its `tools/models/jobs/cars/<id>.made.json`), then prepared with `tools/models/prepare-made.mjs`. Our own work, no
+  third party's; no maker's badges.
 - `people/player.glb`: the player, made with Meshy (Meshy 7.1, multi-image-to-3d) from a front and a back view that
   Meshy (Nano Banana Pro) drew from the prompts in `tools/models/jobs/people/player.json`; reposed into the crowd's bind
   pose and skinned to its 15 bones by `tools/models/prepare-person.mjs`.
