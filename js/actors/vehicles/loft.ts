@@ -154,6 +154,11 @@ export class LoftGeometry extends THREE.BufferGeometry {
   }
 }
 
+/** A box w × h × d (m) standing on y, centred on (x, z), unindexed so the boxes merge (the boxy vehicles & buildings) */
+export function standingBox(w: number, h: number, d: number, x: number, y: number, z: number): THREE.BufferGeometry {
+  return new THREE.BoxGeometry(w, h, d).translate(x, y + h / 2, z).toNonIndexed();
+}
+
 export function part(geometry: THREE.BufferGeometry, id: number): THREE.BufferGeometry {
   const g = geometry.index ? geometry : mergeVertices(geometry);
   if (!('uv' in g.attributes)) {

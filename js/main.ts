@@ -569,7 +569,7 @@ async function initApp(): Promise<void> {
     controllerManager,
     cameraSystem,
     trafficSystem,
-    allBlocks: [...cityBlocks.allBlocks, city.uan.map], // (the UAN's buildings are uan.ts's, not among the blocks')
+    allBlocks: [...cityBlocks.allBlocks, city.uan.map, city.central.map], // (the UAN's & the Central's buildings are their own, not among the blocks')
     onToggle: (open) => {
       controllerManager.resetInput();
       touchControls.setEnabled(!open);
@@ -780,6 +780,10 @@ async function initApp(): Promise<void> {
   let weekday = new Date().getDay();
   let nextPlayerSave = 0;
   let warmedUp = false; // see the first frame below
+  // a vehicle standing within r m of (x, z): the player's left standing, another player's (no tráiler pulls in on it)
+  const vehicleNear = (x: number, z: number, r: number) =>
+    controllerManager.parkedVehicles().some((v) => Math.hypot(v.x - x, v.z - z) < r) ||
+    crimeSystem.remotes.some((o) => !o.person && Math.hypot(o.x - x, o.z - z) < r);
   const scheduler = new Scheduler({ profile: debug })
     .run('gamepad', ({ dt }) => { gamepadControls.update(dt); })
     .run('player', ({ frameDt, elapsed }) => {
@@ -863,6 +867,9 @@ async function initApp(): Promise<void> {
       cityBlocks.update(eye.x, eye.z);
       stores.update(eye.x, eye.z);
       carParks.update(eye.x, eye.z);
+      city.central.update(eye.x, eye.z);
+      // the tráilers at the supermarkets' docks in the small hours (world/delivery-trucks.ts)
+      city.deliveries.update(lightingSystem.hourOfDay, eye.x, eye.z, vehicleNear);
       // (no parked car where another vehicle stands: the player's left standing, the other players')
       for (const v of controllerManager.parkedVehicles()) carParks.clearAt(v.x, v.z);
       for (const r of crimeSystem.remotes) if (!r.person) carParks.clearAt(r.x, r.z);
@@ -888,6 +895,7 @@ async function initApp(): Promise<void> {
     // Debugging handle for the console, only with ?debug in the URL
     Object.assign(window, { __slop: {
       scene, renderer, streamer, streetFood, venues, floods, nightlife, interiors: rooms, fires, emergency, gasStations, controllerManager, trafficSystem,
+      deliveries: city.deliveries,
       cameraSystem, streetDetails, cityGrid: city.cityGrid, cityBlocks, mapSystem, audioSystem, crimeSystem, stamina, aimControl,
       weaponWheel, weaponIcons, scheduler, boarding, quality, multiplayer: () => multiplayer
     } });
