@@ -1,0 +1,6 @@
+{
+  "note": "Modelled by script in Blender (blender -b --factory-startup -P tools/models/blender/volkswagen-gol.py -- <volkswagen-gol.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/volkswagen-gol.glb --length 3.892 --roles tools/models/jobs/cars/volkswagen-gol.roles.json --plates 0.535,0.49 (its real length, so it is not rescaled; light enough for no levels of detail: tools/models/add-lods.mjs leaves it). Reference photographs from Wikimedia Commons: 'Volkswagen Gol Hatchback Mk7.jpg', 'Volkswagen Gol 1.6 MSi Power 2017.jpg', 'VW Gol G7 24-06-2023.jpg', 'Volkswagen Gol Comfortline 2017.jpg', 'Volkswagen Gol 1.6 MSi Trendline 2017.jpg', 'VWGolRearside-Tandil.JPG', 'Volkswagen Gol Hatchback -- Rear.JPG', '2015 Volkswagen Gol Trend 1.6 Pack III, I-Motion (rear).jpg', 'Volkswagen Gol 1.6 Trendline 2014 (14089216972).jpg'",
+  "license": "our own work",
+  "source": "tools/models/blender/volkswagen-gol.py",
+  "args": "--length 3.892 --roles tools/models/jobs/cars/volkswagen-gol.roles.json --plates 0.535,0.49"
+}
