@@ -7,6 +7,7 @@
 
 import * as THREE from 'three/webgpu';
 import { liftAt } from './ground.ts';
+import { slopeTilt, turnedBox } from './standing.ts';
 import { drapeGeometry } from './drape.ts';
 import { FlatLayer, pavedHeight } from './car-parks.ts';
 import { createPavementMaterial } from '../render/tsl-materials.ts';
@@ -72,15 +73,9 @@ function buildDeliveryTrucks(scene: THREE.Object3D, blocked: (x: number, z: numb
   }
   const chains = DOCK_CHAINS.map((id) => STOREFRONTS.find((s) => s.id === id));
   const trucks: PlacedTruck[] = docks.map((d) => {
-    const fx = Math.sin(d.heading), fz = Math.cos(d.heading);
     const y = liftAt(d.x, d.z) + pavedHeight(d.x, d.z);
-    const ahead = (liftAt(d.x + fx * 9, d.z + fz * 9) - liftAt(d.x - fx * 9, d.z - fz * 9)) / 18;
-    const right = (liftAt(d.x + fz, d.z - fx) - liftAt(d.x - fz, d.z + fx)) / 2;
-    const hx = TRUCK_SIZE.width / 2, hz = TRUCK_SIZE.length / 2, cs = Math.cos(d.heading), sn = Math.sin(d.heading);
-    const ex = Math.abs(cs) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
-    const collider = { minX: d.x - ex, maxX: d.x + ex, minZ: d.z - ez, maxZ: d.z + ez, minY: y, maxY: y + TRUCK_SIZE.height,
-      obb: { cx: d.x, cz: d.z, hx, hz, cs, sn }, broken: true };
-    return { x: d.x, y, z: d.z, yaw: d.heading, pitch: -Math.atan(ahead), roll: Math.atan(right), chain: d.chain,
+    const collider = { ...turnedBox(d.x, d.z, TRUCK_SIZE.width / 2, TRUCK_SIZE.length / 2, d.heading, y, y + TRUCK_SIZE.height), broken: true };
+    return { x: d.x, y, z: d.z, yaw: d.heading, ...slopeTilt(d.x, d.z, d.heading, 9), chain: d.chain,
       cab: Math.floor(hash(d.x, d.z, 73) * CAB_PAINTS.length) % CAB_PAINTS.length, collider, here: false };
   });
 

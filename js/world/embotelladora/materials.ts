@@ -6,8 +6,9 @@
 // into shapes, the glass (lit inside at night), the depot's louvres and red shutters, the posts striped red & white;
 // and the brand's name, lettered.
 import * as THREE from 'three/webgpu';
-import { color, float, floor, fract, max, mix, mx_noise_float, positionWorld, sin, smoothstep, step, texture, uv } from 'three/tsl';
+import { color, float, floor, fract, max, mix, mx_noise_float, positionWorld, sin, smoothstep, step, texture, uv, vertexColor } from 'three/tsl';
 import { cityUniforms } from '../../render/tsl-materials.ts';
+import { Tint } from '../building-kit.ts';
 import { lineCover as cover } from '../../render/materials/shared.ts';
 import type { Node } from 'three/webgpu';
 
@@ -20,10 +21,11 @@ export const BRAND_FONT = `'Brush Script MT', 'Snell Roundhand', 'Segoe Script',
 
 const std = (hex: number, roughness = 0.9, metalness = 0) => new THREE.MeshStandardNodeMaterial({ color: hex, roughness, metalness });
 
-// A paint on render, weathered a little (world space: every piece runs on into the next)
-function painted(hex: number, roughness = 0.9): THREE.MeshStandardNodeMaterial {
-  const m = std(hex, roughness);
-  m.colorNode = color(hex).mul(mx_noise_float(positionWorld.mul(0.35)).mul(0.05).add(0.98));
+// The plain colours' shared materials, each piece's colour on its vertices (building-kit.ts Tint): the paints on render
+// and the concrete, weathered a little (world space: every piece runs on into the next); the painted steel; the leaves
+function tinted(roughness: number, metalness: number, grain: Node<'float'> | null = null): THREE.MeshStandardNodeMaterial {
+  const m = std(0xffffff, roughness, metalness);
+  m.colorNode = grain ? vertexColor().mul(grain) : vertexColor();
   return m;
 }
 
@@ -41,17 +43,17 @@ export type PlantMaterials = ReturnType<typeof createPlantMaterials>;
 /** The plant's materials. `barsH`: the red fence's height (m, its rails at its foot & top) */
 export function createPlantMaterials(barsH: number) {
   const u = uv().x, v = uv().y;
-  const white = painted(0xf0eee7);
-  const cream = painted(0xeadb9e, 0.85);
-  const depotWall = painted(0xe0d2ab);
+  const render = tinted(0.9, 0, mx_noise_float(positionWorld.mul(0.35)).mul(0.06).add(0.98));
+  const steel = tinted(0.5, 0.28);
+  const leafy = tinted(0.85, 0, mx_noise_float(positionWorld.mul(3.2)).mul(0.3).add(mx_noise_float(positionWorld.mul(0.7).add(5.3)).mul(0.12)).add(0.85));
+  const white = new Tint(render, 0xf0eee7), cream = new Tint(render, 0xeadb9e), depotWall = new Tint(render, 0xe0d2ab);
   // the cladding: grey sheet in trapezoidal ribs every 20 cm along the wall
   const cladding = std(0x8d9195, 0.55, 0.35);
   cladding.colorNode = color(0x8d9195).mul(float(1).sub(cover(u.div(0.2), 0.3).mul(0.18)));
   // the roofs: pale sheet in ribs every 30 cm (its top's uv: u along the piece, v across it)
   const roof = std(0xc9cbca, 0.6, 0.25);
   roof.colorNode = color(0xc9cbca).mul(float(1).sub(cover(v.div(0.3), 0.25).mul(0.12)));
-  const concrete = std(0xa6a39b, 0.92);
-  concrete.colorNode = color(0xa6a39b).mul(mx_noise_float(positionWorld.mul(0.9)).mul(0.07).add(0.97));
+  const concrete = new Tint(render, 0xa6a39b);
   // the precast wall's slabs, stacked 50 cm high between its posts
   const precast = std(0xc2bfb5, 0.92);
   precast.colorNode = color(0xc2bfb5).mul(mx_noise_float(positionWorld.mul(0.6)).mul(0.06).add(0.97))
@@ -65,14 +67,14 @@ export function createPlantMaterials(barsH: number) {
     const joint = max(cover(v.div(0.09), 0.012 / 0.09 * 1.4), cover(along, 0.012 / 0.28 * 1.4));
     brick.colorNode = mix(color(0xc4814a).mul(shade.mul(0.16).add(0.9)), color(0xd8cdb8), joint);
   }
-  const red = std(0xd0141f, 0.45, 0.25);
+  const red = new Tint(steel, 0xd0141f);
   // the red fence: square bars every 13 cm, a rail along its foot & its top
   const bars = openwork(0xd0141f, max(cover(u.div(0.13), 0.035 / 0.13), step(v, 0.07).add(step(barsH - 0.08, v))), 0.45, 0.25);
   // chain-link: wires diagonal both ways in 6 cm diamonds
   const chain = openwork(0x9aa0a4, max(cover(u.add(v).div(0.085), 0.07), cover(u.sub(v).div(0.085), 0.07)), 0.5, 0.6);
   // the gate's mesh behind its frame: a fine grid of red wire
   const mesh = openwork(0xc0121c, max(cover(u.div(0.15), 0.05), cover(v.div(0.15), 0.05)), 0.5, 0.3);
-  const brown = std(0x5a3c2d, 0.75);
+  const brown = new Tint(render, 0x5a3c2d);
   // the canopy's soffit: slats across it every 50 cm
   const soffit = std(0x7b5a45, 0.8);
   soffit.colorNode = color(0x7b5a45).mul(float(1).sub(cover(u.div(0.5), 0.2).mul(0.35)));
@@ -94,19 +96,12 @@ export function createPlantMaterials(barsH: number) {
   louvres.colorNode = color(0x5c4838).mul(float(1).sub(cover(v.div(0.12), 0.3).mul(0.4)));
   const shutter = std(0xc8141c, 0.5, 0.3);
   shutter.colorNode = color(0xc8141c).mul(float(1).sub(cover(v.div(0.08), 0.25).mul(0.3)));
-  // the hedges & the ficus: leafy greens, a lighter flush on top
-  const leaves = (hex: number) => {
-    const m = std(hex, 0.85);
-    const n = mx_noise_float(positionWorld.mul(3.2)), n2 = mx_noise_float(positionWorld.mul(0.7).add(5.3));
-    m.colorNode = color(hex).mul(n.mul(0.3).add(n2.mul(0.12)).add(0.85));
-    return m;
-  };
-  const hedge = leaves(0x24401b);
-  const ficus = leaves(0x355f22);
-  const tank = std(0xeeeeea, 0.45, 0.3);
+  // the hedges & the ficus: leafy greens
+  const hedge = new Tint(leafy, 0x24401b), ficus = new Tint(leafy, 0x355f22);
+  const tank = new Tint(steel, 0xeeeeea);
   return {
     white, cream, depotWall, cladding, roof, concrete, precast, brick, red, bars, chain, mesh, brown, soffit, striped,
-    glass, towerGlass, louvres, shutter, hedge, ficus, tank, dark: std(0x2a2c2e, 0.6, 0.3)
+    glass, towerGlass, louvres, shutter, hedge, ficus, tank, dark: new Tint(steel, 0x2a2c2e)
   };
 }
 

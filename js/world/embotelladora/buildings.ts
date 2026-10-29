@@ -14,7 +14,7 @@ import {
 } from '../embotelladora-plan.ts';
 import { hash } from '../hash.ts';
 import { PLANT_YAW, floorOf, frameAt, groundAt } from './site.ts';
-import type { Kit, Frame } from '../building-kit.ts';
+import type { Kit, Frame, KitMaterial } from '../building-kit.ts';
 import type { PlantMaterials } from './materials.ts';
 import type { PlantRect } from '../embotelladora-plan.ts';
 import type { Footprint } from '../buildings.ts';
@@ -30,11 +30,11 @@ export interface BrandSigns {
 }
 
 // A box over a rectangle of the frame from y0 to y1 (m over the frame's floor), its UVs in metres from its u0
-function slab(kit: Kit, f: Frame, [u0, u1, v0, v1]: PlantRect, y0: number, y1: number, mat: THREE.Material, cast = true): void {
+function slab(kit: Kit, f: Frame, [u0, u1, v0, v1]: PlantRect, y0: number, y1: number, mat: KitMaterial, cast = true): void {
   kit.box(f, u1 - u0, y1 - y0, v1 - v0, (u0 + u1) / 2, (y0 + y1) / 2, (v0 + v1) / 2, mat, u0, 0, cast);
 }
 // A cylinder (radius r, from y0 to y1 over the floor) standing at (u, v) of the frame
-function column(kit: Kit, f: Frame, u: number, v: number, r: number, y0: number, y1: number, mat: THREE.Material, segments = 16, cast = true): void {
+function column(kit: Kit, f: Frame, u: number, v: number, r: number, y0: number, y1: number, mat: KitMaterial, segments = 16, cast = true): void {
   kit.add(new THREE.CylinderGeometry(r, r, y1 - y0, segments), mat, f, u, (y0 + y1) / 2, v, 0, cast);
 }
 // What stops the player over a rectangle of the frame, from y0 to y1 over its floor
@@ -241,7 +241,7 @@ function buildTopiaries(kit: Kit, mats: PlantMaterials): void {
  * street's): a head 0.8 m tall, its lenses red over amber over green at ±0.36 m of its own height (scaled 0.7), as the
  * town's signals' lens material reads them (street-details.ts). Into `parent`, in the world
  */
-export function buildGateSignal(parent: THREE.Object3D, mats: PlantMaterials, lensMat: THREE.Material): void {
+export function buildGateSignal(parent: THREE.Object3D, lensMat: THREE.Material): void {
   const [g0, , gv] = GATE;
   const u = g0 - 0.25, v = gv - 0.42, p = plantAt(u, v);
   const head = new THREE.Group();
@@ -249,13 +249,14 @@ export function buildGateSignal(parent: THREE.Object3D, mats: PlantMaterials, le
   head.position.set(p.x, groundAt(u, v) + 3.1, p.z);
   head.rotation.y = PLANT_YAW;
   head.scale.setScalar(0.7);
-  const housing = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.14, 0.3), mats.dark);
-  const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.5).translate(0, 0, 0.35), mats.dark);
+  const dark = new THREE.MeshStandardNodeMaterial({ color: 0x15171a, roughness: 0.5, metalness: 0.3 });
+  const housing = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.14, 0.3), dark);
+  const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.5).translate(0, 0, 0.35), dark);
   const lenses: THREE.BufferGeometry[] = [];
   for (const y of [0.36, 0, -0.36]) {
     for (const s of [-1, 1]) {
       lenses.push(new THREE.CylinderGeometry(0.13, 0.13, 0.02, 14).rotateX(Math.PI / 2).translate(0, y, s * 0.16));
-      head.add(new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.05, 0.16).translate(0, y + 0.15, s * 0.23), mats.dark)); // (its visor)
+      head.add(new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.05, 0.16).translate(0, y + 0.15, s * 0.23), dark)); // (its visor)
     }
   }
   housing.castShadow = true;

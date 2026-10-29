@@ -6,7 +6,7 @@
 // block slopes), each stopping the player, a post at every corner and end; across the staff's car park's driveways a
 // sliding gate of the same red bars, closed.
 import { GEO } from '../city-geodata.js';
-import { carParks } from '../parking.ts';
+import { carParks, segmentDistance } from '../parking.ts';
 import { FENCES, FENCE_H, inPlant, plantAt } from '../embotelladora-plan.ts';
 import { frameAt, groundAt } from './site.ts';
 import type { Kit } from '../building-kit.ts';
@@ -18,19 +18,12 @@ import type { PointXZ } from '../city-config.ts';
 const PIECE: Record<FenceKind, number> = { bars: 2.5, precast: 2.5, brick: 3.4, chain: 3 };
 const CHAIN_OVER = 1.4; // m of chain-link over the brick wall
 
-// The distance (m) from p to the segment a-b
-function segmentDistance(p: PointXZ, a: PointXZ, b: PointXZ): number {
-  const dx = b.x - a.x, dz = b.z - a.z, L2 = dx * dx + dz * dz;
-  const t = L2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.z - a.z) * dz) / L2)) : 0;
-  return Math.hypot(p.x - a.x - dx * t, p.z - a.z - dz * t);
-}
-
 /** The walls & fences into the kit; how many metres of each kind */
 export function buildPlantFences(kit: Kit, mats: PlantMaterials): Record<FenceKind, number> {
   // the staff's car park's driveways through the fence (parking.ts finds them)
   const ways = carParks(GEO.parking).filter((l) => inPlant((l.minX + l.maxX) / 2, (l.minZ + l.maxZ) / 2)).flatMap((l) => l.entrances);
   const inDriveway = (p: PointXZ) => ways.some((e) => e.path.some((a, i) =>
-    i + 1 < e.path.length && segmentDistance(p, a, e.path[i + 1]) < e.width / 2 + 0.6));
+    i + 1 < e.path.length && segmentDistance(p.x, p.z, a.x, a.z, e.path[i + 1].x, e.path[i + 1].z) < e.width / 2 + 0.6));
   const metres: Record<FenceKind, number> = { bars: 0, precast: 0, brick: 0, chain: 0 };
   for (const { kind, pts } of FENCES) {
     const h = FENCE_H[kind];

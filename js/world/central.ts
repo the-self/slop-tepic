@@ -10,6 +10,7 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GEO } from './city-geodata.js';
 import { liftAt } from './ground.ts';
+import { slopeTilt, turnedBox } from './standing.ts';
 import { drapeGeometry } from './drape.ts';
 import { FlatLayer, fillLot, paintLine, pavedHeight } from './car-parks.ts';
 import { carParks } from './parking.ts';
@@ -65,7 +66,6 @@ function buildCentral(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addLa
   // the frame's turn: its u along the world's (UX, UZ), v along (VX, VZ)
   const o = centralAt(0, 0), e = centralAt(1, 0);
   const yaw = Math.atan2(-(e.z - o.z), e.x - o.x);
-  const cs = Math.cos(yaw), sn = Math.sin(yaw);
   const [u0, u1, v0, v1] = TERMINAL;
   const mid = centralAt((u0 + u1) / 2, (v0 + v1) / 2);
   const patioY = pavedHeight(mid.x, mid.z);
@@ -91,10 +91,7 @@ function buildCentral(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addLa
     // an oriented box of the frame (u0..u1 × v0..v1, from y0 to y1 over the floor) that stops the player
     collide: (a0, a1, b0, b1, y0, y1) => {
       const c = centralAt((a0 + a1) / 2, (b0 + b1) / 2);
-      const hx = (a1 - a0) / 2, hz = (b1 - b0) / 2;
-      const ex = Math.abs(cs) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
-      const collider: Collider = { minX: c.x - ex, maxX: c.x + ex, minZ: c.z - ez, maxZ: c.z + ez, minY: floorY + y0, maxY: floorY + y1,
-        obb: { cx: c.x, cz: c.z, hx, hz, cs, sn } };
+      const collider = turnedBox(c.x, c.z, (a1 - a0) / 2, (b1 - b0) / 2, yaw, floorY + y0, floorY + y1);
       colliders.push(collider);
       return collider;
     }
@@ -165,11 +162,8 @@ function buildCentral(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addLa
   // (the andén's, for the people boarding them: sim/central.ts)
   const andenCoaches = parked.filter(({ bay }) => bay.row === 0).map(({ bay }) => ({ x: bay.x, z: bay.z, heading: bay.heading }));
   const coaches: PlacedCoach[] = parked.map(({ bay, line }) => {
-    const fx = Math.sin(bay.heading), fz = Math.cos(bay.heading);
     const y = liftAt(bay.x, bay.z) + patioY;
-    const ahead = (liftAt(bay.x + fx * 4, bay.z + fz * 4) - liftAt(bay.x - fx * 4, bay.z - fz * 4)) / 8;
-    const right = (liftAt(bay.x + fz, bay.z - fx) - liftAt(bay.x - fz, bay.z + fx)) / 2;
-    return { x: bay.x, y, z: bay.z, yaw: bay.heading, pitch: -Math.atan(ahead), roll: Math.atan(right), line };
+    return { x: bay.x, y, z: bay.z, yaw: bay.heading, ...slopeTilt(bay.x, bay.z, bay.heading, 4), line };
   });
   const count = coaches.length;
   const bodyGeo = buildCoachBodyGeometry();
@@ -191,10 +185,7 @@ function buildCentral(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addLa
     }
     rows[i] = p.line;
     // (it stops the player: its turned box, short of its roof)
-    const hx = COACH_W / 2, hz = COACH_L / 2, ccs = Math.cos(p.yaw), csn = Math.sin(p.yaw);
-    const ex = Math.abs(ccs) * hx + Math.abs(csn) * hz, ez = Math.abs(csn) * hx + Math.abs(ccs) * hz;
-    colliders.push({ minX: p.x - ex, maxX: p.x + ex, minZ: p.z - ez, maxZ: p.z + ez, minY: p.y, maxY: p.y + 3.3,
-      obb: { cx: p.x, cz: p.z, hx, hz, cs: ccs, sn: csn } });
+    colliders.push(turnedBox(p.x, p.z, COACH_W / 2, COACH_L / 2, p.yaw, p.y, p.y + 3.3));
   });
   for (const [k, a] of Object.entries(paints)) bodyGeo.setAttribute(k, new THREE.InstancedBufferAttribute(a, 3));
   names.geometry.setAttribute('coachName', new THREE.InstancedBufferAttribute(rows, 1));

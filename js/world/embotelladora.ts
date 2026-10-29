@@ -7,6 +7,7 @@
 // brand along their sides, instanced, drawn while the camera is within SHOW m. All of it stops the player.
 import * as THREE from 'three/webgpu';
 import { liftAt } from './ground.ts';
+import { slopeTilt, turnedBox } from './standing.ts';
 import { drapeGeometry } from './drape.ts';
 import { FlatLayer, fillLot, pavedHeight } from './car-parks.ts';
 import {
@@ -25,34 +26,23 @@ import {
   trailerNameTexture
 } from '../actors/actor-models.ts';
 import type { TileStreamer } from './streaming.ts';
+import type { SlopeTilt } from './standing.ts';
 import type { LotReserve } from './landmark-models.ts';
 import type { Collider, Footprint } from './buildings.ts';
 
 const SHOW = 600; // m from the camera within which the fleet is drawn
 
 /** A vehicle standing on the yard: where (m, its middle on the ground), its turn & tilt (rad) */
-interface Standing {
+interface Standing extends SlopeTilt {
   x: number;
   y: number;
   z: number;
   yaw: number;
-  pitch: number;
-  roll: number;
 }
 
 // A vehicle `length` m long standing at (x, z) facing `heading`, on the ground's slope under it
 function stand(x: number, z: number, heading: number, length: number): Standing {
-  const fx = Math.sin(heading), fz = Math.cos(heading), half = length / 2;
-  const ahead = (liftAt(x + fx * half, z + fz * half) - liftAt(x - fx * half, z - fz * half)) / length;
-  const right = (liftAt(x + fz, z - fx) - liftAt(x - fz, z + fx)) / 2;
-  return { x, y: liftAt(x, z) + pavedHeight(x, z), z, yaw: heading, pitch: -Math.atan(ahead), roll: Math.atan(right) };
-}
-
-// What stops the player over a vehicle (its turned box, from its foot to its top)
-function vehicleCollider(s: Standing, width: number, length: number, height: number): Collider {
-  const hx = width / 2, hz = length / 2, cs = Math.cos(s.yaw), sn = Math.sin(s.yaw);
-  const ex = Math.abs(cs) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
-  return { minX: s.x - ex, maxX: s.x + ex, minZ: s.z - ez, maxZ: s.z + ez, minY: s.y, maxY: s.y + height, obb: { cx: s.x, cz: s.z, hx, hz, cs, sn } };
+  return { x, y: liftAt(x, z) + pavedHeight(x, z), z, yaw: heading, ...slopeTilt(x, z, heading, length / 2) };
 }
 
 // Instanced meshes of `geos` (each with its material) at the vehicles' places
@@ -110,8 +100,8 @@ function buildEmbotelladora(scene: THREE.Object3D, streamer: Pick<TileStreamer, 
   // The fleet: the route trucks in their bays, the tráilers at the shed's doors
   const trucks = parkTrucks(truckBays()).map((b) => stand(b.x, b.z, b.heading, TRUCK_L));
   const rigs = trailers().map((t) => stand(t.x, t.z, t.heading, TRUCK_SIZE.length));
-  for (const s of trucks) colliders.push(vehicleCollider(s, TRUCK_W, TRUCK_L, ROUTE_TRUCK_SIZE.height));
-  for (const s of rigs) colliders.push(vehicleCollider(s, TRUCK_SIZE.width, TRUCK_SIZE.length, TRUCK_SIZE.height));
+  for (const s of trucks) colliders.push(turnedBox(s.x, s.z, TRUCK_W / 2, TRUCK_L / 2, s.yaw, s.y, s.y + ROUTE_TRUCK_SIZE.height));
+  for (const s of rigs) colliders.push(turnedBox(s.x, s.z, TRUCK_SIZE.width / 2, TRUCK_SIZE.length / 2, s.yaw, s.y, s.y + TRUCK_SIZE.height));
   const truckName = createRouteTruckNameMaterial(routeTruckNameTexture(BRAND, `700 ${BRAND_FONT}`));
   const fleet = instances(group, trucks, [
     [buildRouteTruckGeometry(), createRouteTruckMaterial(), true],
@@ -136,7 +126,7 @@ function buildEmbotelladora(scene: THREE.Object3D, streamer: Pick<TileStreamer, 
   /** Hangs the signal on the gate's post, its lights on the town's signal clock (street-details.ts: `clock`, s): green
    *  for the trucks going out while Insurgentes has red at the crossing by the gate */
   function lightGate(clock: Parameters<typeof createTrafficSignalLensMaterial>[1]): void {
-    buildGateSignal(group, mats, createTrafficSignalLensMaterial(false, clock));
+    buildGateSignal(group, createTrafficSignalLensMaterial(false, clock));
   }
 
   /** Shows the fleet while (x, z) is within SHOW m of the plant */

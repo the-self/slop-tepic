@@ -103,7 +103,7 @@ function inCarPark(lot: CarPark, x: number, z: number): boolean {
   return x >= lot.minX && x <= lot.maxX && z >= lot.minZ && z <= lot.maxZ && insidePoly(lot.pts, x, z);
 }
 
-// Distance (m) from (x, z) to the segment a-b
+/** The distance (m) from (x, z) to the segment a-b */
 function segmentDistance(x: number, z: number, ax: number, az: number, bx: number, bz: number): number {
   const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz;
   const t = L2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2)) : 0;
@@ -246,4 +246,4 @@ function displayStalls(lot: CarPark, out: 1 | -1, wallAt: WallDistance | null = 
   return stalls;
 }
 
-export { STALL_W, STALL_D, AISLE, carParks, inCarPark, inMouth, layStalls, parkCars, displayStalls };
+export { STALL_W, STALL_D, AISLE, carParks, inCarPark, inMouth, segmentDistance, layStalls, parkCars, displayStalls };
