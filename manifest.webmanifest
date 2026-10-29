@@ -1,0 +1,12 @@
+{
+  "name": "Tepic · Ciudad Abierta",
+  "short_name": "Tepic",
+  "description": "Un mundo abierto de Tepic, Nayarit, a escala real, en tu navegador.",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0b0d10",
+  "theme_color": "#0b0d10"
+}

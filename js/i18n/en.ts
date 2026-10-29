@@ -196,11 +196,18 @@ export const en = {
   'touch.nitro': 'Nitro',
   'touch.handbrake': 'Handbrake',
   'touch.fire': 'Fire',
+  'touch.punch': 'Punch',
   'touch.board': 'Get in, steal or get out',
   'touch.board.board': 'Get in',
   'touch.board.steal': 'Steal',
   'touch.board.exit': 'Get out',
   'touch.board.use': 'Use',
+  'touch.tools': 'More actions',
+  'touch.map': 'Map',
+  'touch.camera': 'Camera',
+  'touch.weapon': 'Switch weapon',
+  'touch.horn': 'Horn',
+  'touch.rotate': 'Turn your phone sideways to play',
 
   // The car's rev counter
   'tacho.nitro': 'Nitro',

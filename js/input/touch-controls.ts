@@ -47,6 +47,7 @@ class TouchControls {
   onAvailabilityChange: ((available: boolean) => void) | null;
   media: MediaQueryList;
   mode?: PlayerMode;
+  melee: boolean; // the weapon in hand is the fists: the fire button punches (setMelee)
 
   constructor(controllerManager: TouchTarget) {
     this.controller = controllerManager;
@@ -60,6 +61,7 @@ class TouchControls {
     this.available = false;
     this.touchSeen = false;
     this.onAvailabilityChange = null;
+    this.melee = false;
     this.media = window.matchMedia(TOUCH_SCREEN);
 
     const { stick } = this;
@@ -105,7 +107,10 @@ class TouchControls {
 
     this.media.addEventListener('change', () => { this.updateAvailability(); });
     // Hybrid devices can report a fine pointer until their first touch. Capture runs before the control handlers.
+    // (The first drag on the view, the cameras' look in player/cameras.ts, also puts away the hint how to look.)
     document.addEventListener('pointerdown', (event) => {
+      const target = event.target;
+      if (event.pointerType === 'touch' && target && 'localName' in target && target.localName === 'canvas') this.root?.classList.add('has-looked');
       if (event.pointerType !== 'touch' || this.touchSeen) return;
       this.touchSeen = true;
       this.updateAvailability();
@@ -145,14 +150,30 @@ class TouchControls {
     this.reset();
     if (!this.root) return;
     this.mode = mode;
-    const labels = TOUCH_LABELS[mode];
     for (const button of this.buttons) {
       const action = button.getAttribute('data-touch-action') as TouchAction;
       button.hidden = (action === 'up' && (mode === 'cyclist' || mode === 'moto')) || (action === 'down' && mode !== 'helicopter') ||
         (action === 'fire' && mode === 'helicopter'); // (no guns from the helicopter, crime.ts)
-      setLabel(button, labels[action]);
+    }
+    this.showLabels();
+  }
+
+  /** The weapon in hand is the fists (`melee`): the fire button says it punches. Cheap to call every frame. */
+  setMelee(melee: boolean): void {
+    if (melee === this.melee) return;
+    this.melee = melee;
+    this.showLabels();
+  }
+
+  showLabels(): void {
+    if (!this.root || !this.mode) return;
+    const labels = TOUCH_LABELS[this.mode];
+    for (const button of this.buttons) {
+      const action = button.getAttribute('data-touch-action') as TouchAction;
+      const key = action === 'fire' && this.melee ? 'touch.punch' : labels[action];
+      setLabel(button, key);
       const label = this.root.querySelector<HTMLElement>(`[data-touch-label="${action}"]`);
-      if (label) setText(label, labels[action]);
+      if (label) setText(label, key);
     }
   }
 
