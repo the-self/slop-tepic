@@ -105,3 +105,4 @@ function buildCityBlocks(scene: THREE.Object3D) {
 }
 
 export { Quadtree, buildCityBlocks };
+export { inReservedLot } from './buildings/houses.ts';

@@ -10,6 +10,7 @@ import { signKind, VENUE_KINDS } from '../venues.ts';
 import { LANDMARK_RESERVES } from '../tepic-landmarks.ts';
 import { LA_LOMA_RESERVES } from '../la-loma-plan.ts';
 import { FORUM_RESERVE } from '../forum-plan.ts';
+import { EMBOTELLADORA_RESERVE } from '../embotelladora-plan.ts';
 import { isEnterableStore, storeReserve } from '../store-interiors.ts';
 import { SLOPES, groundHeight, liftAt } from '../ground.ts';
 import { chance, irange, pickW, rand, range, seedDice } from './dice.ts';
@@ -18,8 +19,12 @@ import type { CityBlock } from '../city-config.ts';
 import type { LotReserve } from '../landmark-models.ts';
 import type { CityBuild, HouseBlock, Span } from './types.ts';
 
-// the lots the landmarks, La Loma's buildings & Forum Tepic stand on (tepic-landmarks.ts, la-loma-plan.ts, forum-plan.ts)
-const TEPIC_RESERVES = [...LANDMARK_RESERVES, ...LA_LOMA_RESERVES, FORUM_RESERVE];
+// the lots the landmarks, La Loma's buildings, Forum Tepic & the bottling plant stand on (tepic-landmarks.ts,
+// la-loma-plan.ts, forum-plan.ts, embotelladora-plan.ts)
+const TEPIC_RESERVES = [...LANDMARK_RESERVES, ...LA_LOMA_RESERVES, FORUM_RESERVE, EMBOTELLADORA_RESERVE];
+/** Whether (x, z) lies on a lot one of those stands on: Overture's house there is not drawn (what reads GEO.houses
+ *  on its own, the house fires, keeps off it) */
+const inReservedLot = (x: number, z: number): boolean => TEPIC_RESERVES.some((r) => r.contains(x, z));
 
 // Blocks the real buildings stand on (city-geodata.js `houses`, Overture Maps): built house by house (A2) instead
 const HOUSES = GEO.houses;
@@ -250,4 +255,4 @@ function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[]) {
   }
 }
 
-export { indexHouseBlocks, buildHouses };
+export { indexHouseBlocks, buildHouses, inReservedLot };

@@ -8,7 +8,7 @@
 // (campusClaims, bardas.ts).
 import * as THREE from 'three/webgpu';
 import { campusBuildings, campusPlan, inCampus } from './uan-campus.ts';
-import { Kit } from './uan/kit.ts';
+import { Kit } from './building-kit.ts';
 import { createUanMaterials } from './uan/materials.ts';
 import { buildRails, buildWalls } from './uan/walls.ts';
 import { buildGates } from './uan/gates.ts';

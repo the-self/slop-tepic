@@ -28,7 +28,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
     audio, crime, crimeHud, weaponWheel, weaponIcons, venues, streetFood, floods, nightlife, rooms, emergency, fires, gasStations, forumLife,
     render, gamepad, boarding, map, net, remoteCars
   } = game;
-  const { streamer, cityBlocks, stores, carParks, central, deliveries, streetDetails, powerLines, traffic, highwayTraffic } = city;
+  const { streamer, cityBlocks, stores, carParks, central, embotelladora, deliveries, streetDetails, powerLines, traffic, highwayTraffic } = city;
 
   // The saved player: every 5 s in play (the 'hud' system below), and on leaving the page or hiding it
   const save = () => { savePlayer(controllers, stateKey, crime.money, rooms.inside?.venue ?? null); };
@@ -167,6 +167,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
       stores.update(eye.x, eye.z);
       carParks.update(eye.x, eye.z);
       central.update(eye.x, eye.z);
+      embotelladora.update(eye.x, eye.z);
       // the tráilers at the supermarkets' docks in the small hours (world/delivery-trucks.ts)
       deliveries.update(lighting.hourOfDay, eye.x, eye.z, vehicleNear);
       // (no parked car where another vehicle stands: the player's left standing, the other players')

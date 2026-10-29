@@ -16,7 +16,7 @@ import { liftAt } from '../ground.ts';
 import { letteringMaterial, REJA_H } from './materials.ts';
 import { LOT_Y } from './walls.ts';
 import type { CampusGate, GateOpening } from '../uan-campus.ts';
-import type { Frame, Kit } from './kit.ts';
+import type { Frame, Kit } from '../building-kit.ts';
 import type { UanMaterials } from './materials.ts';
 
 const SINK = 1.0; // m the gates' feet go into the ground (they span the slope of a street)

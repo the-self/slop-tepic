@@ -4,8 +4,8 @@
 // (see-through: cut out by their bars & wires, the wire's coverage left to the scene pass's multisampling far off), the
 // louvred windows, the roofs, and the lettering on the portals (painted on a canvas, standing clear of its plane).
 import * as THREE from 'three/webgpu';
-import { color, float, floor, fract, fwidth, length, max, min, mix, mx_noise_float, positionWorld, sin, smoothstep, step, texture, uv, vec2, vec3 } from 'three/tsl';
-import { bumpNormal } from '../../render/materials/shared.ts';
+import { color, float, floor, fract, fwidth, length, max, mix, mx_noise_float, positionWorld, sin, smoothstep, step, texture, uv, vec2, vec3 } from 'three/tsl';
+import { bumpNormal, lineCover as cover } from '../../render/materials/shared.ts';
 import { cityUniforms } from '../../render/tsl-materials.ts';
 import type { Node } from 'three/webgpu';
 
@@ -213,15 +213,6 @@ function createUanMaterials(): UanMaterials {
   };
 }
 
-// How much of a pixel lines `w` wide (a share of their period) cover at x (in periods, the lines on its integers): 1
-// on one, its edge smoothed over the pixel's width; and far off, where a pixel spans a period or more, the share of it
-// they cover (the wires' haze)
-function cover(x: Node<'float'>, w: number) {
-  const f = fract(x), d = min(f, float(1).sub(f)); // (to the nearest line, in periods)
-  const fw = max(fwidth(x), 1e-4); // (periods a pixel)
-  const line = float(1).sub(smoothstep(0, fw, d.sub(w / 2)));
-  return mix(line, float(w), smoothstep(0.5, 2.0, fw));
-}
 
 // Draws `text` in `ink` centred in the canvas box (x, y, w, h px), as big as fills `fill` of its height and fits its width
 function drawText(g: CanvasRenderingContext2D, text: string, x: number, y: number, w: number, h: number, ink: string, fill: number, weight: number, font: string): void {

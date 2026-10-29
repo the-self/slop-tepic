@@ -14,7 +14,7 @@ import { GEO } from '../city-geodata.js';
 import { letteringMaterial, REJA_H } from './materials.ts';
 import type { CampusWall } from '../uan-campus.ts';
 import type { PointXZ } from '../city-config.ts';
-import type { Frame, Kit } from './kit.ts';
+import type { Frame, Kit } from '../building-kit.ts';
 import type { UanMaterials } from './materials.ts';
 
 const LOT_Y = 0.22; // m: the block's ground over the town's floor (city-grid.ts's sidewalk top)

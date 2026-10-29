@@ -1,11 +1,12 @@
-// js/world/uan/kit.ts
-// The campus's building kit: pieces (boxes, shapes, planes) placed in a frame of their own (a wall's stretch, a gate,
-// a building: its origin, its turn), gathered per material and per CELL m of ground and merged into one mesh each, so
-// the whole campus is a few dozen draws, culled by the cell; and the colliders of what stops the player. Boxes and
-// planes carry UVs in metres (u along their length, v up), which the stone, the rejas & the louvres are drawn by.
+// js/world/building-kit.ts
+// A building kit for the places built piece by piece (the UAN's campus, uan.ts; the bottling plant, embotelladora.ts):
+// pieces (boxes, shapes, planes) placed in a frame of their own (a wall's stretch, a gate, a building: its origin, its
+// turn), gathered per material and per CELL m of ground and merged into one mesh each, so a whole campus is a few dozen
+// draws, culled by the cell; and the colliders of what stops the player. Boxes and planes carry UVs in metres (u along
+// their length, v up), which the stone, the rejas, the bricks & the louvres are drawn by.
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { Collider } from '../buildings.ts';
+import type { Collider } from './buildings.ts';
 
 const CELL = 200; // m of ground per merged mesh
 

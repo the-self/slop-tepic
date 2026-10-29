@@ -16,7 +16,7 @@ import { GEO } from '../city-geodata.js';
 import { inCampus } from '../uan-campus.ts';
 import { blockAt } from '../city-config.ts';
 import type { CampusBuilding } from '../uan-campus.ts';
-import type { Frame, Kit } from './kit.ts';
+import type { Frame, Kit } from '../building-kit.ts';
 import { RAIL_H, nameBoards } from './materials.ts';
 import type { Footprint } from '../buildings/types.ts';
 import type { UanMaterials } from './materials.ts';
