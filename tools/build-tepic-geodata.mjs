@@ -1316,7 +1316,7 @@ const KNOWN_PARKING = [
     ],
     keep: [
       { lat: 21.4920409, lon: -104.8659292, r: 9, note: "Carl's Jr." },
-      // the mall's glass entrances, standing out of its walls under their canopies (js/world/forum-plan.ts entrances)
+      // the mall's glass entrances, standing out of its walls under their canopies (js/places/forum/plan.ts entrances)
       { lat: 21.4921138, lon: -104.8658813, r: 10, note: 'the north entrance' },
       { lat: 21.4917612, lon: -104.8675995, r: 10, note: 'the west entrance' },
       { lat: 21.4903043, lon: -104.8677935, r: 9, note: 'the south entrance' }

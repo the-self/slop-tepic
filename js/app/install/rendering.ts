@@ -18,7 +18,7 @@ export function installRendering({ scene, renderer, lighting, quality, loading, 
   // (the hills', rivers' & bridges' pieces merged by material: render/scene-culling.ts mergeSiblings)
   setupSceneCulling(scene, cullingRoots, lighting.sunLight.shadow, quality.propDistance, named(['Hills', 'Rivers', 'Bridges']));
   // ...whose world matrices never change again: rendering stops walking them (the loop updates the rest of the scene)
-  const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Airport', 'RoadMarkings', 'Pavements', 'Footways', 'Topes', 'StreamedTiles', 'BusStops', 'PowerLines', 'Pools', 'Furniture'])
+  const staticRoots = [...cullingRoots, ...named(['TepicLandmarks', 'Cotos', 'CarParks', 'Embotelladora', 'Airport', 'RoadMarkings', 'Pavements', 'Footways', 'Topes', 'StreamedTiles', 'BusStops', 'PowerLines', 'Pools', 'Furniture'])
     .filter((o) => o.parent === scene)];
   freezeStaticMatrices(scene, staticRoots);
   loading.mark('culling');

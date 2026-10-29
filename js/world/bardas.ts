@@ -42,7 +42,7 @@ const OSM_CELL = 25;
 
 /**
  * The bardas into the scene. `keepOpen(x, z)`: ground left open to the street (the car parks & their driveways,
- * car-parks.ts keepsOpen); `claimed(x, z)`: ground walled otherwise (the UAN's grounds, uan.ts), where neither
+ * car-parks.ts keepsOpen); `claimed(x, z)`: ground walled otherwise (the UAN's grounds, places/uan/), where neither
  * OpenStreetMap's walls nor ours stand. Returns the group and the walls' & gates' colliders
  */
 function buildBardas(scene: THREE.Object3D, keepOpen: ((x: number, z: number) => boolean) | null = null,

@@ -26,10 +26,10 @@ const PERSON_WAIT = 8000; // ms the loading screen waits for the player's body (
 export async function startFrameLoop(game: Game): Promise<void> {
   const {
     debug, quality, loading, renderer, scene, lighting, rain, roadWater, hud, city, controllers, stateKey, blood, stamina, cameras, aim,
-    audio, crime, crimeHud, weaponWheel, weaponIcons, venues, streetFood, floods, nightlife, rooms, emergency, fires, gasStations, forumLife,
+    audio, crime, crimeHud, weaponWheel, weaponIcons, venues, streetFood, floods, nightlife, rooms, emergency, fires, gasStations, forumLife, centralLife,
     render, gamepad, boarding, map, net, remoteCars, trains, railCrossings
   } = game;
-  const { streamer, cityBlocks, stores, carParks, central, deliveries, streetDetails, powerLines, traffic, highwayTraffic } = city;
+  const { streamer, cityBlocks, stores, carParks, central, embotelladora, deliveries, streetDetails, powerLines, traffic, highwayTraffic } = city;
 
   // The saved player: every 5 s in play (the 'hud' system below), and on leaving the page or hiding it
   const save = () => { savePlayer(controllers, stateKey, crime.money, rooms.inside?.venue ?? null); };
@@ -86,6 +86,15 @@ export async function startFrameLoop(game: Game): Promise<void> {
   const vehicleNear = (x: number, z: number, r: number) =>
     controllers.parkedVehicles().some((v) => Math.hypot(v.x - x, v.z - z) < r) ||
     crime.remotes.some((o) => !o.person && Math.hypot(o.x - x, o.z - z) < r);
+  // the Central's gates rise for any vehicle at them; its coaches stop for one in their way, or for the player on foot
+  const centralVehicleAt = (x: number, z: number, r: number) => traffic.vehicleAt(x, z, r);
+  const centralBlocked = (x: number, z: number, r: number) => {
+    if (traffic.vehicleAt(x, z, r)) return true;
+    const p = controllers.getActiveEntity().position;
+    return controllers.activeMode === 'person' && Math.hypot(p.x - x, p.z - z) < r + 0.6;
+  };
+  // ...and its doors open for its travellers coming through them (places/central/life.ts), as for the player
+  const centralSomeoneAt = (x: number, z: number, r: number) => centralLife.someoneAt(x, z, r);
   const scheduler = new Scheduler({ profile: debug })
     .run('gamepad', ({ dt }) => { gamepad.update(dt); })
     .run('player', ({ frameDt, elapsed }) => {
@@ -133,7 +142,8 @@ export async function startFrameLoop(game: Game): Promise<void> {
     .run('traffic', ({ dt, elapsed }) => {
       // the hour sets how much traffic and how many people are out (sim/traffic-demand.ts): rush hours on the avenues
       traffic.setHour(lighting.hourOfDay);
-      traffic.setParked(crime.addObstacles(controllers.parkedVehicles()));
+      // (and the Central's coaches out on the streets: places/central/index.ts)
+      traffic.setParked(central.addObstacles(crime.addObstacles(controllers.parkedVehicles())));
       const entity = controllers.getActiveEntity();
       traffic.update(dt, elapsed, cameras.currentPos, entity, controllers.activeMode, cameras.camera);
       highwayTraffic.update(dt, cameras.camera, entity, controllers.activeMode);
@@ -154,6 +164,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
       nightlife.update(dt, lighting.hourOfDay, weekday, cameras.camera);
       rooms.update(dt, lighting.hourOfDay);
       forumLife.update(dt, cameras.camera, controllers.getActiveEntity(), controllers.activeMode); // (Forum Tepic)
+      centralLife.update(dt, cameras.camera); // (the Central de Autobuses' travellers)
       if (!rooms.active) fires.update(dt, cityUniforms.uDryness.value, cameras.camera);
       // the sounds that stay put (audio/audio-ambience.ts): the planchas, the antros' & parties' music, the fires
       ambience.length = 0;
@@ -178,12 +189,18 @@ export async function startFrameLoop(game: Game): Promise<void> {
         nextPlayerSave = now + 5000;
       }
     })
+    // the Central de Autobuses: its doors opening for the player, its gates' arms rising for the vehicles that come
+    // (the traffic's bodies, gathered above), the coaches coming and going on their highways (places/central/index.ts)
+    .run('central', ({ dt }) => {
+      const eye = cameras.currentPos, at = controllers.getActiveEntity().position;
+      central.update(dt, eye.x, eye.z, at.x, at.z, centralVehicleAt, centralBlocked, centralSomeoneAt);
+    })
     .run('city detail', () => {
       const eye = cameras.currentPos;
       cityBlocks.update(eye.x, eye.z);
       stores.update(eye.x, eye.z);
       carParks.update(eye.x, eye.z);
-      central.update(eye.x, eye.z);
+      embotelladora.update(eye.x, eye.z);
       // the tráilers at the supermarkets' docks in the small hours (world/delivery-trucks.ts)
       deliveries.update(lighting.hourOfDay, eye.x, eye.z, vehicleNear);
       // (no parked car where another vehicle stands: the player's left standing, the other players')

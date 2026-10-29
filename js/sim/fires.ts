@@ -54,6 +54,8 @@ interface FiresOptions {
   controllers: FireControllers;
   houses?: ArrayLike<number>; // city-geodata.js: stride numbers a house (x, z in dm, ..., floors at 5, flags at 6)
   stride?: number;
+  /** Whether the house at (x, z) (m) is not drawn: a landmark's, the mall's or the bottling plant's lot (no fire there) */
+  reserved?: (x: number, z: number) => boolean;
 }
 
 const MAX_FIRES = 6;
@@ -73,6 +75,7 @@ class Fires {
   controllers: FireControllers;
   houses: ArrayLike<number>;
   stride: number;
+  reserved: (x: number, z: number) => boolean;
   fires: Fire[];
   timers: { house: number; grass: number }; // s to the next
   dryness: number;
@@ -84,13 +87,14 @@ class Fires {
    *   sim/emergency.ts); controllers (the ground, the walls: player/controllers.ts); houses & stride (city-geodata.js,
    *   for house fires)
    */
-  constructor({ scene, crime, services, controllers, houses = [], stride = 8 }: FiresOptions) {
+  constructor({ scene, crime, services, controllers, houses = [], stride = 8, reserved = () => false }: FiresOptions) {
     this.crime = crime;
     this.services = services;
     this.fx = crime.fx;
     this.controllers = controllers;
     this.houses = houses;
     this.stride = stride;
+    this.reserved = reserved;
     this.fires = [];
     this.timers = { house: rnd(...HOUSE_EVERY) * 0.5, grass: rnd(...GRASS_EVERY) * 0.3 };
     this.dryness = 0;
@@ -138,7 +142,7 @@ class Fires {
       const i = Math.floor(Math.random() * (H.length / S)) * S;
       const hx = H[i] / 10, hz = H[i + 1] / 10;
       const d = Math.hypot(hx - x, hz - z);
-      if (d < 150 || d > 450 || H[i + 6] & 8) continue;
+      if (d < 150 || d > 450 || H[i + 6] & 8 || this.reserved(hx, hz)) continue;
       return { x: hx, z: hz, roof: H[i + 5] * 3.0 };
     }
     return null;

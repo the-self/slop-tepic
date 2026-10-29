@@ -13,7 +13,8 @@ import { Interiors } from '../../world/interiors.ts';
 import { Fires } from '../../sim/fires.ts';
 import { EmergencyServices } from '../../sim/emergency.ts';
 import { GasStations } from '../../sim/gas-stations.ts';
-import { ForumLife } from '../../sim/forum.ts';
+import { ForumLife } from '../../places/forum/life.ts';
+import { CentralLife } from '../../places/central/life.ts';
 import type { Boot } from './boot.ts';
 import type { CityParts } from '../game.ts';
 import type { PlayerParts } from './player.ts';
@@ -45,7 +46,8 @@ export function installCityLife({ params, scene, loading, events, rain, city, co
   traffic.setSirens(emergency.sirens); // (the cars ahead of them pull over)
   audio.sources.pursuers = [...crime.cruisers, crime.heli]; // (the patrol cars & trucks, the helicopter)
   // Burning wrecks, house fires, the dry season's quemas, and the bomberos who come for them (sim/fires.ts)
-  const fires = new Fires({ scene, crime, services: emergency, controllers, houses: GEO.houses, stride: GEO.houseStride || 8 });
+  const fires = new Fires({ scene, crime, services: emergency, controllers, houses: GEO.houses, stride: GEO.houseStride || 8,
+    reserved: city.cityBlocks.inReservedLot });
   // Tepic's gas stations (sim/gas-stations.ts): the car fills up stopped by a pump (G); a pump shot, rammed or caught in a
   // blast goes up
   const gasStations = new GasStations({
@@ -74,7 +76,7 @@ export function installCityLife({ params, scene, loading, events, rain, city, co
   events.on('collision', (impact) => {
     if (impact.kind === 'building' && impact.a === controllers.getActiveEntity()) carParks.strike(impact.x, impact.z, impact.speed);
   });
-  // Forum Tepic (sim/forum.ts): no rain under its roofs; its shoppers fall as bodies in the car's world, and one run
+  // Forum Tepic (places/forum/life.ts): no rain under its roofs; its shoppers fall as bodies in the car's world, and one run
   // over there is a crime as on the street (sim/crime.ts's traffic knock listener), always seen (the mall is full of
   // shoppers); the glass a car drives through goes from its world, heard breaking
   rain.setRoofs(forum.roofs);
@@ -88,5 +90,11 @@ export function installCityLife({ params, scene, loading, events, rain, city, co
   forumLife.glass.physics = physics;
   forumLife.glass.sound = audio;
   loading.mark('controllers');
-  return { venues, streetFood, floods, nightlife, rooms, emergency, fires, gasStations, forumLife };
+  // The Central de Autobuses' travellers: walking in and out, sitting in the waiting room, in line boarding the coaches
+  // (places/central/life.ts), on its floors (ground.ts's decks: the topmost there)
+  // ...and its coaches' roads out of town to Guadalajara, Mazatlán & Miramar, found as the police find theirs (one way
+  // streets kept to, far enough to reach the edge of the map)
+  city.central.setRouter((x0, z0, x1, z1) => crime.route(x0, z0, x1, z1, 120000, true));
+  const centralLife = new CentralLife(scene, (x, z) => controllers.getGroundHeight(x, z, 'person', Infinity), city.central.andenCoaches);
+  return { venues, streetFood, floods, nightlife, rooms, emergency, fires, gasStations, forumLife, centralLife };
 }

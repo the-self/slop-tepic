@@ -49,14 +49,15 @@ export function letteringAtlas(rows: readonly (readonly [text: string, ink: stri
 }
 
 /** The lettering's material over an atlas of `rows` rows: the row named by the per-instance attribute `rowAttribute`,
- *  cut out of the clear */
-export function createLetteringMaterial(tex: THREE.Texture, rows: number, rowAttribute: string, roughness = 0.5): THREE.MeshStandardNodeMaterial {
+ *  cut out of the clear; with `fadeAttribute`, faded too by that per-instance attribute (0..1, dithered) */
+export function createLetteringMaterial(tex: THREE.Texture, rows: number, rowAttribute: string, roughness = 0.5, fadeAttribute?: string): THREE.MeshStandardNodeMaterial {
   const row = attribute(rowAttribute, 'float');
   const t = texture(tex, vec2(uv().x, uv().y.add(float(rows - 1).sub(row)).div(rows)));
   const mat = new THREE.MeshStandardNodeMaterial();
   mat.colorNode = t.rgb;
-  mat.opacityNode = t.a;
+  mat.opacityNode = fadeAttribute ? t.a.mul(attribute(fadeAttribute, 'float')) : t.a;
   mat.alphaTest = 0.5;
+  mat.alphaHash = Boolean(fadeAttribute);
   mat.roughnessNode = float(roughness);
   mat.metalnessNode = float(0.0);
   return mat;
