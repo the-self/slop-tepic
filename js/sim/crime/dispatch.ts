@@ -1,11 +1,13 @@
 // js/sim/crime/dispatch.ts
 // Who turns up (sim/crime.ts): the police for the stars (and from four the army and the helicopter), the traffic's
-// patrols that spot a wanted player, gangs on their turf, the cartel's trucks, thieves, and health, armour and a
+// patrols that spot a wanted player (or a gang's armed men: they go for them), gangs on their turf, the cartel's trucks, thieves, and health, armour and a
 // bazooka lying about.
 import { POLICE, GANGS, NARCO, gangTurf } from '../crime-rules.ts';
 import { MAX_AGENTS, MAX_TRUCKS, HEALTH_PICKUP, ARMOR_PICKUP, rand } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
 import { t as tr } from '../../i18n/i18n.ts'; // (t is the dispatch's timers here)
+
+const GANG_CALL_EVERY = 35; // s at least between two patrols going for a gang
 
 export function dispatch(crime: CrimeSystem, dt: number): void {
   const t = crime.timers;
@@ -52,7 +54,9 @@ export function dispatch(crime: CrimeSystem, dt: number): void {
     t.patrols = 0.5;
     const v = stars > 0 && crime.onStreet ? crime.trafficPatrolSees(crime.px, crime.pz, true) : null;
     if (v && crime.takeOverPatrol(v)) crime.toast(tr('toast.patrol'));
+    else if (stars === 0 && t.gangCall <= 0) gangCall(crime);
   }
+  t.gangCall -= dt;
 
   // the helicopter, from four stars (another a while after one is shot down)
   t.heli -= dt;
@@ -130,5 +134,18 @@ export function dispatch(crime: CrimeSystem, dt: number): void {
       const s = crime.traffic.sidewalkSpot(crime.px, crime.pz, 30, 90);
       if (s) crime.drop('bazooka', s.x, s.z, 0, 300);
     }
+  }
+}
+
+// A patrol of the traffic that sees a gang's armed men on their corner goes for them (one at a time, now and then)
+function gangCall(crime: CrimeSystem): void {
+  if (crime.cruisers.some((cr) => cr.active && cr.state === 'respond')) return;
+  for (const a of crime.agents) {
+    if (a.kind !== 'gang' || a.fallen || a.dead || !a.weapon) continue;
+    const v = crime.trafficPatrolSees(a.x, a.z, true);
+    if (!v || !crime.respondToGang(v, a)) continue;
+    crime.timers.gangCall = GANG_CALL_EVERY;
+    if (Math.hypot(a.x - crime.px, a.z - crime.pz) < 120) crime.toast(tr('toast.copsGang'));
+    return;
   }
 }

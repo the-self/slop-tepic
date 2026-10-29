@@ -1,0 +1,6 @@
+{
+  "note": "Modelled by script in Blender (blender -b --factory-startup -P tools/models/blender/nissan-np300.py -- <nissan-np300.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/nissan-np300.glb --length 5.332 --roles tools/models/jobs/cars/nissan-np300.roles.json --plates 0.56,0.53 (its real length, the Pick-up's in Nissan Mexicana's NP300 MY21 data sheet, so it is not rescaled; light enough for no levels of detail: tools/models/add-lods.mjs leaves it)",
+  "license": "our own work",
+  "source": "tools/models/blender/nissan-np300.py",
+  "args": "--length 5.332 --roles tools/models/jobs/cars/nissan-np300.roles.json --plates 0.56,0.53"
+}

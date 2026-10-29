@@ -158,7 +158,7 @@ export function installControls({ renderer, hud, events, city, controllers, came
     controllerManager: controllers,
     cameraSystem: cameras,
     trafficSystem: traffic,
-    allBlocks: [...cityBlocks.allBlocks, city.uan.map, city.central.map], // (the UAN's & the Central's buildings are their own, not among the blocks')
+    allBlocks: [...cityBlocks.allBlocks, ...city.places.flatMap((p) => p.map ?? [])], // (the places' buildings are their own, not among the blocks')
     onToggle: (open) => {
       controllers.resetInput();
       touch.setEnabled(!open);

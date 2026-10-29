@@ -11,7 +11,7 @@ export type AudioParts = ReturnType<typeof installAudio>;
 
 export function installAudio({ hud, events, city, controllers }: Boot & CityParts & PlayerParts) {
   const { traffic, highwayTraffic, streetDetails } = city;
-  const audio = new CityAudioSystem({ controllerManager: controllers, trafficSystem: traffic, highwayTraffic, streetDetails, propBreaker: streetDetails.breaker }, {
+  const audio = new CityAudioSystem({ controllerManager: controllers, trafficSystem: traffic, highwayTraffic, streetDetails }, {
     onStateChange: () => { hud.showSound(audio); }
   });
   document.getElementById('btn-sound')?.addEventListener('click', () => { audio.setEnabled(!audio.enabled); });

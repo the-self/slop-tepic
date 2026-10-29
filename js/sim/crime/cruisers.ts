@@ -6,7 +6,7 @@ import { boxHit } from '../mayhem.ts';
 import { boxOverlap, wrapAngle } from '../weapons.ts';
 import { POLICE, NARCO } from '../crime-rules.ts';
 import type { Car } from '../traffic.ts';
-import type { Faction, Cruiser, Agent } from './types.ts';
+import type { Faction, Cruiser, Agent, XZ } from './types.ts';
 import { PARKED_Y, DESPAWN, CRUISER, CRUISER_HP, clamp, rand } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
 import { cruiserBody, driveCruiserBody, dropCruiserBody, placeCruiserMesh } from './cruiser-bodies.ts';
@@ -15,6 +15,9 @@ import type { CruiserBody } from './cruiser-bodies.ts';
 const tilt = { pitch: 0, roll: 0 };
 const WALL = { type: 'building' }; // (what a body strikes that isn't a vehicle, to the audio)
 const STOPPED = 2.5; // m/s the player's vehicle goes under for a patrol car to stop by it and send its officers out
+const GANG_REACH = 45; // m round where a patrol was called to that it looks for armed gang members
+const CALL_SPEED = 14; // m/s a patrol car makes for a gang's corner (~50 km/h)
+const CALL_TIME = 150; // s a patrol stays on a gang call at most
 
 // The bomberos' fire trucks and the Cruz Roja's ambulances: in the patrol cars' pool for their driving, collisions,
 // sirens & gunfire, but sent and driven by sim/emergency.ts, never in a chase
@@ -42,7 +45,19 @@ export function spawnCruiser(
   cr.crew.length = 0;
   cr.bodyMesh.material = cr.paint;
   cr.lightbar.visible = faction === 'police';
+  cr.lightbar.material = crime.bars.lit;
+  cr.siren = faction === 'police';
   return cr;
+}
+
+// Off the call (the player no longer wanted, a gang dealt with): the lights switched off and the siren with them, as a
+// patrol car going back about its round
+function standDown(crime: CrimeSystem, cr: Cruiser): void {
+  cr.state = 'leave';
+  cr.life = 0; // (its officers have time to get back in before it goes)
+  if (cr.faction !== 'police') return;
+  cr.lightbar.material = crime.bars.dark;
+  cr.siren = false;
 }
 
 // A patrol of the traffic that sees the wanted player takes up the chase: it leaves the traffic and goes on as one of
@@ -51,6 +66,33 @@ export function takeOverPatrol(crime: CrimeSystem, v: Car): Cruiser | null {
   if (!crime.cruisers.some((c) => !c.active && c.faction === 'police')) return null;
   const cr = crime.spawnCruiser('police', { x: v.x, z: v.z, heading: v.yaw + v.yawOffset, speed: v.speed });
   if (cr) crime.traffic.withdraw(v);
+  return cr;
+}
+
+// The nearest armed gang member standing within `reach` m of (x, z), or null
+export function armedGangNear(crime: CrimeSystem, x: number, z: number, reach: number): Agent | null {
+  let best: Agent | null = null, bestD = reach;
+  for (const a of crime.agents) {
+    if (a.kind !== 'gang' || a.fallen || a.dead || !a.weapon) continue;
+    const d = Math.hypot(a.x - x, a.z - z);
+    if (d < bestD) {
+      bestD = d;
+      best = a;
+    }
+  }
+  return best;
+}
+
+// A patrol of the traffic that sees a gang's armed men on their corner goes for them: out of the traffic, lights and
+// siren on, it stops by them and sends its officers out, and the police and the gang shoot it out (agents.ts)
+export function respondToGang(crime: CrimeSystem, v: Car, gang: Agent): Cruiser | null {
+  if (!crime.cruisers.some((c) => !c.active && c.faction === 'police')) return null;
+  const cr = crime.spawnCruiser('police', { x: v.x, z: v.z, heading: v.yaw + v.yawOffset, speed: v.speed });
+  if (!cr) return null;
+  crime.traffic.withdraw(v);
+  cr.state = 'respond';
+  cr.goalX = gang.x;
+  cr.goalZ = gang.z;
   return cr;
 }
 
@@ -101,7 +143,7 @@ export function updateCruiser(crime: CrimeSystem, cr: Cruiser, dt: number): void
   const narco = cr.faction === 'narco';
   // the police chase while there are stars, the army from four, the cartel while it is after the player
   const done = narco ? crime.gangAnger[NARCO] <= 0 : cr.faction === 'army' ? !POLICE.soldiers[stars] : stars === 0;
-  if (done || crime.state !== 'play') cr.state = 'leave';
+  if ((done || crime.state !== 'play') && cr.state === 'chase') standDown(crime, cr);
   // its crew out on foot: those fallen are left behind; nobody left of them nor in it, it stays where they left it
   if (cr.deployed) {
     const crew = cr.crew;
@@ -119,7 +161,12 @@ export function updateCruiser(crime: CrimeSystem, cr: Cruiser, dt: number): void
       return;
     }
   }
-  if (cr.state === 'leave' && (dist > 90 || cr.life > 90)) {
+  if (cr.state === 'respond') {
+    respond(crime, cr, dt, dist);
+    return;
+  }
+  // (gone once its crew is back in it)
+  if (cr.state === 'leave' && !cr.crew.length && (dist > 90 || cr.life > 90)) {
     crime.removeCruiser(cr);
     return;
   }
@@ -143,37 +190,14 @@ export function updateCruiser(crime: CrimeSystem, cr: Cruiser, dt: number): void
       const lead = Math.min(1.2, dist / 18);
       tx = crime.px + crime.pvx * lead;
       tz = crime.pz + crime.pvz * lead;
-    } else {
-      // a new route when the player has moved on from where the last one led (or it ran out, or the car got stuck)
-      if (!cr.path || (cr.replan <= 0 && Math.hypot(hx - cr.goalX, hz - cr.goalZ) > 25)) {
-        cr.path = crime.route(cr.x, cr.z, hx, hz);
-        // (without the intersections it is already past: on the way from the first to the second)
-        while (cr.path && cr.path.length > 1 &&
-          Math.hypot(cr.path[1].x - cr.x, cr.path[1].z - cr.z) < Math.hypot(cr.path[1].x - cr.path[0].x, cr.path[1].z - cr.path[0].z)) {
-          cr.path.shift();
-        }
-        cr.pathI = 0;
-        cr.startX = cr.x;
-        cr.startZ = cr.z;
-        cr.goalX = hx;
-        cr.goalZ = hz;
-        cr.replan = 3;
-      }
-      if (cr.path && crime.pursue(cr, 10 + Math.abs(cr.speed) * 0.6) && crime._aim) {
-        tx = crime._aim.x;
-        tz = crime._aim.z;
-      }
+    } else if (followRoute(crime, cr, hx, hz)) {
+      tx = aim.x;
+      tz = aim.z;
     }
   }
-  // overtaking: something slow ahead in its way (a car or bus queued at a light), it pulls out round it (chasing or
-  // leaving)
-  const pass = crime.blockerAhead(cr);
-  if (pass) {
-    const side = cr.passSide || 1; // (left first: the oncoming lane)
-    const lx = Math.cos(cr.heading) * side, lz = -Math.sin(cr.heading) * side;
-    if (crime.solidAt(cr.x + lx * 3.2 + Math.sin(cr.heading) * 5, cr.z + lz * 3.2 + Math.cos(cr.heading) * 5)) cr.passSide = -side;
-    tx = cr.x + Math.sin(cr.heading) * 12 + lx * 3.4 * pass;
-    tz = cr.z + Math.cos(cr.heading) * 12 + lz * 3.4 * pass;
+  if (overtake(crime, cr)) {
+    tx = aim.x;
+    tz = aim.z;
   }
   let want = narco ? 22 : POLICE.speed[stars] || 13;
   // stop near the player on foot, or in a vehicle standing still (boxed in, crashed, given up), and send the officers
@@ -192,6 +216,91 @@ export function updateCruiser(crime: CrimeSystem, cr: Cruiser, dt: number): void
     if (cr.crew.length) want = 0;
     else if (crime.mode !== 'person' && dist > 15) cr.deployed = false;
   }
+  crime.moveCruiser(cr, dt, want, tx, tz);
+}
+
+const aim: XZ = { x: 0, z: 0 }; // (where followRoute and overtake steer a patrol car)
+
+// Along the roads to (gx, gz): a new route when the goal has moved on from where the last one led (or it ran out, or the
+// car got stuck), the point ahead on it into `aim`. False with no route there.
+function followRoute(crime: CrimeSystem, cr: Cruiser, gx: number, gz: number): boolean {
+  if (!cr.path || (cr.replan <= 0 && Math.hypot(gx - cr.goalX, gz - cr.goalZ) > 25)) {
+    cr.path = crime.route(cr.x, cr.z, gx, gz);
+    // (without the intersections it is already past: on the way from the first to the second)
+    while (cr.path && cr.path.length > 1 &&
+      Math.hypot(cr.path[1].x - cr.x, cr.path[1].z - cr.z) < Math.hypot(cr.path[1].x - cr.path[0].x, cr.path[1].z - cr.path[0].z)) {
+      cr.path.shift();
+    }
+    cr.pathI = 0;
+    cr.startX = cr.x;
+    cr.startZ = cr.z;
+    cr.goalX = gx;
+    cr.goalZ = gz;
+    cr.replan = 3;
+  }
+  if (!cr.path || !crime.pursue(cr, 10 + Math.abs(cr.speed) * 0.6) || !crime._aim) return false;
+  aim.x = crime._aim.x;
+  aim.z = crime._aim.z;
+  return true;
+}
+
+// Overtaking: something slow ahead in its way (a car or bus queued at a light), it pulls out round it (into `aim`)
+function overtake(crime: CrimeSystem, cr: Cruiser): boolean {
+  const pass = crime.blockerAhead(cr);
+  if (!pass) return false;
+  const side = cr.passSide || 1; // (left first: the oncoming lane)
+  const lx = Math.cos(cr.heading) * side, lz = -Math.sin(cr.heading) * side;
+  if (crime.solidAt(cr.x + lx * 3.2 + Math.sin(cr.heading) * 5, cr.z + lz * 3.2 + Math.cos(cr.heading) * 5)) cr.passSide = -side;
+  aim.x = cr.x + Math.sin(cr.heading) * 12 + lx * 3.4 * pass;
+  aim.z = cr.z + Math.cos(cr.heading) * 12 + lz * 3.4 * pass;
+  return true;
+}
+
+// Called to a gang's corner (respondToGang): there along the roads, lights going; it stops short of them and its
+// officers get out to take them on. Once no armed gang member is left standing there (or it has been too long) it
+// stands down, and its officers get back in; the player wanted meanwhile, it joins the chase instead
+function respond(crime: CrimeSystem, cr: Cruiser, dt: number, dist: number): void {
+  if (crime.state === 'play' && crime.wanted.stars > 0) {
+    cr.state = 'chase';
+    cr.path = null;
+    return;
+  }
+  if (dist > 280 || cr.stuckCount > 3) {
+    crime.removeCruiser(cr);
+    return;
+  }
+  cr.replan -= dt;
+  // (where the gang is now, once a second)
+  if (Math.floor(cr.life) !== Math.floor(cr.life - dt)) {
+    const g = armedGangNear(crime, cr.goalX, cr.goalZ, GANG_REACH);
+    if (!g || cr.life > CALL_TIME) {
+      standDown(crime, cr);
+      return;
+    }
+    cr.goalX = g.x;
+    cr.goalZ = g.z;
+  }
+  const gx = cr.goalX, gz = cr.goalZ;
+  const d = Math.hypot(gx - cr.x, gz - cr.z);
+  let tx = gx, tz = gz;
+  if (!(d < 40 && crime.clearLine(cr.x, cr.z, gx, gz)) && followRoute(crime, cr, gx, gz)) {
+    tx = aim.x;
+    tz = aim.z;
+  }
+  if (overtake(crime, cr)) {
+    tx = aim.x;
+    tz = aim.z;
+  }
+  let want = CALL_SPEED;
+  cr.slowT = Math.abs(cr.speed) < 1.5 ? cr.slowT + dt : 0;
+  if (d < 22 || (d < 40 && cr.slowT > 1.5)) {
+    want = 0;
+    if (!cr.deployed && Math.abs(cr.speed) < 1.5) {
+      cr.deployed = true;
+      crime.deployOfficers(cr);
+    }
+  }
+  if (cr.deployed) want = 0; // (it waits for them where it stopped)
   crime.moveCruiser(cr, dt, want, tx, tz);
 }
 
@@ -465,6 +574,7 @@ export function collideCruisers(crime: CrimeSystem): void {
           cr.speed *= 0.6;
           cr.vx -= hit.nx * approach * (1 - share) * 0.5;
           cr.vz -= hit.nz * approach * (1 - share) * 0.5;
+          crime.rammed(cr, hit.nx, hit.nz); // (n: from it towards the player)
           crime.audio?.crash?.({ a: cr, b: pe, x: pe.position.x - hit.nx * size[0], y: pe.position.y + 0.6, z: pe.position.z - hit.nz * size[0], speed: approach });
           if (approach > 2) crime.traffic.sparks(pe.position.x - hit.nx * size[0], pe.position.y + 0.6, pe.position.z - hit.nz * size[0], hit.nx, hit.nz, approach);
           // a car ramming the player hurts it: badly on foot

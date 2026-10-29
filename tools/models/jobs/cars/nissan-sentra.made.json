@@ -1,0 +1,6 @@
+{
+  "note": "Modelled by script in Blender on the shared shell (blender -b --factory-startup -P tools/models/blender/nissan-sentra.py -- <nissan-sentra.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/nissan-sentra.glb --length 4.641 --roles tools/models/jobs/cars/nissan-sentra.roles.json --plates 0.45,0.82 (its real length, so it is not rescaled; light enough for no levels of detail)",
+  "license": "our own work",
+  "source": "tools/models/blender/nissan-sentra.py",
+  "args": "--length 4.641 --roles tools/models/jobs/cars/nissan-sentra.roles.json --plates 0.45,0.82"
+}

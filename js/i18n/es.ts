@@ -280,6 +280,7 @@ export const es: Messages = {
   'toast.patrol': 'Te vio una patrulla',
   'toast.turf': 'Territorio de {gang}',
   'toast.cartel': 'El cártel manda a su gente',
+  'toast.copsGang': 'Una patrulla va contra la pandilla',
   'toast.hospital': 'Cuenta del hospital: ${fee}',
   'toast.backUp': 'De nuevo en pie',
   'toast.gunsTaken': 'Te quitaron las armas',

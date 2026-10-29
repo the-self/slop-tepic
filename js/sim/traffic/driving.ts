@@ -12,6 +12,7 @@ import { holdsOn, mergingAhead, pedsOut } from './right-of-way.ts';
 import { enter, leave, mayEnter, signalAhead } from './junctions.ts';
 import { curbBrake, curbside } from './pickups.ts';
 import { crossingBrake } from './crossings.ts';
+import { railBrake, railCap } from './rail-crossings.ts';
 import { topeCap } from './topes.ts';
 
 // Overtake into an adjacent lane when it is clearly quicker (MOBIL), or work towards a lane the planned turn
@@ -157,9 +158,9 @@ function accelerate(ts: TrafficState, v: DrivenVehicle, dt: number): void {
       v.leaderSpeed = 0;
     }
   }
-  worst = Math.min(worst, curbBrake(ts, v), crossingBrake(ts, v));
+  worst = Math.min(worst, curbBrake(ts, v), crossingBrake(ts, v), railBrake(ts, v));
   if (v.sirenNear) cap = Math.min(cap, 3); // (pulled over for a siren: crawling)
-  cap = Math.min(cap, topeCap(v)); // (easing over a tope)
+  cap = Math.min(cap, topeCap(v), railCap(v)); // (easing over a tope, over the rails)
   if (v.flats) cap = Math.min(cap, LIMP); // (on a flat tyre)
   // (gunfire: stopped dead where it is, gunfire.ts frighten; out of an intersection first, never across its box)
   if ((v.fright === 'freeze' || v.fright === 'bail') && !v.conn) cap = 0;

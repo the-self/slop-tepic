@@ -23,7 +23,7 @@ type AgentState = 'approach' | 'flee' | 'idle' | 'chase' | 'leave' | 'board';
 // A patrol car's side: the police, the cartel's black trucks, or the army's olive ones (four stars on)
 // (the bomberos' trucks & the Cruz Roja's ambulances share the patrol cars' driving: sim/emergency.ts sends them)
 type Faction = 'police' | 'narco' | 'army' | 'fire' | 'ambulance';
-type CruiserState = 'chase' | 'leave';
+type CruiserState = 'chase' | 'respond' | 'leave';
 // What lies about to be picked up: money, health, armour, or a gun
 type PickupKind = 'money' | 'health' | 'armor' | StreetGun | 'bazooka';
 // What a shot meets first (trace)
@@ -91,7 +91,8 @@ interface CrimeControllers {
 // What crime uses of sim/traffic.ts's traffic: the road graph, its people & vehicles, and what shots, blasts and
 // patrol cars do to them (walking round its vehicles only where it can tell where they are)
 type CrimeTraffic = Pick<TrafficSystem, 'network' | 'peds' | 'cars' | 'buses' | 'setKnockListener' | 'panic' | 'rayHit' | 'shootPed'
-  | 'shootVehicle' | 'shootTyre' | 'spikeTraffic' | 'blast' | 'roadSpot' | 'sidewalkSpot' | 'sparks' | 'bumpBody' | 'knockBox' | 'withdraw'>
+  | 'shootVehicle' | 'shootTyre' | 'spikeTraffic' | 'blast' | 'burnCar' | 'setPoliceAlert' | 'roadSpot' | 'sidewalkSpot' | 'sparks' | 'bumpBody'
+  | 'knockBox' | 'withdraw'>
   & Partial<Pick<TrafficSystem, 'vehicleBoxAt' | 'vehicleAt'>>;
 // The sounds crime plays (audio/audio-system.ts CityAudioSystem)
 interface CrimeAudio {

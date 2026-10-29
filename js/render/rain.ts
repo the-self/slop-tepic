@@ -1,12 +1,13 @@
 import * as THREE from 'three/webgpu';
 import type { Node } from 'three/webgpu';
-import { attribute, uniform, vec3, float, mod, normalize, cross, length, smoothstep, mix, cameraPosition, abs } from 'three/tsl';
+import { attribute, uniform, vec3, float, mod, normalize, cross, length, smoothstep, step, mix, cameraPosition, abs } from 'three/tsl';
 
 // js/render/rain.ts
 // Falling rain around the camera: thin streaks in a box that follows it, each drop placed in the vertex shader from
 // its seed and the time (nothing moves on the CPU), wrapped round the box so the rain stays put in the world as the
 // camera moves through it. They fall at a raindrop's terminal speed (~9 m/s for 2-3 mm drops), slanted by the wind,
-// and each streak is as long as a drop moves in a 1/30 s exposure. Density follows the intensity (draw range).
+// and each streak is as long as a drop moves in a 1/30 s exposure. Density follows the intensity (draw range). None
+// falls under the roofs it is given (setRoofs: a mall's), nor indoors at all (weather-effects.ts).
 
 const DROPS = 12000;
 const BOX: [number, number, number] = [64, 36, 64]; // m around the camera (x, y, z)
@@ -36,9 +37,24 @@ function buildRainGeometry() {
   return g;
 }
 
+/** A roof no rain falls under: a turned box's centre (m), half sizes along its axes (m), its turn as cos / sin (a
+ *  collider's obb), and its top (m, absolute) */
+export interface RainRoof {
+  cx: number;
+  cz: number;
+  hu: number;
+  hv: number;
+  cs: number;
+  sn: number;
+  top: number;
+}
+const ROOFS = 12; // the most roofs the rain keeps out of
+
 export interface Rain {
   mesh: THREE.Mesh;
   update(intensity: number, windX: number, windZ: number, elapsed: number, camera: THREE.Camera): void;
+  /** The roofs no drop falls under (a mall's: places/forum/index.ts), at most ROOFS */
+  setRoofs(roofs: readonly RainRoof[]): void;
 }
 
 /** nightFactor: 0 by day .. 1 at night (LightingSystem's uNightFactor), dims the streaks */
@@ -57,6 +73,14 @@ function createRain(scene: THREE.Scene, nightFactor: Node<'float'>): Rain {
   const dir = normalize(uVelocity);
   const side = normalize(cross(dir, drop.sub(cameraPosition)));
   const streak = length(uVelocity).mul(EXPOSURE);
+  // under a roof (below its top, inside its turned box) a drop isn't drawn: no rain falls indoors
+  const roofs = Array.from({ length: ROOFS }, () => ({ box: uniform(new THREE.Vector4(0, 0, -1, -1)), turn: uniform(new THREE.Vector3(1, 0, -1e9)) }));
+  let sheltered: Node<'float'> = float(0);
+  for (const { box, turn } of roofs) {
+    const dx = drop.x.sub(box.x), dz = drop.z.sub(box.y);
+    const lx = dx.mul(turn.x).sub(dz.mul(turn.y)), lz = dx.mul(turn.y).add(dz.mul(turn.x));
+    sheltered = sheltered.max(step(abs(lx), box.z).mul(step(abs(lz), box.w)).mul(step(drop.y, turn.z)));
+  }
   const material = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
   // about a pixel wide at any distance (a drop is 2-3 mm, far below one): a 1.2 mm half-width per metre away
   const halfWidth = length(drop.sub(cameraPosition)).mul(0.0012).add(0.002);
@@ -67,7 +91,7 @@ function createRain(scene: THREE.Scene, nightFactor: Node<'float'>): Rain {
   const near = smoothstep(0.6, 2.5, length(drop.sub(cameraPosition)));
   const across = float(1).sub(abs(corner.x)); // a soft streak, brightest down its middle
   material.colorNode = mix(vec3(0.78, 0.82, 0.88), vec3(0.32, 0.36, 0.42), nightFactor);
-  material.opacityNode = uOpacity.mul(edge).mul(near).mul(across.mul(0.6).add(0.4));
+  material.opacityNode = uOpacity.mul(edge).mul(near).mul(across.mul(0.6).add(0.4)).mul(float(1).sub(sheltered));
 
   const mesh = new THREE.Mesh(buildRainGeometry(), material);
   mesh.name = 'Rain';
@@ -91,6 +115,18 @@ function createRain(scene: THREE.Scene, nightFactor: Node<'float'>): Rain {
       uVelocity.value.set(windX * 0.6, -FALL, windZ * 0.6);
       uTime.value = elapsed % 3600;
       uOpacity.value = 0.18 + 0.22 * intensity;
+    },
+    setRoofs(list) {
+      roofs.forEach(({ box, turn }, i) => {
+        const r = i < list.length ? list[i] : null;
+        if (r) {
+          box.value.set(r.cx, r.cz, r.hu, r.hv);
+          turn.value.set(r.cs, r.sn, r.top);
+        } else {
+          box.value.set(0, 0, -1, -1);
+          turn.value.set(1, 0, -1e9);
+        }
+      });
     }
   };
 }

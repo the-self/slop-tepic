@@ -128,7 +128,8 @@ function renderCar(ts: TrafficState, c: Car): void {
   else ts.dummy.scale.set(c.sx, c.sy, c.sz); // (the body shape stretched to the model's size)
   ts.dummy.updateMatrix();
   bodyInst.setMatrixAt(slot, ts.dummy.matrix);
-  if (c.isPolice) ts.policeLightbarInst.setMatrixAt(ts.policeDrawn++, ts.dummy.matrix);
+  if (c.onCall && !c.burnt) ts.policeLightbarInst.setMatrixAt(ts.policeDrawn++, ts.dummy.matrix);
+  else if (c.isPolice) ts.policeDarkBarInst.setMatrixAt(ts.policeDarkDrawn++, ts.dummy.matrix);
   if (c.fleet === 'combi' && c.sign >= 0) {
     ts.combiSignInst.setMatrixAt(ts.combisDrawn, ts.dummy.matrix);
     ts.combiSignRows.array[ts.combisDrawn++] = c.sign;
@@ -152,7 +153,7 @@ function renderCar(ts: TrafficState, c: Car): void {
   // (the livery, and how crushed it is: 4 × 4 bits, see createLoftedCarMaterial's crumple)
   const dm = c.damage;
   const q = (x: number) => Math.round(Math.min(1, x) * 15);
-  const b3 = (c.isPolice ? 1 : 0) + (dm ? 2 * (q(dm.front) + 16 * q(dm.rear) + 256 * q(dm.left) + 4096 * q(dm.right)) : 0);
+  const b3 = (c.isPolice && !c.burnt ? 1 : 0) + (dm ? 2 * (q(dm.front) + 16 * q(dm.rear) + 256 * q(dm.left) + 4096 * q(dm.right)) : 0);
   if (state[o4] !== b0 || state[o4 + 1] !== b1 || state[o4 + 2] !== b2 || state[o4 + 3] !== b3) {
     state[o4] = b0;
     state[o4 + 1] = b1;
@@ -314,11 +315,12 @@ function updateTrafficLights(ts: TrafficState): void {
     spot.position.set(0, -1000, 0);
   }
 
-  // 1. NYPD emergency roof lightbar flashes (smoothly pulsing red/blue 360° PointLights on nearby patrol cruisers)
+  // 1. NYPD emergency roof lightbar flashes (smoothly pulsing red/blue 360° PointLights on nearby patrol cruisers on a
+  // call: going about their round, their lights are off)
   let policeLightsUsed = 0;
   for (let i = 0; i < ts.litVehicleCount && policeLightsUsed < POLICE_LIGHT_POOL_SIZE; i++) {
     const v = ts.litVehicles[i];
-    if (!v.isPolice || v._effDist >= 88) continue;
+    if (!v.onCall || v.burnt || v._effDist >= 88) continue;
     const fade = smoothDistFade(v._effDist, 52, 88);
     if (fade <= 0.001) continue;
     const wave = Math.sin((ts.clock + v.blinkPhase) * Math.PI * 6.0);

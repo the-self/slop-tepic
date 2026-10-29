@@ -93,12 +93,12 @@ function intersectionHarness() {
   const exit = { lanes: [0], outSide: 1 };
   const edge = { to: n, axisIndex: 0, occ: [[]], opposite: null, inSide: 0, len: 100 };
   const car = { edge, move: { to: exit, out: [0], turn: 'S' }, lane: 0, s: 80, speed: 4,
-    driver: { b: 3 }, half: 2.25, wait: 0, commit: null, isPolice: false };
+    driver: { b: 3 }, half: 2.25, wait: 0, commit: null, onCall: false };
   const state = { phase: 'red', occupied: false, pedestrians: false, space: true, conflict: false };
   const ts = { connector: () => ({ len: 20 }) };
   const junctions = trafficModule('junctions', {
     './constants.ts': constants,
-    './signals.ts': { phaseOf: () => state.phase, runsRed: (v) => v.isPolice || v.sirenNear === true },
+    './signals.ts': { phaseOf: () => state.phase, runsRed: (v) => v.onCall === true || v.sirenNear === true },
     './idm.ts': { canStopBefore: () => true, stopAt: () => -3, timeTo: () => 1 },
     './occupancy.ts': { boxBusy: () => state.occupied, ahead: () => null, laneCoord: () => 0 },
     './right-of-way.ts': {
@@ -129,22 +129,37 @@ test('a car pulled over for a siren behind edges through a red, giving way to th
   assert.equal(mayEnter(car, 18), false);
 });
 
-test('police pass red and amber signals while ordinary cars stop', () => {
+test('police on a call pass red and amber signals while ordinary cars stop', () => {
   const { car, state, mayEnter, signalAhead } = intersectionHarness();
   for (const phase of ['red', 'amber']) {
     state.phase = phase;
-    car.isPolice = false;
+    car.onCall = false;
     assert.equal(mayEnter(car, 18), false);
     assert.equal(signalAhead(car, car.edge, 18), -3);
-    car.isPolice = true;
+    car.onCall = true;
     assert.equal(mayEnter(car, 18), true);
     assert.equal(signalAhead(car, car.edge, 18), 0);
   }
 });
 
+test('a patrol car goes through the reds only on a call, lights & siren on: going about its round it waits', () => {
+  const { runsRed } = trafficModule('signals');
+  const { setPoliceAlert } = trafficModule('hooks');
+  const patrol = { isPolice: true, onCall: false, sirenNear: false, fright: null };
+  const taxi = { isPolice: false, onCall: false, sirenNear: false, fright: null };
+  const ts = { policeAlert: false, cars: [patrol, taxi] };
+  assert.equal(runsRed(patrol), false, 'no call on: it stops at the red');
+  setPoliceAlert(ts, true);
+  assert.equal(patrol.onCall, true);
+  assert.equal(taxi.onCall, false, 'only the police');
+  assert.equal(runsRed(patrol), true);
+  setPoliceAlert(ts, false);
+  assert.equal(runsRed(patrol), false, 'called off: its lights off again, it waits');
+});
+
 test('police still wait for crossing traffic, pedestrians and a blocked exit', () => {
   const { car, state, mayEnter } = intersectionHarness();
-  car.isPolice = true;
+  car.onCall = true;
   for (const [key, blocked] of [['occupied', true], ['pedestrians', true], ['space', false], ['conflict', true]]) {
     const initial = state[key];
     state[key] = blocked;
@@ -185,17 +200,17 @@ test('police running a red yield to fast cross traffic regardless of how long th
   assert.equal(yieldToCrossTraffic(car, node), false);
 });
 
-test('left turns account for oncoming police even when their signal is red', () => {
+test('left turns account for oncoming police on a call even when their signal is red', () => {
   const edge = { to: { signal: true }, through: 0, len: 100, occ: [] };
-  const car = { edge, move: { turn: 'S', out: [0] }, lane: 0, speed: 10, half: 2.25, isPolice: false };
+  const car = { edge, move: { turn: 'S', out: [0] }, lane: 0, speed: 10, half: 2.25, onCall: false };
   edge.occ.push([{ v: car, s: 85 }]);
   const rightOfWay = trafficModule('right-of-way', {
-    './signals.ts': { phaseOf: () => 'red', runsRed: (v) => v.isPolice || v.sirenNear === true },
+    './signals.ts': { phaseOf: () => 'red', runsRed: (v) => v.onCall === true || v.sirenNear === true },
     './occupancy.ts': { leadOf: (list) => list.at(-1) }
   });
   const yieldOncoming = (o, impatient) => rightOfWay.yieldOncoming({}, o, impatient);
   assert.equal(yieldOncoming(edge, false), false);
-  car.isPolice = true;
+  car.onCall = true;
   assert.equal(yieldOncoming(edge, false), true);
   car.speed = 0;
   assert.equal(yieldOncoming(edge, false), false);
@@ -559,6 +574,35 @@ test('a vehicle bumped or caught in a blast on a bridge reports and sparks over 
   assert.deepEqual(sparks, [DECK]);
 });
 
+test('a blast that catches a car full on sets it to blow up, and blown up it is a charred shell with nobody getting out', () => {
+  const { blast, burnCar } = trafficModule('gunfire', {
+    '../weapons.ts': { blastFalloff: (d, r) => Math.max(0, 1 - d / r) ** 1.5 },
+    '../../player/vehicle-damage.ts': { createDamage: () => ({ front: 0, rear: 0, left: 0, right: 0, engine: 0, version: 0 }) },
+    './constants.ts': { MASS: { sedan: 1200 }, massOf: () => 1200 },
+    './collisions.ts': { hurtVehicle() {} },
+    './crashes.ts': { crash: () => null },
+    './sparks.ts': { spawnCollisionSparks() {} },
+    './surface.ts': { hillAt: () => 0 }
+  });
+  const car = (x, extra = {}) => ({
+    x, z: 0, yaw: 0, yawOffset: 0, halfWidth: 0.9, half: 2.2, tx: 0, tz: 1, speed: 8, vx: 0, vz: 0, hy: 0, yawVel: 0, rollVel: 0,
+    pitchVel: 0, edge: {}, crash: null, burnt: false, paint: [0.8, 0.1, 0.1], damage: null, wrecked: false, ...extra
+  });
+  const hit = car(0), beside = car(3), far = car(10), bus = car(1, { bus: true }), shell = car(-1, { burnt: true });
+  const blown = [];
+  blast({ peds: [], vehicles: [hit, beside, far, bus, shell] }, 0, 0, 11.2, 24, blown);
+  assert.deepEqual(blown, [hit, beside], 'the cars it caught full on, not one further off, a camión or a shell already burnt');
+  blast({ peds: [], vehicles: [hit] }, 0, 0, 11.2, 24, blown);
+  assert.equal(blown.length, 2, 'each once');
+  burnCar(hit);
+  assert.equal(hit.burnt, true);
+  assert.ok(hit.paint.every((c) => c < 0), 'marked for the car materials to draw it burnt');
+  assert.equal(hit.damage.engine, 1);
+  assert.equal(hit.wrecked, true);
+  assert.equal(hit.abandoned, false, 'its driver dead at the wheel: nobody to get out');
+  assert.equal(hit.speed, 0);
+});
+
 // The road network over a made-up road graph (no grid, no blocks), the obstacles given
 function networkOf(roadGraph, obstacles = []) {
   const { buildRoadNetwork } = loadModule(readFileSync(join(__dirname, '../js/world/road-network.ts'), 'utf8'), {
@@ -703,7 +747,7 @@ function roadHarness({ pickups, lanes = [1.8], lane = 0, half = 4.55 } = {}) {
   const curb = pickups ? trafficModule('pickups', { './constants.ts': constants, './idm.ts': idm, './population.ts': population }) : null;
   const driving = trafficModule('driving', {
     './constants.ts': constants,
-    './signals.ts': { phaseOf: () => 'green', runsRed: (v) => v.isPolice || v.sirenNear === true },
+    './signals.ts': { phaseOf: () => 'green', runsRed: (v) => v.onCall === true || v.sirenNear === true },
     './occupancy.ts': { ahead: () => null, cross() {}, straddle: () => 0 },
     './idm.ts': idm,
     './routing.ts': { nearestLane: (m, l) => l },
@@ -711,7 +755,8 @@ function roadHarness({ pickups, lanes = [1.8], lane = 0, half = 4.55 } = {}) {
     './junctions.ts': { enter() {}, leave() {}, mayEnter: () => true, signalAhead: () => 0 },
     './pickups.ts': curb ?? { curbBrake: () => 0, curbside() {} },
     './crossings.ts': { crossingBrake: () => 0 },
-    './topes.ts': { topeCap: () => Infinity }
+    './topes.ts': { topeCap: () => Infinity },
+    './rail-crossings.ts': { railBrake: () => 0, railCap: () => Infinity }
   });
   const edge = { len: 600, lanes, half, occ: lanes.map(() => []), to: {}, sx: 0, sz: 0, dx: 0, dz: 1, rx: -1, rz: 0, stops: [] };
   const v = {

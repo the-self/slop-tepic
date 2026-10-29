@@ -302,6 +302,10 @@ export interface CityGeodata {
   airport: Airport;
   overrides: BuildingOverride[];
   parking: ParkingLot[];
+  /** Car dealers, 4 numbers each: their showroom (house index), their make (index into STOREFRONTS, one with `dealer`),
+   *  their lot of cars on show (index into `parking`, -1 none), and how far its street edge stands out from the
+   *  showroom's front (m). */
+  dealers: number[];
   lakes: Lake[];
   /** Pedestrian crossings on the streets, 3 numbers each: x, z (m), kind (0 unmarked, 1 marked: a zebra, 2 with
    *  lights). */

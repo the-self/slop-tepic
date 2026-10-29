@@ -1,11 +1,12 @@
 // js/audio/audio-ambience.ts
 // The city's sounds that keep going where they are: the music of the antros and the house parties (cumbia, banda
-// sinaloense, reggaetón), the taco stands' planchas sizzling, a fire's crackle & roar, a crowd's murmur. Each is a
+// sinaloense, reggaetón), the taco stands' planchas sizzling, a fire's crackle & roar, a crowd's murmur; and the
+// trains' (sim/trains.ts): a diesel's rumble, the wheels over the rail joints, the horn, a crossing's bell. Each is a
 // loop synthesised once, the first time it is wanted (no audio files), and played through the spatial emitter of
 // whatever source it belongs to (audio-system.ts, its `loops` pool), muffled by the walls in between like any other.
 
-/** The loops there are: three kinds of music, a plancha, a fire and a crowd */
-export type AmbienceKind = 'cumbia' | 'banda' | 'reggaeton' | 'sizzle' | 'fire' | 'crowd';
+/** The loops there are: three kinds of music, a plancha, a fire, a crowd, and a train's four */
+export type AmbienceKind = 'cumbia' | 'banda' | 'reggaeton' | 'sizzle' | 'fire' | 'crowd' | 'locomotive' | 'wheels' | 'horn' | 'bell';
 
 /**
  * A sound that stays where it is this frame, handed to CityAudioSystem.setAmbience() (the street food, nightlife,
@@ -241,7 +242,76 @@ function crowd(ctx: BaseAudioContext) {
   }, 0.5);
 }
 
-const MAKERS: Partial<Record<string, (ctx: BaseAudioContext) => AudioBuffer>> = { cumbia, banda, reggaeton, sizzle, fire, crowd };
+// A GE diesel working: its 16 cylinders firing ~107 times a second at the crank's ~13 Hz beat, the deep thump under
+// it, the turbo's whine over it, the exhaust's rush. Every frequency a whole number of cycles in the loop's 4 s
+function locomotive(ctx: BaseAudioContext) {
+  return loopBuffer(ctx, 4, (out, rate) => {
+    const rnd = random(23);
+    let lp = 0, rush = 0;
+    const a = 1 - Math.exp(-TAU * 380 / rate);
+    for (let i = 0; i < out.length; i++) {
+      const t = i / rate;
+      const crank = 1 + 0.4 * Math.sin(TAU * 13.25 * t) + 0.15 * Math.sin(TAU * 26.5 * t + 1.1);
+      lp += (saw(fract(106.75 * t)) - lp) * a;
+      rush += ((rnd() * 2 - 1) - rush) * 0.04;
+      out[i] = lp * 0.9 * crank + Math.sin(TAU * 53.5 * t) * 0.55 * crank + rush * 1.6 + Math.sin(TAU * 1600 * t) * 0.025;
+    }
+  }, 0.7);
+}
+
+// Steel wheels rolling: the rumble, and each truck's two axles clacking over a rail joint, two cars to the loop
+function wheels(ctx: BaseAudioContext) {
+  return loopBuffer(ctx, 4, (out, rate) => {
+    const rnd = random(31);
+    let lp = 0, lp2 = 0;
+    for (let i = 0; i < out.length; i++) {
+      const w = rnd() * 2 - 1;
+      lp += (w - lp) * 0.03;
+      lp2 += (w - lp2) * 0.2;
+      out[i] = lp * 2.2 + (lp2 - lp) * 0.25;
+    }
+    for (const car of [0, 2]) {
+      for (const at of [0.05, 0.23, 1.44, 1.62]) {
+        noiseHit(out, rate, car + at, 0.07, 0.55, rnd, 0.45, 210);
+        kick(out, rate, car + at, 0.35);
+      }
+    }
+  }, 0.65);
+}
+
+// The horn: a five-chime (D#, F#, A, C#, D#: the K5LA's chord), brassy, a slight waver
+function horn(ctx: BaseAudioContext) {
+  return loopBuffer(ctx, 2, (out, rate) => {
+    const a = 1 - Math.exp(-TAU * 2600 / rate);
+    for (const f of [311, 370, 440, 554.5, 622]) {
+      let phase = 0, lp = 0;
+      for (let i = 0; i < out.length; i++) {
+        const t = i / rate;
+        phase += (f * (1 + 0.003 * Math.sin(TAU * 5 * t))) / rate;
+        lp += (saw(phase - Math.floor(phase)) - lp) * a;
+        out[i] += lp * 0.2;
+      }
+    }
+  }, 0.8);
+}
+
+// A level crossing's bell, struck two and a half times a second
+function bell(ctx: BaseAudioContext) {
+  return loopBuffer(ctx, 2, (out, rate) => {
+    for (let k = 0; k < 5; k++) {
+      for (const [ratio, gain] of [[1, 1], [2.41, 0.45], [3.93, 0.22], [5.4, 0.1]] as const) {
+        const f = 1180 * ratio, i0 = Math.floor(k * 0.4 * rate);
+        for (let i = 0; i < 0.38 * rate && i0 + i < out.length; i++) out[i0 + i] += Math.sin(TAU * f * i / rate) * Math.exp(-i / rate * 9 * ratio ** 0.5) * gain;
+      }
+    }
+  }, 0.6);
+}
+
+const fract = (x: number) => x - Math.floor(x);
+
+const MAKERS: Partial<Record<string, (ctx: BaseAudioContext) => AudioBuffer>> = {
+  cumbia, banda, reggaeton, sizzle, fire, crowd, locomotive, wheels, horn, bell
+};
 
 function createAmbienceResources(ctx: BaseAudioContext): AmbienceResources {
   const buffers = new Map<AmbienceKind, AudioBuffer | null>();

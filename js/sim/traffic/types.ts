@@ -83,6 +83,9 @@ interface TrafficEdge extends RoadEdge {
   stops: BusStop<TrafficEdge>[];
   /** the topes across it (topes.ts): m from its start stop line, in order */
   topes: number[];
+  /** the railway's level crossings across it (rail-crossings.ts), by s: the crossing's index (world/railway.ts
+   *  levelCrossings), m from its start stop line to it and to where a vehicle's front stops short of its gate */
+  rails: { c: number; s: number; stop: number }[];
 }
 
 /** A street crossing along a road (crossings.ts): where it is taken, its kind, the edges it crosses (pedestrian-
@@ -379,6 +382,11 @@ interface Car extends VehicleBase {
   bus: false;
   isTaxi: boolean;
   isPolice: boolean;
+  /** a patrol car with its lights and siren on (the police after a wanted player, setPoliceAlert): it goes through
+   *  the reds; off, it drives as anyone does, lights dark and no siren */
+  onCall: boolean;
+  /** blown up (gunfire.ts blast, burnCar): a charred shell, its driver dead in it, till it comes back as another car */
+  burnt: boolean;
   heavy: boolean;
   mass: number;
   bodyType: string;
@@ -403,6 +411,8 @@ interface Bus extends VehicleBase {
   livery: number;
   crash: null;
   isPolice?: undefined;
+  onCall?: undefined;
+  burnt?: undefined;
   isTaxi?: undefined;
   bodyType?: undefined;
   mass?: undefined;
@@ -423,6 +433,8 @@ interface TwoWheelerBase extends VehicleBase {
   crash: null;
   kit?: TwoWheelKit;
   isPolice?: undefined;
+  onCall?: undefined;
+  burnt?: undefined;
   isTaxi?: undefined;
   mass?: undefined;
   livery?: undefined;

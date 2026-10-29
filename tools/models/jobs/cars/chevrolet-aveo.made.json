@@ -1,0 +1,6 @@
+{
+  "note": "Modelled by script in Blender (blender -b --factory-startup -P tools/models/blender/chevrolet-aveo.py -- <chevrolet-aveo.made.glb>): the 2018-2023 Aveo sold in Mexico (the third Chevrolet Sail), against photographs from Wikimedia Commons (2020 Chevrolet Aveo in Rojo Scarlet, front right and rear right, by Cutlass, CC0; Chevrolet Aveo Taxi Cancun, public domain; CHEVROLET SAIL SEDAN THIRD GENERATION China, by Dinkun Chen, CC BY-SA 4.0). Then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/chevrolet-aveo.glb --length 4.300 --roles tools/models/jobs/cars/chevrolet-aveo.roles.json --plates 0.44,0.84 (its real length, so it is not rescaled; light enough for no levels of detail)",
+  "license": "our own work",
+  "source": "tools/models/blender/chevrolet-aveo.py",
+  "args": "--length 4.300 --roles tools/models/jobs/cars/chevrolet-aveo.roles.json --plates 0.44,0.84"
+}

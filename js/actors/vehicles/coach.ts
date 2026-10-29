@@ -116,9 +116,10 @@ export function coachNameTexture(lines: readonly (readonly [name: string, ink: s
   return letteringAtlas(lines, { width: 512, row: 64, size: 46, font: `italic 900 'Arial Black', Arial, sans-serif`, fit: 490, edge: 6 });
 }
 
-/** The name panels' material: the atlas's row `coachName` (per instance), cut out of the clear */
-export function createCoachNameMaterial(tex: THREE.Texture, rows: number): THREE.MeshStandardNodeMaterial {
-  return createLetteringMaterial(tex, rows, 'coachName', 0.4);
+/** The name panels' material: the atlas's row `coachName` (per instance), cut out of the clear; with `fade`, faded by
+ *  that per-instance attribute too */
+export function createCoachNameMaterial(tex: THREE.Texture, rows: number, fade?: string): THREE.MeshStandardNodeMaterial {
+  return createLetteringMaterial(tex, rows, 'coachName', 0.4, fade);
 }
 
 let _coachMat: THREE.MeshStandardNodeMaterial | null = null;

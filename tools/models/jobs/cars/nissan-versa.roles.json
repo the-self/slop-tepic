@@ -1,0 +1,10 @@
+{
+  "headlamp": "light",
+  "lamp": "lamp",
+  "lampbright": "lamp",
+  "amber": "amber",
+  "gloss": "trim",
+  "pocket": "trim",
+  "alloy": "rim",
+  "dish": "wheel"
+}

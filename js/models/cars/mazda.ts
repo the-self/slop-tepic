@@ -1,21 +1,22 @@
 // js/models/cars/mazda.ts
-// Mazda (built in Salamanca). Fields: README.md
+// Mazda (built in Salamanca). Fields: README.md. All three are drawn from their own files near the camera
+// (tools/models/blender/mazda-3.py, mazda-cx-5.py, mazda-mx-5.py)
 
 import type { CarModel } from './index.ts';
 
 export const CARS: CarModel[] = [
   {
-    id: 'mazda-3', name: 'MásDá 3', body: 'sedan', class: 'family',
+    id: 'mazda-3', glb: 'assets/models/cars/mazda-3.glb', name: 'MásDá 3', body: 'sedan', class: 'family',
     size: [4.66, 1.80, 1.44], mass: 1400, drive: 'fwd', power: [139, 6000], torque: [252, 4000], redline: 6500,
     gears: 6, top: 210, accel: 8.0, rarity: 6, paints: [0x9e1b22, 0x9e1b22, 0x52575e, 0xf2f2ee, 0x1c2026]
   },
   {
-    id: 'mazda-cx-5', name: 'MásDá CX-5', body: 'suv', class: 'family',
+    id: 'mazda-cx-5', glb: 'assets/models/cars/mazda-cx-5.glb', name: 'MásDá CX-5', body: 'suv', class: 'family',
     size: [4.58, 1.84, 1.68], mass: 1620, drive: 'awd', power: [140, 6000], torque: [252, 4000], redline: 6500,
     gears: 6, top: 195, accel: 8.5, rarity: 5, paints: [0x9e1b22, 0x52575e, 0xf2f2ee, 0x1c2026]
   },
   {
-    id: 'mazda-mx-5', name: 'MásDá MX-5', body: 'coupe', class: 'sport',
+    id: 'mazda-mx-5', glb: 'assets/models/cars/mazda-mx-5.glb', name: 'MásDá MX-5', body: 'coupe', class: 'sport',
     size: [3.92, 1.73, 1.23], mass: 1080, drive: 'rwd', power: [135, 7000], torque: [205, 4000], redline: 7500,
     gears: 6, top: 219, accel: 6.5, rarity: 0.5, paints: [0x9e1b22, 0xf2f2ee, 0x1c2026, 0x2a5aa8]
   }

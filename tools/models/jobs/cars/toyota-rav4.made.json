@@ -1,0 +1,6 @@
+{
+  "note": "Modelled by script in Blender on the shared shell (blender -b --factory-startup -P tools/models/blender/toyota-rav4.py -- <toyota-rav4.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/toyota-rav4.glb --length 4.600 --roles tools/models/jobs/cars/toyota-rav4.roles.json --plates 0.58,0.85 (its real length, so it is not rescaled), then given its levels of detail by tools/models/add-lods.mjs (its body is 22k triangles)",
+  "license": "our own work",
+  "source": "tools/models/blender/toyota-rav4.py",
+  "args": "--length 4.600 --roles tools/models/jobs/cars/toyota-rav4.roles.json --plates 0.58,0.85"
+}

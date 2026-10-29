@@ -62,6 +62,9 @@ export function installCrime({ scene, renderer, events, city, controllers, solid
     const mode = controllers.activeMode;
     const me = controllers.getActiveEntity();
     if (mode === 'person' || (impact.a !== me && impact.b !== me)) return;
+    // (a patrol car driven into: a star, crime/player.ts rammed; the normal points from b towards a)
+    if (impact.a === me) crime.rammed(impact.b, impact.nx, impact.nz);
+    else crime.rammed(impact.a, -impact.nx, -impact.nz);
     const damage = crashDamage(mode, impact.speed, hardness(impact.kind, impact.a === me ? impact.b : impact.a), impact.kind);
     const now = performance.now() * 0.001;
     if (damage <= 0 || now - lastCrash < CRASH_GRACE) return;

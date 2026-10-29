@@ -33,6 +33,8 @@ export interface WeatherEffectsSystems {
   crime: CrimeSystem;
   audio: CityAudioSystem;
   interiors: Interiors;
+  /** whether (x, y, z) is under a roof the rain keeps out from under (Forum Tepic's: places/forum/index.ts) */
+  sheltered: (x: number, y: number, z: number) => boolean;
   /** ° the street grid is turned clockwise from true north (world/city-config.ts CITY.bearingDeg) */
   bearingDeg: number;
 }
@@ -64,14 +66,17 @@ export class WeatherEffects implements System {
     // wind blows from windDirection (° clockwise from true north): toward the opposite bearing, in the grid frame
     const toward = (w.windDirection + 180 - this.s.bearingDeg) * Math.PI / 180;
     const wind = (w.windSpeed || 0) / 3.6;
-    // (indoors, no rain falls round the camera nor drums on the roof over it)
+    // (indoors, no rain falls round the camera nor drums on the roof over it; under the mall's roofs it falls outside
+    // only, heard faintly on the roof)
     const falling = interiors.active ? 0 : roadWater.rain;
     rain.update(falling, Math.sin(toward) * wind, -Math.cos(toward) * wind, elapsed, cameras.camera);
+    const eye = cameras.camera.position;
+    const heard = this.s.sheltered(eye.x, eye.y, eye.z) ? falling * 0.25 : falling;
     controllers.roadWet = floods.level > 0.05 ? 1 : roadWater.wet; // (a flood soaks every street)
     controllers.rain = roadWater.rain; // (washing the blood off the car, controllers.ts)
     controllers.roadGrip = wetGrip(roadWater.wet);
     traffic.setRoadWater(roadWater.wet, roadWater.rain, controllers.roadGrip);
-    audio.setRain(falling);
+    audio.setRain(heard);
     if (w.code >= THUNDERSTORM && roadWater.rain > 0.3) {
       if (!this.nextLightning) this.nextLightning = elapsed + 4 + Math.random() * 10;
       if (elapsed >= this.nextLightning) {

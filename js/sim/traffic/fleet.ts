@@ -48,7 +48,15 @@ const HEAVY_BODIES = new Set(['suv', 'pickup', 'van', 'wedge', 'crossover', 'off
 
 const taxiYellow = new THREE.Color(0xffbe14);
 const policeWhite = new THREE.Color(0xf6f9fc);
+const combiWhite = new THREE.Color(0xf4f5f2);
 const paintColor = new THREE.Color();
+
+// c's paint, as float32 values (so renderCar() can tell whether an instance slot's paint changes by comparing)
+function paintAs(c: Car, col: THREE.Color): void {
+  c.paint[0] = Math.fround(col.r);
+  c.paint[1] = Math.fround(col.g);
+  c.paint[2] = Math.fround(col.b);
+}
 
 // c becomes a `model` with the `body` shape: its size (scales of the body shape), paint and footprint
 function assignModel(c: Car, body: string, model: CarModel): void {
@@ -70,9 +78,7 @@ function assignModel(c: Car, body: string, model: CarModel): void {
     const paints = paintsOf(model);
     paintColor.setHex(paints[Math.floor(Math.random() * paints.length)]);
   }
-  c.paint[0] = Math.fround(paintColor.r);
-  c.paint[1] = Math.fround(paintColor.g);
-  c.paint[2] = Math.fround(paintColor.b);
+  paintAs(c, paintColor);
 }
 // The combis: white high-roof Nissan Urvans & Toyota Hiaces, as on Tepic's routes
 const COMBI_MODELS = ['nissan-urvan', 'toyota-hiace'].map((id) => {
@@ -80,8 +86,13 @@ const COMBI_MODELS = ['nissan-urvan', 'toyota-hiace'].map((id) => {
   if (!m) throw new Error(`No car model '${id}'`);
   return m;
 });
-// A fresh draw from the traffic's models (taxis, police & combis stay what they are)
+// A fresh draw from the traffic's models (taxis, police & combis stay what they are, a burnt one in its livery again)
 function drawModel(c: Car): void {
+  if (c.burnt) {
+    c.burnt = false;
+    if (c.fleet === 'combi') paintAs(c, combiWhite);
+    else if (c.model && (c.isTaxi || c.isPolice)) assignModel(c, c.bodyType, c.model);
+  }
   if (c.isTaxi || c.isPolice || c.fleet === 'combi') return;
   const body = pickBody();
   const model = pickModel(body);
@@ -94,7 +105,6 @@ function createCars() {
   const cars: Car[] = [];
   let policeCount = 0;
 
-  const combiWhite = new THREE.Color(0xf4f5f2);
   let combiCount = 0;
   for (let i = 0; i < NUM_CARS; i++) {
     const isPolice = (i % 40) === 6;
@@ -102,7 +112,7 @@ function createCars() {
     const isCombi = !isPolice && !isTaxi && (i % 9) === 4; // white Urvans & Hiaces on the routes (see buses below)
     // paint as float32 values, so renderCar() can tell whether an instance slot's paint changes by comparing
     const car: Car = Object.assign(createVehicle(false, 2.25, 0.86, 1.38, CAR_DRIVER, 10 + (i % 5) * 0.9), {
-      isTaxi, isPolice, heavy: false, mass: MASS.sedan, bodyType: 'sedan', model: null, paint: [0, 0, 0], sx: 1, sy: 1, sz: 1, sw: 1,
+      isTaxi, isPolice, onCall: false, burnt: false, heavy: false, mass: MASS.sedan, bodyType: 'sedan', model: null, paint: [0, 0, 0], sx: 1, sy: 1, sz: 1, sw: 1,
       fleet: isCombi ? 'combi' as const : null });
     if (isPolice) {
       policeCount++;
@@ -112,9 +122,7 @@ function createCars() {
     } else if (isCombi) {
       combiCount++;
       assignModel(car, 'van', COMBI_MODELS[combiCount % COMBI_MODELS.length]);
-      car.paint[0] = Math.fround(combiWhite.r);
-      car.paint[1] = Math.fround(combiWhite.g);
-      car.paint[2] = Math.fround(combiWhite.b);
+      paintAs(car, combiWhite);
     } else {
       drawModel(car);
     }

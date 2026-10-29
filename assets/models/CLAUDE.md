@@ -120,8 +120,14 @@ Use `--keep-width` for props that stand alone.
 
 ## Cars and people
 
-- **Only the cars modelled in Blender are files** (2026-10-27): `cars/tesla-cybertruck.glb`, `cars/tesla-model-y.glb` and the Tsuru's two
-  (`nissan-tsuru.glb`, the taxi with its roof sign, and `nissan-tsuru-particular.glb`), modelled by script (`tools/models/blender/`, below). Every other car is drawn with its procedural body shape (`js/actors/actor-models.ts`,
+- **Only the cars modelled in Blender are files** (2026-10-27): `cars/tesla-cybertruck.glb`, `cars/tesla-model-y.glb`, the Tsuru's two
+  (`nissan-tsuru.glb`, the taxi with its roof sign, and `nissan-tsuru-particular.glb`), the Versa, the March, the NP300,
+  the Aveo and the Gol, the three Mazdas (`mazda-3`, `mazda-cx-5`, `mazda-mx-5`: one script each on the Mazda 3's,
+  which a sedan, a crossover and a roadster share), and the rest of the dealers' cars: the Toyotas (Yaris, Corolla,
+  RAV4, Hilux, Supra) and the Sentra, Kicks and X-Trail, each a short script on the shell they share
+  (`tools/models/blender/shell.py`: the Mazdas' lines made a tool, a pickup's bed included), modelled by script
+  (`tools/models/blender/`, below). The parked cars and the dealers' cars on show are drawn from their files near the
+  camera too (`world/car-parks.ts`). Every other car is drawn with its procedural body shape (`js/actors/actor-models.ts`,
   `models/bodies.ts`). The ten Meshy cars and the four from Sketchfab below were taken out, files and jobs: they
   looked worse than the body shapes, and the heavy ones cost the game too much (the Onix 111k triangles, 13 MB). What
   was learnt making them stays here; their files and jobs are in git's history (before 2026-10-27).
@@ -283,8 +289,26 @@ Use `--keep-width` for props that stand alone.
     profile too, so the end caps are slivers (cap rings on a cap thinner than them tore it). Squared off, it read as
     a box: the real one is soft everywhere. Lamps are filled shapes (a chrome reflector, a lens, a round lamp's bowl,
     `carlib.disc`), never outlines: drawn rings and lines read as a child's drawing. One script, two files: `--taxi`
-    adds the roof sign; the player's taxi draws its file too (car-looks.ts), its door badges hidden. No bevel on the body: the arches' rounded edges bent the
+    adds the roof sign; the player's taxi draws its file too (car-looks.ts), its door badges hidden.
+  - **Five at once, by agents** (Versa, March, NP300, Aveo, Gol): one agent per car, each writing only its own
+    script, jobs and glb (shared files edited after, by one hand), each looping build → render → compare against
+    Commons photos of the exact generation, and each car reviewed and sent back until it held up. What came back
+    from every one of them: **no makers' badges** (they all drew one: the game never shows brands); **lamps never
+    eyes** — a white bowl with a dark ring or a bright dot reads as a cartoon eye, so the lens is chrome-grey glass
+    over a reflector, the bowl a slightly brighter tone with nothing round it, the housing a band along an edge;
+    lay lamps by casting each point in along the plan outline's normal at its own height (a BVHTree of the body),
+    not to the nearest point, which folded them over the hood's edge and tore their corners, and keep every point
+    inside the body's extent; ~1.5–2 mm between stacked layers on a curve; a crease kept to where the sides are flat
+    (between the arches), and faded before the lamps, or it tears them. prepare-made takes anything inside a wheel's
+    cylinder for rim or tyre, so a dark dish behind hubcap spokes needs a material of its own mapped to 'wheel' (as
+    `dish`), or it turns silver. Each script keeps its helpers (ray-laid bands, hubcaps, split spokes, creases):
+    the next car should start from the closest one. No bevel on the body: the arches' rounded edges bent the
     paint's normals into dark streaks up the fenders, and weighted normals (`tidy(..., weighted=False)`) smeared a
     body curved all over. Lamps, slots, intakes and bumpers are drawn flat in a plane before the car (`decal`,
     `panel`) and laid onto the skin (`onto`: a shrinkwrap, projected along y, or to the nearest point round a corner,
     where a ray from behind would miss and leave the decal hanging in the air).
+  - **A face on the shared shell** (`shell.py`): a panel laid over the nose's fold (where its flat cap meets the
+    hood's slope) needs rows close together (`m=24`) and 3 mm off the skin, its bars and chrome further out: with
+    coarse rows the skin bulged through between them, two patches of paint in the grille that read as a badge. A
+    rear bumper at the body's edge is a box, not a panel: the panel's corners beyond the skin stay in their plane, a
+    flap in the air behind the car.

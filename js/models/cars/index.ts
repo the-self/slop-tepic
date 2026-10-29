@@ -13,6 +13,11 @@ import { CARS as stellantis } from './stellantis.ts';
 import { CARS as electric } from './electric.ts';
 import { CARS as premium } from './premium.ts';
 import { CARS as exotic } from './exotic.ts';
+import { CARS as renault } from './renault.ts';
+import { CARS as suzuki } from './suzuki.ts';
+import { CARS as mitsubishi } from './mitsubishi.ts';
+import { CARS as seat } from './seat.ts';
+import { CARS as chinese } from './chinese.ts';
 import type { BodyShapeName } from '../bodies.ts';
 
 /** The body shapes a model is drawn with: actor-models.ts's own, bodies.ts's, the bus and the motorcycle */
@@ -47,7 +52,7 @@ export interface CarModel {
 
 const CAR_MODELS: CarModel[] = [
   ...nissan, ...chevrolet, ...volkswagen, ...toyota, ...honda, ...mazda, ...kiaHyundai, ...ford, ...stellantis,
-  ...electric, ...premium, ...exotic
+  ...renault, ...suzuki, ...mitsubishi, ...seat, ...chinese, ...electric, ...premium, ...exotic
 ];
 const CAR_MODEL_BY_ID: Partial<Record<string, CarModel>> = Object.fromEntries(CAR_MODELS.map((m) => [m.id, m]));
 // (the models the taxi & police slots are drawn with: a typo in an id fails here, at load)

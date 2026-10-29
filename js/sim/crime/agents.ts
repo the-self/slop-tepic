@@ -2,7 +2,7 @@
 // The people on foot of the street's crime (sim/crime.ts): police (soldiers among them, from four stars), gang members
 // (the cartel's among them) and thieves:
 // spawning them, hurting and knocking them down, what each kind does every frame, walking round walls and vehicles,
-// the police and the cartel finding each other, and their shots.
+// the police and the gangs finding each other, and their shots.
 import { PersonRig, OUTFIT, OUTFIT_SEED } from '../pedestrians.ts';
 import type { StreetGun } from '../crime-rules.ts';
 import { boxHit } from '../mayhem.ts';
@@ -178,8 +178,8 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
   }
   const toPlayer = Math.atan2(dx, dz);
   const playing = crime.state === 'play';
-  // the police and the cartel shoot it out wherever they meet
-  const fights = a.kind === 'cop' || a.gang === NARCO;
+  // the police and the gangs (the cartel's too) shoot it out wherever they meet
+  const fights = a.kind === 'cop' || a.kind === 'gang';
   if (fights) {
     a.foeT -= dt;
     if (a.foe && (a.foe.fallen || !crime.agents.includes(a.foe))) a.foe = null;
@@ -190,13 +190,14 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
   }
   const foeDist = a.foe ? Math.hypot(a.foe.x - a.x, a.foe.z - a.z) : Infinity;
 
-  if (a.foe && (a.kind === 'cop' ? crime.wanted.stars === 0 || foeDist < dist : !crime.gangAnger[NARCO] || foeDist < dist)) {
+  if (a.foe && (a.kind === 'cop' ? crime.wanted.stars === 0 || foeDist < dist : !crime.gangAnger[a.gang] || foeDist < dist)) {
     // fighting the other side: facing them, shooting
     goalYaw = Math.atan2(a.foe.x - a.x, a.foe.z - a.z);
     aim = 1;
     speed = foeDist > 30 ? RUN * 0.6 : 0;
     const gun = NPC_GUN[a.weapon ?? 'pistol'];
-    if (a.stepT <= 0) crime.npcShoot(a, gun, a.kind === 'cop' ? SKILL.cop : SKILL.narco, foeDist, dt, a.foe);
+    const skill = a.kind === 'cop' ? (a.army ? SKILL.army : SKILL.cop) : a.gang === NARCO ? SKILL.narco : SKILL.gang;
+    if (a.stepT <= 0) crime.npcShoot(a, gun, skill, foeDist, dt, a.foe);
     if (a.kind === 'cop' && a.state === 'leave') a.t = 0; // (still on the job)
   } else if (a.kind === 'cop') {
     const stars = crime.wanted.stars;
@@ -208,7 +209,14 @@ export function updateAgent(crime: CrimeSystem, a: Agent, dt: number): void {
     // (once making for the car, only the player stopping close by again turns them round)
     const boarding = a.state === 'board';
     const away = crime.mode !== 'person' && (crime.pspeed > (boarding ? 3 : 7) || dist > (boarding ? 30 : 40));
-    if (car && crime.state !== 'busted' && (away || !playing || !called)) {
+    if (car?.state === 'respond') {
+      // out on a gang call (cruisers.ts respond): to where the gang was seen, looking round there for them (the
+      // shooting is the fight's, above, once they see one)
+      const hx = car.goalX - a.x, hz = car.goalZ - a.z;
+      const far = Math.hypot(hx, hz) > 6;
+      goalYaw = far ? Math.atan2(hx, hz) : a.heading + dt * 1.2;
+      speed = far ? RUN * 0.8 : 0;
+    } else if (car && crime.state !== 'busted' && (away || !playing || !called)) {
       a.state = 'board';
       // (their own door: the side of the car they're on)
       const h = car.heading, lx = Math.cos(h), lz = -Math.sin(h);
@@ -391,12 +399,12 @@ export function walkAgent(crime: CrimeSystem, a: Agent, goalYaw: number, speed: 
   }
 }
 
-// The nearest of the other side (the police for the cartel, the cartel for the police) within FOE_RANGE in sight
+// The nearest of the other side (the police for a gang, a gang's armed men for the police) within FOE_RANGE in sight
 export function findFoe(crime: CrimeSystem, a: Agent): Agent | null {
   let best: Agent | null = null;
   let bestD = FOE_RANGE;
   for (const o of crime.agents) {
-    if (o.fallen || (a.kind === 'cop' ? o.gang !== NARCO : o.kind !== 'cop')) continue;
+    if (o.fallen || (a.kind === 'cop' ? o.kind !== 'gang' || !o.weapon : o.kind !== 'cop')) continue;
     const d = Math.hypot(o.x - a.x, o.z - a.z);
     if (d < bestD && crime.clearLine(a.x, a.z, o.x, o.z)) {
       bestD = d;

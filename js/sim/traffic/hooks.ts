@@ -36,6 +36,18 @@ function setParked(ts: TrafficState, list: ParkedVehicle[] | null): void {
 function setSirens(ts: TrafficState, list: readonly SirenSource[]): void {
   ts.sirens = list;
 }
+// The railway's level crossings a train closes now (sim/trains.ts: closed[i], world/railway.ts levelCrossings' i): the
+// traffic stops short of their gates, people short of the track
+function setRailClosed(ts: TrafficState, closed: readonly boolean[]): void {
+  ts.railClosed = closed;
+}
+// The police after a wanted player (sim/crime.ts, while it has stars): the traffic's patrol cars put their lights and
+// sirens on, and go through the reds; with no call on they drive as anyone does, lights dark
+function setPoliceAlert(ts: TrafficState, on: boolean): void {
+  if (ts.policeAlert === on) return;
+  ts.policeAlert = on;
+  for (const c of ts.cars) if (c.isPolice) c.onCall = on;
+}
 // The weather on the street (app/weather-effects.ts, from weather.ts RoadWater): on a wet road drivers keep further
 // back, go a little slower and take the bends slower (the tyres' grip, wetGrip), and nobody brakes as hard; in the rain
 // people hurry and don't stop to chat
@@ -67,6 +79,6 @@ function setKnockListener(ts: TrafficState, fn: KnockListener | null): void {
 }
 
 export {
-  setCollisionListener, setMayhemListener, reportCollision, setParked, setSirens, setRoadWater, setSolidQuery, setWallQuery,
-  setRagdolls, setKnockListener
+  setCollisionListener, setMayhemListener, reportCollision, setParked, setSirens, setRailClosed, setPoliceAlert, setRoadWater, setSolidQuery,
+  setWallQuery, setRagdolls, setKnockListener
 };

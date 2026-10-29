@@ -54,13 +54,16 @@ function createVehicleMeshes(group: THREE.Group, transit: Transit, policeCount: 
   const combiSignInst = new THREE.InstancedMesh(combiSignGeo, createRouteSignMaterial(signTexture, signNames.length, 'box'), Math.max(1, combiCount));
   combiSignInst.castShadow = true;
 
-  // NYPD roof light bars (the blue & white livery is painted by the sedan material from the instance's carState)
-  const policeLightbarInst = new THREE.InstancedMesh(buildLightbarGeometry(BODY_SPECS.sedan), createLightbarMaterial(), Math.max(1, policeCount));
+  // NYPD roof light bars (the blue & white livery is painted by the sedan material from the instance's carState): those
+  // flashing (on a call, Car.onCall) and those switched off
+  const barGeo = buildLightbarGeometry(BODY_SPECS.sedan);
+  const policeLightbarInst = new THREE.InstancedMesh(barGeo, createLightbarMaterial(), Math.max(1, policeCount));
+  const policeDarkBarInst = new THREE.InstancedMesh(barGeo, createLightbarMaterial(false), Math.max(1, policeCount));
   const carShadowInst = new THREE.InstancedMesh(unitPlane, contactShadowMat, NUM_CARS);
   carShadowInst.renderOrder = 998;
 
   for (const m of bodyMeshes) m.castShadow = m.receiveShadow = true;
-  policeLightbarInst.castShadow = true;
+  policeLightbarInst.castShadow = policeDarkBarInst.castShadow = true;
   carWheelLeftInst.castShadow = carWheelLeftInst.receiveShadow = true;
   carWheelRightInst.castShadow = carWheelRightInst.receiveShadow = true;
 
@@ -70,6 +73,7 @@ function createVehicleMeshes(group: THREE.Group, transit: Transit, policeCount: 
     carWheelRightInst,
     sparkInst,
     policeLightbarInst,
+    policeDarkBarInst,
     combiSignInst
   );
 
@@ -137,7 +141,7 @@ function createVehicleMeshes(group: THREE.Group, transit: Transit, policeCount: 
   busWheelRightInst.castShadow = busWheelRightInst.receiveShadow = true;
   return {
     bodies, bodyMeshes, modelBodies, carWheelLeftInst, carWheelRightInst,
-    signNames, combiSignGeo, combiSignRows, combiSignInst, policeLightbarInst, carShadowInst,
+    signNames, combiSignGeo, combiSignRows, combiSignInst, policeLightbarInst, policeDarkBarInst, carShadowInst,
     busBodyGeo, busStates, busHeaderGeo, busSignRows, busBodyMat, busDestMat, busWheelMat,
     busBodyInst, busHeaderInst, busWheelLeftInst, busWheelRightInst, busShadowInst
   };

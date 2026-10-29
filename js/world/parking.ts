@@ -2,8 +2,9 @@
 // Tepic's surface car parks (city-geodata.js `parking`, from OpenStreetMap's amenity=parking cut to the property lines
 // by tools/build-tepic-geodata.mjs): the lots in front of Walmart, Soriana, Ley, Bodega Aurrera and the Home Depot, the
 // plazas' and the hospitals'. Here they are laid out in stalls, rows along the lot's long side, back to back across
-// the lot with a two-way aisle between each pair, and some stalls taken by a parked car. Plain data in, plain data out
-// (no three.js), so node --test reads it directly: car-parks.ts draws the asphalt, the paint and the cars.
+// the lot with a two-way aisle between each pair, and some stalls taken by a parked car. The car dealers' lots (the
+// builder's too, in front of their showrooms) have the make's cars on show instead (displayStalls). Plain data in,
+// plain data out (no three.js), so node --test reads it directly: car-parks.ts draws the asphalt, the paint and the cars.
 
 import { hash } from './hash.ts';
 import { insidePoly } from './rings.ts';
@@ -102,7 +103,7 @@ function inCarPark(lot: CarPark, x: number, z: number): boolean {
   return x >= lot.minX && x <= lot.maxX && z >= lot.minZ && z <= lot.maxZ && insidePoly(lot.pts, x, z);
 }
 
-// Distance (m) from (x, z) to the segment a-b
+/** The distance (m) from (x, z) to the segment a-b */
 function segmentDistance(x: number, z: number, ax: number, az: number, bx: number, bz: number): number {
   const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz;
   const t = L2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2)) : 0;
@@ -110,11 +111,11 @@ function segmentDistance(x: number, z: number, ax: number, az: number, bx: numbe
 }
 
 /** Whether a stall centred at (x, z) would stand in an entrance's way: on its driveway, or across its mouth (the
- *  driveway carried on MOUTH m into the lot, to the aisle) */
+ *  driveway carried on MOUTH m into the lot, to the aisle); `pad`: m from a stall's middle to its side, and a hand */
 const MOUTH = 9;
-function inMouth(lot: CarPark, x: number, z: number): boolean {
+function inMouth(lot: CarPark, x: number, z: number, pad = STALL_W / 2 + 0.3): boolean {
   for (const e of lot.entrances) {
-    const clear = e.width / 2 + STALL_W / 2 + 0.3;
+    const clear = e.width / 2 + pad;
     const p = e.path;
     for (let i = 0; i + 1 < p.length; i++) if (segmentDistance(x, z, p[i].x, p[i].z, p[i + 1].x, p[i + 1].z) < clear) return true;
     const end = p.at(-1), before = p.at(-2);
@@ -205,4 +206,44 @@ function parkCars(stalls: readonly Stall[], { fill = 0.5 }: { fill?: number } = 
   return cars;
 }
 
-export { STALL_W, STALL_D, AISLE, carParks, inCarPark, inMouth, layStalls, parkCars };
+/** A car dealer's display: the cars side by side DISPLAY_W apart, in rows DISPLAY_D deep, each turned DISPLAY_TURN off
+ *  square to the street (as dealers park them, angled to the passing traffic), DISPLAY_EDGE m in from the lot's edges */
+const DISPLAY_W = 3.6;
+const DISPLAY_D = 5.6;
+const DISPLAY_TURN = 0.38; // rad
+const DISPLAY_EDGE = 0.5;
+const DISPLAY_PAD = 1.2;
+
+/**
+ * A car dealer's lot, laid out for its cars on show: rows along the lot (u), the first at its street edge (`out`: +1
+ * the street lies towards +v, -1 towards -v), a second behind it where the lot is deep enough, every car's nose out to
+ * the street. A spot is kept where the car stands in the lot, off the way in (inMouth) and clear of the showroom's walls
+ */
+function displayStalls(lot: CarPark, out: 1 | -1, wallAt: WallDistance | null = null): Stall[] {
+  const { ux, uz, vx, vz } = lot;
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+  for (const p of lot.pts) {
+    const u = p.x * ux + p.z * uz, v = p.x * vx + p.z * vz;
+    u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+  }
+  const rows = Math.min(2, Math.floor((v1 - v0 - DISPLAY_EDGE) / DISPLAY_D));
+  const n = Math.floor((u1 - u0 - 2 * DISPLAY_EDGE) / DISPLAY_W);
+  if (rows < 1 || n < 1) return [];
+  const uStart = u0 + (u1 - u0 - n * DISPLAY_W) / 2;
+  // (nose out to the street, turned a little: the cars all the same way)
+  const heading = Math.atan2(vx * out, vz * out) + DISPLAY_TURN;
+  const stalls: Stall[] = [];
+  for (let r = 0; r < rows; r++) {
+    const v = out > 0 ? v1 - DISPLAY_EDGE - DISPLAY_D * (r + 0.5) : v0 + DISPLAY_EDGE + DISPLAY_D * (r + 0.5);
+    for (let i = 0; i < n; i++) {
+      const u = uStart + (i + 0.5) * DISPLAY_W;
+      const x = u * ux + v * vx, z = u * uz + v * vz;
+      // (a car turned across the row reaches DISPLAY_PAD m to either side of its middle)
+      if (!inCarPark(lot, x, z) || inMouth(lot, x, z, DISPLAY_PAD) || (wallAt && wallAt(x, z, 3) < 1.4)) continue;
+      stalls.push({ x, z, heading, ux, uz, lineA: false, lineB: false, lot });
+    }
+  }
+  return stalls;
+}
+
+export { STALL_W, STALL_D, AISLE, carParks, inCarPark, inMouth, segmentDistance, layStalls, parkCars, displayStalls };

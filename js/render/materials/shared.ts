@@ -109,6 +109,16 @@ export const bumpNormal = Fn(([height]: [Node<'float'>]) => {
   return det.abs().mul(normalView).sub(grad).normalize();
 });
 
+/** How much of a pixel lines `w` wide (a share of their period) cover at x (in periods, the lines on its integers): 1
+ *  on one, its edge smoothed over the pixel's width; and far off, where a pixel spans a period or more, the share of it
+ *  they cover (the wires' haze: a fence's bars, chain-link, the slats of a louvre, the joints of brick) */
+export function lineCover(x: Node<'float'>, w: number): Node<'float'> {
+  const f = fract(x), d = min(f, float(1).sub(f)); // (to the nearest line, in periods)
+  const fw = max(fwidth(x), 1e-4); // (periods a pixel)
+  const line = float(1).sub(smoothstep(0, fw, d.sub(w / 2)));
+  return mix(line, float(w), smoothstep(0.5, 2.0, fw));
+}
+
 /**
  * Filter-Width Anti-Aliased Filled Band (ported from CityGenerator.js)
  * Wrapped in Fn() so NodeBuilder emits a single WGSL function instead of inlining fwidth trees.

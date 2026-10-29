@@ -17,13 +17,18 @@ import type { CityBlock } from '../city-config.ts';
 import type { LotReserve } from '../landmark-models.ts';
 import type { CityBuild, HouseBlock, Span } from './types.ts';
 
-// the lots the landmarks & La Loma's buildings stand on (tepic-landmarks.ts, la-loma-plan.ts)
+// the lots the landmarks & La Loma's buildings stand on (tepic-landmarks.ts, la-loma-plan.ts); the places' (js/places/:
+// the UAN's grounds, Forum Tepic, the bottling plant) come with buildHouses' call
 const TEPIC_RESERVES = [...LANDMARK_RESERVES, ...LA_LOMA_RESERVES];
 
 // Blocks the real buildings stand on (city-geodata.js `houses`, Overture Maps): built house by house (A2) instead
 const HOUSES = GEO.houses;
 const HS = GEO.houseStride || 7; // integers per house
 const SIGNS = GEO.signs; // shop sign faces (chains under parody names, local businesses, trades)
+// the car dealers' showrooms (GEO.dealers): house index -> how far out from the front their lot of cars on show runs
+// (m), where their pole sign stands on the sidewalk past it
+const DEALER_LOTS = new Map<number, number>();
+for (let k = 0; k + 3 < GEO.dealers.length; k += 4) DEALER_LOTS.set(GEO.dealers[k], GEO.dealers[k + 3]);
 
 /** The block each house stands on (A2 groups them by it), and the blocks any house stands on */
 function indexHouseBlocks() {
@@ -43,7 +48,14 @@ function indexHouseBlocks() {
 //     with a black water tank (tinaco) on most. Big boxes (supermarkets, department stores, malls, warehouses) are one
 //     hall in metal cladding with a glazed front and units on the roof; strip plazas a row of locales 5-7 m wide under
 //     one roof, in one colour. Grouped per block for the maps & the streaming of roof details
-function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[]) {
+/**
+ * `placeLots`: the lots the places stand on (js/places/: the UAN's grounds, Forum Tepic, the bottling plant), no house
+ * built there. Returns whether (x, z) lies on one of those lots or a landmark's: Overture's house there is not drawn
+ * (what reads GEO.houses on its own, the house fires, keeps off it)
+ */
+function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[], placeLots: readonly LotReserve[]): (x: number, z: number) => boolean {
+  const reserves = [...TEPIC_RESERVES, ...placeLots];
+  const inReservedLot = (x: number, z: number): boolean => reserves.some((r) => r.contains(x, z));
   const byBlock = new Map<number, HouseBlock>();
   const blockOf = (b: CityBlock | null, cx: number, cz: number) => {
     const key = b ? b.id : -1;
@@ -76,7 +88,7 @@ function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[]) {
   for (let i = 0; i < HOUSES.length; i += HS) {
     const cx0 = HOUSES[i] / 10, cz0 = HOUSES[i + 1] / 10;
     const own = known.get(i / HS);
-    if (TEPIC_RESERVES.some((r) => r.contains(cx0, cz0))) continue; // a landmark stands there (tepic-landmarks.ts)
+    if (reserves.some((r) => r.contains(cx0, cz0))) continue; // a landmark stands there (tepic-landmarks.ts)
     if (!storeHalls.has(i) && storeLots.some((r) => r.contains(cx0, cz0))) continue; // inside a store's hall
     const w0 = HOUSES[i + 2] / 10, d0 = HOUSES[i + 3] / 10;
     const th = HOUSES[i + 4] / 1000;
@@ -138,7 +150,7 @@ function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[]) {
       // on behind the Catedral's neighbours: their other houses stay)
       const intoLandmark = ([[0, 0], [-1, -1], [1, -1], [1, 1], [-1, 1]] satisfies [number, number][]).some(([a, b]) => {
         const pa = a * Math.max(0, hx - 1.2), pb = b * Math.max(0, hz - 1.2);
-        return TEPIC_RESERVES.some((r) => r.contains(cx + pa * cs + pb * sn, cz - pa * sn + pb * cs));
+        return reserves.some((r) => r.contains(cx + pa * cs + pb * sn, cz - pa * sn + pb * cs));
       });
       if (intoLandmark) return;
       // on a hillside (terrain.ts), and anywhere on the town's slopes (ground.ts), the house stands on
@@ -154,6 +166,13 @@ function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[]) {
       const onSlope = SLOPES || g1 > 0;
       const base = SLOPES ? g0 - 0.15 : onSlope ? Math.max(0, g0 - 0.15) : 0;
       const top = g1 + h;
+      // a chain's front on a slope: how far its ground stands over the box's foot, where its glazing starts (the wall
+      // kind's fraction, 1/25 per metre, up to 12 m: mexican-house.ts)
+      if (chain) {
+        const r = alongZ ? hx : hz;
+        const sink = groundHeight(cx + (ou * r) * cs + (ov * r) * sn, cz - (ou * r) * sn + (ov * r) * cs) - base;
+        faces[front] += Math.min(0.48, Math.max(0, sink) / 25);
+      }
       // the centro's colonial houses (within ~620 m of the Plaza Principal; not the chains, halls, plazas or cotos): their
       // look is the house material's (cantera, guardapolvo, cornice, balcony doors); here their balconies, one at
       // each upper-floor window of the front (the material's window cells: one per ~3.4 m)
@@ -209,12 +228,13 @@ function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[]) {
       const ry = th + (ov ? (ov > 0 ? -Math.PI / 2 : Math.PI / 2) : 0);
       const gf = onSlope ? groundHeight(...toFront(0.9)) : 0; // the ground at the street front
       if (fascia) {
-        // the logo box over the middle of the front (a supermarket's runs further along it)
+        // the logo box over the middle of the front (a supermarket's runs further along it, a car dealer's halfway)
         const [sx, sz] = toFront(0.25);
-        const boxH = wide ? 1.8 : 1.3;
-        blk.awnings.push({ x: sx, y: 0, g: Math.max(gf, base), z: sz, w: 0, d: Math.min(len - 1.0, wide ? (chain ? 26 : 16) : 5.2), sideDir: ou || 1, colorIdx: 0, ry,
+        const boxH = wide ? 1.8 : chain?.dealer ? 1.6 : 1.3;
+        blk.awnings.push({ x: sx, y: 0, g: Math.max(gf, base), z: sz, w: 0, d: Math.min(len - 1.0, wide ? (chain ? 26 : 16) : chain?.dealer ? 12 : 5.2), sideDir: ou || 1, colorIdx: 0, ry,
           noAwning: true, sign: signNo - 1, signY: top - boxH * 0.5 + 0.35, signH: boxH, signW: 0.5 });
-        if (chain?.pylon) city.pylons.push({ front: toFront(1.4), y: onSlope ? groundHeight(...toFront(1.4)) : 0, ry, along: len, slot: signNo - 1, ou, ov, cs, sn, pylon: chain.pylon });
+        const pole = (DEALER_LOTS.get(i / HS) ?? 0) + 1.4; // (out past a dealer's lot)
+        if (chain?.pylon) city.pylons.push({ front: toFront(pole), y: onSlope ? groundHeight(...toFront(pole)) : 0, ry, along: len, slot: signNo - 1, ou, ov, cs, sn, pylon: chain.pylon });
       } else if (hasSign || chance(0.55)) {
         const [ax, az] = toFront(0.9);
         const [sx, sz] = toFront(0.16); // the sign flat on the wall above the awning
@@ -235,6 +255,7 @@ function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[]) {
     city.quadtree.insert(blk);
     city.allBlocks.push(blk);
   }
+  return inReservedLot;
 }
 
 export { indexHouseBlocks, buildHouses };

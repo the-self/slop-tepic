@@ -28,5 +28,10 @@ export const CARS: CarModel[] = [
     id: 'mg-5', name: 'MeGusta 5', body: 'sedan', class: 'economy',
     size: [4.68, 1.82, 1.48], mass: 1270, drive: 'fwd', power: [84, 6000], torque: [150, 4500], redline: 6400,
     gears: 5, top: 180, accel: 11.5, rarity: 8
+  },
+  {
+    id: 'mg-zs', name: 'MeGusta ZS', body: 'crossover', class: 'economy',
+    size: [4.32, 1.81, 1.65], mass: 1340, drive: 'fwd', power: [78, 6000], torque: [141, 4500], redline: 6400,
+    gears: 5, top: 175, accel: 12.5, rarity: 4
   }
 ];

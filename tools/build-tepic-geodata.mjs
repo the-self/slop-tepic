@@ -1297,6 +1297,57 @@ const PARKING_SKIP = /^(multi-storey|underground|street_side|rooftop|lane|layby|
 const NOT_PARKING = [
   { lat: 21.490935, lon: -104.881585, note: 'beside Walmart Insurgentes, round the lienzo charro: it has no car park' }
 ];
+// Car parks OpenStreetMap leaves out where someone who knows the place says the ground is one lot (its outline in
+// degrees, along the streets round it): asphalt round every building OpenStreetMap maps in it (a mall, a store, a food
+// court) and the ones it leaves out (`buildings`, rings in degrees), `clear` m off their walls for the sidewalk, and
+// round the points in `keep` (a pad restaurant OSM maps as a point), `r` m about each
+const KNOWN_PARKING = [
+  {
+    name: 'Forum Tepic', clear: 4, note: "Forum's lots round the mall, Liverpool, the Fiesta Inn & Sam's Club, from the Boulevard Colosio to " +
+      'the Paseo de Forum: OSM maps their aisles, not the lots',
+    ring: [[21.493637, -104.866361], [21.491958, -104.862715], [21.489995, -104.863762], [21.490425, -104.864635], [21.490438, -104.864868],
+      [21.490015, -104.866146], [21.489701, -104.866917], [21.489673, -104.867173], [21.490405, -104.868735], [21.490540, -104.868898],
+      [21.490722, -104.868955], [21.490968, -104.868883], [21.492945, -104.867846], [21.493087, -104.867728], [21.493208, -104.867573],
+      [21.493271, -104.867008], [21.493715, -104.866226]],
+    buildings: [
+      // the food court & the PlayCity casino on the mall's south side (Overture's footprint)
+      [[21.4916724, -104.8669222], [21.4914694, -104.8664909], [21.4909608, -104.8667641], [21.4911638, -104.8671955]]
+    ],
+    keep: [
+      { lat: 21.4920409, lon: -104.8659292, r: 9, note: "Carl's Jr." },
+      // the mall's glass entrances, standing out of its walls under their canopies (js/places/forum/plan.ts entrances)
+      { lat: 21.4921138, lon: -104.8658813, r: 10, note: 'the north entrance' },
+      { lat: 21.4917612, lon: -104.8675995, r: 10, note: 'the west entrance' },
+      { lat: 21.4903043, lon: -104.8677935, r: 9, note: 'the south entrance' }
+    ]
+  }
+];
+// ...as OSM elements: their rings closed, and the cells they leave clear ((x, z) in the world: a building's or a kept
+// point's)
+const knownParking = KNOWN_PARKING.map((p) => {
+  const ring = p.ring.map(([lat, lon]) => toWorld(lon, lat));
+  const holes = [];
+  for (const e of [...bldOSM.elements, ...detailsOSM.elements]) {
+    const t = e.tags || {};
+    if (e.type !== 'way' || !(t.building || t.shop === 'mall' || t.amenity === 'food_court')) continue;
+    for (const r of elemRings(e)) {
+      if (!inRing(ring, ...centroid(r))) continue;
+      const out = insetRing(r, -p.clear);
+      holes.push({ ring: out, box: bbox(out) });
+    }
+  }
+  for (const b of p.buildings) {
+    const out = insetRing(b.map(([lat, lon]) => toWorld(lon, lat)), -p.clear);
+    holes.push({ ring: out, box: bbox(out) });
+  }
+  const discs = p.keep.map((k) => [...toWorld(k.lon, k.lat), k.r]);
+  return {
+    type: 'way', tags: { amenity: 'parking', parking: 'surface', name: p.name },
+    geometry: [...p.ring, p.ring[0]].map(([lat, lon]) => ({ lat, lon })),
+    clear: (x, z) => holes.some(({ ring: h, box }) => x >= box.x0 && x <= box.x1 && z >= box.z0 && z <= box.z1 && inRing(h, x, z)) ||
+      discs.some(([cx, cz, r]) => Math.hypot(x - cx, z - cz) < r)
+  };
+});
 const PARKING_MIN = 150; // m²: smaller pieces are a strip along a wall, not a lot (8 stalls is about 100 m² with its aisle)
 // the lot's surface: 0 asphalt (OSM's untagged lots are, mostly), 1 poured concrete, 2 setts (adoquín, empedrado),
 // 3 earth or gravel
@@ -1305,7 +1356,7 @@ const PARKING_SURFACE = (t) => /^(concrete|concrete:plates)$/.test(t) ? 1 : /^(p
 const parkingLots = [];
 {
   let skipped = 0, small = 0;
-  for (const e of landOSM.elements) {
+  for (const e of [...landOSM.elements, ...knownParking]) {
     const t = e.tags || {};
     if (t.amenity !== 'parking') continue;
     if (PARKING_SKIP.test(t.parking || '')) { skipped++; continue; }
@@ -1315,6 +1366,7 @@ const parkingLots = [];
       const byBlock = new Map();
       ringCells(ring, raster, (L, k) => {
         if (!prop[k] || !byLab.has(L)) return;
+        if (e.clear && e.clear(X0 + ((k % W) + 0.5) * RES, Z0 + (Math.floor(k / W) + 0.5) * RES)) return;
         if (!byBlock.has(L)) byBlock.set(L, []);
         byBlock.get(L).push(k);
       });
@@ -1686,6 +1738,209 @@ const inHouse = (x, z, pad) => (houseCells.get(Math.floor(x / HC) * 100003 + Mat
   const th = houses[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th), dx = x - houses[k] / 10, dz = z - houses[k + 1] / 10;
   return Math.abs(cs * dx - sn * dz) < houses[k + 2] / 20 + pad && Math.abs(sn * dx + cs * dz) < houses[k + 3] / 20 + pad;
 });
+// --- Car dealers (agencias): the showroom each make's dealer stands in, and its lot of cars on show in front ---------
+// The new-car dealers of Overture Maps' places (auto_dealer, vehicle_dealer) and OpenStreetMap's shop=car whose name
+// or brand is one of the makes of js/world/storefronts/agencias.ts: not a salesperson's own page ("Asesor Mazda"), a
+// used-car lot, a body shop or a motorcycle dealer, one per make within DEALER_SAME m (the surest). Each takes the
+// building it stands in (the nearest of DEALER_HALL m² or more within DEALER_REACH m: Overture's ML footprints of the
+// cars on its lot are smaller) as its showroom (5C gives it the make's front & pole sign), and the ground between
+// that building's street front and the property line as its lot: the widest run of it at least DEALER_DEPTH m deep and
+// DEALER_WIDE m along the front, clear of the other buildings and of the mapped car parks. Insurgentes' big dealers
+// are mapped as one footprint over the whole plot, up to the sidewalk, yard and all: one at least DEALER_YARD[0] m deep
+// gives its front DEALER_YARD[1]-[2] m of it back to the lot, the showroom standing back behind it as they do. A
+// dealer on a plot with no footprint big enough by its pin (Mazda's, on Insurgentes: Overture's footprint of its hall
+// reaches over Privada San Ángel and is squeezed out) gets one of its own on the open ground there, across the plot's
+// front, facing the avenue. A showroom that isn't a whole plot already gets its service hall (taller) behind it on the
+// open ground there, as Insurgentes' dealers have. The lot
+// is a car park of its own (its entrances from the street come with the others' below), where the game puts the
+// make's cars on show (js/world/car-parks.ts)
+const DEALERS = STOREFRONTS.map((sf, store) => ({ sf, store })).filter(({ sf }) => sf.dealer);
+const DEALER_SAME = 200, DEALER_REACH = 15, DEALER_HALL = 100, DEALER_DEPTH = 6.2, DEALER_WIDE = 7, DEALER_MAX = [40, 13]; // m, m²
+const DEALER_YARD = [24, 7, 10]; // m
+const DEALER_BUILT = [40, 9, 14], DEALER_BUILT_MIN = 12; // m: a showroom put in at most this wide, its yard, its depth; at least this wide
+const DEALER_HALL_DEEP = 70, DEALER_HALL_MIN = 12; // m
+const DEALER_SLIDE = Array.from({ length: 25 }, (_, i) => (i % 2 ? 1 : -1) * Math.ceil(i / 2)); // m: 0, 1, -1, 2, -2... 12
+const dealers = []; // { k: house, store, lot, depth (m) }
+{
+  const NOT_DEALER = /asesor|ejecutiv|ventas|\bvtas\b|vendedor|seminuev|usados|refacci|taller|hojalat|\bmotos?\b/i;
+  const found = [];
+  const makeOf = (name, brand) => DEALERS.find(({ sf }) => sf.match.test(name) || sf.match.test(brand));
+  const file = path.join(DATA, 'overture', 'places.geojsonl');
+  if (fs.existsSync(file)) {
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      if (!line.includes('_dealer"')) continue;
+      const f = JSON.parse(line);
+      const p = f.properties || {};
+      if (!/^(auto_dealer|vehicle_dealer)$/.test(p.basic_category || '') || !f.geometry || f.geometry.type !== 'Point') continue;
+      const name = ((p.names && p.names.primary) || '').trim();
+      const brand = (p.brand && p.brand.names && p.brand.names.primary) || '';
+      const make = makeOf(name, brand);
+      if (!make || NOT_DEALER.test(name) || (p.confidence || 0) < 0.3) continue;
+      const [x, z] = toWorld(f.geometry.coordinates[0], f.geometry.coordinates[1]);
+      if (inBox(x, z)) found.push({ ...make, x, z, conf: p.confidence || 0, name });
+    }
+  }
+  for (const e of detailsOSM.elements) {
+    const t = e.tags || {};
+    if (t.shop !== 'car') continue;
+    const name = (t.name || '').trim(), make = makeOf(name, t.brand || '');
+    const g = e.type === 'node' ? [e] : e.geometry || [];
+    if (!make || !g.length || NOT_DEALER.test(name) || t.second_hand === 'only') continue;
+    const [x, z] = toWorld(g.reduce((s2, n) => s2 + n.lon, 0) / g.length, g.reduce((s2, n) => s2 + n.lat, 0) / g.length);
+    if (inBox(x, z)) found.push({ ...make, x, z, conf: 0.85, name });
+  }
+  found.sort((a, b) => b.conf - a.conf);
+  const kept = [];
+  for (const d of found) if (!kept.some((k) => k.sf === d.sf && Math.hypot(k.x - d.x, k.z - d.z) < DEALER_SAME)) kept.push(d);
+  // the showroom: the nearest building big enough within DEALER_REACH m of the pin (0 inside it), not another's
+  const taken = new Set();
+  const showroom = (x, z) => {
+    let best = -1, bd = Infinity;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+      for (const k of houseCells.get((Math.floor(x / HC) + a) * 100003 + Math.floor(z / HC) + b) || []) {
+        if (taken.has(k) || houses[k + 6] & KIND.coto || (houses[k + 2] * houses[k + 3]) / 100 < DEALER_HALL) continue;
+        const th = houses[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th), dx = x - houses[k] / 10, dz = z - houses[k + 1] / 10;
+        const d = Math.hypot(Math.max(0, Math.abs(cs * dx - sn * dz) - houses[k + 2] / 20), Math.max(0, Math.abs(sn * dx + cs * dz) - houses[k + 3] / 20));
+        if (d < bd) { bd = d; best = k; }
+      }
+    }
+    return bd <= DEALER_REACH ? best : -1;
+  };
+  // whether the lot may cover (x, z): inside the property line, off every building but the showroom (and a hand round
+  // them), off the mapped car parks
+  const open = (x, z, own) => propAt(x, z) && !parkingAt(x, z) && !(houseCells.get(Math.floor(x / HC) * 100003 + Math.floor(z / HC)) || []).some((k) => {
+    if (k === own) return false;
+    const th = houses[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th), dx = x - houses[k] / 10, dz = z - houses[k + 1] / 10;
+    return Math.abs(cs * dx - sn * dz) < houses[k + 2] / 20 + 0.3 && Math.abs(sn * dx + cs * dz) < houses[k + 3] / 20 + 0.3;
+  });
+  // a house of the dealer's put in (its showroom, its service hall): its index, and in the cells the others are found by
+  const addHouse = (cx, cz, w, dd, th, floors, kind) => {
+    houses.push(Math.round(cx * 10), Math.round(cz * 10), Math.round(w * 10), Math.round(dd * 10), Math.round(th * 1000), floors, kind, 0);
+    floorsMapped.push(0);
+    const k = houses.length - HS, r = Math.hypot(w, dd) / 2;
+    for (let ix = Math.floor((cx - r) / HC); ix <= Math.floor((cx + r) / HC); ix++) {
+      for (let iz = Math.floor((cz - r) / HC); iz <= Math.floor((cz + r) / HC); iz++) {
+        const key = ix * 100003 + iz;
+        if (!houseCells.has(key)) houseCells.set(key, []);
+        houseCells.get(key).push(k);
+      }
+    }
+    return k;
+  };
+  // a showroom built on the open ground by (x, z): facing the widest street within 70 m (a dealer's address is on the
+  // avenue, not the side street), its front DEALER_BUILT[1] m (its yard) back from the property line there, as wide as
+  // the open ground runs along it round the pin (DEALER_BUILT[0] at most), DEALER_BUILT[2] deep; the house's index, or -1
+  const build = (x, z) => {
+    let road = null, rd = Infinity, nx = 0, nz = 0;
+    for (const r of drivePieces) {
+      if (Math.min(r.x0, r.x1) > x + 70 || Math.max(r.x0, r.x1) < x - 70 || Math.min(r.z0, r.z1) > z + 70 || Math.max(r.z0, r.z1) < z - 70) continue;
+      const dx = r.x1 - r.x0, dz = r.z1 - r.z0, L2 = dx * dx + dz * dz;
+      const t = L2 ? Math.max(0, Math.min(1, ((x - r.x0) * dx + (z - r.z0) * dz) / L2)) : 0;
+      const px = r.x0 + dx * t, pz = r.z0 + dz * t, d = Math.hypot(px - x, pz - z);
+      if (d > 70 || d < 1e-3 || (road && (r.r < road.r - 0.5 || (r.r <= road.r + 0.5 && d >= rd)))) continue;
+      road = r; rd = d; nx = (px - x) / d; nz = (pz - z) / d;
+    }
+    if (!road) return -1;
+    let edge = 0; // (m from the pin out to the property line)
+    while (edge < rd && propAt(x + nx * edge, z + nz * edge)) edge += 0.5;
+    const th = Math.atan2(nx, nz), cs = Math.cos(th), sn = Math.sin(th); // (local +v, the front (3), towards the street)
+    const [most, yard, deep] = DEALER_BUILT, front = edge - yard;
+    // (a column along the front is free where the showroom and its yard would stand clear across it)
+    const free = (u) => {
+      for (let v = front - deep; v <= edge - 0.5; v += 1) if (!open(x + nx * v + cs * u, z + nz * v - sn * u, -1)) return false;
+      return true;
+    };
+    let u0 = 0, u1 = 0;
+    if (!free(0)) {
+      const near = DEALER_SLIDE.map((d) => d / 2).find((d) => free(d));
+      if (near === undefined) return -1;
+      u0 = u1 = near;
+    }
+    while (u1 - u0 < most && free(u1 + 0.5)) u1 += 0.5;
+    while (u1 - u0 < most && free(u0 - 0.5)) u0 -= 0.5;
+    const w = u1 - u0 - 0.6;
+    if (w < DEALER_BUILT_MIN) return -1;
+    const mid = (u0 + u1) / 2, back = front - deep / 2;
+    // (a hall's metal sides, the make's glazed front: 5C)
+    return addHouse(x + nx * back + cs * mid, z + nz * back - sn * mid, w, deep, th, 2, 3 | KIND.shop | KIND.big);
+  };
+  // the service hall (taller) behind a showroom no deeper than DEALER_YARD[0], on the open ground there: as wide as the
+  // showroom, as deep as the ground runs back (DEALER_HALL_DEEP m at most, DEALER_HALL_MIN at least), a hall's
+  let halls = 0;
+  const addHall = (k) => {
+    const cx = houses[k] / 10, cz = houses[k + 1] / 10, w = houses[k + 2] / 10, dd = houses[k + 3] / 10, th = houses[k + 4] / 1000;
+    const cs = Math.cos(th), sn = Math.sin(th);
+    const [ou, ov] = [[-1, 0], [1, 0], [0, -1], [0, 1]][houses[k + 6] & 3];
+    const face = ou ? w / 2 : dd / 2, len = ou ? dd : w;
+    if (2 * face >= DEALER_YARD[0]) return;
+    const at = (t, s) => [cx + (ov * t - ou * (face + s)) * cs + (ou * t - ov * (face + s)) * sn, cz - (ov * t - ou * (face + s)) * sn + (ou * t - ov * (face + s)) * cs];
+    let depth = DEALER_HALL_DEEP;
+    for (let t = -len / 2 + 0.5; t <= len / 2 - 0.5; t += 1) {
+      let s = 0.3;
+      while (s < depth && open(...at(t, s + 0.5), k)) s += 0.5;
+      depth = Math.min(depth, s - 0.3);
+    }
+    if (depth < DEALER_HALL_MIN) return;
+    const [hx, hz] = at(0, 0.3 + depth / 2);
+    addHouse(hx, hz, ou ? depth : w, ou ? dd : depth, th, 2, (houses[k + 6] & 3) | KIND.big);
+    halls++;
+  };
+  let lots = 0, yards = 0, built = 0;
+  for (const d of kept) {
+    let k = showroom(d.x, d.z);
+    if (k < 0 && (k = build(d.x, d.z)) >= 0) built++;
+    if (k < 0) continue;
+    taken.add(k);
+    addHall(k);
+    let cx = houses[k] / 10, cz = houses[k + 1] / 10, w = houses[k + 2] / 10, dd = houses[k + 3] / 10;
+    const th = houses[k + 4] / 1000, cs = Math.cos(th), sn = Math.sin(th);
+    const toW = (u, v) => [cx + u * cs + v * sn, cz - u * sn + v * cs];
+    // the front's frame: out from it (ou, ov), along it (au, av), how far out it stands from the middle, how long it is
+    const [ou, ov] = [[-1, 0], [1, 0], [0, -1], [0, 1]][houses[k + 6] & 3];
+    const au = ov, av = ou ? 1 : 0, face = ou ? w / 2 : dd / 2, len = ou ? dd : w, deep = ou ? w : dd;
+    const at = (t, s) => toW(au * t + ou * (face + s), av * t + ov * (face + s));
+    // (a deep plot: its front yard, s from -yard to 0, is the lot's to start with)
+    const yard = deep >= DEALER_YARD[0] ? Math.max(DEALER_YARD[1], Math.min(DEALER_YARD[2], deep * 0.25)) : 0;
+    // how deep the open ground runs out from the front, a column every metre along it
+    const cols = [];
+    for (let t = -len / 2 + 0.5; t <= len / 2 - 0.5; t += 1) {
+      let s = 0.3 - yard;
+      while (s < DEALER_MAX[1] + 0.6 && open(...at(t, s + 0.25), k)) s += 0.25;
+      cols.push({ t, depth: s + yard - 0.6 }); // (from the yard's back, a hand short of what stops it)
+    }
+    // the widest run of columns deep enough, at most DEALER_MAX[0] m (its depth the shallowest of them)
+    let best = null;
+    for (let i = 0; i < cols.length; i++) {
+      let depth = Infinity;
+      for (let j = i; j < cols.length && cols[j].depth >= DEALER_DEPTH; j++) {
+        depth = Math.min(depth, cols[j].depth);
+        const wide = cols[j].t - cols[i].t + 1;
+        if (wide >= DEALER_WIDE && wide <= DEALER_MAX[0] && (!best || wide > best.wide || (wide === best.wide && depth > best.depth))) best = { t0: cols[i].t - 0.5, t1: cols[j].t + 0.5, wide, depth };
+      }
+    }
+    if (!best) { dealers.push({ k, store: d.store, lot: -1, depth: 0 }); continue; }
+    const depth = Math.min(best.depth, DEALER_MAX[1]), s0 = 0.3 - yard;
+    let poly = [at(best.t0, s0), at(best.t1, s0), at(best.t1, s0 + depth), at(best.t0, s0 + depth)];
+    if (ringArea(poly) > 0) poly = poly.reverse();
+    // (its rows along the front: θ with (cos θ, -sin θ) along it)
+    const [ax, az] = [au * cs + av * sn, -au * sn + av * cs];
+    const [mx, mz] = at((best.t0 + best.t1) / 2, s0 + depth / 2);
+    // (the showroom stands back behind its yard)
+    if (yard) {
+      cx -= ((ou * cs + ov * sn) * yard) / 2;
+      cz -= ((-ou * sn + ov * cs) * yard) / 2;
+      if (ou) w -= yard; else dd -= yard;
+      houses[k] = Math.round(cx * 10); houses[k + 1] = Math.round(cz * 10); houses[k + 2] = Math.round(w * 10); houses[k + 3] = Math.round(dd * 10);
+    }
+    parkingLots.push({ name: `Agencia ${d.sf.name}`, surface: 1, th: Math.atan2(-az, ax), poly, box: bbox(poly), area: best.wide * depth, lab: labAt(mx, mz), entrances: [], dealer: true });
+    dealers.push({ k, store: d.store, lot: parkingLots.length - 1, depth: 0.3 + depth });
+    yards += yard ? 1 : 0;
+    lots++;
+  }
+  log(`car dealers: ${dealers.length} showrooms of ${kept.length} dealers (${found.length} places of the makes), ${built} of them built where Overture has none, ${halls} service halls behind them, ${lots} with a lot of cars on show in front (${yards} on the yard of a plot mapped as one footprint): ` +
+    kept.map((d) => d.sf.name).join(', '));
+}
+
 // --- Car parks' entrances: where a lot opens onto the street ---------------------------------------------------------
 // Where a service road or aisle that runs through a lot (OSM highway=service: the parking aisles, the driveways, the
 // plazas' access roads) leaves the lot's block onto the street: the point on the curb it crosses (found to a few cm
@@ -1804,9 +2059,11 @@ const inHouse = (x, z, pad) => (houseCells.get(Math.floor(x / HC) * 100003 + Mat
       // within half a FRONTAGE of one)
       const along = lot.entrances.map(([ex, ez]) => [(ex - ax) * ux + (ez - az) * uz, (ex - ax) * ox + (ez - az) * oz])
         .filter(([u, v]) => u > -3 && u < len + 3 && v > -2 && v < REACH + 1).map(([u]) => u);
-      const count = Math.max(1, Math.round(len / FRONTAGE));
+      // (a car dealer's one way in, a driveway's width, at an end of its front, the cars on show along the rest)
+      const count = lot.dealer ? 1 : Math.max(1, Math.round(len / FRONTAGE));
+      const wide = lot.dealer ? SERVICE_WIDTH.driveway : 6;
       for (let k = 0; k < count; k++) {
-        const d = (len * (k + 0.5)) / count;
+        const d = lot.dealer ? Math.max(len / 2, len - wide / 2 - 0.2) : (len * (k + 0.5)) / count;
         if (along.some((u) => Math.abs(u - d) < FRONTAGE / 2)) continue;
         const x = ax + ux * d, z = az + uz * d, c = toCurb(x, z);
         if (c < 0) continue;
@@ -1814,7 +2071,7 @@ const inHouse = (x, z, pad) => (houseCells.get(Math.floor(x / HC) * 100003 + Mat
         const depth = depthTo(lot, cx, cz, -ox, -oz, 3);
         if (depth < 0) continue;
         const reach = Math.max(SIDEWALK + 0.3, depth + 0.5);
-        lot.entrances.push([q(cx), q(cz), Math.round(Math.atan2(-oz, -ox) * 1000), 6, flat([[cx, cz], [cx - ox * reach, cz - oz * reach]])]);
+        lot.entrances.push([q(cx), q(cz), Math.round(Math.atan2(-oz, -ox) * 1000), wide, flat([[cx, cz], [cx - ox * reach, cz - oz * reach]])]);
         made++;
       }
     }
@@ -2139,6 +2396,11 @@ const signs = [];
     const [bg, fg] = LOCAL_COLOURS[hashS(t) % LOCAL_COLOURS.length];
     addSign(`trade:${t}`, { text: t, bg, fg, border: fg });
   }
+  // the car dealers' showrooms: their make's front & sign
+  for (const d of dealers) {
+    houses[d.k + 7] = signIndex.get(`chain:${STOREFRONTS[d.store].id}`);
+    houses[d.k + 6] |= KIND.shop;
+  }
   const tradeOf = (name, cat) => {
     for (const [re, t] of GENERIC) if (re.test(name) || re.test(cat)) return t;
     return null;
@@ -2214,7 +2476,8 @@ const signs = [];
         const i = houseAt(x, z, 12);
         if (i >= 0 && !(houses[i + 6] & (KIND.big | KIND.coto))) { houses[i + 6] |= KIND.strip | KIND.shop; plazas++; }
       }
-      const chain = CHAINS.find((sf) => (sf.big ? leads(sf).test(name) : sf.match.test(name) || sf.match.test(brand)));
+      // (a dealer of a make: its showroom has its sign already, every other place naming the make is a body shop or a parts store)
+      const chain = CHAINS.find((sf) => !sf.dealer && (sf.big ? leads(sf).test(name) : sf.match.test(name) || sf.match.test(brand)));
       if (chain) {
         chainPlaces.push({ chain, x, z, conf: p.confidence || 0 });
         continue;
@@ -2260,7 +2523,7 @@ const signs = [];
       if (!inBox(x, z)) continue;
       const name = (t.name || t.brand || '').trim();
       if (name && known(name, x, z)) { osmTally.known++; continue; }
-      const chain = name ? CHAINS.find((sf) => sf.match.test(name) || sf.match.test(t.brand || '')) : null;
+      const chain = name ? CHAINS.find((sf) => !sf.dealer && (sf.match.test(name) || sf.match.test(t.brand || ''))) : null;
       if (chain) {
         if (chainPlaces.some((c) => c.chain === chain && Math.hypot(c.x - x, c.z - z) < OSM_SAME_CHAIN)) { osmTally.known++; continue; }
         chainPlaces.push({ chain, x, z, conf: 0.85 });
@@ -2292,6 +2555,7 @@ const signs = [];
     if (i < 0) continue;
     // (a convenience store or pharmacy inside a hall or a mall: the hall keeps its own front, height & name)
     if (!big && houses[i + 6] & KIND.big) continue;
+    if (dealers.some((d) => d.k === i)) continue; // (a car dealer's showroom keeps its make's)
     houses[i + 7] = signIndex.get(`chain:${c.chain.id}`);
     houses[i + 6] |= KIND.shop;
     if (big) houses[i + 6] = (houses[i + 6] | KIND.big) & ~KIND.strip;
@@ -2808,6 +3072,7 @@ const SPOTS = [
   ['central', 'Central de Autobuses', 'Av. Insurgentes · Ciudad del Valle', 21.49839, -104.88706],
   ['estacion', 'Antigua estación del tren', 'Av. Allende · Ferrocarril', 21.50392, -104.88208],
   ['juventud', 'Parque Lineal Juventud', 'Colonia Juventud', 21.49525, -104.87694],
+  ['forum', 'Forum Tepic', 'Blvd. Colosio · Plaza Forum', 21.49252, -104.86586, 21.49208, -104.86589],
   ['xalisco', 'Xalisco Centro', 'Plaza Benito Juárez · Xalisco', 21.44370, -104.90170],
   ['bonaterra', 'Bonaterra', 'Libramiento · Bonaterra', 21.46550, -104.84385],
   ['aeropuerto', 'Aeropuerto de Tepic', 'Terminal · Pantanal', 21.41720, -104.83820, 21.41700, -104.83930]
@@ -2974,6 +3239,8 @@ const footbridges = [];
   }
   // (from the last down, so the indices still to go stay put)
   for (const n of [...gone].sort((a, b) => b - a)) houses.splice(n * HS, HS);
+  // (the car dealers' showrooms move down with the rest; one taken out is no dealer's)
+  for (const d of dealers) d.k = gone.has(d.k / HS) ? -1 : d.k - HS * [...gone].filter((n) => n * HS < d.k).length;
   log(`footbridge stairs: ${footbridges.length * 2} flights, ${turned} turned along the road, ${blocked} still into a roadway; ${gone.size} buildings under them taken out`);
 
   // The low footbridges: over an open channel (the waterways the blocks leave a gap for, above ground)
@@ -3174,6 +3441,9 @@ const GEO = {
   // or gravel), the stall rows' direction θ (mrad: along (cos θ, -sin θ)), outline (flat ring), entrances ([x, z on
   // the curb (m), the way in square to it (mrad, atan2 of z over x), width (m), path from the curb to the lot (flat)])]
   parking: parkingLots.map((p) => [p.name, p.surface, Math.round(p.th * 1000), flat(p.poly), p.entrances]),
+  // Car dealers (4), 4 numbers each: their showroom (house index), their make (index into STOREFRONTS), their lot of
+  // cars on show (index into parking, -1 none), and how far its street edge stands out from the showroom's front (m)
+  dealers: dealers.filter((d) => d.k >= 0).flatMap((d) => [d.k / HS, d.store, d.lot, q(d.depth)]),
   // Lakes, presas, ponds & reservoirs (4): [kind (lake, pond, reservoir, wetland), name, flags (1 intermittent, 2
   // beyond the box, 4 up the hills: laid on the hillside, no basin), outline (flat ring, its shore)]
   lakes: lakes.map((l) => [l.kind, l.name, l.flags, flat(l.shore)]),

@@ -9,6 +9,7 @@ import type { Ped, Car } from './traffic.ts';
 import { WEAPONS, Arsenal } from './weapons.ts';
 import { Wanted, GANGS, SIGHT, inSight } from './crime-rules.ts';
 import { GunfireFX } from './gunfire-fx.ts';
+import { createLightbarMaterial } from '../actors/actor-models.ts';
 import type {
   CrimeState, DownKind, AgentKind, Faction, PickupKind, Blips, SightCones, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers,
   CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, TraceHit, RemoteTarget, ShotProp
@@ -22,14 +23,15 @@ import { spawnHeli, removeHeli, damageHeli, updateHeli, skyLine } from './crime/
 import { witnessed, trafficPatrolSees, patrolEyes } from './crime/witnesses.ts';
 import { buildRoadGraph, nearestNode, route, clearLine } from './crime/road-graph.ts';
 import {
-  bindInput, updatePlayer, placePlayerGun, findTarget, muzzle, playerFire, punch, hurt, down, updateDown, playerSize
+  bindInput, updatePlayer, placePlayerGun, findTarget, muzzle, playerFire, punch, hurt, down, updateDown, playerSize, rammed
 } from './crime/player.ts';
-import { aimAlong, trace, hitScan, updateRockets, explode, showShot, blastSeen } from './crime/gunfire.ts';
+import { aimAlong, trace, hitScan, updateRockets, updateFuses, explode, showShot, blastSeen } from './crime/gunfire.ts';
+import type { Fuse } from './crime/gunfire.ts';
 import {
   spawnAgent, angerGang, removeAgent, damageAgent, knockAgent, kill, updateAgent, walkAgent, findFoe, npcShoot
 } from './crime/agents.ts';
 import {
-  spawnCruiser, takeOverPatrol, removeCruiser, damageCruiser, updateCruiser, pursue, blockerAhead, deployOfficers, moveCruiser, collideCruisers,
+  spawnCruiser, takeOverPatrol, respondToGang, removeCruiser, damageCruiser, updateCruiser, pursue, blockerAhead, deployOfficers, moveCruiser, collideCruisers,
   abandoned
 } from './crime/cruisers.ts';
 import { dispatch } from './crime/dispatch.ts';
@@ -121,6 +123,8 @@ class CrimeSystem {
   _blips?: Blips;
   sight: SightCones = []; // the police's eyes while the player is wanted (update)
   seen = false; // whether the police saw the player at the last update
+  clock = 0; // s of crime updates
+  lastRam = -Infinity; // clock s the player last drove into a patrol car (crime/player.ts rammed)
   lastSeen: XZ = { x: 0, z: 0 }; // m: where they last saw it (or a crime of its was reported): where they hunt for it
 
   fx: GunfireFX;
@@ -132,7 +136,10 @@ class CrimeSystem {
   spikes: SpikeStrip[] = []; // the police's spike strips (crime/spikes.ts)
   candidates: LockTarget[];
   // s to the next
-  timers: { dispatch: number; gangs: number; thief: number; health: number; bazooka: number; trucks: number; patrols: number; heli: number; spikes: number };
+  timers: {
+    dispatch: number; gangs: number; thief: number; health: number; bazooka: number; trucks: number; patrols: number; heli: number; spikes: number;
+    gangCall: number;
+  };
   // the traffic's own patrol cars (traffic.ts: every 40th car keeps the livery): witnesses, and they join a chase
   trafficPolice: Car[];
   heli: Helicopter;
@@ -142,6 +149,11 @@ class CrimeSystem {
   playerGuns: Record<string, THREE.Group> = {};
   npcGuns: Partial<Record<StreetGun, NpcGunMesh>> = {};
   burnt = new THREE.MeshStandardNodeMaterial({ color: 0x1d1b1a, roughness: 0.95, metalness: 0.1 });
+  // the police's light bars flashing (on a call) and switched off (going back, with no call on)
+  bars = { lit: createLightbarMaterial(), dark: createLightbarMaterial(false) };
+  // the traffic's cars a blast caught full on, about to blow up (crime/gunfire.ts updateFuses), and a blast's catch
+  fuses: Fuse[] = [];
+  blown: Car[] = [];
   pickupMesh = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.28, 0), new THREE.MeshBasicNodeMaterial(), MAX_PICKUPS);
   // the road graph (buildRoadGraph): its intersections, each one's links [node, m], and the nodes in 80 m cells
   nodes: XZ[] = [];
@@ -209,7 +221,7 @@ class CrimeSystem {
     this.rockets = [];
     this.pickups = [];
     this.candidates = []; // lock-on targets, rebuilt per shot
-    this.timers = { dispatch: 0, gangs: 2, thief: rand(40, 70), health: 30, bazooka: 45, trucks: 0, patrols: 0, heli: 0, spikes: 20 };
+    this.timers = { dispatch: 0, gangs: 2, thief: rand(40, 70), health: 30, bazooka: 45, trucks: 0, patrols: 0, heli: 0, spikes: 20, gangCall: 20 };
     this.trafficPolice = traffic.cars.filter((v) => v.isPolice);
 
     this.buildGuns();
@@ -299,6 +311,7 @@ class CrimeSystem {
     // (on the street: not flying, nor up on a roof)
     this.onStreet = mode !== 'helicopter' && pe.position.y - this.groundAt(this.px, this.pz) < 2.6;
 
+    this.clock += dt;
     this.hurtFlash = Math.max(0, this.hurtFlash - dt * 1.6);
     this.shake = Math.max(0, this.shake - dt * 2.5);
     for (let g = 0; g < this.gangAnger.length; g++) this.gangAnger[g] = Math.max(0, this.gangAnger[g] - dt);
@@ -307,6 +320,7 @@ class CrimeSystem {
     else this.updatePlayer(dt, elapsed);
 
     this.updateRockets(dt);
+    updateFuses(this, dt);
     this.crowd.begin();
     for (const guns of Object.values(this.npcGuns)) guns.count = 0;
     for (let i = this.agents.length - 1; i >= 0; i--) this.updateAgent(this.agents[i], dt);
@@ -359,6 +373,8 @@ class CrimeSystem {
       this.lastSeen.z = this.pz;
     }
     if (this.state === 'play') this.wanted.update(dt, seen);
+    // (the traffic's patrol cars put their lights & sirens on while the police are after the player)
+    this.traffic.setPoliceAlert(this.state === 'play' && this.wanted.stars > 0);
     this.dispatch(dt);
     this.fx.update(dt);
   }
@@ -420,6 +436,11 @@ class CrimeSystem {
 
   punch(): void {
     punch(this);
+  }
+
+  // The player's vehicle struck `other` (n from it towards the player): a patrol car driven into is a crime
+  rammed(other: unknown, nx: number, nz: number): void {
+    rammed(this, other, nx, nz);
   }
 
   // ((fromX, fromZ) left out: the player's own place)
@@ -552,6 +573,10 @@ class CrimeSystem {
 
   takeOverPatrol(v: Car): Cruiser | null {
     return takeOverPatrol(this, v);
+  }
+
+  respondToGang(v: Car, gang: Agent): Cruiser | null {
+    return respondToGang(this, v, gang);
   }
 
   removeCruiser(cr: Cruiser): void {

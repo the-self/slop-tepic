@@ -211,7 +211,8 @@ export interface PhysicsWorld {
   system: Jolt.PhysicsSystem;
   bodies: Jolt.BodyInterface;
   groundAt: CarWorld['groundAt'];
-  layers: { ragdoll: number; ragdollGround: number; debris: number };
+  /** its layers: `moving` the vehicles' (and what drives into them as one: a train's cars, sim/trains/contact.ts) */
+  layers: { moving: number; ragdoll: number; ragdollGround: number; debris: number };
   /** the user data of a body on the ragdolls' layer that a vehicle's contact counts as a crash (a wall's) */
   firm: number;
   // a static body of ground n samples cell m apart a side round (cx, cz), sampled from fromY; or `body` reshaped
@@ -427,7 +428,7 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
   const systems: PhysicsSystemHooks[] = [];
   const shared: PhysicsWorld = {
     Jolt, system, bodies, groundAt: world.groundAt,
-    layers: { ragdoll: LAYER_RAGDOLL, ragdollGround: LAYER_RAGDOLL_GROUND, debris: LAYER_DEBRIS },
+    layers: { moving: LAYER_MOVING, ragdoll: LAYER_RAGDOLL, ragdollGround: LAYER_RAGDOLL_GROUND, debris: LAYER_DEBRIS },
     firm: FIRM,
     groundField: (body, cx, cz, fromY, n, cell) => groundField(body, cx, cz, fromY, n, cell, LAYER_RAGDOLL_GROUND),
     dropBody,
@@ -595,19 +596,17 @@ function createCarPhysics(Jolt: JoltApi, world: CarWorld): CarPhysics {
     if (!v1 && !v2) return;
     const n = Jolt.wrapPointer(manifold, Jolt.ContactManifold).mWorldSpaceNormal; // (from body 1 into body 2)
     const nx = n.GetX(), ny = n.GetY(), nz = n.GetZ();
-    if (v1) noteHit(v1, v2, -nx, -ny, -nz);
-    if (v2) noteHit(v2, v1, nx, ny, nz);
+    if (v1) noteHit(v1, v2, b2, -nx, -ny, -nz);
+    if (v2) noteHit(v2, v1, b1, nx, ny, nz);
   };
-  // Vehicle `v` touching `other` (a vehicle, or null: a wall, the ground), the normal (nx, ny, nz) out of it into `v`:
-  // its approach, its own velocity into it less the other's
-  function noteHit(v: PhysicsVehicle, other: PhysicsVehicle | undefined, nx: number, ny: number, nz: number): void {
+  // Vehicle `v` touching `other` (a vehicle, or null: a wall, the ground), body `against`, the normal (nx, ny, nz) out
+  // of it into `v`: its approach, its own velocity into it less the other's (a wall's nought, a train's its own)
+  function noteHit(v: PhysicsVehicle, other: PhysicsVehicle | undefined, against: Jolt.Body, nx: number, ny: number, nz: number): void {
     // (a Vec3 returned by value is Jolt's scratch, the next call's: read before the other's)
     const a = v.body.GetLinearVelocity();
     let rx = a.GetX(), ry = a.GetY(), rz = a.GetZ();
-    if (other) {
-      const o = other.body.GetLinearVelocity();
-      rx -= o.GetX(); ry -= o.GetY(); rz -= o.GetZ();
-    }
+    const o = against.GetLinearVelocity();
+    rx -= o.GetX(); ry -= o.GetY(); rz -= o.GetZ();
     const approach = -(rx * nx + ry * ny + rz * nz);
     if (approach <= v.hit.speed) return;
     v.hit.speed = approach;

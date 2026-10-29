@@ -21,7 +21,7 @@ export const CARS: CarModel[] = [
     gears: 8, top: 210, accel: 8.6, rarity: 10
   },
   {
-    id: 'volkswagen-gol', name: 'Vochowagen Golazo', body: 'hatch', class: 'economy',
+    id: 'volkswagen-gol', glb: 'assets/models/cars/volkswagen-gol.glb', name: 'Vochowagen Golazo', body: 'hatch', class: 'economy',
     size: [3.89, 1.66, 1.46], mass: 1000, drive: 'fwd', power: [74, 5250], torque: [155, 4000], redline: 6200,
     gears: 5, top: 180, accel: 11.0, rarity: 14
   },

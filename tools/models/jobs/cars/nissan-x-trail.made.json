@@ -1,0 +1,6 @@
+{
+  "note": "Modelled by script in Blender on the shared shell (blender -b --factory-startup -P tools/models/blender/nissan-x-trail.py -- <nissan-x-trail.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/nissan-x-trail.glb --length 4.680 --roles tools/models/jobs/cars/nissan-x-trail.roles.json --plates 0.62,0.88 (its real length, so it is not rescaled; light enough for no levels of detail)",
+  "license": "our own work",
+  "source": "tools/models/blender/nissan-x-trail.py",
+  "args": "--length 4.680 --roles tools/models/jobs/cars/nissan-x-trail.roles.json --plates 0.62,0.88"
+}

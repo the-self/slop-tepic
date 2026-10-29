@@ -35,6 +35,9 @@ import { placeStreetCrossings } from './crossings.ts';
 import { placeBusStops } from '../../world/bus-stops.ts';
 import { planTopes } from '../../world/topes.ts';
 import { placeTopes } from './topes.ts';
+import { placeRailCrossings } from './rail-crossings.ts';
+import { levelCrossings } from '../../world/railway.ts';
+import type { LevelCrossing } from '../../world/railway.ts';
 import type { BusStop } from '../../world/bus-stops.ts';
 
 /** Where spawnPed places someone: a track's fields, copied onto them */
@@ -100,6 +103,9 @@ interface TrafficState extends VehicleMeshes {
   streetCrossings: StreetCrossing[];
   /** the bus stops on the streets (world/bus-stops.ts), in STOP_CELL m cells (pickups.ts) */
   stopCells: Map<number, BusStop<TrafficEdge>[]>;
+  /** the railway's level crossings (world/railway.ts), and which a train closes now (hooks.ts setRailClosed) */
+  railCrossings: readonly LevelCrossing[];
+  railClosed: readonly boolean[];
 
   // ---- who there is (fleet.ts, peds.ts) and how they are drawn ----
   cars: Car[];
@@ -142,6 +148,8 @@ interface TrafficState extends VehicleMeshes {
   parkedOutside: ParkedVehicle[];
   /** the fire trucks & ambulances on their way (hooks.ts setSirens): the traffic pulls over for them */
   sirens: readonly SirenSource[];
+  /** the police after a wanted player (hooks.ts setPoliceAlert): the traffic's patrol cars on a call, lights & siren */
+  policeAlert: boolean;
   crashedObstacles: ParkedVehicle[];
   parked: ParkedVehicle[];
   /** the weather on the street (hooks.ts setRoadWater): the tyres' grip, how fast drivers go and how far back they
@@ -215,6 +223,7 @@ interface TrafficState extends VehicleMeshes {
   wheelCars: number;
   visibleCars: number;
   policeDrawn: number;
+  policeDarkDrawn: number;
   combisDrawn: number;
   visibleBuses: number;
   /** frames updated (the first couple keep every mesh visible for the shader warm-up) */
@@ -294,6 +303,7 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     e.crossings = []; // the street crossings along it (crossings.ts)
     e.stops = []; // the bus stops by its right curb (pickups.ts)
     e.topes = []; // the topes across it (topes.ts)
+    e.rails = []; // the level crossings across it (rail-crossings.ts)
   }
   // The topes, the paint's (world/topes.ts): the traffic slows down for each
   placeTopes(planTopes(network.paintEdges, GEO.topes), edges);
@@ -310,6 +320,9 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
   // The street crossings along the roads, OpenStreetMap's (crossings.ts): the sidewalks split at them, people cross
   // there and the traffic stops for them
   const streetCrossings = placeStreetCrossings(GEO.crossings, edges);
+  // The railway's level crossings (world/railway.ts): the traffic eases over the rails, and waits there for a train
+  const railCrossings = levelCrossings();
+  placeRailCrossings(railCrossings, edges);
 
   // =========================================================================
   // 1-2. THE VEHICLES (fleet.ts: cars, camiones, cyclists and motorcyclists, drawn from the models in that order) AND
@@ -337,9 +350,9 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
   const { headlightPool, policeLightPool } = createLightPools(group);
 
   // Nothing shows until it has been placed
-  const { bodyMeshes, carWheelLeftInst, carWheelRightInst, policeLightbarInst, combiSignInst, carShadowInst } = meshes;
+  const { bodyMeshes, carWheelLeftInst, carWheelRightInst, policeLightbarInst, policeDarkBarInst, combiSignInst, carShadowInst } = meshes;
   const { busBodyInst, busHeaderInst, busWheelLeftInst, busWheelRightInst, busShadowInst } = meshes;
-  const carInstances = [...bodyMeshes, carWheelLeftInst, carWheelRightInst, policeLightbarInst, combiSignInst, carShadowInst];
+  const carInstances = [...bodyMeshes, carWheelLeftInst, carWheelRightInst, policeLightbarInst, policeDarkBarInst, combiSignInst, carShadowInst];
   const busInstances = [busBodyInst, busHeaderInst, busWheelLeftInst, busWheelRightInst, busShadowInst];
   for (const inst of [...carInstances, ...busInstances, sparkInst]) {
     inst.frustumCulled = false;
@@ -399,6 +412,8 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     pedRoutes,
     streetCrossings,
     stopCells,
+    railCrossings,
+    railClosed: [],
     cars,
     buses,
     bikes,
@@ -429,6 +444,7 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     },
     parkedOutside: [],
     sirens: [],
+    policeAlert: false,
     crashedObstacles: [],
     parked: [],
     roadGrip: 1,
@@ -475,6 +491,7 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     wheelCars: 0,
     visibleCars: 0,
     policeDrawn: 0,
+    policeDarkDrawn: 0,
     combisDrawn: 0,
     visibleBuses: 0,
     updates: 0,

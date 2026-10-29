@@ -39,8 +39,8 @@ import type { Node } from 'three/webgpu';
  * (the instance's tone), a darker plinth ("guardapolvo") and a pale coping on the parapet; a few windows per floor
  * with aluminium frames behind iron bars (rejas); on the street front's ground floor a door and a garage gate, or a
  * shop's rolled-down steel shutter (cortina); side & rear walls partly bare grey block (obra negra); flat concrete roofs,
- * some coated red (impermeabilizante). WALL_KINDS.chainStore fronts get a convenience store's glazing under a yellow
- * stripe and a red band. Big boxes (WALL_KINDS.bigFront / bigSide) are halls in pale metal cladding with a glazed
+ * some coated red (impermeabilizante). WALL_KINDS.chainStore fronts get a convenience store's glazing (a car dealer's
+ * showroom's, two storeys high) under the chain's stripe and band. Big boxes (WALL_KINDS.bigFront / bigSide) are halls in pale metal cladding with a glazed
  * front under a dark canopy and a white membrane roof. Lit windows & open stores glow at night.
  */
 let _mexicanHouseMat: THREE.MeshStandardNodeMaterial | null = null;
@@ -48,6 +48,8 @@ let _mexicanHouseMat: THREE.MeshStandardNodeMaterial | null = null;
 export interface ChainFacade {
   band: THREE.ColorRepresentation;
   stripe: THREE.ColorRepresentation;
+  /** m the glazing runs up from the ground (a car dealer's showroom: its tall windows), 2.6 when left out */
+  glaze?: number;
 }
 export interface MexicanHouseOptions {
   floorHeight?: number; // m
@@ -61,6 +63,7 @@ export function createMexicanHouseMaterial({ floorHeight = 3.0, chains = [] }: M
   const chainList = chains.length ? chains : [{ band: '#d8232a', stripe: '#f5a623' }];
   const chainBands = uniformArray<'color'>(chainList.map((c) => new THREE.Color(c.band)), 'color');
   const chainStripes = uniformArray<'color'>(chainList.map((c) => new THREE.Color(c.stripe)), 'color');
+  const chainGlaze = uniformArray<'float'>(chainList.map((c) => c.glaze ?? 2.6), 'float');
   const mat = new THREE.MeshStandardNodeMaterial({ metalness: 0.0, roughness: 0.86 });
   const box = attribute('box', 'vec4'); // width, height, depth, seed + tone
   const faces = attribute('faces', 'vec4'); // WALL_KINDS of the -x, +x, -z & +z walls
@@ -268,9 +271,11 @@ export function createMexicanHouseMaterial({ floorHeight = 3.0, chains = [] }: M
     c = mix(c, color(0xaeb2b5).mul(float(1.0).sub(step(0.7, fract(fv.div(0.09))).mul(0.22))), max(cortina.mul(float(1.0).sub(shopOpen)), drum));
     c = mix(c, mix(color(0x2a3236), seen.mul(0.45), 0.75), shopView);
 
-    // chain convenience store front: glazing between grey piers, a yellow stripe, a red band above
-    const storeTop = box.y;
-    const glazH = min(storeTop.mul(0.62), float(2.6));
+    // chain convenience store front: glazing between grey piers, a yellow stripe, a red band above; on a slope all of it
+    // from the front's own ground up (`sink` m over the box's foot: the wall kind's fraction, houses.ts)
+    const sink = isChain.mul(fract(kind)).mul(25.0);
+    const storeTop = box.y.sub(sink);
+    const glazH = min(storeTop.mul(0.62), chainGlaze.element(chainNo)).add(sink);
     const pier = step(fract(sx.div(2.6)), 0.14);
     const glass = isChain.mul(step(y, glazH));
     const stripe = isChain.mul(step(glazH, y)).mul(step(y, glazH.add(0.45)));

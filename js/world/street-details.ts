@@ -9,14 +9,15 @@ import { CfeNetwork, cfePoint, cfeHash } from './cfe-network.ts';
 import { mappedTreeSites, clearOfMapped } from './mapped-trees.ts';
 import { lampFinder } from './mapped-lamps.ts';
 import { lotTrees } from './lot-greenery.ts';
-import { campusTrees, inCampus, inCampusBuilding } from './uan-campus.ts';
 import { medianTrees } from './medians.ts';
 import { parkTreeSites, sidewalkBlocks, parkLampSites, medianRuns, onPitch } from './city-grid.ts';
 import { liftAt } from './ground.ts';
 import { surfaceY } from './footways.ts';
 import { LA_LOMA, laLomaKeepsClear, laLomaWoods } from './la-loma-plan.ts';
+import { nearPlaceBuilding } from './place-claims.ts';
 import { hashPos } from './hash.ts';
 import { GEO } from './city-geodata.js';
+import type { PlaceClaims } from './place-claims.ts';
 import type { PointXZ, Bounds, CityBlock } from './city-config.ts';
 import type { BreakableProp, PropCollider, PropBody, PropLook } from '../sim/mayhem.ts';
 import type { TreeSite } from './trees.ts';
@@ -173,7 +174,10 @@ function createTrafficSignalLensMaterial(isAvenueHead: boolean, clock: THREE.Uni
 }
 
 // keepClear: lots no tree is planted in ({ contains(x, z) }: the halls of the stores you walk into, the car parks)
-function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x: number, z: number): boolean }[] = []) {
+function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x: number, z: number): boolean }[],
+  places: readonly PlaceClaims[]) {
+  // (the places' buildings run to their curbs, js/places/: no lamp, pole, furniture nor tree against them)
+  const inPlaceBuilding = (x: number, z: number, pad: number) => nearPlaceBuilding(places, x, z, pad);
   const group = new THREE.Group();
   group.name = 'StreetDetails';
 
@@ -277,7 +281,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
 
   // True only when (x, z) is on a non-park, non-median, non-plaza sidewalk with `pad` clearance from all curbs
   const isOnSidewalk = (x: number, z: number, pad = 0.55) => {
-    if (!isOnCurbIsland(x, z, pad) || inCampusBuilding(x, z, pad + 0.3)) return false; // (the UAN's run to their curbs)
+    if (!isOnCurbIsland(x, z, pad) || inPlaceBuilding(x, z, pad + 0.3)) return false; // (the UAN's run to their curbs)
     const b = blockAt(x, z);
     return !(b && b.park > 0.6) && !inPlaza(x, z, 1.0); // (b: on a curb island)
   };
@@ -870,7 +874,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
         const ex = along >= 0 ? bx / lb : ax / la, ez = along >= 0 ? bz / lb : az / la;
         const ox = ax / la + bx / lb, oz = az / la + bz / lb, ol = Math.hypot(ox, oz) || 1;
         const px = v.x + (ox / ol) * t + ex * Math.abs(along), pz = v.z + (oz / ol) * t + ez * Math.abs(along);
-        if (blockAt(px, pz) !== b || !isClearOfPoles(px, pz, 0.8) || inCampusBuilding(px, pz, 0.5)) continue;
+        if (blockAt(px, pz) !== b || !isClearOfPoles(px, pz, 0.8) || inPlaceBuilding(px, pz, 0.5)) continue;
         bollardPositions.push([px, pz]);
       }
     }
@@ -1003,10 +1007,10 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
     t.y = SIDEWALK_Y + 0.012 + liftAt(t.x, t.z);
     treePositions.push(t);
   }
-  // (the UAN's campus planted as its own: uan-campus.ts)
+  // (the places' grounds planted as their own: the UAN's campus, places/uan/plan.ts)
   const yardTrees: TreeSite[] = lotTrees(allBlocks, GEO.houses, { stride: GEO.houseStride || 8, sidewalk: GEO.frame.sidewalk || 2.2, skip: medianBlocks })
-    .filter((t) => !inCampus(t.x, t.z))
-    .concat(campusTrees());
+    .filter((t) => !places.some((c) => c.garden?.grounds(t.x, t.z)))
+    .concat(places.flatMap((c) => c.garden?.trees() ?? []));
   for (const t of yardTrees) {
     t.y = SIDEWALK_Y + 0.012 + liftAt(t.x, t.z);
     treePositions.push(t);
@@ -1016,7 +1020,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
   //    off every roadway the traffic drives (city-config.ts onRoadway: the unnamed drives & alleys among them)
   const mappedTrees = mappedTreeSites(GEO.trees, blockAt, liftAt);
   {
-    const kept = new Set(clearOfMapped(treePositions, mappedTrees).filter((t) => !onPitch(t.x, t.z) && !onRoadway(t.x, t.z) && !inCampusBuilding(t.x, t.z, 1.5)));
+    const kept = new Set(clearOfMapped(treePositions, mappedTrees).filter((t) => !onPitch(t.x, t.z) && !onRoadway(t.x, t.z) && !inPlaceBuilding(t.x, t.z, 1.5)));
     const before = treePositions.length;
     const all = treePositions.filter((t) => kept.has(t));
     treePositions.length = 0;
@@ -1073,7 +1077,9 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
 
   // Procedural trees (js/world/trees.ts): species skeletons with leaf-spray cards, one instanced mesh per species, variant &
   // level of detail, each tree's level following the camera
-  const planted = keepClear.length ? treePositions.filter((t) => !keepClear.some((r) => r.contains(t.x, t.z))) : treePositions;
+  // (and the places' palms, Forum Tepic's on its sidewalk, places/forum/plan.ts: inside its lot, kept clear of the others)
+  const planted = [...(keepClear.length ? treePositions.filter((t) => !keepClear.some((r) => r.contains(t.x, t.z))) : treePositions),
+    ...places.flatMap((c) => c.palms ?? []).map((t) => ({ ...t, y: liftAt(t.x, t.z) + surfaceY(t.x, t.z), tier: 0 }))];
   const treeField = createTreeField(scene, planted);
   group.add(treeField.group);
   // ...and their trunks stop the player, like the CFE poles (app/city.ts adds both to the player's colliders); those
@@ -1419,19 +1425,37 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
       const r = nearestRoads(x, z, 12).find((q) => q.road.name);
       return r ? r.road.name : '';
     };
+    // Where an approach's pole stands: on the curb to the right of its stop line (m out from the centreline), or where
+    // that is roadway (a junction across a divided avenue's median, where its two roadways cross over; a driveway's
+    // gap in the sidewalk) a little further out, then further back along the approach (m short of the stop line), clear
+    // of the poles already up (another approach's, a lamp's)
+    const POLE_OUT = [1.1, 1.7, 2.6, 3.6, 4.6], POLE_BACK = [0, 3, 6, 9];
+    const poleSpot = (e: RoadNetwork['edges'][number]): { off: number; back: number } | null => {
+      for (const back of POLE_BACK) {
+        if (back > e.len - 2) break;
+        for (const out of POLE_OUT) {
+          const ex = e.sx + e.dx * (e.len - back), ez = e.sz + e.dz * (e.len - back), off = e.half + out;
+          const px = ex + e.rx * off, pz = ez + e.rz * off;
+          if (!isOnCurbIsland(px, pz, 0.3)) continue;
+          // (the stop line's own two spots as before; the ones further out or back only where no pole stands)
+          if ((back || out > 1.7) && !isClearOfPoles(px, pz, 1.5)) continue;
+          return { off, back };
+        }
+      }
+      return null;
+    };
+    let moved = 0; // (the poles standing further out or back than the stop line's curb)
     for (const n of network.nodes) {
       if (!n.signal) continue;
       for (const e of n.in) {
         if (!e.lanes.length) continue;
-        const ex = e.sx + e.dx * e.len, ez = e.sz + e.dz * e.len; // its stop line, on the centreline
-        let off = e.half + 1.1;
-        let px = ex + e.rx * off, pz = ez + e.rz * off;
-        if (!isOnCurbIsland(px, pz, 0.3)) {
-          off = e.half + 1.7;
-          px = ex + e.rx * off;
-          pz = ez + e.rz * off;
-          if (!isOnCurbIsland(px, pz, 0.3)) continue;
-        }
+        const spot = poleSpot(e);
+        if (!spot) continue;
+        const { off, back } = spot;
+        if (back || off > e.half + 1.8) moved++;
+        // (abreast of the pole on the centreline: the stop line, or as far back along the approach as the pole stands)
+        const ex = e.sx + e.dx * (e.len - back), ez = e.sz + e.dz * (e.len - back);
+        const px = ex + e.rx * off, pz = ez + e.rz * off;
         const mid = e.lanes.reduce((t, o) => t + o, 0) / e.lanes.length; // over the middle of its lanes
         const reach = off - mid;
         if (reach < 1.5) continue;
@@ -1523,7 +1547,8 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
       mat.colorNode = texture(tex, atlasSlotUV(attribute('bladeSlot', 'float'), COLS, rows));
       add(geo, mat, blades.map((b) => b.m));
     }
-    console.info(`[signals] ${heads.length} mast-arm signal heads, ${blades.length} street name blades at the signalised junctions`);
+    console.info(`[signals] ${heads.length} mast-arm signal heads (${moved} of their poles off the stop line's curb), ${blades.length} ` +
+      'street name blades at the signalised junctions');
     cornerSigns = buildCornerSigns(network, roadName, colliders);
     return heads.length;
   }
@@ -1713,4 +1738,4 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
   return { group, footprints, colliders: cfeColliders, signalClock, audioSignals, update, breaker, cfe, addJunctionSignals };
 }
 
-export { buildStreetDetails };
+export { buildStreetDetails, createTrafficSignalLensMaterial };
