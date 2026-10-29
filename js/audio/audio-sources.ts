@@ -77,13 +77,8 @@ export interface CollisionImpact {
   speed: number;
 }
 
-/** A system that reports its collisions to one listener */
-export interface CollisionSource {
-  setCollisionListener?(listener: ((impact: CollisionImpact) => void) | null): void;
-}
-
 /** The player's controllers (player/controllers.ts ControllerManager), as the audio reads them */
-export interface AudioControllers extends CollisionSource {
+export interface AudioControllers {
   entities: Readonly<Record<string, AudioEntity>>;
   keys: DriveKeys;
   activeMode: PlayerMode;
@@ -116,7 +111,8 @@ export interface AudioStreetVehicle {
   leaderSpeed: number;
   conn?: unknown;
   yielding?: boolean;
-  isPolice?: boolean;
+  /** a patrol car with its lights & siren on (sim/traffic.ts Car.onCall): its siren heard */
+  onCall?: boolean;
   bus?: boolean;
   moto?: boolean;
   heavy?: boolean;
@@ -138,7 +134,7 @@ export interface AudioPedestrian extends Talker {
   rig: AudioRig;
 }
 
-export interface AudioTraffic extends CollisionSource {
+export interface AudioTraffic {
   cars: readonly AudioStreetVehicle[];
   buses: readonly AudioStreetVehicle[];
   motos?: readonly AudioStreetVehicle[];
@@ -188,7 +184,6 @@ export interface AudioSimulation {
   trafficSystem: AudioTraffic;
   highwayTraffic: { cars: readonly AudioHighwayCar[] };
   streetDetails: { audioSignals: readonly AudioSignalSite[] };
-  propBreaker?: CollisionSource | null;
 }
 
 // ---- What it collects: pooled records, rewritten every collect()
@@ -446,7 +441,7 @@ class CityAudioSources {
       if (!v.edge) continue;
       const y = (v.hy || 0) + 0.7; // (over the ground under it)
       const d2 = this.distanceSq(v.x, y, v.z);
-      const range = v.isPolice ? SIREN_RANGE : MOTOR_RANGE;
+      const range = v.onCall ? SIREN_RANGE : MOTOR_RANGE;
       if (!Number.isFinite(d2) || d2 > range * range) continue;
       if (d2 <= MOTOR_RANGE * MOTOR_RANGE) {
         this.snapshot.traffic += (1 - d2 / (MOTOR_RANGE * MOTOR_RANGE)) * (0.2 + 0.8 * unit(v.speed / 12));
@@ -454,7 +449,7 @@ class CityAudioSources {
       const green = !v.edge.to.signal || signalPhase(elapsed, v.edge.axisIndex === 0) === 'green';
       const blocked = v.wait > 2 && v.speed < 0.5 && v.gap < 8 && v.leaderSpeed < 0.5 && green && !v.conn && !v.yielding;
       this.motor(v, v.bus ? 'bus' : v.moto ? 'moto' : v.heavy ? 'suv' : 'sedan', v.x, y, v.z,
-        v.speed, roadLoad(v.speed, v.acc, v.driver.a), v.yaw + v.yawOffset, !!v.isPolice, false, seedAt(seedOffset + i), blocked);
+        v.speed, roadLoad(v.speed, v.acc, v.driver.a), v.yaw + v.yawOffset, !!v.onCall, false, seedAt(seedOffset + i), blocked);
     }
   }
 

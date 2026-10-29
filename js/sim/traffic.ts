@@ -29,11 +29,13 @@ import type {
   TrafficCollision, MayhemListener, KnockListener, SmokeEmitter, TrafficRayHit, RayAccept, BodyBox, RoadSpot, TakenVehicle,
   VehicleLook, RouteLook, LookKit, LookWheel, SolidQuery, HillQuery, SurfaceQuery
 } from './traffic/types.ts';
-import { setCollisionListener, setMayhemListener, setKnockListener, setRagdolls, setSolidQuery, setWallQuery, setParked, setSirens, setRoadWater } from './traffic/hooks.ts';
+import {
+  setCollisionListener, setMayhemListener, setKnockListener, setRagdolls, setSolidQuery, setWallQuery, setParked, setSirens, setPoliceAlert, setRoadWater
+} from './traffic/hooks.ts';
 import { setHillQuery, setSurfaceQuery } from './traffic/surface.ts';
 import { setHour } from './traffic/near.ts';
 import { setPhysics, setSmokeEmitter } from './traffic/crashes.ts';
-import { rayHit, shootPed, shootVehicle, shootTyre, spikeTraffic, blast, panic, knockBox } from './traffic/gunfire.ts';
+import { rayHit, shootPed, shootVehicle, shootTyre, spikeTraffic, blast, burnCar, panic, knockBox } from './traffic/gunfire.ts';
 import { sparksAt } from './traffic/sparks.ts';
 import { bumpBody } from './traffic/collisions.ts';
 import { roadSpot, sidewalkSpot } from './traffic/spawning.ts';
@@ -63,7 +65,8 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     shootTyre: (v: Vehicle, x: number, y: number, z: number): boolean => shootTyre(ts, v, x, y, z),
     spikeTraffic: (cx: number, cz: number, heading: number, halfLen: number, halfW: number): void => { spikeTraffic(ts, cx, cz, heading, halfLen, halfW); },
     sparks: (x: number, y: number, z: number, nx: number, nz: number, speed: number): void => { sparksAt(ts, x, y, z, nx, nz, speed); },
-    blast: (x: number, z: number, radius: number, power: number): number => blast(ts, x, z, radius, power),
+    blast: (x: number, z: number, radius: number, power: number, blown?: Car[] | null): number => blast(ts, x, z, radius, power, blown),
+    burnCar: (v: Car): void => { burnCar(v); },
     panic: (x: number, z: number, radius: number, drivers?: boolean): void => { panic(ts, x, z, radius, drivers); },
     knockBox: (x: number, z: number, heading: number, hw: number, hl: number, vx: number, vz: number): number =>
       knockBox(ts, x, z, heading, hw, hl, vx, vz),
@@ -75,6 +78,7 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     setSurfaceQuery: (fn: SurfaceQuery | null): void => { setSurfaceQuery(ts, fn); },
     setParked: (list: ParkedVehicle[] | null): void => { setParked(ts, list); },
     setSirens: (list: readonly SirenSource[]): void => { setSirens(ts, list); },
+    setPoliceAlert: (on: boolean): void => { setPoliceAlert(ts, on); },
     setRoadWater: (wet: number, rain: number, grip?: number): void => { setRoadWater(ts, wet, rain, grip); },
     vehicleAt: (x: number, z: number, r?: number): boolean => vehicleAt(ts, x, z, r),
     vehicleBoxAt: (x: number, z: number, r?: number): BodyBox | null => vehicleBoxAt(ts, x, z, r),

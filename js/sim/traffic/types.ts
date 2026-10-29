@@ -379,6 +379,11 @@ interface Car extends VehicleBase {
   bus: false;
   isTaxi: boolean;
   isPolice: boolean;
+  /** a patrol car with its lights and siren on (the police after a wanted player, setPoliceAlert): it goes through
+   *  the reds; off, it drives as anyone does, lights dark and no siren */
+  onCall: boolean;
+  /** blown up (gunfire.ts blast, burnCar): a charred shell, its driver dead in it, till it comes back as another car */
+  burnt: boolean;
   heavy: boolean;
   mass: number;
   bodyType: string;
@@ -403,6 +408,8 @@ interface Bus extends VehicleBase {
   livery: number;
   crash: null;
   isPolice?: undefined;
+  onCall?: undefined;
+  burnt?: undefined;
   isTaxi?: undefined;
   bodyType?: undefined;
   mass?: undefined;
@@ -423,6 +430,8 @@ interface TwoWheelerBase extends VehicleBase {
   crash: null;
   kit?: TwoWheelKit;
   isPolice?: undefined;
+  onCall?: undefined;
+  burnt?: undefined;
   isTaxi?: undefined;
   mass?: undefined;
   livery?: undefined;

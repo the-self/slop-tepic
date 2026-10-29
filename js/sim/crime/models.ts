@@ -4,7 +4,7 @@
 import * as THREE from 'three/webgpu';
 import type { StreetGun } from '../crime-rules.ts';
 import {
-  BODY_SPECS, buildCarGeometry, createLoftedCarMaterial, buildLightbarGeometry, createLightbarMaterial,
+  BODY_SPECS, buildCarGeometry, createLoftedCarMaterial, buildLightbarGeometry,
   buildHelicopterBodyGeometry, buildHelicopterMainRotorGeometry, buildHelicopterTailRotorGeometry, createLoftedHelicopterMaterial
 } from '../../actors/actor-models.ts';
 import { WEAPON_MODELS, buildWeaponGeometry, createWeaponMaterial } from '../../actors/weapon-models.ts';
@@ -64,13 +64,17 @@ export function buildCruisers(crime: CrimeSystem): void {
     army: { body: truckBody, paint: createLoftedCarMaterial(truckSpec, 0x4a5130), name: 'ArmyTruck' }
   };
   const bar = buildLightbarGeometry(spec);
-  const barMat = createLightbarMaterial();
+  const barMat = crime.bars.lit;
   const shadowGeo = new THREE.PlaneGeometry(2.3, 5.2).rotateX(-Math.PI / 2);
   const shadowMat = createContactShadowMaterial();
   // a burnt-out wreck that is never driven, parked out of sight, so that material compiles at load too
   const parkedWreck = new THREE.Mesh(body, crime.burnt);
   parkedWreck.position.y = PARKED_Y;
   crime.scene.add(parkedWreck);
+  // (and a light bar switched off, cruisers.ts standDown)
+  const parkedBar = new THREE.Mesh(bar, crime.bars.dark);
+  parkedBar.position.y = PARKED_Y;
+  crime.scene.add(parkedBar);
   const fleet: [CrimeFaction, number][] = [['police', MAX_CRUISERS], ['narco', MAX_TRUCKS], ['army', MAX_ARMY]];
   for (const [faction, n] of fleet) {
     const look = looks[faction];

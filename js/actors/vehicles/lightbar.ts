@@ -36,11 +36,13 @@ export function buildLightbarGeometry(spec: BodySpec = BODY_SPECS.sedan): THREE.
   return mergeGeometries(parts);
 }
 
-let _lightbarMat: THREE.MeshStandardNodeMaterial | null = null;
+const _lightbarMats = new Map<boolean, THREE.MeshStandardNodeMaterial>();
 
-// Light bar lenses: red & blue halves flashing in alternation (double strobes), each car on its own phase
-export function createLightbarMaterial(): THREE.MeshStandardNodeMaterial {
-  if (_lightbarMat) return _lightbarMat;
+// Light bar lenses: red & blue halves flashing in alternation (double strobes), each car on its own phase; `lit` false:
+// switched off, the lenses dark (a patrol car going about its round, no call on)
+export function createLightbarMaterial(lit = true): THREE.MeshStandardNodeMaterial {
+  const made = _lightbarMats.get(lit);
+  if (made) return made;
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.18, metalness: 0.1 });
   const lightbar = () => {
     const p = attribute('position', 'vec3');
@@ -60,10 +62,12 @@ export function createLightbarMaterial(): THREE.MeshStandardNodeMaterial {
     const lens = mix(mix(color(0xd8dde2), color(0x8a0d12), s.isRed), color(0x0f3c9a), s.isBlue);
     return mix(color(0x15181b), lens, s.isLens);
   })();
-  mat.emissiveNode = Fn(() => {
-    const s = lightbar();
-    return color(0xff1a22).mul(s.isRed.mul(s.redOn).mul(6.0)).add(color(0x2a6cff).mul(s.isBlue.mul(s.blueOn).mul(7.0))).mul(s.isLens);
-  })();
-  _lightbarMat = mat;
+  if (lit) {
+    mat.emissiveNode = Fn(() => {
+      const s = lightbar();
+      return color(0xff1a22).mul(s.isRed.mul(s.redOn).mul(6.0)).add(color(0x2a6cff).mul(s.isBlue.mul(s.blueOn).mul(7.0))).mul(s.isLens);
+    })();
+  }
+  _lightbarMats.set(lit, mat);
   return mat;
 }

@@ -39,6 +39,12 @@ const _carMaterialCache = new Map<string, THREE.MeshStandardNodeMaterial>();
 // The car models' paint (createModelCarMaterial): its brightest (linear albedo; fresh white paint reflects ~0.75),
 // the roughness of the paint under the coat, and how much clear coat
 const PAINT_ALBEDO = 0.72;
+
+// A burnt-out shell of the traffic (sim/traffic/gunfire.ts burnCar marks its instance's `paintColor` below 0, a mark
+// no paint has): 0 or 1. Drawn soot black and blistered, matte, its glass and lamps gone dark
+const burntShell = (): Node<'float'> => step(attribute('paintColor', 'vec3').x, -0.5);
+const sootOf = (p: Node<'vec3'>): Node<'vec3'> =>
+  mix(color(0x0b0a09), color(0x2b2622), sin(p.x.mul(7.0).add(p.z.mul(3.0))).mul(sin(p.y.mul(11.0).add(p.z.mul(5.0)))).mul(0.5).add(0.5));
 const PAINT_ROUGHNESS = 0.4;
 const CLEAR_COAT = 0.55;
 let _carPlateTexture: THREE.CanvasTexture | undefined;
@@ -78,18 +84,22 @@ export function createModelCarMaterial(map: THREE.Texture, paintMap: THREE.Textu
   const lum = rgb.dot(vec3(0.299, 0.587, 0.114));
   let body: Node<'float'>;
   let bare: Node<'float'> = float(0);
+  let roughness: Node<'float'>;
+  let metalness: Node<'float'> | null = null;
   if (paintMap) {
     const mask = texture(paintMap);
     body = mask.r;
     bare = mask.b; // (metal: under the paint, bare steel that takes no clear coat)
     // (the paint under its clear coat is never glossier than ~0.4: the coat is what mirrors the sky)
-    mat.roughnessNode = mix(mask.g, max(mask.g, float(PAINT_ROUGHNESS)), body);
-    mat.metalnessNode = mask.b;
+    roughness = mix(mask.g, max(mask.g, float(PAINT_ROUGHNESS)), body);
+    metalness = mask.b;
   } else {
     const sat = max(rgb.r, max(rgb.g, rgb.b)).sub(min(rgb.r, min(rgb.g, rgb.b)));
     body = smoothstep(0.5, 0.78, lum).mul(float(1).sub(smoothstep(0.06, 0.16, sat)));
-    mat.roughnessNode = mix(float(0.7), float(0.32), body);
+    roughness = mix(float(0.7), float(0.32), body);
   }
+  mat.roughnessNode = roughness;
+  mat.metalnessNode = metalness;
   const stateUniform = paintHex === null ? null : uniform(new THREE.Vector4(0, 0, 0, 0));
   const paintUniform = paintHex === null ? null : uniform(new THREE.Color(paintHex));
   if (stateUniform) mat.userData.carState = stateUniform;
@@ -100,15 +110,28 @@ export function createModelCarMaterial(map: THREE.Texture, paintMap: THREE.Textu
   // light, linear), or white and silver cars glare in the sun with no shape to them
   const shaded = paint.mul(lum).mul(1.12);
   const brightest = max(shaded.r, max(shaded.g, shaded.b));
-  mat.colorNode = mix(rgb, shaded.mul(min(float(1), float(PAINT_ALBEDO).div(max(brightest, 1e-3)))), body);
-  // a clear coat that shows the sky in it, softened, rather than a mirror of it all over the car; none on bare metal
-  // (a Cybertruck's steel: the paint mask's B, prepare-made.mjs 'steel')
-  mat.clearcoatNode = body.mul(CLEAR_COAT).mul(float(1).sub(bare));
-  mat.clearcoatRoughnessNode = float(0.12);
+  const painted = mix(rgb, shaded.mul(min(float(1), float(PAINT_ALBEDO).div(max(brightest, 1e-3)))), body);
   const lamp = smoothstep(0.2, 0.4, rgb.r.sub(max(rgb.g, rgb.b))).mul(step(positionLocal.z, 0.0));
   const brake = color(0xff2a1a).mul(lamp).mul(state.x.mul(2.2));
   // and a lamp lit day and night (the Cybertruck's light bar): the file's emissive texture, car-files.ts glowMap
-  mat.emissiveNode = glowMap ? brake.add(texture(glowMap).rgb.mul(color(0xfff4e6)).mul(1.8)) : brake;
+  const glow = glowMap ? brake.add(texture(glowMap).rgb.mul(color(0xfff4e6)).mul(1.8)) : brake;
+  // a clear coat that shows the sky in it, softened, rather than a mirror of it all over the car; none on bare metal
+  // (a Cybertruck's steel: the paint mask's B, prepare-made.mjs 'steel')
+  const coat = body.mul(CLEAR_COAT).mul(float(1).sub(bare));
+  mat.clearcoatRoughnessNode = float(0.12);
+  if (paintUniform) {
+    mat.colorNode = painted;
+    mat.clearcoatNode = coat;
+    mat.emissiveNode = glow;
+    return mat;
+  }
+  // (the traffic's: one of them may be a burnt-out shell)
+  const burnt = burntShell();
+  mat.colorNode = mix(painted, sootOf(positionLocal).mul(lum.mul(0.6).add(0.4)), burnt);
+  mat.clearcoatNode = coat.mul(float(1).sub(burnt));
+  mat.roughnessNode = mix(roughness, float(0.95), burnt);
+  if (metalness) mat.metalnessNode = metalness.mul(float(1).sub(burnt));
+  mat.emissiveNode = glow.mul(float(1).sub(burnt));
   return mat;
 }
 
@@ -405,6 +428,9 @@ export function createLoftedCarMaterial(spec: BodySpec, fixedColorHex: number | 
   col = mix(col, color(0x1b1e21), isTrim);
   col = mix(col, alloyCol, isAlloy);
   col = mix(col, tyreCol, isTyre);
+  // (the traffic's: one of them may be a burnt-out shell, its rims grey with ash)
+  const burnt = fixed ? null : burntShell();
+  if (burnt) col = mix(col, mix(sootOf(p), color(0x3a3734), isAlloy), burnt);
   const gore = blood ? bloodStains(p, n, spec, one.sub(isTyre).sub(isAlloy)) : null;
   if (gore) col = mix(col, mix(color(0x5c0709), color(0x2a0405), gore.dried), gore.cover.mul(0.94));
 
@@ -425,6 +451,10 @@ export function createLoftedCarMaterial(spec: BodySpec, fixedColorHex: number | 
   if (gore) {
     rough = mix(rough, float(0.2), gore.cover); // (wet, glossy)
     metal = mix(metal, float(0.0), gore.cover);
+  }
+  if (burnt) {
+    rough = mix(rough, float(0.95), burnt);
+    metal = mix(metal, float(0.05), burnt);
   }
 
   // ---- Emissive: running lights, tail / brake lights & CHMSL, turn signals, taxi roof light -----------------------
@@ -470,7 +500,8 @@ export function createLoftedCarMaterial(spec: BodySpec, fixedColorHex: number | 
   mat.colorNode = col;
   mat.roughnessNode = rough;
   mat.metalnessNode = metal;
-  mat.emissiveNode = headlamps.add(tail).add(stop).add(turn).add(sign);
+  const lit = headlamps.add(tail).add(stop).add(turn).add(sign);
+  mat.emissiveNode = burnt ? lit.mul(one.sub(burnt)) : lit;
 
   if (!blood) _carMaterialCache.set(cacheKey, mat);
   return mat;

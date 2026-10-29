@@ -7,7 +7,7 @@ import type { MotorVoice, MotorVoiceParams } from './audio-synthesis.ts';
 import { createEventResources, playEvent, createWindVoice, createRainVoice } from './audio-events.ts';
 import type { EventKind, EventOptions, EventResources, EventVoice, RainParams, RainVoice, WindParams, WindVoice } from './audio-events.ts';
 import { CityAudioSources } from './audio-sources.ts';
-import type { AudioControllers, AudioEntity, AudioSimulation, CollisionImpact, CollisionSource, Conversation, MotorSound, PersonSound } from './audio-sources.ts';
+import type { AudioControllers, AudioEntity, AudioSimulation, CollisionImpact, Conversation, MotorSound, PersonSound } from './audio-sources.ts';
 import { CityAcoustics } from './audio-acoustics.ts';
 import type { Point3 } from './audio-acoustics.ts';
 import { createAmbienceResources, createLoopVoice } from './audio-ambience.ts';
@@ -247,7 +247,6 @@ class CityAudioSystem {
   lastHorn: number;
   collisionPairs: WeakMap<object, WeakMap<object, Contact>>;
   collisionSequence: number;
-  collisionSystems: CollisionSource[];
   onCollision: (impact: CollisionImpact) => boolean;
   motorParams: MotorVoiceParams;
   windParams: WindParams;
@@ -299,9 +298,9 @@ class CityAudioSystem {
     this.lastHorn = -Infinity;
     this.collisionPairs = new WeakMap();
     this.collisionSequence = 0;
-    this.collisionSystems = [simulation.controllerManager, simulation.trafficSystem, simulation.propBreaker].filter((system) => system != null);
+    // (the crashes come over the game's bus, app/install/audio.ts: taking the systems' one collision listener for
+    // itself would leave the bus's, and the crime's and the city's that hear it there, deaf)
     this.onCollision = (impact) => this.crash(impact);
-    for (const system of this.collisionSystems) system.setCollisionListener?.(this.onCollision);
     this.motorParams = { speed: 0, load: 0, verticalSpeed: 0, doppler: 1, seed: 0, rpm: 0 };
     this.windParams = { speed: 0, altitude: 0, night: 0, traffic: 0, enclosure: 0 };
     this.rainParams = { rain: 0, enclosure: 0, inCar: false };
@@ -784,7 +783,6 @@ class CityAudioSystem {
 
   dispose() {
     this.disposed = true;
-    for (const system of this.collisionSystems) system.setCollisionListener?.(null);
     document.removeEventListener('pointerdown', this.onGesture);
     document.removeEventListener('keydown', this.onGesture);
     document.removeEventListener('visibilitychange', this.onVisibility);

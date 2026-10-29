@@ -22,8 +22,8 @@ import type { NetParts } from './install/multiplayer.ts';
 /** What the game's systems tell each other without importing each other (core/events.ts) */
 export interface GameEvents {
   /** a crash of the player, the traffic or a street prop (each system's collision report); `kind` what struck:
-   *  'vehicle', 'prop', a building's... (player/stats.ts hardness) */
-  collision: CollisionImpact & { kind: string };
+   *  'vehicle', 'prop', a building's... (player/stats.ts hardness); (nx, nz) the normal, from b towards a */
+  collision: CollisionImpact & { kind: string; nx: number; nz: number };
   /** someone thrown, shot or knocked down come to rest (sim/ragdolls.ts onSettle): blood under them, an ambulance */
   settle: RagdollHandle;
   /** a CFE line down (world/cfe-network.ts): an arc's crackle, a transformer's bang, a shock to the player */

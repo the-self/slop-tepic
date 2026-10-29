@@ -11,7 +11,8 @@ const STAR_HEAT: readonly number[] = [0, 10, 60, 150, 320, 560];
 const MAX_HEAT = 800;
 // Heat each crime adds when the police witness it (crime.ts witnessed: an officer, a patrol car or the helicopter in
 // sight of it; crimes against the police themselves always count, and a store's staff call a robbery in). Running
-// someone over in front of a patrol: the first one is a star, the third two.
+// someone over in front of a patrol: the first one is a star, the third two. Driving into a patrol car is a star of
+// its own; the second, two.
 const CRIME_HEAT = {
   runOver: 22,
   punch: 12,
@@ -20,6 +21,7 @@ const CRIME_HEAT = {
   gunfire: 3,
   carjack: 15,
   hitCop: 70,
+  ramCop: 35,
   shootCop: 110,
   killCop: 170,
   explosion: 45,

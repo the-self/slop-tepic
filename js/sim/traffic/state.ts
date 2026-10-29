@@ -142,6 +142,8 @@ interface TrafficState extends VehicleMeshes {
   parkedOutside: ParkedVehicle[];
   /** the fire trucks & ambulances on their way (hooks.ts setSirens): the traffic pulls over for them */
   sirens: readonly SirenSource[];
+  /** the police after a wanted player (hooks.ts setPoliceAlert): the traffic's patrol cars on a call, lights & siren */
+  policeAlert: boolean;
   crashedObstacles: ParkedVehicle[];
   parked: ParkedVehicle[];
   /** the weather on the street (hooks.ts setRoadWater): the tyres' grip, how fast drivers go and how far back they
@@ -215,6 +217,7 @@ interface TrafficState extends VehicleMeshes {
   wheelCars: number;
   visibleCars: number;
   policeDrawn: number;
+  policeDarkDrawn: number;
   combisDrawn: number;
   visibleBuses: number;
   /** frames updated (the first couple keep every mesh visible for the shader warm-up) */
@@ -337,9 +340,9 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
   const { headlightPool, policeLightPool } = createLightPools(group);
 
   // Nothing shows until it has been placed
-  const { bodyMeshes, carWheelLeftInst, carWheelRightInst, policeLightbarInst, combiSignInst, carShadowInst } = meshes;
+  const { bodyMeshes, carWheelLeftInst, carWheelRightInst, policeLightbarInst, policeDarkBarInst, combiSignInst, carShadowInst } = meshes;
   const { busBodyInst, busHeaderInst, busWheelLeftInst, busWheelRightInst, busShadowInst } = meshes;
-  const carInstances = [...bodyMeshes, carWheelLeftInst, carWheelRightInst, policeLightbarInst, combiSignInst, carShadowInst];
+  const carInstances = [...bodyMeshes, carWheelLeftInst, carWheelRightInst, policeLightbarInst, policeDarkBarInst, combiSignInst, carShadowInst];
   const busInstances = [busBodyInst, busHeaderInst, busWheelLeftInst, busWheelRightInst, busShadowInst];
   for (const inst of [...carInstances, ...busInstances, sparkInst]) {
     inst.frustumCulled = false;
@@ -429,6 +432,7 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     },
     parkedOutside: [],
     sirens: [],
+    policeAlert: false,
     crashedObstacles: [],
     parked: [],
     roadGrip: 1,
@@ -475,6 +479,7 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     wheelCars: 0,
     visibleCars: 0,
     policeDrawn: 0,
+    policeDarkDrawn: 0,
     combisDrawn: 0,
     visibleBuses: 0,
     updates: 0,

@@ -3,11 +3,11 @@
 // to it, rockets in flight, and blasts that throw people, shove cars and hurt the player.
 import type * as THREE from 'three/webgpu';
 import type { Weapon } from '../weapons.ts';
-import type { Ped, Vehicle } from '../traffic.ts';
+import type { Car, Ped, Vehicle } from '../traffic.ts';
 import { WEAPONS, rayCircle, rayBox, blastFalloff } from '../weapons.ts';
 import type { TraceKind, XZ, Agent, Cruiser, TraceTarget, TraceHit, RemoteTarget, ShotProp } from './types.ts';
 import type { Shot } from '../../../shared/protocol.ts';
-import { BODY_R, PERSON_H, CAR_H, BUS_H, HELI_R, inBody, clamp } from './constants.ts';
+import { BODY_R, PERSON_H, CAR_H, BUS_H, HELI_R, inBody, clamp, rand } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
 
 // Free aim: what the crosshair's ray (the middle of the screen, from the camera) meets first, past the player, within
@@ -273,6 +273,37 @@ export function showShot(crime: CrimeSystem, s: Shot): void {
   crime.fx.impact(s.ex, s.ey, s.ez, 'dust', -Math.sin(yaw), -Math.cos(yaw));
 }
 
+// A car of the traffic a blast caught full on: its tank goes up `t` s later (the player's doing, or not)
+export interface Fuse {
+  v: Car;
+  t: number;
+  byPlayer: boolean;
+}
+const TANK = { radius: 5.5, damage: 80 }; // a car's own blast: m, and its harm at the centre
+const MAX_FUSES = 8; // (a pile-up blowing up one into the next stops somewhere)
+
+// The cars `blast` caught (crime.blown) lit: each blows up a moment apart
+function light(crime: CrimeSystem, byPlayer: boolean): void {
+  for (const v of crime.blown) if (crime.fuses.length < MAX_FUSES) crime.fuses.push({ v, t: rand(0.35, 1.1), byPlayer });
+  crime.blown.length = 0;
+}
+
+// The lit cars blowing up: a charred shell thrown up by its own blast, which catches the cars beside it (and sets
+// them off in turn), throws the people about and leaves it burning (fires.ts, through onExplosion)
+export function updateFuses(crime: CrimeSystem, dt: number): void {
+  const fuses = crime.fuses;
+  for (let i = fuses.length - 1; i >= 0; i--) {
+    const f = fuses[i];
+    f.t -= dt;
+    if (f.t > 0) continue;
+    fuses.splice(i, 1);
+    const v = f.v;
+    if ((!v.edge && !v.crash) || v.burnt) continue; // (gone from the street meanwhile, or already up)
+    crime.traffic.burnCar(v);
+    crime.explode(v.x, (v.hy ?? crime.groundAt(v.x, v.z)) + 0.8, v.z, TANK.radius, TANK.damage, f.byPlayer);
+  }
+}
+
 // Another player's rocket going off here: the blast seen, heard and felt, the street thrown about, nobody hurt by it
 // (its shooter's game sends the hits)
 export function blastSeen(crime: CrimeSystem, x: number, y: number, z: number, radius: number): void {
@@ -281,7 +312,8 @@ export function blastSeen(crime: CrimeSystem, x: number, y: number, z: number, r
   crime.audio?.gunfire?.('explosion', x, y, z);
   const near = Math.hypot(crime.camera ? crime.camera.position.x - x : 0, crime.camera ? crime.camera.position.z - z : 0);
   crime.shake = Math.min(1.6, crime.shake + clamp(1.6 - near / 40, 0, 1.6));
-  crime.traffic.blast(x, z, radius * 1.4, 24);
+  crime.traffic.blast(x, z, radius * 1.4, 24, crime.blown);
+  light(crime, false);
   crime.traffic.panic(x, z, 70);
 }
 
@@ -292,7 +324,8 @@ export function explode(crime: CrimeSystem, x: number, y: number, z: number, rad
   crime.audio?.gunfire?.('explosion', x, y, z);
   const near = Math.hypot(crime.camera ? crime.camera.position.x - x : 0, crime.camera ? crime.camera.position.z - z : 0);
   crime.shake = Math.min(1.6, crime.shake + clamp(1.6 - near / 40, 0, 1.6));
-  const thrown = crime.traffic.blast(x, z, radius * 1.4, 24);
+  const thrown = crime.traffic.blast(x, z, radius * 1.4, 24, crime.blown);
+  light(crime, byPlayer);
   crime.traffic.panic(x, z, 70);
   const seen = byPlayer && (crime.witnessed(x, z) || crime.witnessed());
   if (byPlayer) crime.report(thrown > 0 ? 'shootPed' : 'explosion', seen);

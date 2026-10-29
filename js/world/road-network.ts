@@ -1698,13 +1698,16 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
       paint.len = e.len;
     }
   }
+  const filled = unmappedLights(nodes, signalPts, signalled);
   let signalCount = 0;
   for (const [n, d] of signalled) {
     if (n.arms.length < 3 && !n.midblock && d > 4) continue;
     n.signal = true;
     signalCount++;
   }
-  if (signalPts.length) console.info(`[roads] ${signalCount} signalised junctions of ${signalPts.length / 2} real traffic signals`);
+  if (signalPts.length) {
+    console.info(`[roads] ${signalCount} signalised junctions of ${signalPts.length / 2} real traffic signals (${filled} more on Insurgentes)`);
+  }
   for (const e of edges) {
     if (!e.inArm || !e.outArm) throw new Error('[roads] an edge without its arms'); // (computeArms gave every end one)
     e.inSide = e.inArm.side; // the side of e.to it arrives over
@@ -1733,6 +1736,33 @@ function buildRoadNetwork(sidewalks: readonly Footprint[], obstacles: readonly F
 }
 
 // The largest strongly connected set of `list` (a Set), going on from item e to the items next(e)
+// The lights OpenStreetMap leaves out: along Avenida Insurgentes, Tepic's main avenue, the crossroads have their signals,
+// though only some of them are mapped (a player who drives it every day found it short of them). A crossroads of it (a
+// street going on across it both ways, not an alley) more than LIGHTS_APART m from any signal gets them too, into
+// `signalled` (at 0 m, as a mapped one at the junction). Returns how many it added.
+const LIGHTS_ON = /insurgentes/i;
+const LIGHTS_APART = 180; // m
+function unmappedLights(nodes: readonly RoadNode[], signalPts: ArrayLike<number>, signalled: Map<RoadNode, number>): number {
+  const lit: { x: number; z: number }[] = [];
+  for (let i = 0; i < signalPts.length; i += 2) lit.push({ x: signalPts[i], z: signalPts[i + 1] });
+  let added = 0;
+  for (const n of nodes) {
+    if (n.shape || n.midblock || n.lift || signalled.has(n)) continue;
+    if (![...n.in, ...n.out].some((e) => !e.minor && LIGHTS_ON.test(e.name ?? ''))) continue;
+    // the arms of the streets across it, out of it opposite ways
+    const across = n.arms.filter((arm) => {
+      const e = arm.in ?? arm.out;
+      return e && !e.minor && !LIGHTS_ON.test(e.name ?? '');
+    });
+    if (!across.some((a, i) => across.some((b, j) => j > i && a.ux * b.ux + a.uz * b.uz < -0.8))) continue;
+    if (lit.some((p) => Math.hypot(p.x - n.x, p.z - n.z) < LIGHTS_APART)) continue;
+    signalled.set(n, 0);
+    lit.push(n);
+    added++;
+  }
+  return added;
+}
+
 function largestComponent<T>(list: T[], next: (e: T) => T[]): Set<T> {
   const index = new Map(list.map((e, i) => [e, i]));
   const succ = list.map((e) => next(e).map((f) => index.get(f)).filter((j) => j !== undefined));

@@ -5,7 +5,7 @@
 import * as THREE from 'three/webgpu';
 import type { Point3 } from '../ragdolls.ts';
 import type { Weapon, WeaponId } from '../weapons.ts';
-import type { Ped } from '../traffic.ts';
+import type { Car, Ped } from '../traffic.ts';
 import { throwVelocity } from '../ragdolls.ts';
 import { WEAPONS, Arsenal, pickTarget, wrapAngle } from '../weapons.ts';
 import { isTypingInField } from '../../world/city-config.ts';
@@ -370,4 +370,30 @@ export function playerSize(crime: CrimeSystem): [number, number] | null {
     return null;
   }
   return s;
+}
+
+const RAM_SPEED = 3; // m/s the player has to drive into a patrol car at (~11 km/h): a bump while parking is no crime
+const RAM_GRACE = 1.5; // s one crash counts once in (its contact lasts a few steps)
+
+// The player's vehicle struck `other` (n: from it towards the player): a patrol car of the chase's or of the traffic's
+// it drove into is a crime against the police themselves, who always see it (ramCop). Not when it is the patrol car
+// that drove into the player (a chase ramming it): whoever came at the other faster did it
+export function rammed(crime: CrimeSystem, other: unknown, nx: number, nz: number): void {
+  let ovx: number, ovz: number;
+  const cr = crime.cruisers.find((c) => c === other);
+  if (cr) {
+    if (!cr.active || cr.wreck || (cr.faction !== 'police' && cr.faction !== 'army')) return;
+    ovx = Math.sin(cr.heading) * cr.speed + cr.vx;
+    ovz = Math.cos(cr.heading) * cr.speed + cr.vz;
+  } else {
+    const v = crime.trafficPolice.find((c: Car) => c === other);
+    if (!v || v.burnt) return;
+    ovx = v.tx * v.speed + v.vx;
+    ovz = v.tz * v.speed + v.vz;
+  }
+  // (the player's velocity from before the crash, crime.ts update)
+  const mine = -(crime.pvx * nx + crime.pvz * nz), theirs = ovx * nx + ovz * nz;
+  if (mine < RAM_SPEED || mine < theirs || crime.clock - crime.lastRam < RAM_GRACE) return;
+  crime.lastRam = crime.clock;
+  crime.report('ramCop', true);
 }

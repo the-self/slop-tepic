@@ -9,9 +9,10 @@ const phaseOf = (ts: TrafficState, e: TrafficEdge) => (e.axisIndex === 0 ? ts.av
 // with the avenue's.
 const walkOn = (ts: TrafficState, side: number) => (side >= 2 ? ts.stWalk : ts.aveWalk);
 
-// Who goes on a red, giving way to the cross traffic: the police, and anyone pulled over for a siren close behind
+// Who goes on a red, giving way to the cross traffic: the police on a call (lights & siren on; going about their round,
+// they wait at the light as anyone does), and anyone pulled over for a siren close behind
 // (giveWay, driving.ts), edging through the light as drivers do to let the ambulance or the bomberos by: a queue
 // waiting at a red would otherwise shut it in, every lane held (sim/emergency.ts)
-const runsRed = (v: Vehicle): boolean => v.isPolice || v.sirenNear || v.fright === 'flee'; // (fleeing gunfire: through anything)
+const runsRed = (v: Vehicle): boolean => v.onCall === true || v.sirenNear || v.fright === 'flee'; // (fleeing gunfire: through anything)
 
 export { phaseOf, walkOn, runsRed };

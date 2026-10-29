@@ -113,7 +113,7 @@ function update(ts: TrafficState, dt: number, elapsed: number, focusPos: { x: nu
   ts.litVehicleCount = 0;
   ts.wheelCars = 0;
   ts.visibleCars = 0;
-  ts.policeDrawn = 0;
+  ts.policeDrawn = ts.policeDarkDrawn = 0;
   ts.combisDrawn = 0;
   ts.visibleBuses = 0;
   ts.riderCrowd.begin();
@@ -201,6 +201,7 @@ function update(ts: TrafficState, dt: number, elapsed: number, focusPos: { x: nu
   syncInst(ts.carWheelLeftInst, ts.wheelCars * 2);
   syncInst(ts.carWheelRightInst, ts.wheelCars * 2);
   syncInst(ts.policeLightbarInst, ts.policeDrawn);
+  syncInst(ts.policeDarkBarInst, ts.policeDarkDrawn);
   syncInst(ts.combiSignInst, ts.combisDrawn);
   if (ts.combisDrawn > 0) flagRange(ts.combiSignRows, ts.combisDrawn);
   syncInst(ts.carShadowInst, ts.visibleCars);

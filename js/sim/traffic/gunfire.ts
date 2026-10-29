@@ -88,9 +88,13 @@ function shootVehicle(ts: TrafficState, v: Vehicle, x: number, y: number, z: num
   killedIfDead(ts, v);
 }
 
+const BLOWN_UP = 0.35; // the share of a blast's force (blastFalloff) that sets a car's tank off: a rocket into it or beside it
+const BURNT_PAINT = -1; // a burnt-out shell's paint: a mark no paint has, that the car materials draw as one (car-material.ts)
+
 // An explosion at (x, z): people within `radius` m are thrown off their feet, cyclists off their bikes, vehicles shoved
-// and spun by up to `power` m/s (by their weight). Returns how many people it threw.
-function blast(ts: TrafficState, x: number, z: number, radius: number, power: number): number {
+// and spun by up to `power` m/s (by their weight). Returns how many people it threw. The cars it caught full on go into
+// `blown` (once each): they blow up a moment later (crime.ts burnCar), the fire reaching the tank
+function blast(ts: TrafficState, x: number, z: number, radius: number, power: number, blown: Car[] | null = null): number {
   let thrown = 0;
   for (const p of ts.peds) {
     if (!p.placed || p.fallen) continue;
@@ -115,6 +119,7 @@ function blast(ts: TrafficState, x: number, z: number, radius: number, power: nu
       thrown++;
       continue;
     }
+    if (blown && !v.bus && !v.burnt && k > BLOWN_UP && !blown.includes(v)) blown.push(v);
     const heft = Math.min(1.5, MASS.sedan / massOf(v)); // a bus hardly moves
     const shove = power * k * heft;
     // near the player, a car is thrown in Jolt: up, over, rolling
@@ -140,6 +145,26 @@ function blast(ts: TrafficState, x: number, z: number, radius: number, power: nu
     spawnCollisionSparks(ts, v.x, 0.6, v.z, -nx, -nz, 6 + shove, v.hy ?? hillAt(ts, v.x, v.z)); // (over its road: a bridge's deck too)
   }
   return thrown;
+}
+
+// A car blown up (its tank gone up after a blast caught it): a charred shell crushed all round, stopped for good, its
+// driver dead at the wheel (nobody gets out); it comes back to the traffic in its own paint (fleet.ts drawModel)
+function burnCar(v: Car): void {
+  if (v.burnt) return;
+  v.burnt = true;
+  v.paint.fill(BURNT_PAINT);
+  v.damage ??= createDamage();
+  const d = v.damage;
+  d.front = Math.max(d.front, 0.7);
+  d.rear = Math.max(d.rear, 0.6);
+  d.left = Math.max(d.left, 0.5);
+  d.right = Math.max(d.right, 0.5);
+  d.engine = 1;
+  d.version++;
+  v.wrecked = true;
+  v.abandoned = false;
+  v.blink = 0;
+  v.speed = 0;
 }
 
 const DRIVER_HIT = 0.3; // the share of the rounds into a car's cab that hit its driver
@@ -260,4 +285,4 @@ function spikeTraffic(ts: TrafficState, cx: number, cz: number, heading: number,
   }
 }
 
-export { rayHit, shootPed, shootVehicle, shootTyre, spikeTraffic, blast, panic, knockBox };
+export { rayHit, shootPed, shootVehicle, shootTyre, spikeTraffic, blast, burnCar, panic, knockBox };

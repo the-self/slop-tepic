@@ -272,6 +272,7 @@ export const en = {
   'toast.patrol': 'A patrol car spotted you',
   'toast.turf': '{gang} turf',
   'toast.cartel': 'The cartel is sending its people',
+  'toast.copsGang': 'A patrol car is going for the gang',
   'toast.hospital': 'Hospital bill: ${fee}',
   'toast.backUp': 'Back on your feet',
   'toast.gunsTaken': 'Your guns were taken',
