@@ -1,27 +1,18 @@
 // js/places/kit/pieces.ts
-// The places' building kit: pieces (boxes, shapes, planes, any geometry) placed in a frame of their own (a wall's
-// stretch, a gate, a building, a terminal's hall: its origin, its turn), gathered per material and per `cell` m of
-// ground and merged into one mesh each, so a whole campus is a few dozen draws, culled by the cell; and the colliders
-// of what stops the player. Boxes and planes carry UVs in metres (u along their length, v up), which the UAN's stone,
-// rejas & louvres are drawn by; a material whose pieces don't all carry UVs is patterned by position (the Central's).
-// Its other half, mesh-list.ts, writes the vertices straight in world space (Forum Tepic's floors, fronts & columns).
+// The places' building kit (the UAN's campus, the Central's terminal, the bottling plant): pieces (boxes, shapes,
+// planes, any geometry) placed in a frame of their own (a wall's stretch, a gate, a building, a terminal's hall: its
+// origin, its turn), gathered per material and per `cell` m of ground and merged into one mesh each, so a whole campus
+// is a few dozen draws, culled by the cell; and the colliders of what stops the player (world/standing.ts turnedBox).
+// Boxes and planes carry UVs in metres (u along their length, v up), which the stone, the rejas, the bricks & the
+// louvres are drawn by; a material whose pieces don't all carry UVs is patterned by position (the Central's). A piece
+// in a plain colour can take a Tint, a colour of a shared material painted on its vertices: all of that material's
+// colours are one mesh. Its other half, mesh-list.ts, writes the vertices straight in world space (Forum Tepic's).
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { turnedBox } from '../../world/standing.ts';
 import type { Collider } from '../../world/buildings.ts';
 
 const CELL = 200; // m of ground per merged mesh (by default)
-
-/** The frame of the world itself (pieces placed in a group already turned into place) */
-export const WORLD: Readonly<Frame> = { x: 0, y: 0, z: 0, yaw: 0 };
-
-/**
- * A collider over an upright box turned by (cs, sn) = (cos, sin) of its yaw: centre (cx, cz), half sizes hx (along its
- * local x: (cs, -sn)) & hz (m), from y0 to y1 (m); its bounds the turned box's
- */
-export function boxCollider(cx: number, cz: number, hx: number, hz: number, cs: number, sn: number, y0: number, y1: number): Collider {
-  const ex = Math.abs(cs) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
-  return { minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez, minY: y0, maxY: y1, obb: { cx, cz, hx, hz, cs, sn } };
-}
 
 /** A frame pieces are placed in: its origin (m) and its turn (rad: local +x along (cos, -sin), +z along (sin, cos)) */
 export interface Frame {
@@ -30,6 +21,23 @@ export interface Frame {
   z: number;
   yaw: number;
 }
+
+/** The frame of the world itself (pieces placed in a group already turned into place) */
+export const WORLD: Readonly<Frame> = { x: 0, y: 0, z: 0, yaw: 0 };
+
+/** A plain colour of a shared material: the pieces given it are drawn by `base`, their vertices coloured `color`
+ *  (`base` reads them: colorNode times vertexColor()). Give `base` itself to no piece */
+export class Tint {
+  readonly base: THREE.Material;
+  readonly color: THREE.Color;
+  constructor(base: THREE.Material, hex: number) {
+    this.base = base;
+    this.color = new THREE.Color(hex);
+  }
+}
+
+/** What a piece is drawn with: a material, or a plain colour of a shared one */
+export type KitMaterial = THREE.Material | Tint;
 
 export class Kit {
   readonly colliders: Collider[] = [];
@@ -47,9 +55,15 @@ export class Kit {
   }
 
   /** A geometry (its own, not shared) in frame f at (x, y, z), turned `ry` more */
-  add(geo: THREE.BufferGeometry, mat: THREE.Material, f: Frame, x: number, y: number, z: number, ry = 0, cast = true): void {
+  add(geo: THREE.BufferGeometry, kitMat: KitMaterial, f: Frame, x: number, y: number, z: number, ry = 0, cast = true): void {
     const g = geo.index ? geo.toNonIndexed() : geo;
     for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal' && name !== 'uv') g.deleteAttribute(name);
+    const mat = kitMat instanceof Tint ? kitMat.base : kitMat;
+    if (kitMat instanceof Tint) {
+      const { r, g: gr, b } = kitMat.color, n = g.attributes.position.count, rgb = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) rgb.set([r, gr, b], i * 3);
+      g.setAttribute('color', new THREE.BufferAttribute(rgb, 3));
+    }
     const c = Math.cos(f.yaw), s = Math.sin(f.yaw);
     this.m.compose(this.v.set(f.x + x * c + z * s, f.y + y, f.z - x * s + z * c), this.q.setFromAxisAngle(this.up, f.yaw + ry), this.one);
     g.applyMatrix4(this.m);
@@ -61,12 +75,12 @@ export class Kit {
   }
 
   /** A box w (along x) x h x d, its centre at (x, y, z) of frame f; its UVs in metres from u0 along it */
-  box(f: Frame, w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material, u0 = 0, ry = 0, cast = true): void {
+  box(f: Frame, w: number, h: number, d: number, x: number, y: number, z: number, mat: KitMaterial, u0 = 0, ry = 0, cast = true): void {
     this.add(meterBox(w, h, d, u0), mat, f, x, y, z, ry, cast);
   }
 
   /** A plane w x h standing on local x (facing +z), its centre at (x, y, z) of frame f; its UVs in metres (from its corner) */
-  plane(f: Frame, w: number, h: number, x: number, y: number, z: number, mat: THREE.Material, ry = 0, u0 = 0): void {
+  plane(f: Frame, w: number, h: number, x: number, y: number, z: number, mat: KitMaterial, ry = 0, u0 = 0): void {
     const g = new THREE.PlaneGeometry(w, h);
     const uv = g.attributes.uv;
     for (let i = 0; i < uv.count; i++) uv.setXY(i, u0 + uv.getX(i) * w, uv.getY(i) * h);
@@ -74,7 +88,7 @@ export class Kit {
   }
 
   /** A plane w x h like `plane`'s, its UVs the rectangle [u0, v0, u1, v1] of a texture (a name in an atlas) */
-  sign(f: Frame, w: number, h: number, x: number, y: number, z: number, mat: THREE.Material, [u0, v0, u1, v1]: [number, number, number, number], ry = 0): void {
+  sign(f: Frame, w: number, h: number, x: number, y: number, z: number, mat: KitMaterial, [u0, v0, u1, v1]: [number, number, number, number], ry = 0): void {
     const g = new THREE.PlaneGeometry(w, h);
     const uv = g.attributes.uv;
     for (let i = 0; i < uv.count; i++) uv.setXY(i, u0 + uv.getX(i) * (u1 - u0), v0 + uv.getY(i) * (v1 - v0));
@@ -84,7 +98,7 @@ export class Kit {
   /** A collider over a box of frame f: centre (x, z), half sizes hx (along x) & hz, from y0 to y1 over the frame's y */
   collide(f: Frame, x: number, z: number, hx: number, hz: number, y0: number, y1: number, ry = 0): void {
     const c = Math.cos(f.yaw), s = Math.sin(f.yaw);
-    this.colliders.push(boxCollider(f.x + x * c + z * s, f.z - x * s + z * c, hx, hz, Math.cos(f.yaw + ry), Math.sin(f.yaw + ry), f.y + y0, f.y + y1));
+    this.colliders.push(turnedBox(f.x + x * c + z * s, f.z - x * s + z * c, hx, hz, f.yaw + ry, f.y + y0, f.y + y1));
   }
 
   /** Everything gathered, merged per material & cell, into `group` (each mesh named after its material) */

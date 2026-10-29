@@ -17,7 +17,8 @@ import type { CityBlock } from '../city-config.ts';
 import type { LotReserve } from '../landmark-models.ts';
 import type { CityBuild, HouseBlock, Span } from './types.ts';
 
-// the lots the landmarks & La Loma's buildings stand on (tepic-landmarks.ts, la-loma-plan.ts); the places' (js/places/) come with buildHouses' call
+// the lots the landmarks & La Loma's buildings stand on (tepic-landmarks.ts, la-loma-plan.ts); the places' (js/places/:
+// the UAN's grounds, Forum Tepic, the bottling plant) come with buildHouses' call
 const TEPIC_RESERVES = [...LANDMARK_RESERVES, ...LA_LOMA_RESERVES];
 
 // Blocks the real buildings stand on (city-geodata.js `houses`, Overture Maps): built house by house (A2) instead
@@ -47,9 +48,14 @@ function indexHouseBlocks() {
 //     with a black water tank (tinaco) on most. Big boxes (supermarkets, department stores, malls, warehouses) are one
 //     hall in metal cladding with a glazed front and units on the roof; strip plazas a row of locales 5-7 m wide under
 //     one roof, in one colour. Grouped per block for the maps & the streaming of roof details
-/** `placeLots`: the lots the places stand on (js/places/: the UAN's grounds, Forum Tepic), no house built there */
-function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[], placeLots: readonly LotReserve[]) {
+/**
+ * `placeLots`: the lots the places stand on (js/places/: the UAN's grounds, Forum Tepic, the bottling plant), no house
+ * built there. Returns whether (x, z) lies on one of those lots or a landmark's: Overture's house there is not drawn
+ * (what reads GEO.houses on its own, the house fires, keeps off it)
+ */
+function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[], placeLots: readonly LotReserve[]): (x: number, z: number) => boolean {
   const reserves = [...TEPIC_RESERVES, ...placeLots];
+  const inReservedLot = (x: number, z: number): boolean => reserves.some((r) => r.contains(x, z));
   const byBlock = new Map<number, HouseBlock>();
   const blockOf = (b: CityBlock | null, cx: number, cz: number) => {
     const key = b ? b.id : -1;
@@ -249,6 +255,7 @@ function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[], placeLot
     city.quadtree.insert(blk);
     city.allBlocks.push(blk);
   }
+  return inReservedLot;
 }
 
 export { indexHouseBlocks, buildHouses };

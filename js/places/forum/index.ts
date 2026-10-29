@@ -7,7 +7,7 @@
 // city data's (tools/build-tepic-geodata.mjs KNOWN_PARKING). The inside is hidden while the camera is far.
 import * as THREE from 'three/webgpu';
 import { FLOOR, FORUM, FORUM_CLAIMS } from './plan.ts';
-import { boxCollider } from '../kit/pieces.ts';
+import { turnedBox } from '../../world/standing.ts';
 import { addFootDecks, townHeight } from '../../world/ground.ts';
 import { createForumMaterials } from './build/materials.ts';
 import { createMuralTexture, createSignAtlas } from './build/signs.ts';
@@ -49,7 +49,7 @@ export function buildForum({ scene }: PlaceContext) {
   // what stops the player: the walls, fronts, balustrades, columns, kiosks & escalators' sides, on the floor under each
   const colliders: ForumCollider[] = P.walls.map((w) => {
     const y = base(w.cx, w.cz);
-    return boxCollider(w.cx, w.cz, w.hu, w.hv, w.cs, w.sn, y + w.y0, y + w.y1);
+    return turnedBox(w.cx, w.cz, w.hu, w.hv, Math.atan2(w.sn, w.cs), y + w.y0, y + w.y1);
   });
   // the upper floor and the escalators, walked on
   addFootDecks(P.decks);

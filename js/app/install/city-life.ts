@@ -46,7 +46,8 @@ export function installCityLife({ params, scene, loading, events, rain, city, co
   traffic.setSirens(emergency.sirens); // (the cars ahead of them pull over)
   audio.sources.pursuers = [...crime.cruisers, crime.heli]; // (the patrol cars & trucks, the helicopter)
   // Burning wrecks, house fires, the dry season's quemas, and the bomberos who come for them (sim/fires.ts)
-  const fires = new Fires({ scene, crime, services: emergency, controllers, houses: GEO.houses, stride: GEO.houseStride || 8 });
+  const fires = new Fires({ scene, crime, services: emergency, controllers, houses: GEO.houses, stride: GEO.houseStride || 8,
+    reserved: city.cityBlocks.inReservedLot });
   // Tepic's gas stations (sim/gas-stations.ts): the car fills up stopped by a pump (G); a pump shot, rammed or caught in a
   // blast goes up
   const gasStations = new GasStations({

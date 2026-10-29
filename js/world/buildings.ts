@@ -60,7 +60,7 @@ function buildCityBlocks(scene: THREE.Object3D, places: readonly PlaceClaims[]) 
   // A. The made-up lots of the blocks no real building stands on, A2. the real buildings, B6. the sitting areas
   const { houseBlocks, houseBlock } = indexHouseBlocks();
   fillMadeUpBlocks(city, houseBlocks);
-  buildHouses(city, houseBlock, claimedLots(places, 'houses'));
+  const inReservedLot = buildHouses(city, houseBlock, claimedLots(places, 'houses'));
   plantSittingAreas(city.allBlocks);
 
   // C. The static island-wide massing; D. the streamed pools, the sign atlas & the store lights
@@ -102,6 +102,8 @@ function buildCityBlocks(scene: THREE.Object3D, places: readonly PlaceClaims[]) 
     stores: city.stores,
     quadtree: city.quadtree,
     allBlocks: city.allBlocks,
+    /** Whether (x, z) lies on a landmark's or a place's lot, where no house of Overture's is drawn */
+    inReservedLot,
     update,
     updateLights
   };

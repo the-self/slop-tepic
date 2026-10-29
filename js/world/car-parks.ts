@@ -14,6 +14,7 @@ import * as THREE from 'three/webgpu';
 import { GEO } from './city-geodata.js';
 import { blockAt } from './city-config.ts';
 import { liftAt } from './ground.ts';
+import { slopeTilt } from './standing.ts';
 import { drapeGeometry } from './drape.ts';
 import { indexHouses } from './lot-greenery.ts';
 import { hash } from './hash.ts';
@@ -234,11 +235,9 @@ function placeCar(car: Omit<ParkedCar, 'stall'> & { stall: Pick<ParkedCar['stall
   const len = model.size[0];
   const back = Math.max(0, (len - STALL_D + 0.3) / 2);
   const cx = x + fx * back, cz = z + fz * back;
-  // the ground's tilt under it: rise ahead and to its right (its local +x)
-  const ahead = (liftAt(cx + fx * 1.5, cz + fz * 1.5) - liftAt(cx - fx * 1.5, cz - fz * 1.5)) / 3;
-  const right = (liftAt(cx + fz * 0.8, cz - fx * 0.8) - liftAt(cx - fz * 0.8, cz + fx * 0.8)) / 1.6;
   return {
-    x: cx, y: liftAt(cx, cz) + y0, z: cz, yaw: car.heading, pitch: -Math.atan(ahead), roll: Math.atan(right), body, model: model.id,
+    // (on the ground's tilt under it: its rise 1.5 m ahead & behind, 0.8 m either side)
+    x: cx, y: liftAt(cx, cz) + y0, z: cz, yaw: car.heading, ...slopeTilt(cx, cz, car.heading, 1.5, 0.8), body, model: model.id,
     sx: model.size[1] / dims.width, sy: model.size[2] / dims.height, sz: model.size[0] / dims.length,
     paint: new THREE.Color(paints[Math.floor(car.paint * paints.length) % paints.length]),
     halfW: model.size[1] / 2, halfL: model.size[0] / 2, height: model.size[2], collider: null, taken: false, damage: null
