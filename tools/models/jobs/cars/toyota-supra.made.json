@@ -1,0 +1,6 @@
+{
+  "note": "Modelled by script in Blender on the shared shell (blender -b --factory-startup -P tools/models/blender/toyota-supra.py -- <toyota-supra.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/toyota-supra.glb --length 4.379 --roles tools/models/jobs/cars/toyota-supra.roles.json --plates 0.33,0.55 (its real length, so it is not rescaled; light enough for no levels of detail)",
+  "license": "our own work",
+  "source": "tools/models/blender/toyota-supra.py",
+  "args": "--length 4.379 --roles tools/models/jobs/cars/toyota-supra.roles.json --plates 0.33,0.55"
+}

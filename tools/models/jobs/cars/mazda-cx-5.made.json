@@ -1,0 +1,6 @@
+{
+  "note": "Modelled by script in Blender (blender -b --factory-startup -P tools/models/blender/mazda-cx-5.py -- <mazda-cx-5.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/mazda-cx-5.glb --length 4.575 --roles tools/models/jobs/cars/mazda-cx-5.roles.json --plates 0.58,0.72 (its real length, so it is not rescaled; light enough for no levels of detail)",
+  "license": "our own work",
+  "source": "tools/models/blender/mazda-cx-5.py",
+  "args": "--length 4.575 --roles tools/models/jobs/cars/mazda-cx-5.roles.json --plates 0.58,0.72"
+}

@@ -58,6 +58,14 @@ crop the neighbours, scale it to a known height, and simplify it.
 - `cars/tesla-model-y.glb`: the 2025 Model Y ("Juniper"), modelled by script in Blender
   (`tools/models/blender/tesla-model-y.py`, on `carlib.py`) from its real sizes and photographs, then prepared with
   `tools/models/prepare-made.mjs` (`tools/models/jobs/cars/tesla-model-y.made.json`). Our own work, no third party's.
+- `cars/mazda-3.glb`, `cars/mazda-cx-5.glb`, `cars/mazda-mx-5.glb`: the Mazda 3 sedan (2019 on), the CX-5 (2017 on) and
+  the MX-5 (ND), modelled by script in Blender (`tools/models/blender/mazda-3.py`, `mazda-cx-5.py`, `mazda-mx-5.py`, on
+  `carlib.py`) from their real sizes, then prepared with `tools/models/prepare-made.mjs`
+  (`tools/models/jobs/cars/mazda-*.made.json`). Our own work, no third party's.
+- `cars/toyota-*.glb` (Yaris, Corolla, RAV4, Hilux, Supra) and `cars/nissan-*.glb` (Versa, March, Sentra, Kicks,
+  X-Trail, NP300): the dealers' cars, modelled by script in Blender (`tools/models/blender/<id>.py`, each on the shell
+  they share, `shell.py`, on `carlib.py`) from their real sizes, then prepared with `tools/models/prepare-made.mjs`
+  (`tools/models/jobs/cars/<id>.made.json`). Our own work, no third party's.
 - `people/player.glb`: the player, made with Meshy (Meshy 7.1, multi-image-to-3d) from a front and a back view that
   Meshy (Nano Banana Pro) drew from the prompts in `tools/models/jobs/people/player.json`; reposed into the crowd's bind
   pose and skinned to its 15 bones by `tools/models/prepare-person.mjs`.

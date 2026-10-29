@@ -24,6 +24,10 @@ const TEPIC_RESERVES = [...LANDMARK_RESERVES, ...LA_LOMA_RESERVES];
 const HOUSES = GEO.houses;
 const HS = GEO.houseStride || 7; // integers per house
 const SIGNS = GEO.signs; // shop sign faces (chains under parody names, local businesses, trades)
+// the car dealers' showrooms (GEO.dealers): house index -> how far out from the front their lot of cars on show runs
+// (m), where their pole sign stands on the sidewalk past it
+const DEALER_LOTS = new Map<number, number>();
+for (let k = 0; k + 3 < GEO.dealers.length; k += 4) DEALER_LOTS.set(GEO.dealers[k], GEO.dealers[k + 3]);
 
 /** The block each house stands on (A2 groups them by it), and the blocks any house stands on */
 function indexHouseBlocks() {
@@ -154,6 +158,13 @@ function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[]) {
       const onSlope = SLOPES || g1 > 0;
       const base = SLOPES ? g0 - 0.15 : onSlope ? Math.max(0, g0 - 0.15) : 0;
       const top = g1 + h;
+      // a chain's front on a slope: how far its ground stands over the box's foot, where its glazing starts (the wall
+      // kind's fraction, 1/25 per metre, up to 12 m: mexican-house.ts)
+      if (chain) {
+        const r = alongZ ? hx : hz;
+        const sink = groundHeight(cx + (ou * r) * cs + (ov * r) * sn, cz - (ou * r) * sn + (ov * r) * cs) - base;
+        faces[front] += Math.min(0.48, Math.max(0, sink) / 25);
+      }
       // the centro's colonial houses (within ~620 m of the Plaza Principal; not the chains, halls, plazas or cotos): their
       // look is the house material's (cantera, guardapolvo, cornice, balcony doors); here their balconies, one at
       // each upper-floor window of the front (the material's window cells: one per ~3.4 m)
@@ -209,12 +220,13 @@ function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[]) {
       const ry = th + (ov ? (ov > 0 ? -Math.PI / 2 : Math.PI / 2) : 0);
       const gf = onSlope ? groundHeight(...toFront(0.9)) : 0; // the ground at the street front
       if (fascia) {
-        // the logo box over the middle of the front (a supermarket's runs further along it)
+        // the logo box over the middle of the front (a supermarket's runs further along it, a car dealer's halfway)
         const [sx, sz] = toFront(0.25);
-        const boxH = wide ? 1.8 : 1.3;
-        blk.awnings.push({ x: sx, y: 0, g: Math.max(gf, base), z: sz, w: 0, d: Math.min(len - 1.0, wide ? (chain ? 26 : 16) : 5.2), sideDir: ou || 1, colorIdx: 0, ry,
+        const boxH = wide ? 1.8 : chain?.dealer ? 1.6 : 1.3;
+        blk.awnings.push({ x: sx, y: 0, g: Math.max(gf, base), z: sz, w: 0, d: Math.min(len - 1.0, wide ? (chain ? 26 : 16) : chain?.dealer ? 12 : 5.2), sideDir: ou || 1, colorIdx: 0, ry,
           noAwning: true, sign: signNo - 1, signY: top - boxH * 0.5 + 0.35, signH: boxH, signW: 0.5 });
-        if (chain?.pylon) city.pylons.push({ front: toFront(1.4), y: onSlope ? groundHeight(...toFront(1.4)) : 0, ry, along: len, slot: signNo - 1, ou, ov, cs, sn, pylon: chain.pylon });
+        const pole = (DEALER_LOTS.get(i / HS) ?? 0) + 1.4; // (out past a dealer's lot)
+        if (chain?.pylon) city.pylons.push({ front: toFront(pole), y: onSlope ? groundHeight(...toFront(pole)) : 0, ry, along: len, slot: signNo - 1, ou, ov, cs, sn, pylon: chain.pylon });
       } else if (hasSign || chance(0.55)) {
         const [ax, az] = toFront(0.9);
         const [sx, sz] = toFront(0.16); // the sign flat on the wall above the awning

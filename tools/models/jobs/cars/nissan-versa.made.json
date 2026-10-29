@@ -1,0 +1,6 @@
+{
+  "note": "Modelled by script in Blender on the shared shell (blender -b --factory-startup -P tools/models/blender/nissan-versa.py -- <nissan-versa.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/nissan-versa.glb --length 4.495 --roles tools/models/jobs/cars/nissan-versa.roles.json --plates 0.50,0.80 (its real length, so it is not rescaled; light enough for no levels of detail)",
+  "license": "our own work",
+  "source": "tools/models/blender/nissan-versa.py",
+  "args": "--length 4.495 --roles tools/models/jobs/cars/nissan-versa.roles.json --plates 0.50,0.80"
+}

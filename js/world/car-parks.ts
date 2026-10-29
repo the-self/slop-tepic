@@ -8,7 +8,8 @@
 // can be stolen (carNear, take: app/boarding.ts), the player's own car then taking its place; one with another vehicle
 // standing in it is taken away too (clearAt: the player's car put back in the stall on a reload, a friend's who stole it).
 // The cars parked at the curb at the foot of the Cerro de la Cruz, where its road up is closed to them (car-free.ts),
-// are drawn, stop the player and can be stolen the same way.
+// are drawn, stop the player and can be stolen the same way. So are the cars on show in front of the car dealers'
+// showrooms (GEO.dealers): their lots unpainted, every spot taken by one of the make's models, new and straight.
 import * as THREE from 'three/webgpu';
 import { GEO } from './city-geodata.js';
 import { blockAt } from './city-config.ts';
@@ -17,11 +18,16 @@ import { drapeGeometry } from './drape.ts';
 import { indexHouses } from './lot-greenery.ts';
 import { hash } from './hash.ts';
 import { PARK_WALK_Y as PARK_Y } from './park-floor.ts';
-import { carParks, inCarPark, inMouth, layStalls, parkCars, STALL_D, STALL_W } from './parking.ts';
+import { carParks, displayStalls, inCarPark, inMouth, layStalls, parkCars, STALL_D, STALL_W } from './parking.ts';
 import { cerroParking } from './car-free.ts';
 import { createPavementMaterial, createRoadPaintMaterial, createRoadSurfaceMaterial } from '../render/tsl-materials.ts';
 import { BODY_SPECS, bodyDims, buildCarGeometry, buildCarProxyGeometry, createLoftedCarMaterial } from '../actors/actor-models.ts';
-import { paintsOf, pickBody, pickModel } from '../models/cars/index.ts';
+import { loadCarFiles, onCarFile } from '../actors/vehicles/car-files.ts';
+import type { CarFileWheels } from '../actors/vehicles/car-files.ts';
+import { createModelCarMaterial, createModelWheelMaterial } from '../actors/vehicles/car-material.ts';
+import { CAR_MODEL_BY_ID, paintsOf, pickBody, pickModel } from '../models/cars/index.ts';
+import type { CarModel } from '../models/cars/index.ts';
+import { STOREFRONTS } from './storefronts/index.ts';
 import type { CarPark, ParkedCar } from './parking.ts';
 import type { Collider } from './buildings.ts';
 import type { TileStreamer } from './streaming.ts';
@@ -199,12 +205,22 @@ interface BodyMeshes {
   far: THREE.InstancedMesh;
 }
 
-// (a car at the curb has no stall: where it stands is all placeCar reads of one)
-function placeCar(car: Omit<ParkedCar, 'stall'> & { stall: Pick<ParkedCar['stall'], 'x' | 'z'> }, y0: number): PlacedCar | null {
-  const body = pickBody(car.model);
-  const model = pickModel(body, (car.model * 7.31) % 1);
+/** A car model's own file drawn near the camera (car-files.ts): its body, room for every parked car of that model,
+ *  and its wheels (two a side each), where its file puts them */
+interface FileMeshes {
+  body: THREE.InstancedMesh;
+  left: THREE.InstancedMesh | null;
+  right: THREE.InstancedMesh | null;
+  wheels: CarFileWheels | null;
+}
+
+// (a car at the curb has no stall: where it stands is all placeCar reads of one; `chosen`: its model, else drawn by
+// the traffic's shares with car.model)
+function placeCar(car: Omit<ParkedCar, 'stall'> & { stall: Pick<ParkedCar['stall'], 'x' | 'z'> }, y0: number, chosen?: CarModel): PlacedCar | null {
+  const model = chosen ?? pickModel(pickBody(car.model), (car.model * 7.31) % 1);
   if (!model) return null;
-  const spec = BODY_SPECS[body]; // (the traffic's body shapes, pickBody's)
+  const body = model.body;
+  const spec = BODY_SPECS[body]; // (the traffic's body shapes: every car model's)
   const dims = bodyDims(spec);
   const paints = paintsOf(model);
   const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
@@ -224,6 +240,30 @@ function placeCar(car: Omit<ParkedCar, 'stall'> & { stall: Pick<ParkedCar['stall
   };
 }
 
+/** A car dealer's lot: the side its street lies on (displayStalls' `out`) and the make's models on show */
+interface DealerLot {
+  out: 1 | -1;
+  models: CarModel[];
+}
+
+/** The car dealers' lots (GEO.dealers), by their index in `lots`: the street on the side away from the showroom */
+function dealerLots(lots: readonly CarPark[]): Map<number, DealerLot> {
+  const out = new Map<number, DealerLot>();
+  const HS = GEO.houseStride || 8;
+  for (let k = 0; k + 3 < GEO.dealers.length; k += 4) {
+    const [house, store, index] = [GEO.dealers[k], GEO.dealers[k + 1], GEO.dealers[k + 2]];
+    const lot = lots.at(index), make = STOREFRONTS.at(store);
+    if (index < 0 || !lot || !make?.dealer) continue;
+    const models = make.dealer.map((id) => CAR_MODEL_BY_ID[id]).filter((m) => m !== undefined);
+    if (!models.length) continue;
+    // (from the showroom's middle to the lot's, across the rows)
+    const hx = GEO.houses[house * HS] / 10, hz = GEO.houses[house * HS + 1] / 10;
+    const cx = (lot.minX + lot.maxX) / 2, cz = (lot.minZ + lot.maxZ) / 2;
+    out.set(index, { out: (cx - hx) * lot.vx + (cz - hz) * lot.vz >= 0 ? 1 : -1, models });
+  }
+  return out;
+}
+
 /**
  * Builds the car parks into the scene (their ground & paint to `streamer` when there is one, laid tile by tile round
  * the camera). Returns the lots (for what must keep clear of them: the yards' trees), the parked cars' colliders,
@@ -240,8 +280,9 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   const placed: PlacedCar[] = [];
   const ramps: Ramp[] = [];
   const rampTris: number[] = [];
-  let stallCount = 0;
-  for (const lot of lots) {
+  let stallCount = 0, onShow = 0;
+  const dealers = dealerLots(lots);
+  lots.forEach((lot, index) => {
     const y = lotHeight(lot);
     if (lot.surface === 0) fillLot(asphalt, lot, y);
     else fillLot(paved, lot, y, { pave: [PAVE[lot.surface]] });
@@ -267,6 +308,17 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
         asphalt.index.push(v, v + 1, v + 2, v, v + 2, v + 3); // (counter-clockwise seen from above, as pavements.ts)
       }
     }
+    const dealer = dealers.get(index);
+    if (dealer) {
+      // (each spot one of the make's models in turn, in one of its paints)
+      displayStalls(lot, dealer.out, walls.wallDistance).forEach((s, k) => {
+        const model = dealer.models[k % dealer.models.length];
+        const p = placeCar({ stall: s, heading: s.heading, shift: 0, model: 0, paint: hash(s.x, s.z, 27) }, y, model);
+        if (p) placed.push(p);
+        onShow++;
+      });
+      return;
+    }
     const stalls = layStalls(lot, walls.wallDistance);
     stallCount += stalls.length;
     // lines on the asphalt & the concrete, mostly white, yellow on a few lots (nobody paints on stones or earth)
@@ -286,7 +338,7 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
       const p = placeCar(car, y);
       if (p) placed.push(p);
     }
-  }
+  });
   // the cars parked at the foot of the Cerro de la Cruz, on the road (its deck: the traffic's surface)
   for (const c of cerroParking()) {
     const p = placeCar({ stall: c, heading: c.heading, shift: 0, model: c.seed, paint: hash(c.z, c.x, 26) }, CURB_Y);
@@ -394,12 +446,54 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
 
   const dummy = new THREE.Object3D();
   let lastX = Infinity, lastZ = Infinity;
+  // The car models made as 3D models (models/cars `glb`): within NEAR_RADIUS, once its file has loaded, such a car is
+  // its own mesh at its real size, its wheels where its file puts them, as the traffic's (sim/traffic/meshes.ts);
+  // further off, and until then, its body shape
+  const perModel = new Map<string, number>();
+  for (const c of placed) perModel.set(c.model, (perModel.get(c.model) ?? 0) + 1);
+  const files = new Map<string, FileMeshes>();
+  loadCarFiles();
+  onCarFile((id, file) => {
+    const count = perModel.get(id);
+    if (!count || files.has(id)) return;
+    const instanced = (g: THREE.BufferGeometry, m: THREE.Material, n: number) => {
+      const inst = new THREE.InstancedMesh(g, m, n);
+      inst.count = 0;
+      inst.frustumCulled = false; // (handed out round the camera only)
+      inst.castShadow = inst.receiveShadow = true;
+      inst.name = `ParkedCars:${id}`;
+      group.add(inst);
+      return inst;
+    };
+    const geo = file.geometry.clone();
+    geo.setAttribute('paintColor', new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3));
+    geo.setAttribute('carState', new THREE.InstancedBufferAttribute(new Float32Array(count * 4), 4));
+    const body = instanced(geo, createModelCarMaterial(file.map, file.paintMap, null, file.glowMap), count);
+    const wheelMat = file.wheels && file.wheel ? createModelWheelMaterial(file.map, file.paintMap) : null;
+    const left = wheelMat && file.wheel ? instanced(file.wheel.left, wheelMat, count * 2) : null;
+    const right = wheelMat && file.wheel ? instanced(file.wheel.right, wheelMat, count * 2) : null;
+    files.set(id, { body, left, right, wheels: file.wheels });
+    lastX = Infinity; // (drawn so on the next update)
+  });
+  const _wheel = new THREE.Matrix4(), _offset = new THREE.Matrix4();
+  // a file's car's four wheels, from its body's matrix (dummy's): standing still, straight ahead
+  const placeWheels = (own: FileMeshes) => {
+    const w = own.wheels;
+    if (!w || !own.left || !own.right) return;
+    for (const [inst, x] of [[own.left, -w.x], [own.right, w.x]] as const) {
+      for (const z of [w.front, w.rear]) {
+        _wheel.multiplyMatrices(dummy.matrix, _offset.makeTranslation(x, w.radius, z));
+        inst.setMatrixAt(inst.count++, _wheel);
+      }
+    }
+  };
   // The cars within CAR_RADIUS of (x, z) into their meshes, once the camera has moved REDRAW m since the last time
   function update(x: number, z: number): void {
     if (Math.hypot(x - lastX, z - lastZ) < REDRAW) return;
     lastX = x;
     lastZ = z;
     for (const m of meshes.values()) m.near.count = m.far.count = 0;
+    for (const f of files.values()) for (const inst of [f.body, f.left, f.right]) if (inst) inst.count = 0;
     const r = Math.ceil(CAR_RADIUS / CAR_CELL);
     const ix0 = Math.floor(x / CAR_CELL), iz0 = Math.floor(z / CAR_CELL);
     for (let ix = ix0 - r; ix <= ix0 + r; ix++) {
@@ -411,13 +505,16 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
           const d = Math.hypot(c.x - x, c.z - z);
           const m = meshes.get(c.body);
           if (d > CAR_RADIUS || !m) continue;
-          const inst = d < NEAR_RADIUS ? m.near : m.far;
+          const own = d < NEAR_RADIUS ? files.get(c.model) : undefined;
+          const inst = own ? own.body : d < NEAR_RADIUS ? m.near : m.far;
           const slot = inst.count++;
           dummy.position.set(c.x, c.y, c.z);
           dummy.rotation.set(c.pitch, c.yaw, c.roll, 'YXZ');
-          dummy.scale.set(c.sx, c.sy, c.sz);
+          if (own) dummy.scale.set(1, 1, 1); // (its file at its real size already)
+          else dummy.scale.set(c.sx, c.sy, c.sz);
           dummy.updateMatrix();
           inst.setMatrixAt(slot, dummy.matrix);
+          if (own) placeWheels(own);
           const paintAttr = inst.geometry.getAttribute('paintColor');
           paintAttr.setXYZ(slot, c.paint.r, c.paint.g, c.paint.b);
           // (lamps off, no livery; how crushed each side is, 4 bits each, as the traffic's: traffic/render.ts)
@@ -440,6 +537,22 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
         }
         inst.visible = inst.count > 0;
         if (inst.count) inst.computeBoundingSphere();
+      }
+    }
+    for (const f of files.values()) {
+      for (const inst of [f.body, f.left, f.right]) {
+        if (!inst) continue;
+        inst.instanceMatrix.clearUpdateRanges();
+        inst.instanceMatrix.addUpdateRange(0, inst.count * 16);
+        inst.instanceMatrix.needsUpdate = true;
+        inst.visible = inst.count > 0;
+      }
+      for (const [name, size] of [['paintColor', 3], ['carState', 4]] as const) {
+        const attr = f.body.geometry.getAttribute(name);
+        if (!(attr instanceof THREE.BufferAttribute)) continue;
+        attr.clearUpdateRanges();
+        attr.addUpdateRange(0, f.body.count * size);
+        attr.needsUpdate = true;
       }
     }
   }
@@ -529,7 +642,7 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   const keepsOpen = (x: number, z: number) =>
     lotCells.get(Math.floor(x / RAMP_CELL) * 4096 + Math.floor(z / RAMP_CELL))?.some((l) => inCarPark(l, x, z) || inMouth(l, x, z)) ?? false;
 
-  console.info(`[car parks] ${lots.length} lots, ${ramps.length} entrances, ${stallCount} stalls, ${placed.length} cars parked`);
+  console.info(`[car parks] ${lots.length} lots, ${ramps.length} entrances, ${stallCount} stalls, ${placed.length} cars parked (${onShow} on show at ${dealers.size} car dealers)`);
   return {
     lots,
     colliders,

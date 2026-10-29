@@ -1,0 +1,6 @@
+{
+  "note": "Modelled by script in Blender on the shared shell (blender -b --factory-startup -P tools/models/blender/nissan-march.py -- <nissan-march.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/nissan-march.glb --length 3.827 --roles tools/models/jobs/cars/nissan-march.roles.json --plates 0.43,0.80 (its real length, so it is not rescaled; light enough for no levels of detail)",
+  "license": "our own work",
+  "source": "tools/models/blender/nissan-march.py",
+  "args": "--length 3.827 --roles tools/models/jobs/cars/nissan-march.roles.json --plates 0.43,0.80"
+}

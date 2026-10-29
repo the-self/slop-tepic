@@ -1,5 +1,6 @@
 // js/models/cars/nissan.ts
-// Nissan, Mexico's best-selling make (built in Aguascalientes & Cuernavaca). Fields: README.md
+// Nissan, Mexico's best-selling make (built in Aguascalientes & Cuernavaca). Fields: README.md. The dealer's six are
+// drawn from their own files near the camera (tools/models/blender/nissan-*.py)
 
 import type { CarModel } from './index.ts';
 
@@ -18,32 +19,38 @@ export const CARS: CarModel[] = [
   {
     id: 'nissan-versa', name: 'Nisán Conversa', body: 'sedan', class: 'economy',
     size: [4.50, 1.74, 1.47], mass: 1150, drive: 'fwd', power: [87, 6300], torque: [154, 4000], redline: 6500,
-    gears: 5, top: 180, accel: 11.0, rarity: 30
+    gears: 5, top: 180, accel: 11.0, rarity: 30,
+    glb: 'assets/models/cars/nissan-versa.glb'
   },
   {
     id: 'nissan-march', name: 'Nisán Marcha', body: 'hatch', class: 'economy',
     size: [3.83, 1.67, 1.51], mass: 1050, drive: 'fwd', power: [79, 6000], torque: [146, 4400], redline: 6500,
-    gears: 5, top: 175, accel: 11.5, rarity: 18
+    gears: 5, top: 175, accel: 11.5, rarity: 18,
+    glb: 'assets/models/cars/nissan-march.glb'
   },
   {
     id: 'nissan-sentra', name: 'Nisán Céntrico', body: 'sedan', class: 'family',
     size: [4.64, 1.82, 1.45], mass: 1370, drive: 'fwd', power: [112, 6400], torque: [197, 4000], redline: 6800,
-    gears: 6, top: 200, accel: 9.4, rarity: 10
+    gears: 6, top: 200, accel: 9.4, rarity: 10,
+    glb: 'assets/models/cars/nissan-sentra.glb'
   },
   {
     id: 'nissan-kicks', name: 'Nisán Patadas', body: 'suv', class: 'economy',
     size: [4.30, 1.76, 1.59], mass: 1200, drive: 'fwd', power: [88, 6300], torque: [149, 4000], redline: 6500,
-    gears: 6, top: 175, accel: 11.0, rarity: 12
+    gears: 6, top: 175, accel: 11.0, rarity: 12,
+    glb: 'assets/models/cars/nissan-kicks.glb'
   },
   {
     id: 'nissan-x-trail', name: 'Nisán Equis-Tráil', body: 'suv', class: 'family',
     size: [4.68, 1.84, 1.72], mass: 1640, drive: 'awd', power: [126, 6000], torque: [233, 4400], redline: 6300,
-    gears: 6, top: 190, accel: 10.0, rarity: 6
+    gears: 6, top: 190, accel: 10.0, rarity: 6,
+    glb: 'assets/models/cars/nissan-x-trail.glb'
   },
   {
     id: 'nissan-np300', name: 'Nisán Chambeadora 300', body: 'pickup', class: 'truck',
     size: [5.25, 1.85, 1.78], mass: 1800, drive: 'rwd', power: [118, 6000], torque: [241, 4000], redline: 6000,
-    gears: 5, top: 170, accel: 12.5, rarity: 14, paints: [0xf2f2ee, 0xf2f2ee, 0xc8cdd2, 0x2a2d31, 0xa31d22]
+    gears: 5, top: 170, accel: 12.5, rarity: 14, paints: [0xf2f2ee, 0xf2f2ee, 0xc8cdd2, 0x2a2d31, 0xa31d22],
+    glb: 'assets/models/cars/nissan-np300.glb'
   },
   {
     id: 'nissan-urvan', name: 'Nisán Urbana', body: 'van', class: 'truck',

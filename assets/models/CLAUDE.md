@@ -120,8 +120,12 @@ Use `--keep-width` for props that stand alone.
 
 ## Cars and people
 
-- **Only the cars modelled in Blender are files** (2026-10-27): `cars/tesla-cybertruck.glb` and `cars/tesla-model-y.glb`,
-  modelled by script (`tools/models/blender/`, below). Every other car is drawn with its procedural body shape (`js/actors/actor-models.ts`,
+- **Only the cars modelled in Blender are files** (2026-10-27): `cars/tesla-cybertruck.glb`, `cars/tesla-model-y.glb` and
+  the three Mazdas (`mazda-3`, `mazda-cx-5`, `mazda-mx-5`: one script each on the Mazda 3's, which a sedan, a
+  crossover and a roadster share), the dealers' Toyotas (Yaris, Corolla, RAV4, Hilux, Supra) and Nissans (Versa, March,
+  Sentra, Kicks, X-Trail, NP300), each a short script on the shell they share (`tools/models/blender/shell.py`: the
+  Mazdas' lines made a tool, a pickup's bed included), modelled by script (`tools/models/blender/`, below). The parked cars and the dealers'
+  cars on show are drawn from their files near the camera too (`world/car-parks.ts`). Every other car is drawn with its procedural body shape (`js/actors/actor-models.ts`,
   `models/bodies.ts`). The ten Meshy cars and the four from Sketchfab below were taken out, files and jobs: they
   looked worse than the body shapes, and the heavy ones cost the game too much (the Onix 111k triangles, 13 MB). What
   was learnt making them stays here; their files and jobs are in git's history (before 2026-10-27).
@@ -282,3 +286,8 @@ Use `--keep-width` for props that stand alone.
     body curved all over. Lamps, slots, intakes and bumpers are drawn flat in a plane before the car (`decal`,
     `panel`) and laid onto the skin (`onto`: a shrinkwrap, projected along y, or to the nearest point round a corner,
     where a ray from behind would miss and leave the decal hanging in the air).
+  - **A face on the shared shell** (`shell.py`): a panel laid over the nose's fold (where its flat cap meets the
+    hood's slope) needs rows close together (`m=24`) and 3 mm off the skin, its bars and chrome further out: with
+    coarse rows the skin bulged through between them, two patches of paint in the grille that read as a badge. A
+    rear bumper at the body's edge is a box, not a panel: the panel's corners beyond the skin stay in their plane, a
+    flap in the air behind the car.

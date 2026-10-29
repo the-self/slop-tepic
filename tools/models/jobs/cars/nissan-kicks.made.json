@@ -1,0 +1,6 @@
+{
+  "note": "Modelled by script in Blender on the shared shell (blender -b --factory-startup -P tools/models/blender/nissan-kicks.py -- <nissan-kicks.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/nissan-kicks.glb --length 4.302 --roles tools/models/jobs/cars/nissan-kicks.roles.json --plates 0.48,0.85 (its real length, so it is not rescaled; light enough for no levels of detail)",
+  "license": "our own work",
+  "source": "tools/models/blender/nissan-kicks.py",
+  "args": "--length 4.302 --roles tools/models/jobs/cars/nissan-kicks.roles.json --plates 0.48,0.85"
+}

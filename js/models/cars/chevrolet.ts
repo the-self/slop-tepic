@@ -1,5 +1,5 @@
 // js/models/cars/chevrolet.ts
-// Chevrolet (GM de México, built in Ramos Arizpe, Silao & San Luis Potosí). Fields: README.md
+// Chevrolet (GM de México, built in Ramos Arizpe, Silao & San Luis Potosí), and GM's GMC, sold beside Buick. Fields: README.md
 
 import type { CarModel } from './index.ts';
 
@@ -38,5 +38,10 @@ export const CARS: CarModel[] = [
     id: 'chevrolet-corvette', name: 'Chebo Corbeta C8', body: 'supercar', class: 'super',
     size: [4.63, 1.93, 1.23], mass: 1580, drive: 'rwd', power: [369, 6450], torque: [637, 5150], redline: 6600,
     gears: 8, top: 312, accel: 3.0, rarity: 0.1, paints: [0xc8102e, 0xe8a200, 0xf2f2ee, 0x1a1c20]
+  },
+  {
+    id: 'gmc-sierra', name: 'GeEmeCé Sierrita Denali', body: 'pickup', class: 'truck',
+    size: [5.89, 2.06, 1.92], mass: 2450, drive: 'awd', power: [313, 5600], torque: [624, 4100], redline: 6000,
+    gears: 10, top: 180, limited: true, accel: 6.5, rarity: 0.6, paints: [0x1c2026, 0xf2f2ee, 0x52575e, 0x6e1f24]
   }
 ];
