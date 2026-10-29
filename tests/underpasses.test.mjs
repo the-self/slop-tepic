@@ -119,6 +119,11 @@ test('two roadways sunk side by side a little apart share one cut, split by a lo
   assert.ok(tops.length > 0);
   for (const q of tops) for (const [x, y] of q) close(y, -(x * 6) / 100 + 0.8, 0.01);
   assert.ok(rims.some((r) => r.depth > 1 && Math.abs(r.az - 2.5) < 0.05));
+  // drawn once, whole (by one of the two cuts): one top and one collider per piece of it, not two
+  const medians = rims.filter((r) => r.depth > 0.1 && r.ax > 10 && r.bx < 90);
+  const pieces = new Set(medians.map((r) => Math.round(Math.min(r.ax, r.bx))));
+  assert.equal(medians.length, pieces.size);
+  assert.equal(tops.length, medians.length);
 });
 
 test("Tepic: Insurgentes runs down under Av. México at grade, and the streets by the 2 de Agosto viaduct stay on the ground", () => {

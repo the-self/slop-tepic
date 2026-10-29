@@ -28,7 +28,7 @@ const HEIGHT = 0.012; // above the asphalt
 const TOPE_SEGS = 6;
 const BOYA_SIDES = 8; // a boya: a low dome as an eight-sided cone
 const ZEBRA_CLEAR = 4; // m from a stop line a mapped crossing must be for a zebra of its own (nearer, the junction's)
-const STUB = 15; // m node to node: a link between two junctions this short gets no crosswalks nor stop bars
+const STUB = 15; // m node to node: a link between two junctions this short gets no crosswalks (its stop bars it keeps)
 
 /** A point on the ground [x, z] (m) */
 type Pt = [number, number];
@@ -122,7 +122,7 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
     return zebraList.push({ x, z, ux: e.rx, uz: e.rz, half: e.half, w: CROSSWALK - 0.3, ox: -e.dx * side, oz: -e.dz * side, e }) - 1;
   };
   // The stop bars, laid once the crosswalks are (each behind the zebra ahead of it as that was painted): an edge's,
-  // from o0 to o1 across it, and the zebra ahead of it
+  // from o0 to o1 across it, and the zebra ahead of it (-1: none, a stub's)
   const bars: { f: PaintEdge; o0: number; o1: number; zebra: number }[] = [];
   const clearCentre = (e: PaintEdge, o: number) => {
     const steps = Math.max(1, Math.ceil((e.len - 1.8) / 2.5));
@@ -209,7 +209,7 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
     // Stop bars across the lanes arriving at each stop line, from the centre line (or median) to the curb (none where a
     // street merely bends: a shape node of the centreline streets)
     for (const f of back ? [e, back] : [e]) {
-      if (f.to.shape || stub) continue;
+      if (f.to.shape) continue;
       const left = back ? Math.max(0, f.lanes[0] - 1.8) : -f.half;
       bars.push({ f, o0: left + 0.1, o1: f.half - 0.1, zebra: f === e ? zTo : zFrom });
     }
@@ -236,10 +236,10 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
     strip(zb.x - zb.ux * zb.half, zb.z - zb.uz * zb.half, zb.x + zb.ux * zb.half, zb.z + zb.uz * zb.half, zb.w, WHITE, 1.2, 0.5, 0, 1, zb.e);
   }
   // each bar as far out from its zebra as it was from its own (1.6 m, middle to middle) and square with it, across
-  // the lanes it stood across (a bar's stop line is never a shape node: its zebra was laid, though maybe left out)
+  // the lanes it stood across; where its zebra was left out, or it has none, at its stop line
   for (const { f, o0, o1, zebra: i } of bars) {
-    const was = zebraList[i], now = of[i] >= 0 ? painted[of[i]] : null;
-    if (!now) {
+    const was = i >= 0 ? zebraList[i] : null, now = i >= 0 && of[i] >= 0 ? painted[of[i]] : null;
+    if (!was || !now) {
       across(f, f.len - 0.35, o0, o1, 0.45, WHITE);
       continue;
     }

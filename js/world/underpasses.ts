@@ -26,6 +26,8 @@ export interface CutSection {
   depth: number;
   roof: boolean;
   pad: [number, number];
+  /** the cut beside it on either side across such a median (its index in Underpasses.cuts; -1 none) */
+  beside: [number, number];
 }
 /** A cut: its cross-sections along the sunk links it carries end to end, the widest's half width (m), and whether each
  *  end runs on into another cut (a fork: no wall across it). */
@@ -53,6 +55,8 @@ export interface Underpasses {
   offset: (x: number, z: number, fromY?: number) => number;
   /** The holes in the road deck over the open cuts, as flat triangles x0, z0, x1, z1, x2, z2. */
   holes: () => number[];
+  /** Whether (x, z) is by a cut (within its 10 m cell of one: the ground there may be its walls or its roof) */
+  near: (x: number, z: number) => boolean;
   /** The cuts' quads: the walls, parapets, medians & roofs in `concrete`, the beds in `asphalt`; the parapets' and
    *  medians' runs returned. */
   meshData: (concrete: QuadSink, asphalt: QuadSink) => RimWall[];
@@ -169,7 +173,7 @@ function sections(chain: [SunkLine, boolean][]): Cut {
     const [px, pz] = pts[Math.max(0, i - 1)], [qx, qz] = pts[Math.min(pts.length - 1, i + 1)];
     const tl = Math.hypot(qx - px, qz - pz) || 1;
     if (i > 0) along += Math.hypot(x - pts[i - 1][0], z - pts[i - 1][1]);
-    s.push({ x, z, nx: -(qz - pz) / tl, nz: (qx - px) / tl, along, half: halves[i], depth: depth[i], roof: roof[i], pad: [0, 0] });
+    s.push({ x, z, nx: -(qz - pz) / tl, nz: (qx - px) / tl, along, half: halves[i], depth: depth[i], roof: roof[i], pad: [0, 0], beside: [-1, -1] });
   }
   return { half, s, joined: [false, false] };
 }
@@ -211,18 +215,19 @@ function createUnderpasses(rg: RoadGraph | null | undefined, { grade = () => 0 }
   const inCut = (cut: Cut, i: number) => i >= 0 && i + 1 < cut.s.length;
   // half the width of piece i of a cut at t along it (its two lines' widths meet at a joint)
   const halfAt = (cut: Cut, i: number, t: number) => cut.s[i].half + (cut.s[i + 1].half - cut.s[i].half) * t;
-  // Is (x, z) inside another stretch of cut than the one `at` m along `own` (two carriageways sunk side by side share
-  // one wide cut, joined or not where they end: no wall between them)?
-  const inOther = (x: number, z: number, own: Cut, at: number) => {
+  // The cut (its index) whose stretch (x, z) is inside, other than the one `at` m along `own`, or -1 (two carriageways
+  // sunk side by side share one wide cut, joined or not where they end: no wall between them)
+  const otherAt = (x: number, z: number, own: Cut, at: number) => {
     for (const id of cells.get(Math.floor(x / CELL) * 100003 + Math.floor(z / CELL)) ?? []) {
-      const cut = cuts[pieces[id * 2]], i = pieces[id * 2 + 1];
+      const c = pieces[id * 2], cut = cuts[c], i = pieces[id * 2 + 1];
       if (cut === own && Math.abs(cut.s[i].along - at) < 3 * cut.half) continue;
       const a = cut.s[i], b = cut.s[i + 1];
       const t = Math.max(0, Math.min(1, along(cut, i, x, z)));
-      if (Math.hypot(x - a.x - (b.x - a.x) * t, z - a.z - (b.z - a.z) * t) < halfAt(cut, i, t)) return true;
+      if (Math.hypot(x - a.x - (b.x - a.x) * t, z - a.z - (b.z - a.z) * t) < halfAt(cut, i, t)) return c;
     }
-    return false;
+    return -1;
   };
+  const inOther = (x: number, z: number, own: Cut, at: number) => otherAt(x, z, own, at) >= 0;
   // the cuts' ends still down where another cut runs on (where three sunk links meet: the Nodo Vial de la Cruz)
   for (const cut of cuts) {
     const first = cut.s[0], last = cut.s[cut.s.length - 1];
@@ -236,22 +241,36 @@ function createUnderpasses(rg: RoadGraph | null | undefined, { grade = () => 0 }
       if (c.depth <= OPEN) continue;
       for (const k of [0, 1]) {
         const side = k ? -1 : 1;
-        const past = (d: number) => inOther(c.x + c.nx * (c.half + d) * side, c.z + c.nz * (c.half + d) * side, cut, c.along);
-        if (past(0.1)) continue;
-        let lo = 0.1, hi = 0;
-        for (let d = 0.5; d <= MEDIAN_GAP && !hi; d += 0.5) if (past(d)) hi = d;
+        const past = (d: number) => otherAt(c.x + c.nx * (c.half + d) * side, c.z + c.nz * (c.half + d) * side, cut, c.along);
+        if (past(0.1) >= 0) continue;
+        let lo = 0.1, hi = 0, beside = -1;
+        for (let d = 0.5; d <= MEDIAN_GAP && !hi; d += 0.5) if ((beside = past(d)) >= 0) hi = d;
         if (!hi) continue;
         for (let n = 0; n < 5; n++) {
           const m = (lo + hi) / 2;
-          if (past(m)) hi = m;
+          if (past(m) >= 0) hi = m;
           else lo = m;
         }
         c.pad[k] = hi / 2 + 0.02; // (a hair past halfway: the two beds overlap under the median's foot, no seam between)
+        c.beside[k] = beside;
       }
     }
   }
   // how far (m) a cross-section's bed reaches to its left (side 1) or right (-1)
   const edge = (c: CutSection, side: number) => c.half + c.pad[side > 0 ? 0 : 1];
+  // Does cut `ci`'s bed reach (x, z) across a median (its pad on that side: the median's middle there is its too)?
+  const padded = (ci: number, x: number, z: number) => {
+    for (const id of cells.get(Math.floor(x / CELL) * 100003 + Math.floor(z / CELL)) ?? []) {
+      if (pieces[id * 2] !== ci) continue;
+      const cut = cuts[ci], i = pieces[id * 2 + 1], a = cut.s[i], b = cut.s[i + 1];
+      const t = Math.max(0, Math.min(1, along(cut, i, x, z)));
+      const ox = x - a.x - (b.x - a.x) * t, oz = z - a.z - (b.z - a.z) * t;
+      const k = ox * a.nx + oz * a.nz >= 0 ? 0 : 1, pad = a.pad[k] + (b.pad[k] - a.pad[k]) * t;
+      const d = Math.hypot(ox, oz), half = halfAt(cut, i, t);
+      if (pad > 0 && d > half - 0.1 && d < half + pad + 0.1) return true;
+    }
+    return false;
+  };
 
   /**
    * How far (m, <= 0) the cuts carve the ground at (x, z): their beds, 0 off them. Under a roof only for a body coming
@@ -304,7 +323,7 @@ function createUnderpasses(rg: RoadGraph | null | undefined, { grade = () => 0 }
    */
   function meshData(concrete: QuadSink, asphalt: QuadSink): RimWall[] {
     const rims: RimWall[] = [];
-    for (const cut of cuts) {
+    cuts.forEach((cut, ci) => {
       const { s } = cut;
       // a point `o` m left of a cross-section (at its bed's edge on side k with W, `pad` m past it; `inset` m in from
       // the median on side k with M), `y` m up
@@ -324,13 +343,18 @@ function createUnderpasses(rg: RoadGraph | null | undefined, { grade = () => 0 }
         const open = (side: number) => inOther(mx + mnx * mh * side, mz + mnz * mh * side, cut, a.along);
         const median = [a.pad[0] > 0 && b.pad[0] > 0, a.pad[1] > 0 && b.pad[1] > 0];
         const walled = [!open(1) && !median[0], !open(-1) && !median[1]];
-        // this cut's half of the median (the cut beside it draws the other): its top, and its face sloping out to its foot
+        // the median, whole, by the first of the two cuts it parts (or by this one where the other's bed doesn't reach
+        // it: where the two part at a fork): its top, and its two faces sloping out to its feet
         for (const side of [1, -1]) {
-          if (!median[side > 0 ? 0 : 1]) continue;
-          concrete(M(a, side, 0, ya + MEDIAN_H), M(b, side, 0, yb + MEDIAN_H), M(b, side, MEDIAN_TOP, yb + MEDIAN_H), M(a, side, MEDIAN_TOP, ya + MEDIAN_H), [0, 1, 0]);
+          const k = side > 0 ? 0 : 1;
+          if (!median[k]) continue;
+          const [ax, , az] = M(a, side, 0, 0), [bx, , bz] = M(b, side, 0, 0), other = a.beside[k];
+          if (other >= 0 && other < ci && padded(other, (ax + bx) / 2, (az + bz) / 2)) continue;
+          concrete(M(a, side, MEDIAN_TOP, ya + MEDIAN_H), M(b, side, MEDIAN_TOP, yb + MEDIAN_H), M(b, side, -MEDIAN_TOP, yb + MEDIAN_H), M(a, side, -MEDIAN_TOP, ya + MEDIAN_H), [0, 1, 0]);
           concrete(M(a, side, MEDIAN_FOOT, ya), M(a, side, MEDIAN_TOP, ya + MEDIAN_H), M(b, side, MEDIAN_TOP, yb + MEDIAN_H), M(b, side, MEDIAN_FOOT, yb),
             [-lx * side * FACE_OUT, FACE_UP, -lz * side * FACE_OUT]);
-          const [ax, , az] = M(a, side, 0, 0), [bx, , bz] = M(b, side, 0, 0);
+          concrete(M(b, side, -MEDIAN_FOOT, yb), M(b, side, -MEDIAN_TOP, yb + MEDIAN_H), M(a, side, -MEDIAN_TOP, ya + MEDIAN_H), M(a, side, -MEDIAN_FOOT, ya),
+            [lx * side * FACE_OUT, FACE_UP, lz * side * FACE_OUT]);
           rims.push({ ax, az, bx, bz, depth: (a.depth + b.depth) / 2 });
         }
         if (walled[0]) concrete(W(a, 1, ya), W(a, 1, 0), W(b, 1, 0), W(b, 1, yb), [-lx, 0, -lz]);
@@ -379,11 +403,13 @@ function createUnderpasses(rg: RoadGraph | null | undefined, { grade = () => 0 }
           }
         }
       }
-    }
+    });
     return rims;
   }
 
-  return { cuts, offset, holes, meshData };
+  const near = (x: number, z: number) => cells.has(Math.floor(x / CELL) * 100003 + Math.floor(z / CELL));
+
+  return { cuts, offset, holes, near, meshData };
 }
 
 export { createUnderpasses };

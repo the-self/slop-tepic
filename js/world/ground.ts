@@ -311,12 +311,13 @@ const surfaceHeight = (x: number, z: number, y?: number): number => {
 };
 
 /**
- * Whether (x, y, z) is in solid ground for a body there: under the ground (in a cut's walls or a tunnel's roof, seen
- * from down in it; in a hill) or inside a bridge's deck. The chase camera keeps in front of it.
+ * Whether (x, y, z) is in solid ground for a body there: by an underpass, under the ground (in its cut's walls or its
+ * tunnel's roof, seen from down in it), or inside a bridge's deck. The chase camera keeps in front of it. (Not the
+ * hills: over a crest the camera is lifted clear of them, cameras.ts, rather than drawn in close.)
  */
 const inSolidGround = (x: number, y: number, z: number): boolean => {
   const g = groundHeight(x, z, y);
-  return y < g - 0.1 || decks.inDeck(x, z, y - g);
+  return (y < g - 0.1 && !!underpasses?.near(x, z)) || decks.inDeck(x, z, y - g);
 };
 
 export {

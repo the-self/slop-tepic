@@ -49,12 +49,17 @@ const hash = (a: number, b: number) => {
   return v - Math.floor(v);
 };
 
+// the topes planned on each list of edges (the paint, the traffic and the player's ground all ask for the network's)
+const planned = new WeakMap<readonly PaintEdge[], { mapped: readonly number[]; topes: Tope[] }>();
+
 /**
  * The topes on the road network's paint edges `edges` (road-network.ts paintEdges: every physical road, each way):
  * the mapped ones of `mapped` (GEO.topes: x, z, kind each) on the edge whose roadway they lie in, and the guessed
- * ones, away from them
+ * ones, away from them. Planned once for the same edges and map, the same list after (don't change it)
  */
 function planTopes(edges: readonly PaintEdge[], mapped: readonly number[]): Tope[] {
+  const known = planned.get(edges);
+  if (known?.mapped === mapped) return known.topes;
   const out: Tope[] = [];
   const across = (e: PaintEdge, s: number, isMapped: boolean, boyas: boolean) => {
     out.push({ x: e.sx + e.dx * s, z: e.sz + e.dz * s, dx: e.dx, dz: e.dz, rx: e.rx, rz: e.rz, half: e.half, mapped: isMapped, boyas });
@@ -80,6 +85,7 @@ function planTopes(edges: readonly PaintEdge[], mapped: readonly number[]): Tope
     across(e, Math.min(FROM_CORNER, e.len * 0.3), false, boyas);
     if (e.len > SECOND && hash(e.to.id, e.from.id) < 0.5) across(e, e.len - FROM_CORNER, false, boyas);
   }
+  planned.set(edges, { mapped, topes: out });
   return out;
 }
 
