@@ -17,6 +17,7 @@ import type { FrameStep } from '../core/scheduler.ts';
 import { precompileShaders, warmUpFrame } from './shaders.ts';
 import { savePlayer } from './player-state.ts';
 import { WeatherEffects } from './weather-effects.ts';
+import { ResolutionGovernor } from './resolution.ts';
 import type { AmbientSource } from '../audio/audio-ambience.ts';
 import type { TrainPlayer } from '../sim/trains.ts';
 import type { Game } from './game.ts';
@@ -27,7 +28,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
   const {
     debug, quality, loading, renderer, scene, lighting, rain, roadWater, hud, city, controllers, stateKey, blood, stamina, cameras, aim,
     audio, crime, crimeHud, weaponWheel, weaponIcons, venues, streetFood, floods, nightlife, rooms, emergency, fires, gasStations, forumLife, centralLife,
-    render, gamepad, boarding, map, net, remoteCars, trains, railCrossings
+    render, gamepad, touch, boarding, map, net, remoteCars, trains, railCrossings
   } = game;
   const { streamer, cityBlocks, stores, carParks, central, embotelladora, deliveries, streetDetails, powerLines, traffic, highwayTraffic } = city;
 
@@ -95,6 +96,9 @@ export async function startFrameLoop(game: Game): Promise<void> {
   };
   // ...and its doors open for its travellers coming through them (places/central/life.ts), as for the player
   const centralSomeoneAt = (x: number, z: number, r: number) => centralLife.someoneAt(x, z, r);
+  // The phone's resolution follows its frame rate (app/resolution.ts; the computer's stays at 1)
+  const resolution = quality.resolution &&
+    new ResolutionGovernor({ min: quality.resolution.min, max: Math.min(quality.resolution.max, window.devicePixelRatio || 1) });
   const scheduler = new Scheduler({ profile: debug })
     .run('gamepad', ({ dt }) => { gamepad.update(dt); })
     .run('player', ({ frameDt, elapsed }) => {
@@ -183,6 +187,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
     .run('hud', ({ dt, now }) => {
       stamina.update(dt, crime.state === 'play' ? controllers.sprintingMode() : null);
       crimeHud.update(crime, dt, stamina);
+      touch.setMelee(crime.arsenal.weapon.melee === true); // (the fire button punches with the fists)
       weaponWheel.update();
       if (!document.hidden && now >= nextPlayerSave) {
         save();
@@ -223,6 +228,11 @@ export async function startFrameLoop(game: Game): Promise<void> {
       const eye = cameras.camera.position;
       if (door) streamer.update(door, 0, Math.max(0, rawDt));
       else streamer.update(eye, eye.y - groundHeight(eye.x, eye.z), Math.max(0, rawDt));
+    })
+    .run('resolution', ({ rawDt }) => {
+      // (not until the city is on screen: the loading's long frames say nothing of play)
+      const ratio = warmedUp && resolution ? resolution.update(rawDt) : 0;
+      if (ratio) renderer.setPixelRatio(ratio);
     });
   if (debug) {
     // Debugging handle for the console, only with ?debug in the URL
@@ -230,7 +240,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
       scene, renderer, streamer, streetFood, venues, forum: forumLife, floods, nightlife, interiors: rooms, fires, emergency, gasStations, controllerManager: controllers,
       deliveries, trains,
       trafficSystem: traffic, cameraSystem: cameras, streetDetails, cityGrid: city.cityGrid, cityBlocks, mapSystem: map, audioSystem: audio,
-      crimeSystem: crime, stamina, aimControl: aim, weaponWheel, weaponIcons, scheduler, boarding, quality, multiplayer: () => net.current
+      crimeSystem: crime, stamina, aimControl: aim, weaponWheel, weaponIcons, scheduler, boarding, quality, resolution, multiplayer: () => net.current
     } });
   }
 

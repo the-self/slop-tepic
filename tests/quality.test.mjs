@@ -17,3 +17,9 @@ test('the low tier costs less in every setting', () => {
   assert.equal(high.ssr, true);
   assert.equal(low.ssr, false);
 });
+
+test('only the low tier moves its resolution, and between sane bounds', () => {
+  assert.equal(pickQuality('high', false).resolution, null);
+  const { resolution } = pickQuality('low', true);
+  assert.ok(resolution && resolution.min < 1 && resolution.max > 1);
+});

@@ -361,6 +361,7 @@ void test('a player opens a room of their own: friends join by its code and pass
 void test('with a static folder the server is the game page too, and serves nothing else of the folder', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slop-static-'));
   fs.writeFileSync(path.join(root, 'index.html'), '<!doctype html><title>Slop</title>');
+  fs.writeFileSync(path.join(root, 'manifest.webmanifest'), '{"name":"Slop"}');
   fs.mkdirSync(path.join(root, 'dist'));
   fs.writeFileSync(path.join(root, 'dist', 'main.js'), 'console.log(1);');
   fs.mkdirSync(path.join(root, 'server'));
@@ -376,6 +377,9 @@ void test('with a static folder the server is the game page too, and serves noth
     const js = await get('/dist/main.js');
     assert.equal(js.status, 200);
     assert.match(js.headers.get('content-type') ?? '', /javascript/);
+    const manifest = await get('/manifest.webmanifest');
+    assert.equal(manifest.status, 200);
+    assert.match(manifest.headers.get('content-type') ?? '', /manifest\+json/);
     for (const p of ['/server/index.ts', '/.env', '/dist/../server/index.ts', '/dist/%2e%2e/server/index.ts', '/dist/..%2fserver%2findex.ts', '/package.json']) {
       const res = await get(p);
       assert.equal(res.status, 404, p);

@@ -2224,17 +2224,81 @@ body[data-mode='moto'] .tacho {
   text-shadow: 0 1px 5px #000;
 }
 .touch-caption { display: block; margin-top: 8px; }
+/* (top middle, clear of the crime card; gone after the first drag on the view, input/touch-controls.ts) */
 .touch-look-hint {
   position: fixed;
-  top: calc(max(var(--edge), env(safe-area-inset-top)) + 120px);
-  right: max(var(--edge), env(safe-area-inset-right));
+  top: calc(max(var(--edge), env(safe-area-inset-top)) + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 40vw;
+  margin: 0;
   padding: 4px;
+  text-align: center;
+}
+#touch-controls.has-looked .touch-look-hint { display: none; }
+
+/* A phone held upright: the game is played sideways (the home screen's manifest locks it so) */
+.rotate-hint {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  background: rgba(8, 9, 11, 0.94);
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 650;
+  text-align: center;
+}
+.rotate-phone {
+  width: 72px;
+  height: 72px;
+  fill: none;
+  stroke: var(--taxi);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+@media (orientation: portrait) {
+  body.touch-enabled .rotate-hint { display: flex; }
 }
 
+/* The map, camera, weapon & horn: a row under the frame rate */
+.touch-tools {
+  position: fixed;
+  top: calc(max(var(--edge), env(safe-area-inset-top)) + 58px);
+  left: max(var(--edge), env(safe-area-inset-left));
+  display: flex;
+  gap: 8px;
+}
+.touch-tool {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: var(--glass-strong);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  pointer-events: auto;
+  touch-action: none;
+}
+.touch-tool .icon { width: 20px; height: 20px; }
+.touch-tool[hidden] { display: none; }
+.touch-tool:active { color: var(--taxi-ink); background: var(--taxi); border-color: var(--taxi); }
+
+/* A triangle: get in/out on top (only while there is something to get into or out of), sprint & jump under it; the
+   fire button apart on its left (punch with the fists), where the helicopter, gunless, has its descend */
 .touch-actions {
   display: grid;
-  grid-template-columns: repeat(2, 64px);
-  gap: 10px;
+  grid-template-columns: 80px 64px 64px;
+  grid-template-areas: 'fire top top' 'fire left right';
+  gap: 6px 12px;
   padding-bottom: 22px;
 }
 .touch-action {
@@ -2255,9 +2319,11 @@ body[data-mode='moto'] .tacho {
   touch-action: none;
 }
 .touch-action > [aria-hidden] { font-size: 23px; line-height: 1; }
-.touch-boost { grid-column: 2; border-color: rgba(255, 194, 26, 0.65); color: var(--taxi); }
-.touch-board { grid-column: 1; grid-row: 2; color: var(--taxi-ink); background: var(--taxi); border-color: var(--taxi); }
-.touch-fire { grid-column: 2; grid-row: 2; border-color: rgba(255, 107, 107, 0.7); color: #ff8a8a; }
+.touch-action[data-touch-action='up'] { grid-area: right; }
+.touch-action[data-touch-action='down'] { grid-area: fire; align-self: center; justify-self: start; }
+.touch-boost { grid-area: left; border-color: rgba(255, 194, 26, 0.65); color: var(--taxi); }
+.touch-board { grid-area: top; justify-self: center; color: var(--taxi-ink); background: var(--taxi); border-color: var(--taxi); }
+.touch-fire { grid-area: fire; align-self: center; justify-self: start; width: 72px; height: 72px; border-color: rgba(255, 107, 107, 0.7); color: #ff8a8a; }
 .touch-action[hidden] { display: none; }
 .touch-action.is-pressed { color: var(--taxi-ink); background: var(--taxi); border-color: var(--taxi); }
 

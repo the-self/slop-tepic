@@ -67,6 +67,10 @@ export function installControls({ renderer, hud, events, city, controllers, came
   function syncMode() {
     const mode = controllers.activeMode;
     touch.setMode(mode);
+    // (a horn only in a car, audio.honk; no guns from the helicopter, crime.ts)
+    for (const tool of document.querySelectorAll<HTMLElement>('[data-touch-tool]')) {
+      tool.hidden = (tool.dataset.touchTool === 'horn' && mode !== 'car') || (tool.dataset.touchTool === 'weapon' && mode === 'helicopter');
+    }
     gamepad.reset();
     showMode();
     // If currently on a static scenic camera, switch to 3rd-Person Chase so user sees their selected character/vehicle
@@ -83,6 +87,18 @@ export function installControls({ renderer, hud, events, city, controllers, came
     event.stopPropagation();
     if (!gasStations.refuel()) boarding.board(); // (by a pump: fill up, sim/gas-stations.ts)
   });
+  // The touch screen's M, V, R & B (index.html .touch-tools): the map, the next camera, the next weapon, the horn
+  for (const tool of document.querySelectorAll<HTMLElement>('[data-touch-tool]')) {
+    tool.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const name = tool.dataset.touchTool;
+      if (name === 'map') map.toggleFullMap(true);
+      else if (name === 'camera') cycleCamera(1);
+      else if (name === 'weapon') crime.cycleWeapon(1);
+      else if (name === 'horn') audio.honk(controllers.getActiveEntity());
+    });
+  }
 
   function selectCamera(camId: CameraPresetId, snap = false) {
     cameras.setCameraPreset(camId, snap);

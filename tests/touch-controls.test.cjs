@@ -50,12 +50,12 @@ function harness({ coarse = true, mode = 'person' } = {}) {
   const root = element();
   const stick = element();
   const knob = element();
-  const buttons = Object.fromEntries(['boost', 'up', 'down'].map((action) => [action, element({ 'data-touch-action': action })]));
+  const buttons = Object.fromEntries(['boost', 'up', 'down', 'fire'].map((action) => [action, element({ 'data-touch-action': action })]));
   const labels = Object.fromEntries(Object.keys(buttons).map((action) => [action, element()]));
   root.querySelectorAll = () => Object.values(buttons);
   root.querySelector = (selector) => labels[selector.match(/"(.*?)"/)[1]];
   document.getElementById = (id) => ({ 'touch-controls': root, 'touch-stick': stick, 'touch-stick-knob': knob })[id];
-  const input = Object.fromEntries(['forward', 'backward', 'left', 'right', 'up', 'down', 'boost'].map((action) => [action, 0]));
+  const input = Object.fromEntries(['forward', 'backward', 'left', 'right', 'up', 'down', 'boost', 'fire'].map((action) => [action, 0]));
   const controller = {
     activeMode: mode,
     setTouchInput(action, value) { input[action] = value; },
@@ -232,4 +232,15 @@ test('availability callback runs after visibility updates and only on an actual 
   document.dispatch('pointerdown', { pointerType: 'touch' });
   document.dispatch('pointerdown', { pointerType: 'touch' });
   assert.deepEqual(changes, [true, false, true]);
+});
+
+test('the fire button punches with the fists and fires with a gun, whatever the mode', () => {
+  const { controls, labels } = harness();
+  assert.equal(labels.fire.textContent, 'Fire');
+  controls.setMelee(true);
+  assert.equal(labels.fire.textContent, 'Punch');
+  controls.setMode('car');
+  assert.equal(labels.fire.textContent, 'Punch', 'a change of mode keeps what is in hand');
+  controls.setMelee(false);
+  assert.equal(labels.fire.textContent, 'Fire');
 });
