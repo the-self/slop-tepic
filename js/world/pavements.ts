@@ -3,6 +3,7 @@ import { SURFACES } from './street-surfaces.ts';
 import { PAVEMENTS } from './pavement-data.ts';
 import { createPavementMaterial } from '../render/tsl-materials.ts';
 import { drapeGeometry } from './drape.ts';
+import { cutDeckHoles } from './river-channels.ts';
 import type { TileStreamer } from './streaming.ts';
 
 // js/world/pavements.ts
@@ -45,10 +46,10 @@ function buildPavements(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'add
   geometry.setIndex(index);
   console.info(`[pavements] ${SURFACES.length} streets of empedrado, adoquín, tierra & concreto (${SURFACES.length - PAVEMENTS.length} of them alleys & tracks)`);
   if (streamer) {
-    streamer.addLayer(geometry, createPavementMaterial(), { name: 'Pavements' });
+    streamer.addLayer(geometry, createPavementMaterial(), { name: 'Pavements', cutHoles: true }); // (opened over the channels & underpasses)
     return null;
   }
-  const mesh = new THREE.Mesh(drapeGeometry(geometry), createPavementMaterial());
+  const mesh = new THREE.Mesh(cutDeckHoles(drapeGeometry(geometry)), createPavementMaterial());
   mesh.name = 'Pavements';
   mesh.receiveShadow = true;
   scene.add(mesh);

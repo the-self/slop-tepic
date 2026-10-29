@@ -13,7 +13,7 @@ import { enter, leave, mayEnter, signalAhead } from './junctions.ts';
 import { curbBrake, curbside } from './pickups.ts';
 import { crossingBrake } from './crossings.ts';
 import { railBrake, railCap } from './rail-crossings.ts';
-import { topeCap } from './topes.ts';
+import { topeCap, topeJolt } from './topes.ts';
 
 // Overtake into an adjacent lane when it is clearly quicker (MOBIL), or work towards a lane the planned turn
 // can be made from; either only if neither v nor its new follower has to brake hard for it. Not while still
@@ -253,6 +253,7 @@ function drive(ts: TrafficState, v: DrivenVehicle, dt: number): void {
   v.wait = v.speed < 0.5 ? v.wait + dt : 0;
   if (!v.conn) {
     v.s += ds;
+    topeJolt(v, ds);
     if (v.s + v.half >= v.edge.len) enter(ts, v);
   } else {
     v.cs += ds;

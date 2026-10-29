@@ -60,9 +60,13 @@ export interface Decks {
   segments: DeckSegment[];
   junctions: DeckJunction[];
   deckLift: (x: number, z: number, over?: number, step?: number) => number;
+  /** Whether a point `over` m over the ground at (x, z) is inside a deck: its slab, or a low ramp's embankment */
+  inDeck: (x: number, z: number, over: number) => boolean;
 }
 
 const SINK = 0.08; // the flat parts of the hills' mesh sit just under the streets & meadows
+const DECK_SLAB = 1.1; // m: a deck's depth under its road
+const DECK_OPEN = 2.5; // m: from here up a deck stands on piers (below it its walls reach the ground, a ramp's embankment)
 
 function createGround(geo: GroundSource, { slopes = false }: { slopes?: boolean } = {}) {
   const hillHeights = geo.terrain ? decodeHeights(geo.terrain) : null;
@@ -203,7 +207,7 @@ function createDecks(geo: { roadGraph?: RoadGraph | null }): Decks {
   }
   // (a junction's disc as a segment of no length: every point within its radius)
   for (const j of junctions) segments.push({ ax: j.x, az: j.z, bx: j.x, bz: j.z, la: j.lift, lb: j.lift, half: j.r });
-  return { segments, junctions, deckLift: deckIndex(segments) };
+  return { segments, junctions, ...deckIndex(segments) };
 }
 
 /**
@@ -217,11 +221,11 @@ function createFootDecks(geo: { footbridges?: Footbridge[] | null }): Decks {
       segments.push({ ax: flat[i], az: flat[i + 1], bx: flat[i + 2], bz: flat[i + 3], la: lifts[i / 2] / 10, lb: lifts[i / 2 + 1] / 10, half: width / 20 });
     }
   }
-  return { segments, junctions: [], deckLift: deckIndex(segments) };
+  return { segments, junctions: [], ...deckIndex(segments) };
 }
 
-// The segments in 32 m cells, and the lift a body reaches at (x, z) on them (Decks.deckLift)
-function deckIndex(segments: readonly DeckSegment[]): Decks['deckLift'] {
+// The segments in 32 m cells, the lift a body reaches at (x, z) on them (Decks.deckLift) and what they fill (inDeck)
+function deckIndex(segments: readonly DeckSegment[]): Pick<Decks, 'deckLift' | 'inDeck'> {
   const CELL = 32;
   const cells = new Map<number, DeckSegment[]>();
   for (const sg of segments) {
@@ -268,7 +272,18 @@ function deckIndex(segments: readonly DeckSegment[]): Decks['deckLift'] {
     // span reaches: on a ramp it would hold the next vertex's lift half a deck's width early, a step at every vertex
     return best || past;
   };
-  return deckLift;
+  const inDeck = (x: number, z: number, over: number) => {
+    for (const sg of cells.get(Math.floor(x / CELL) * 100003 + Math.floor(z / CELL)) ?? []) {
+      const ux = sg.bx - sg.ax, uz = sg.bz - sg.az;
+      const L2 = ux * ux + uz * uz;
+      const t = L2 ? Math.min(1, Math.max(0, ((x - sg.ax) * ux + (z - sg.az) * uz) / L2)) : 0;
+      if (Math.hypot(x - sg.ax - ux * t, z - sg.az - uz * t) > sg.half) continue;
+      const lift = sg.la + (sg.lb - sg.la) * t;
+      if (over <= lift && over >= (lift < DECK_OPEN ? 0 : lift - DECK_SLAB)) return true;
+    }
+    return false;
+  };
+  return { deckLift, inDeck };
 }
 
 const decks = createDecks(GEO);
@@ -278,7 +293,7 @@ const footDecks = createFootDecks(GEO);
 const builtFootDecks: Decks['deckLift'][] = [];
 /** Steps or a terrace those on foot climb onto, as segments of deck (their lifts over the ground at either end) */
 function addFootDecks(segments: readonly DeckSegment[]): void {
-  if (segments.length) builtFootDecks.push(deckIndex(segments));
+  if (segments.length) builtFootDecks.push(deckIndex(segments).deckLift);
 }
 /** deckLift for someone on foot: the roads' decks, the footbridges' and the steps the city added */
 const walkDeckLift = (x: number, z: number, over = Infinity, step = 1.2) => {
@@ -295,8 +310,17 @@ const surfaceHeight = (x: number, z: number, y?: number): number => {
   return y === undefined ? g : g + deckLift(x, z, y - g);
 };
 
+/**
+ * Whether (x, y, z) is in solid ground for a body there: under the ground (in a cut's walls or a tunnel's roof, seen
+ * from down in it; in a hill) or inside a bridge's deck. The chase camera keeps in front of it.
+ */
+const inSolidGround = (x: number, y: number, z: number): boolean => {
+  const g = groundHeight(x, z, y);
+  return y < g - 0.1 || decks.inDeck(x, z, y - g);
+};
+
 export {
-  SINK, SLOPES, LATTICE, createGround, clipToLattice, liftAt, townGrid,
+  SINK, DECK_SLAB, DECK_OPEN, SLOPES, LATTICE, createGround, clipToLattice, liftAt, townGrid,
   hillHeights, terrainHeight, hillGround, townHeight, bareLand, landHeight, hillPaths, waterways, lakes, underpasses, deckHoles, gradeHeight, groundHeight, groundSlope,
-  createDecks, createFootDecks, addFootDecks, decks, footDecks, deckLift, walkDeckLift, surfaceHeight
+  createDecks, createFootDecks, addFootDecks, decks, footDecks, deckLift, walkDeckLift, surfaceHeight, inSolidGround
 };

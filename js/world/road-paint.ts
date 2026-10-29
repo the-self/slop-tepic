@@ -6,14 +6,17 @@ import { createRoadPaintMaterial } from '../render/tsl-materials.ts';
 import { SURFACES } from './street-surfaces.ts';
 import { drapeGeometry } from './drape.ts';
 import { placeCrossings } from './crossings.ts';
-import { planTopes } from './topes.ts';
+import { mergeZebras } from './zebras.ts';
+import type { Zebra } from './zebras.ts';
+import { planTopes, boyaSites, TOPE_LEN, TOPE_H, BOYA_H, BOYA_R } from './topes.ts';
 import { GEO } from './city-geodata.js';
 
 // js/world/road-paint.ts
 // Road markings generated from the drivable road network (js/world/road-network.ts), so the paint matches where traffic
 // actually drives and stops: dashed lane lines, double yellow centre lines on two-way roads, stop bars at the stop
 // lines, continental crosswalks across every intersection approach and at the marked crossings OpenStreetMap maps
-// along the streets (crossings.ts), and green bike lanes along wide one-way avenues.
+// along the streets (crossings.ts), one per crossing however its street is mapped (zebras.ts), and green bike lanes
+// along wide one-way avenues.
 // And the topes (topes.ts): the speed bumps OpenStreetMap maps and those of a third of the two-way residential streets,
 // painted in yellow & black stripes (the traffic slows down for them; the player's car rolls over them). The empedrado and
 // earth streets (pavement-data.ts) get no paint: nobody paints lines on river stones.
@@ -22,10 +25,10 @@ const WHITE = new THREE.Color(0xe6e2d6);
 const YELLOW = new THREE.Color(0xe8ad22);
 const GREEN = new THREE.Color(0x2a8a4e);
 const HEIGHT = 0.012; // above the asphalt
-const TOPE_LEN = 0.9; // along the street (m)
-const TOPE_H = 0.09;
 const TOPE_SEGS = 6;
+const BOYA_SIDES = 8; // a boya: a low dome as an eight-sided cone
 const ZEBRA_CLEAR = 4; // m from a stop line a mapped crossing must be for a zebra of its own (nearer, the junction's)
+const STUB = 15; // m node to node: a link between two junctions this short gets no crosswalks nor stop bars
 
 /** A point on the ground [x, z] (m) */
 type Pt = [number, number];
@@ -111,6 +114,16 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
   const across = (e: PaintEdge, s: number, o0: number, o1: number, w: number, col: THREE.Color, period?: number, duty?: number) => {
     strip(...at(e, s, o0), ...at(e, s, o1), w, col, period, duty, 0, 1, e);
   };
+  // The crosswalks, gathered and painted together once all are known (zebras.ts: one per crossing)
+  const zebraList: Zebra<PaintEdge>[] = [];
+  // (one at s m along e, facing away from the junction behind it (side -1: at its start), ahead (1) or neither (0))
+  const zebra = (e: PaintEdge, s: number, side: number) => {
+    const [x, z] = at(e, s, 0);
+    return zebraList.push({ x, z, ux: e.rx, uz: e.rz, half: e.half, w: CROSSWALK - 0.3, ox: -e.dx * side, oz: -e.dz * side, e }) - 1;
+  };
+  // The stop bars, laid once the crosswalks are (each behind the zebra ahead of it as that was painted): an edge's,
+  // from o0 to o1 across it, and the zebra ahead of it
+  const bars: { f: PaintEdge; o0: number; o1: number; zebra: number }[] = [];
   const clearCentre = (e: PaintEdge, o: number) => {
     const steps = Math.max(1, Math.ceil((e.len - 1.8) / 2.5));
     for (let i = 0; i <= steps; i++) {
@@ -187,17 +200,19 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
       }
     }
 
+    // Continental crosswalks curb to curb, between the stop lines and the intersections at both ends (but across a stub
+    // between two junctions a few metres apart, a divided road's carriageways: nobody crosses it)
+    const stub = e.span < STUB && !e.from.shape && !e.to.shape;
+    const zFrom = e.from.shape || stub ? -1 : zebra(e, -CROSSWALK / 2, -1);
+    const zTo = e.to.shape || stub ? -1 : zebra(e, e.len + CROSSWALK / 2, 1);
+
     // Stop bars across the lanes arriving at each stop line, from the centre line (or median) to the curb (none where a
     // street merely bends: a shape node of the centreline streets)
     for (const f of back ? [e, back] : [e]) {
-      if (f.to.shape) continue;
+      if (f.to.shape || stub) continue;
       const left = back ? Math.max(0, f.lanes[0] - 1.8) : -f.half;
-      across(f, f.len - 0.35, left + 0.1, f.half - 0.1, 0.45, WHITE);
+      bars.push({ f, o0: left + 0.1, o1: f.half - 0.1, zebra: f === e ? zTo : zFrom });
     }
-
-    // Continental crosswalks curb to curb, between the stop lines and the intersections at both ends
-    if (!e.from.shape) across(e, -CROSSWALK / 2, -e.half, e.half, CROSSWALK - 0.3, WHITE, 1.2, 0.5);
-    if (!e.to.shape) across(e, e.len + CROSSWALK / 2, -e.half, e.half, CROSSWALK - 0.3, WHITE, 1.2, 0.5);
 
     for (const [end, node] of [[0, e.from], [1, e.to]] as const) {
       if (!node.shape) continue;
@@ -212,10 +227,30 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
   let zebras = 0;
   for (const c of placeCrossings(GEO.crossings, network.paintEdges)) {
     if (c.kind === 0 || c.raw < ZEBRA_CLEAR || c.raw > c.edge.len - ZEBRA_CLEAR || unpainted(c.x, c.z)) continue;
-    across(c.edge, c.s, -c.edge.half, c.edge.half, CROSSWALK - 0.3, WHITE, 1.2, 0.5);
+    zebra(c.edge, c.s, c.s < 0 ? -1 : c.s > c.edge.len ? 1 : 0);
     zebras++;
   }
-  console.info(`[roads] ${zebras} zebras at the mapped crossings`);
+  // (continental: 60 cm bars 60 cm apart, curb to curb)
+  const { painted, of } = mergeZebras(zebraList, network.paintEdges);
+  for (const zb of painted) {
+    strip(zb.x - zb.ux * zb.half, zb.z - zb.uz * zb.half, zb.x + zb.ux * zb.half, zb.z + zb.uz * zb.half, zb.w, WHITE, 1.2, 0.5, 0, 1, zb.e);
+  }
+  // each bar as far out from its zebra as it was from its own (1.6 m, middle to middle) and square with it, across
+  // the lanes it stood across (a bar's stop line is never a shape node: its zebra was laid, though maybe left out)
+  for (const { f, o0, o1, zebra: i } of bars) {
+    const was = zebraList[i], now = of[i] >= 0 ? painted[of[i]] : null;
+    if (!now) {
+      across(f, f.len - 0.35, o0, o1, 0.45, WHITE);
+      continue;
+    }
+    // (out: square to the zebra, the way the bar's own zebra faced out of its junction)
+    const out = now.ux * was.oz - now.uz * was.ox < 0 ? -1 : 1, back = (CROSSWALK / 2 + 0.35) * out;
+    const ax = -now.uz * back, az = now.ux * back;
+    const [px, pz] = at(f, f.len - 0.35, o0), [qx, qz] = at(f, f.len - 0.35, o1);
+    const tp = (px - now.x) * now.ux + (pz - now.z) * now.uz, tq = (qx - now.x) * now.ux + (qz - now.z) * now.uz;
+    strip(now.x + now.ux * tp + ax, now.z + now.uz * tp + az, now.x + now.ux * tq + ax, now.z + now.uz * tq + az, 0.45, WHITE, 1, 1, 0, 1, f);
+  }
+  console.info(`[roads] ${zebras} zebras at the mapped crossings; ${painted.length} crosswalks painted of ${zebraList.length} (the halves of one crossing as one)`);
 
   // At a simple bend, corresponding offset lines meet at a bounded miter, without an intersection-sized gap.
   for (const roadsAtBend of bends.values()) {
@@ -288,12 +323,31 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
   }
 
   // Topes (topes.ts: OpenStreetMap's, and a third of the two-way residential streets' where none is mapped near): a
-  // low rounded hump curb to curb (cosine profile along the street). uv.x: metres across the street (the stripes)
+  // low rounded hump curb to curb (cosine profile along the street), or rows of yellow boyas. uv.x: metres across the
+  // street (the stripes; a boya all yellow)
   const tPos: number[] = [];
   const tUv: number[] = [];
   const tIdx: number[] = [];
   const topes = planTopes(network.paintEdges, GEO.topes);
+  const sites: number[] = [];
   for (const t of topes) {
+    if (t.boyas) {
+      sites.length = 0;
+      boyaSites(t, sites);
+      for (let i = 0; i + 1 < sites.length; i += 2) {
+        const bx = sites[i], bz = sites[i + 1], top = tPos.length / 3;
+        tPos.push(bx, HEIGHT + BOYA_H, bz);
+        tUv.push(0.25, 0);
+        for (let j = 0; j < BOYA_SIDES; j++) {
+          const a = (j / BOYA_SIDES) * Math.PI * 2;
+          tPos.push(bx + Math.cos(a) * BOYA_R, HEIGHT, bz + Math.sin(a) * BOYA_R);
+          tUv.push(0.25, 0);
+          // (wound to face up and out: counter-clockwise seen from above)
+          tIdx.push(top, top + 1 + ((j + 1) % BOYA_SIDES), top + 1 + j);
+        }
+      }
+      continue;
+    }
     const base = tPos.length / 3;
     for (let k = 0; k <= TOPE_SEGS; k++) {
       const u = (k / TOPE_SEGS - 0.5) * TOPE_LEN;
@@ -316,7 +370,7 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
     const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.75 });
     // 50 cm stripes, the yellow worn a little darker
     mat.colorNode = mix(color(0xd9a520), color(0x1c1c1a), step(0.5, fract(uv().x.div(1.0)))).mul(float(0.92));
-    console.info(`[roads] ${topes.length} topes (${topes.filter((t) => t.mapped).length} mapped)`);
+    console.info(`[roads] ${topes.length} topes (${topes.filter((t) => t.mapped).length} mapped, ${topes.filter((t) => t.boyas).length} of boyas)`);
     if (streamer) {
       // (shaded by the bump's own normals; the worker tilts its top with the street's slope)
       tg.computeVertexNormals();

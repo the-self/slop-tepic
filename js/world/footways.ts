@@ -9,6 +9,7 @@ import { GEO } from './city-geodata.js';
 import { blockAt } from './city-config.ts';
 import { createPavementMaterial } from '../render/tsl-materials.ts';
 import { drapeGeometry } from './drape.ts';
+import { cutDeckHoles } from './river-channels.ts';
 import { LA_LOMA } from './la-loma-plan.ts';
 import type { TileStreamer } from './streaming.ts';
 
@@ -57,10 +58,10 @@ function buildFootways(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
   geometry.setIndex(index);
   console.info(`[footways] ${FOOTWAYS.length} footways, paths, pedestrian streets & steps`);
   if (streamer) {
-    streamer.addLayer(geometry, createPavementMaterial(), { name: 'Footways' });
+    streamer.addLayer(geometry, createPavementMaterial(), { name: 'Footways', cutHoles: true }); // (opened over the channels & underpasses)
     return null;
   }
-  const mesh = new THREE.Mesh(drapeGeometry(geometry), createPavementMaterial());
+  const mesh = new THREE.Mesh(cutDeckHoles(drapeGeometry(geometry)), createPavementMaterial());
   mesh.name = 'Footways';
   mesh.receiveShadow = true;
   scene.add(mesh);

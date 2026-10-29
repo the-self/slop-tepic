@@ -95,6 +95,32 @@ test('two roadways sunk side by side share one cut: no wall between them, parape
   assert.ok(rims.every((r) => r.az < -3.5 || r.az > 9.5 || r.ax === r.bx || Math.abs(r.ax - r.bx) < 1));
 });
 
+test('two roadways sunk side by side a little apart share one cut, split by a low median, not two walls', () => {
+  // two narrow ones 3.2 m wide (each cut 2.2 m either side of it), 5 m apart centre to centre: 0.6 m of ground between
+  const a = graph(0), b = graph(5);
+  for (const l of [...a.links, ...b.links]) l[3] = 3.2;
+  const both = { nodes: [...a.nodes, ...b.nodes], names: [''], signals: [],
+    links: [...a.links, ...b.links.map((l) => [l[0] + 4, l[1] + 4, ...l.slice(2)])] };
+  const u = createUnderpasses(both);
+  // the strip between them is down in the cut, the beds meeting halfway
+  close(u.offset(50, 2.5), -3, 0.05);
+  close(u.offset(210, 2.5), -3, 0.05);
+  const halfway = u.cuts.flatMap((c) => c.s).filter((p) => p.depth > 1 && p.x > 10 && p.x < 250);
+  assert.ok(halfway.every((p) => Math.abs(p.half + Math.max(...p.pad) - 2.5) < 0.05));
+  // no wall stands between them; the median does, 0.8 m high over the bed, its run handed back for a collider
+  const walls = [], tops = [];
+  const rims = u.meshData((p, q, r, s, n) => {
+    const quad = [p, q, r, s];
+    if (!quad.every((v) => v[0] > 10 && v[0] < 90 && v[2] > 0.5 && v[2] < 4.5)) return;
+    if (n[1] === 0) walls.push(quad);
+    else if (n[1] === 1) tops.push(quad);
+  }, () => {});
+  assert.equal(walls.length, 0);
+  assert.ok(tops.length > 0);
+  for (const q of tops) for (const [x, y] of q) close(y, -(x * 6) / 100 + 0.8, 0.01);
+  assert.ok(rims.some((r) => r.depth > 1 && Math.abs(r.az - 2.5) < 0.05));
+});
+
 test("Tepic: Insurgentes runs down under Av. México at grade, and the streets by the 2 de Agosto viaduct stay on the ground", () => {
   const rg = GEO.roadGraph;
   const named = (name) => rg.links.filter((l) => rg.names[l[2]] === name);

@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { GEO } from './city-geodata.js';
-import { groundHeight, landHeight, decks, underpasses } from './ground.ts';
+import { groundHeight, gradeHeight, landHeight, decks, underpasses, DECK_OPEN as OPEN, DECK_SLAB as SLAB } from './ground.ts';
 import { drapeGeometry } from './drape.ts';
 import { createRoadSurfaceMaterial, createBridgeConcreteMaterial, createTrackBedMaterial, createUnderpassEarthMaterial } from '../render/tsl-materials.ts';
 import type { Collider } from './buildings.ts';
@@ -18,8 +18,6 @@ import { RAIL_GAUGE as GAUGE, RAIL_BED_TOP as BED_TOP, RAIL_H } from './railway.
 // set flush into the road where it crosses one at grade.
 // Everything is built flat (y = lift over the ground) and laid on the town's slopes like the other ground layers.
 
-const OPEN = 2.5; // m: from here up a deck stands on piers (below it its walls reach the ground)
-const SLAB = 1.1; // m: the deck's depth under its road
 const PARAPET = 0.6; // m: a deck this far up gets parapets
 const PARAPET_H = 0.9;
 const PARAPET_T = 0.3;
@@ -428,7 +426,8 @@ function buildBridges(scene: THREE.Scene): { group: THREE.Group; colliders: Coll
   if (underpasses) {
     const rims = underpasses.meshData((a, b, c, d, n) => { concrete.quad(a, b, c, d, n); }, (a, b, c, d, n) => { asphalt.quad(a, b, c, d, n); });
     for (const r of rims) {
-      const g = groundHeight((r.ax + r.bx) / 2, (r.az + r.bz) / 2);
+      // (a median's foot down in the cut, under the street even where the cut is roofed)
+      const g = gradeHeight((r.ax + r.bx) / 2, (r.az + r.bz) / 2) - r.depth;
       wallCollider(r.ax, r.az, r.bx, r.bz, 0, PARAPET_T / 2 + 0.05, g - 0.2, g + PARAPET_H);
     }
   }

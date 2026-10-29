@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { log, ringArea, bbox, centroid, rdp, rdpRing, extractBlocks, ringCells, traceOutline, clearCapsule, minAreaRect, decodePNG, createRouteMatcher, houseAt } from './tepic-lib.mjs';
 import { BUILDING_OVERRIDES } from '../js/world/building-overrides.ts';
 import { STOREFRONTS } from '../js/world/storefronts/index.ts';
+import { cyclewayRuns } from '../js/world/medians.ts';
 
 const DATA = process.env.GEO_DATA || fileURLToPath(new URL('data/tepic/', import.meta.url));
 const OUT = process.argv[2] || fileURLToPath(new URL('../js/world/city-geodata.js', import.meta.url));
@@ -1588,7 +1589,29 @@ const storeyTally = { overture: 0, osm: 0, noHouse: 0 };
     }
     return false;
   };
-  let read = 0, small = 0, outside = 0, squeezed = 0, onCanal = 0, onLot = 0, hallsOnLots = 0, bigBoxes = 0;
+  // The Libramiento's camellón between its two carriageways (js/world/medians.ts), where the Parque Lineal and its
+  // ciclovía run nearly the whole way round the south of the city: someone who knows the place says no house stands in
+  // it (Overture has a few, out west), and the game plants it only where it is clear. In 20 m cells: whether (x, z) is
+  // a metre or more inside its curbs
+  const MC = 20;
+  const median = new Map();
+  for (const p of cyclewayRuns(roadLines.map((r) => [r.name, r.w, r.dir, r.lanes, 0, flat(r.pts)])).flat()) {
+    const k = `${Math.floor(p.x / MC)},${Math.floor(p.z / MC)}`;
+    if (!median.has(k)) median.set(k, []);
+    median.get(k).push(p);
+  }
+  const inMedian = (x, z) => {
+    for (let ix = Math.floor(x / MC) - 1; ix <= Math.floor(x / MC) + 1; ix++) {
+      for (let iz = Math.floor(z / MC) - 1; iz <= Math.floor(z / MC) + 1; iz++) {
+        for (const p of median.get(`${ix},${iz}`) || []) {
+          // (the run's points are 4 m apart: within 2.5 m of one along it, inside its half width across)
+          if (Math.abs((x - p.x) * p.tx + (z - p.z) * p.tz) < 2.5 && Math.abs((z - p.z) * p.tx - (x - p.x) * p.tz) < p.half - 1) return true;
+        }
+      }
+    }
+    return false;
+  };
+  let read = 0, small = 0, outside = 0, squeezed = 0, onCanal = 0, onMedian = 0, onLot = 0, hallsOnLots = 0, bigBoxes = 0;
   if (fs.existsSync(file)) {
     const text = fs.readFileSync(file, 'utf8');
     let start = 0;
@@ -1634,6 +1657,7 @@ const storeyTally = { overture: 0, osm: 0, noHouse: 0 };
       if (!ok || w < 3 || d < 3) { squeezed++; continue; }
       const block = byLab.get(labAt(cx, cz));
       if (block && !block.rural && block.park >= 0.6 && onChannel(cx, cz, w, d, cs, sn)) { onCanal++; continue; }
+      if (inMedian(cx, cz)) { onMedian++; continue; }
       // Front: the side with the nearest roadway straight out from its middle (w, e, n, s of the house's own frame)
       const outs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
       let front = 0, bestD = Infinity;
@@ -1718,7 +1742,7 @@ const storeyTally = { overture: 0, osm: 0, noHouse: 0 };
     }
     log(`storeys: ${floorsMapped.reduce((s2, v) => s2 + v, 0)} houses as mapped (${storeyTally.overture} of OpenStreetMap's through Overture, ${storeyTally.osm} matched by their footprint), ${storeyTally.noHouse} mapped on no house, the rest guessed by size & place`);
   }
-  log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets, ${onCanal} on a canal through green, ${onLot} in a car park), ${bigBoxes} big boxes (${hallsOnLots} on a mapped car park)`);
+  log(`houses: ${houses.length / HS} built of ${read} Overture footprints (${small} too small or large, ${outside} off the blocks, ${squeezed} squeezed out by the streets, ${onCanal} on a canal through green, ${onMedian} in the Libramiento's camellón, ${onLot} in a car park), ${bigBoxes} big boxes (${hallsOnLots} on a mapped car park)`);
 }
 
 // The houses in 20 m cells: whether (x, z) lies in one, `pad` m round it (no driveway or wall through a building)

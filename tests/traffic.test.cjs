@@ -755,7 +755,7 @@ function roadHarness({ pickups, lanes = [1.8], lane = 0, half = 4.55 } = {}) {
     './junctions.ts': { enter() {}, leave() {}, mayEnter: () => true, signalAhead: () => 0 },
     './pickups.ts': curb ?? { curbBrake: () => 0, curbside() {} },
     './crossings.ts': { crossingBrake: () => 0 },
-    './topes.ts': { topeCap: () => Infinity },
+    './topes.ts': { topeCap: () => Infinity, topeJolt: () => {} },
     './rail-crossings.ts': { railBrake: () => 0, railCap: () => Infinity }
   });
   const edge = { len: 600, lanes, half, occ: lanes.map(() => []), to: {}, sx: 0, sz: 0, dx: 0, dz: 1, rx: -1, rz: 0, stops: [] };

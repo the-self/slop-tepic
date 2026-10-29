@@ -161,6 +161,8 @@ export interface CarEntity extends EntityBase, GroundTilt {
   vy: number; // m/s
   flying: boolean;
   lastCollisionSpark: CollisionSpark | null;
+  /** Its axles over a tope's hump last frame (bit 0 the front, 1 the rear: car-drive.ts topeHit) */
+  onTope?: number;
   steerAngle: number; // rad
   zFront: number; // m, its nose ahead of its origin
   spec: DriveSpec;

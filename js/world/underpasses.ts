@@ -1,7 +1,9 @@
 // js/world/underpasses.ts
 // The underpasses: the roads sunk under others (city-geodata.js roadGraph links whose lifts go below 0: Insurgentes
 // under Av. México, the Nodo Vial de la Cruz), each down in a cut between concrete walls, open to the sky along its
-// ramps and roofed where its way is a tunnel (OpenStreetMap tunnel=yes); the streets over it stay at grade.
+// ramps and roofed where its way is a tunnel (OpenStreetMap tunnel=yes); the streets over it stay at grade. Two
+// carriageways sunk side by side (OSM maps each way of a divided road on its own) share one cut: its bed runs across
+// the strip between them, down the middle of which stands a low median barrier, not two walls the cut's full depth.
 // Like waterways.ts for the rivers, this module is their shape: the ground they carve (offset, for everyone standing or
 // driving down in one), the holes they open in the road deck (holes) and their walls', beds' and roofs' quads
 // (meshData, bridges.ts draws them), all heights over the ground at grade under them (drape.ts lays them on it).
@@ -11,8 +13,9 @@ import type { GraphLink, RoadGraph } from './city-geodata.js';
 import type { HeightFn } from './lattice.ts';
 
 /** A cross-section along a cut: centre, unit normal (left of the way along), metres along it, half its width wall to
- *  wall (m), its bed's depth under the ground at grade (m, >= 0), and whether the piece from it to the next is roofed
- *  (a tunnel). */
+ *  wall (m), its bed's depth under the ground at grade (m, >= 0), whether the piece from it to the next is roofed
+ *  (a tunnel), and how far (m, left and right) its bed runs on past its half width, to the middle of the median it
+ *  shares with a cut beside it (0 for a wall). */
 export interface CutSection {
   x: number;
   z: number;
@@ -22,6 +25,7 @@ export interface CutSection {
   half: number;
   depth: number;
   roof: boolean;
+  pad: [number, number];
 }
 /** A cut: its cross-sections along the sunk links it carries end to end, the widest's half width (m), and whether each
  *  end runs on into another cut (a fork: no wall across it). */
@@ -34,12 +38,14 @@ export interface Cut {
 export type CutP3 = [number, number, number];
 /** A quad a-b-c-d (corners in order round it) facing n */
 export type QuadSink = (a: CutP3, b: CutP3, c: CutP3, d: CutP3, n: CutP3) => void;
-/** A parapet along a cut's rim, as its centreline from (ax, az) to (bx, bz) (m) */
+/** A parapet along a cut's rim, or a median barrier down in it, as its centreline from (ax, az) to (bx, bz) (m), its
+ *  foot `depth` m under the ground at grade (0 on the rim) */
 export interface RimWall {
   ax: number;
   az: number;
   bx: number;
   bz: number;
+  depth: number;
 }
 export interface Underpasses {
   cuts: Cut[];
@@ -47,7 +53,8 @@ export interface Underpasses {
   offset: (x: number, z: number, fromY?: number) => number;
   /** The holes in the road deck over the open cuts, as flat triangles x0, z0, x1, z1, x2, z2. */
   holes: () => number[];
-  /** The cuts' quads: the walls, parapets & roofs in `concrete`, the beds in `asphalt`; the parapets' runs returned. */
+  /** The cuts' quads: the walls, parapets, medians & roofs in `concrete`, the beds in `asphalt`; the parapets' and
+   *  medians' runs returned. */
   meshData: (concrete: QuadSink, asphalt: QuadSink) => RimWall[];
 }
 
@@ -60,6 +67,12 @@ const PARAPET_H = 0.9;
 const PARAPET_T = 0.25;
 const OPEN = 0.02; // m deep, a cut is opened (shallower, the ramp is at grade)
 const CELL = 10; // m, the cells of the lookup of the cuts' pieces
+const MEDIAN_GAP = 5; // m: two cuts closer than this side by side are one, split by a median barrier
+// the barrier down a shared cut's middle, New Jersey-like (m): its height, and half its top's and its foot's widths
+const MEDIAN_H = 0.8;
+const MEDIAN_TOP = 0.1;
+const MEDIAN_FOOT = 0.3;
+const FACE_OUT = MEDIAN_H / Math.hypot(MEDIAN_H, MEDIAN_FOOT - MEDIAN_TOP), FACE_UP = (MEDIAN_FOOT - MEDIAN_TOP) / Math.hypot(MEDIAN_H, MEDIAN_FOOT - MEDIAN_TOP); // its sloping face's normal
 
 type Pt = [x: number, z: number];
 
@@ -156,7 +169,7 @@ function sections(chain: [SunkLine, boolean][]): Cut {
     const [px, pz] = pts[Math.max(0, i - 1)], [qx, qz] = pts[Math.min(pts.length - 1, i + 1)];
     const tl = Math.hypot(qx - px, qz - pz) || 1;
     if (i > 0) along += Math.hypot(x - pts[i - 1][0], z - pts[i - 1][1]);
-    s.push({ x, z, nx: -(qz - pz) / tl, nz: (qx - px) / tl, along, half: halves[i], depth: depth[i], roof: roof[i] });
+    s.push({ x, z, nx: -(qz - pz) / tl, nz: (qx - px) / tl, along, half: halves[i], depth: depth[i], roof: roof[i], pad: [0, 0] });
   }
   return { half, s, joined: [false, false] };
 }
@@ -179,7 +192,7 @@ function createUnderpasses(rg: RoadGraph | null | undefined, { grade = () => 0 }
       if (s[i].depth <= OPEN && s[i + 1].depth <= OPEN) continue;
       const id = pieces.length / 2;
       pieces.push(c, i);
-      const a = s[i], b = s[i + 1], r = half + 0.5;
+      const a = s[i], b = s[i + 1], r = half + MEDIAN_GAP / 2 + 0.5;
       const i0 = Math.floor((Math.min(a.x, b.x) - r) / CELL), i1 = Math.floor((Math.max(a.x, b.x) + r) / CELL);
       const j0 = Math.floor((Math.min(a.z, b.z) - r) / CELL), j1 = Math.floor((Math.max(a.z, b.z) + r) / CELL);
       for (let j = j0; j <= j1; j++) for (let ii = i0; ii <= i1; ii++) {
@@ -215,6 +228,30 @@ function createUnderpasses(rg: RoadGraph | null | undefined, { grade = () => 0 }
     const first = cut.s[0], last = cut.s[cut.s.length - 1];
     cut.joined = [first.depth > OPEN && inOther(first.x, first.z, cut, first.along), last.depth > OPEN && inOther(last.x, last.z, cut, last.along)];
   }
+  // Where another cut runs beside one within MEDIAN_GAP (Insurgentes' two ways under Av. México, 0.6 m apart), each
+  // one's bed runs on to the middle of the strip between them (found to a couple of cm), where the median stands; where they
+  // overlap they are one already (no wall: see meshData)
+  for (const cut of cuts) {
+    for (const c of cut.s) {
+      if (c.depth <= OPEN) continue;
+      for (const k of [0, 1]) {
+        const side = k ? -1 : 1;
+        const past = (d: number) => inOther(c.x + c.nx * (c.half + d) * side, c.z + c.nz * (c.half + d) * side, cut, c.along);
+        if (past(0.1)) continue;
+        let lo = 0.1, hi = 0;
+        for (let d = 0.5; d <= MEDIAN_GAP && !hi; d += 0.5) if (past(d)) hi = d;
+        if (!hi) continue;
+        for (let n = 0; n < 5; n++) {
+          const m = (lo + hi) / 2;
+          if (past(m)) hi = m;
+          else lo = m;
+        }
+        c.pad[k] = hi / 2 + 0.02; // (a hair past halfway: the two beds overlap under the median's foot, no seam between)
+      }
+    }
+  }
+  // how far (m) a cross-section's bed reaches to its left (side 1) or right (-1)
+  const edge = (c: CutSection, side: number) => c.half + c.pad[side > 0 ? 0 : 1];
 
   /**
    * How far (m, <= 0) the cuts carve the ground at (x, z): their beds, 0 off them. Under a roof only for a body coming
@@ -233,7 +270,9 @@ function createUnderpasses(rg: RoadGraph | null | undefined, { grade = () => 0 }
       if (raw < 0 && !(inCut(cut, i - 1) ? along(cut, i - 1, x, z) > 1 : cut.joined[0])) continue;
       if (raw > 1 && !(inCut(cut, i + 1) ? along(cut, i + 1, x, z) < 0 : cut.joined[1])) continue;
       const t = Math.max(0, Math.min(1, raw));
-      if (Math.hypot(x - a.x - (b.x - a.x) * t, z - a.z - (b.z - a.z) * t) >= halfAt(cut, i, t)) continue;
+      const ox = x - a.x - (b.x - a.x) * t, oz = z - a.z - (b.z - a.z) * t;
+      const k = ox * a.nx + oz * a.nz >= 0 ? 0 : 1; // (left of it, or right)
+      if (Math.hypot(ox, oz) >= halfAt(cut, i, t) + a.pad[k] + (b.pad[k] - a.pad[k]) * t) continue;
       if (a.roof && !(fromY !== undefined && fromY < grade(x, z) - UNDER)) continue;
       const depth = a.depth + (b.depth - a.depth) * t;
       if (-depth < best) best = -depth;
@@ -248,9 +287,9 @@ function createUnderpasses(rg: RoadGraph | null | undefined, { grade = () => 0 }
       for (let i = 0; i + 1 < s.length; i++) {
         const a = s[i], b = s[i + 1];
         if (a.roof || (a.depth <= OPEN && b.depth <= OPEN)) continue;
-        const ha = a.half, hb = b.half;
-        const alx = a.x + a.nx * ha, alz = a.z + a.nz * ha, arx = a.x - a.nx * ha, arz = a.z - a.nz * ha;
-        const blx = b.x + b.nx * hb, blz = b.z + b.nz * hb, brx = b.x - b.nx * hb, brz = b.z - b.nz * hb;
+        const la = edge(a, 1), ra = edge(a, -1), lb = edge(b, 1), rb = edge(b, -1);
+        const alx = a.x + a.nx * la, alz = a.z + a.nz * la, arx = a.x - a.nx * ra, arz = a.z - a.nz * ra;
+        const blx = b.x + b.nx * lb, blz = b.z + b.nz * lb, brx = b.x - b.nx * rb, brz = b.z - b.nz * rb;
         out.push(alx, alz, blx, blz, brx, brz, alx, alz, brx, brz, arx, arz);
       }
     }
@@ -259,16 +298,19 @@ function createUnderpasses(rg: RoadGraph | null | undefined, { grade = () => 0 }
 
   /**
    * The cuts' quads, heights over the ground at grade: their walls (from the bed up to the ground), the parapets along
-   * an open cut's rim from PARAPET m down (and across a tunnel's mouth), the tunnels' roofs seen from inside and their
-   * mouths' faces into `concrete`; the beds into `asphalt`. Returns the parapets' runs (for their colliders).
+   * an open cut's rim from PARAPET m down (and across a tunnel's mouth), the medians down a shared cut, the tunnels'
+   * roofs seen from inside and their mouths' faces into `concrete`; the beds into `asphalt`. Returns the parapets' and
+   * the medians' runs (for their colliders).
    */
   function meshData(concrete: QuadSink, asphalt: QuadSink): RimWall[] {
     const rims: RimWall[] = [];
     for (const cut of cuts) {
       const { s } = cut;
-      // a point `o` m left of a cross-section (in shares of its half width with W), `y` m up
+      // a point `o` m left of a cross-section (at its bed's edge on side k with W, `pad` m past it; `inset` m in from
+      // the median on side k with M), `y` m up
       const P = (c: CutSection, o: number, y: number): CutP3 => [c.x + c.nx * o, y, c.z + c.nz * o];
-      const W = (c: CutSection, k: number, y: number, pad = 0): CutP3 => P(c, (c.half + pad) * k, y);
+      const W = (c: CutSection, k: number, y: number, pad = 0): CutP3 => P(c, (edge(c, k) + pad) * k, y);
+      const M = (c: CutSection, k: number, inset: number, y: number): CutP3 => P(c, (edge(c, k) - inset) * k, y);
       for (let i = 0; i + 1 < s.length; i++) {
         const a = s[i], b = s[i + 1];
         if (a.depth <= OPEN && b.depth <= OPEN) continue;
@@ -280,7 +322,17 @@ function createUnderpasses(rg: RoadGraph | null | undefined, { grade = () => 0 }
         const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2, mnx = (a.nx + b.nx) / 2, mnz = (a.nz + b.nz) / 2;
         const mh = (a.half + b.half) / 2 + 0.1;
         const open = (side: number) => inOther(mx + mnx * mh * side, mz + mnz * mh * side, cut, a.along);
-        const walled = [!open(1), !open(-1)];
+        const median = [a.pad[0] > 0 && b.pad[0] > 0, a.pad[1] > 0 && b.pad[1] > 0];
+        const walled = [!open(1) && !median[0], !open(-1) && !median[1]];
+        // this cut's half of the median (the cut beside it draws the other): its top, and its face sloping out to its foot
+        for (const side of [1, -1]) {
+          if (!median[side > 0 ? 0 : 1]) continue;
+          concrete(M(a, side, 0, ya + MEDIAN_H), M(b, side, 0, yb + MEDIAN_H), M(b, side, MEDIAN_TOP, yb + MEDIAN_H), M(a, side, MEDIAN_TOP, ya + MEDIAN_H), [0, 1, 0]);
+          concrete(M(a, side, MEDIAN_FOOT, ya), M(a, side, MEDIAN_TOP, ya + MEDIAN_H), M(b, side, MEDIAN_TOP, yb + MEDIAN_H), M(b, side, MEDIAN_FOOT, yb),
+            [-lx * side * FACE_OUT, FACE_UP, -lz * side * FACE_OUT]);
+          const [ax, , az] = M(a, side, 0, 0), [bx, , bz] = M(b, side, 0, 0);
+          rims.push({ ax, az, bx, bz, depth: (a.depth + b.depth) / 2 });
+        }
         if (walled[0]) concrete(W(a, 1, ya), W(a, 1, 0), W(b, 1, 0), W(b, 1, yb), [-lx, 0, -lz]);
         if (walled[1]) concrete(W(b, -1, yb), W(b, -1, 0), W(a, -1, 0), W(a, -1, ya), [lx, 0, lz]);
         if (a.roof) {
@@ -295,22 +347,22 @@ function createUnderpasses(rg: RoadGraph | null | undefined, { grade = () => 0 }
           concrete(W(a, side, 0), W(a, side, PARAPET_H), W(b, side, PARAPET_H), W(b, side, 0), [-out[0], 0, -out[2]]);
           concrete(W(a, side, PARAPET_H), W(a, side, PARAPET_H, PARAPET_T), W(b, side, PARAPET_H, PARAPET_T), W(b, side, PARAPET_H), [0, 1, 0]);
           const [ax, , az] = W(a, side, 0, PARAPET_T / 2), [bx, , bz] = W(b, side, 0, PARAPET_T / 2);
-          rims.push({ ax, az, bx, bz });
+          rims.push({ ax, az, bx, bz, depth: 0 });
         }
       }
       // A tunnel's mouth: the roof's face from its underside up to the ground, facing the open cut, with a parapet along
       // its top; the cut's square ends where it stops still down (a wall from its bed up), but where it runs on into
       // another cut
       for (let i = 0; i < s.length; i++) {
-        const c = s[i], half = c.half;
+        const c = s[i], left = edge(c, 1), right = edge(c, -1);
         if (c.depth <= OPEN || (i === 0 && cut.joined[0]) || (i === s.length - 1 && cut.joined[1])) continue;
         const before = i > 0 ? s[i - 1].roof : null, here = i + 1 < s.length ? c.roof : null;
         // facing: +1 the open cut lies ahead of the section (along), -1 behind it
         const [ux, uz] = [c.nz, -c.nx];
         const face = (y0: number, facing: number) => {
           const n: CutP3 = [ux * facing, 0, uz * facing];
-          if (facing > 0) concrete(P(c, half, y0), P(c, half, 0), P(c, -half, 0), P(c, -half, y0), n);
-          else concrete(P(c, -half, y0), P(c, -half, 0), P(c, half, 0), P(c, half, y0), n);
+          if (facing > 0) concrete(P(c, left, y0), P(c, left, 0), P(c, -right, 0), P(c, -right, y0), n);
+          else concrete(P(c, -right, y0), P(c, -right, 0), P(c, left, 0), P(c, left, y0), n);
         };
         if (before === null || here === null) face(-c.depth, before === null ? 1 : -1);
         else if (before !== here) {
@@ -319,11 +371,11 @@ function createUnderpasses(rg: RoadGraph | null | undefined, { grade = () => 0 }
           if (c.depth >= PARAPET) {
             const back = facing * PARAPET_T;
             const q = (o: number, w: number, y: number): CutP3 => [c.x + c.nx * o - ux * w, y, c.z + c.nz * o - uz * w];
-            concrete(q(half, 0, 0), q(half, 0, PARAPET_H), q(-half, 0, PARAPET_H), q(-half, 0, 0), [ux * facing, 0, uz * facing]);
-            concrete(q(-half, back, 0), q(-half, back, PARAPET_H), q(half, back, PARAPET_H), q(half, back, 0), [-ux * facing, 0, -uz * facing]);
-            concrete(q(half, 0, PARAPET_H), q(half, back, PARAPET_H), q(-half, back, PARAPET_H), q(-half, 0, PARAPET_H), [0, 1, 0]);
+            concrete(q(left, 0, 0), q(left, 0, PARAPET_H), q(-right, 0, PARAPET_H), q(-right, 0, 0), [ux * facing, 0, uz * facing]);
+            concrete(q(-right, back, 0), q(-right, back, PARAPET_H), q(left, back, PARAPET_H), q(left, back, 0), [-ux * facing, 0, -uz * facing]);
+            concrete(q(left, 0, PARAPET_H), q(left, back, PARAPET_H), q(-right, back, PARAPET_H), q(-right, 0, PARAPET_H), [0, 1, 0]);
             const mx = c.x - ux * back / 2, mz = c.z - uz * back / 2;
-            rims.push({ ax: mx + c.nx * half, az: mz + c.nz * half, bx: mx - c.nx * half, bz: mz - c.nz * half });
+            rims.push({ ax: mx + c.nx * left, az: mz + c.nz * left, bx: mx - c.nx * right, bz: mz - c.nz * right, depth: 0 });
           }
         }
       }

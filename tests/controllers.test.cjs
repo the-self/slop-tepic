@@ -70,6 +70,7 @@ function keyboardHarness(nyc = {}) {
     'js/actors/vehicles/car-files.ts': { loadCarFiles() {}, onCarFile() {}, carFile() {} },
     'js/sim/pedestrians.ts': {},
     'js/world/park-floor.ts': { isRaisedPark: () => false, parkFloorAt: () => 0 },
+    'js/world/topes.ts': { TOPE_H: 0.12 },
     // (the player's body loads in the browser; here the crowd's person stands in for it)
     'js/actors/person-body.ts': { loadPersonBody: () => new Promise(() => {}) },
     'js/actors/vehicle-lights.ts': {},

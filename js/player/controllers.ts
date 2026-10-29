@@ -91,6 +91,8 @@ class ThirdPersonControllerManager {
   walkDeckAt?: ((x: number, z: number, over: number) => number) | null;
   /** A driveway's ramp over the curb at (x, z) (m over the town's floor, -1 none: world/car-parks.ts rampAt) */
   rampAt?: ((x: number, z: number) => number) | null;
+  /** A tope's hump over the street at (x, z) (m, 0 none: world/topes.ts topeBumps) */
+  bumpAt?: ((x: number, z: number) => number) | null;
   _physicsFocus?: { x: number; y: number; z: number };
   _bodyBounds?: { x: number; z: number };
   _wall?: { type: 'building' };
@@ -238,6 +240,10 @@ class ThirdPersonControllerManager {
   // The driveways where the curb drops in a ramp (world/car-parks.ts): walked & driven up instead of stepped onto
   setCurbRamps(rampAt: ((x: number, z: number) => number) | null): void {
     this.rampAt = rampAt;
+  }
+  // The topes' humps across the streets (world/topes.ts topeBumps): the car rides over them, the walker steps over
+  setBumps(bumpAt: ((x: number, z: number) => number) | null): void {
+    this.bumpAt = bumpAt;
   }
   keepOffHills(entity: PlayerEntity, prevX: number, prevZ: number): void {
     Ground.keepOffHills(this, entity, prevX, prevZ);

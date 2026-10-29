@@ -18,6 +18,8 @@ test('Tepic geodata builds with default paths in a checkout containing spaces an
     fs.symlinkSync(path.join(root, 'tools/data'), path.join(dir, 'tools/data'), 'dir');
     fs.cpSync(path.join(root, 'js/world/storefronts'), path.join(dir, 'js/world/storefronts'), { recursive: true });
     fs.copyFileSync(path.join(root, 'js/world/building-overrides.ts'), path.join(dir, 'js/world/building-overrides.ts'));
+    // (the Libramiento's camellón, which no house stands in, and what it imports)
+    for (const name of ['medians.ts', 'hash.ts']) fs.copyFileSync(path.join(root, 'js/world', name), path.join(dir, 'js/world', name));
     const env = { ...process.env };
     delete env.GEO_DATA;
     const result = spawnSync(process.execPath, ['--max-old-space-size=8192', path.join(dir, 'tools/build-tepic-geodata.mjs')], {

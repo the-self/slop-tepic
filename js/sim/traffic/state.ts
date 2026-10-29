@@ -302,7 +302,8 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     e.lefts = 0; // and to the left
     e.crossings = []; // the street crossings along it (crossings.ts)
     e.stops = []; // the bus stops by its right curb (pickups.ts)
-    e.topes = []; // the topes across it (topes.ts)
+    e.topes = []; // the topes across it (topes.ts), and the speed each is taken at
+    e.topeOver = [];
     e.rails = []; // the level crossings across it (rail-crossings.ts)
   }
   // The topes, the paint's (world/topes.ts): the traffic slows down for each

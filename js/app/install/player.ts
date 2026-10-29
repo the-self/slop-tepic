@@ -3,6 +3,8 @@
 // and the bodies that fall in it; the cameras and the free aim. And what the world and the player report to the bus:
 // their crashes, someone come to rest, a CFE line down.
 import { CITY, TELEPORT_LOCATIONS } from '../../world/city-config.ts';
+import { GEO } from '../../world/city-geodata.js';
+import { planTopes, topeBumps } from '../../world/topes.ts';
 import { ThirdPersonControllerManager } from '../../player/controllers.ts';
 import { Stamina } from '../../player/stats.ts';
 import { CameraSystem } from '../../player/cameras.ts';
@@ -10,7 +12,7 @@ import { AimControl } from '../../player/aim.ts';
 import { createCarPhysics } from '../../player/car-physics.ts';
 import { createRagdolls } from '../../sim/ragdolls.ts';
 import { BloodPools } from '../../sim/blood.ts';
-import { groundHeight, gradeHeight, townHeight, landHeight, deckLift, walkDeckLift, surfaceHeight } from '../../world/ground.ts';
+import { groundHeight, gradeHeight, townHeight, landHeight, deckLift, walkDeckLift, surfaceHeight, inSolidGround } from '../../world/ground.ts';
 import { playerStateKey, restorePlayer } from '../player-state.ts';
 import type { Boot } from './boot.ts';
 import type { CityParts } from '../game.ts';
@@ -23,6 +25,7 @@ export async function installPlayer({ scene, renderer, loading, joltReady, event
   // The ground (world/ground.ts): the town's own slopes and the hills over them (the flat city with ?slopes=0)
   controllers.setTerrain(groundHeight, townHeight, landHeight, deckLift, walkDeckLift); // (and the bridges' decks over it; on foot the footbridges' too)
   controllers.setCurbRamps(carParks.rampAt); // (the car parks' driveways, up over the curb)
+  controllers.setBumps(topeBumps(planTopes(traffic.network.paintEdges, GEO.topes))); // (the topes: the paint's, the traffic's)
   traffic.setHillQuery(gradeHeight); // (the roads' lifts are over the ground at grade: down an underpass, < 0)
   traffic.setSurfaceQuery(surfaceHeight);
   // People, bicycles & hydrants knocked flying bounce off the buildings' walls (sim/mayhem.ts)
@@ -90,8 +93,9 @@ export async function installPlayer({ scene, renderer, loading, joltReady, event
   const aim = new AimControl({ canvas: renderer.domElement, controllers });
   cameras.aim = aim;
   cameras.setGroundQuery(groundHeight); // the chase cameras stay over the ground
-  // ...and in front of the walls between them and the player (what is under 1 m across, a pole, left out)
-  cameras.setObstacleQuery((x, y, z) => controllers.isSolidAt(x, z, 0, y, 1));
+  // ...and in front of the walls between them and the player (what is under 1 m across, a pole, left out), and of the
+  // ground's: an underpass's walls and roof, a bridge's deck (so it never pops up onto the street over the player)
+  cameras.setObstacleQuery((x, y, z) => controllers.isSolidAt(x, z, 0, y, 1) || inSolidGround(x, y, z));
   // The scenic cameras frame the city's own spots (see cameras.ts)
   const T = TELEPORT_LOCATIONS;
   cameras.setScenicAnchors({

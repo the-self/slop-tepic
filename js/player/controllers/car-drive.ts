@@ -6,6 +6,7 @@ import { enginePower } from '../vehicle-damage.ts';
 import { wash } from '../car-blood.ts';
 import { suspensionOf, steerLimit } from '../car-physics.ts';
 import { EJECT_SPEED, FUEL_IDLE, FUEL_BURN } from './constants.ts';
+import { TOPE_H } from '../../world/topes.ts';
 import type { DriveInput, DriveSpec, DriveState } from '../drivetrain.ts';
 import type { CarDamage } from '../vehicle-damage.ts';
 import type { CarBodyDef, CarPhysics, PhysicsVehicle, VehicleOut } from '../car-physics.ts';
@@ -20,6 +21,12 @@ const SLIDE = 0.05; // rad (~3°) of sideways slide before the steering catches 
 const FLAT_PULL = 0.03;
 const FLAT_SINK = 0.18;
 const FLAT_DRAG = 0.9;
+// A tope taken fast (car-drive.ts topeHit): from TOPE_EASY m/s the axle striking it kicks the body up and pitches it,
+// harder the faster, as the springs bottom out on a hump of poured concrete
+const TOPE_EASY = 4; // m/s (~15 km/h): slower, the springs take it
+const TOPE_HEAVE = 0.07; // m/s up per m/s over TOPE_EASY
+const TOPE_PITCH = 0.05; // rad/s per m/s over TOPE_EASY
+const TOPE_MAX = 2.6; // m/s up at most
 
 // The car: a rigid body on its sprung wheels in Jolt Physics (car-physics.ts, set up by app/install/player.ts before
 // the first frame). Before the world's step (stepVehicles): what the traffic did to it since the last one carried over,
@@ -174,6 +181,33 @@ export function followBody(ctl: ThirdPersonControllerManager, ent: CarEntity | C
   return o;
 }
 
+// An axle of car `c` (its body `v`) coming onto a tope's hump (world/topes.ts topeBumps) faster than TOPE_EASY: its
+// body kicked up and pitched, the front throwing the nose up, the rear the tail, and the camera jolted; by a row of
+// boyas less, as much less as they are lower. (The hump is in the ground it rides too, but at 0.5 m between the
+// ground's samples its springs barely feel 12 cm of it)
+function topeHit(ctl: ThirdPersonControllerManager, c: CarEntity, v: PhysicsVehicle): void {
+  const bump = ctl.bumpAt;
+  if (!bump || c.flying) {
+    c.onTope = 0;
+    return;
+  }
+  const sn = Math.sin(c.heading), cs = Math.cos(c.heading), axle = c.halfL * 0.65;
+  // (bit 0 the front axle, 1 the rear)
+  const on = (bump(c.position.x + sn * axle, c.position.z + cs * axle) > 0 ? 1 : 0) | (bump(c.position.x - sn * axle, c.position.z - cs * axle) > 0 ? 2 : 0);
+  const fast = Math.abs(c.speed) - TOPE_EASY, struck = on & ~(c.onTope ?? 0);
+  c.onTope = on;
+  if (!struck || fast <= 0 || !ctl.carPhysics) return;
+  // how high it is: its crest, within half a metre along of the axle that struck it
+  const k = struck & 1 ? 1 : -1;
+  let crest = 0;
+  for (let a = -0.5; a <= 0.5; a += 0.125) crest = Math.max(crest, bump(c.position.x + sn * (axle * k + a), c.position.z + cs * (axle * k + a)));
+  const hard = crest / TOPE_H;
+  // (about its left (cos, 0, -sin): + raises its nose; the rear axle the other way)
+  const pitch = TOPE_PITCH * fast * hard * -k * Math.sign(c.speed);
+  ctl.carPhysics.shove(v, 0, Math.min(TOPE_MAX, TOPE_HEAVE * fast) * hard, 0, cs * pitch, 0, -sn * pitch);
+  c.cameraKick = Math.max(c.cameraKick || 0, Math.min(0.8, (fast / 18) * Math.max(hard, 0.6)));
+}
+
 // After the step: the car's body's pose, speed and wheels read back; a knock the body itself took is a crash
 export function carMoved(ctl: ThirdPersonControllerManager, dt: number, driving: boolean): void {
   const c = ctl.entities.car;
@@ -203,6 +237,7 @@ export function carMoved(ctl: ThirdPersonControllerManager, dt: number, driving:
   }
   // a kerb taken fast, a landing: its springs struck their stops (car-physics.ts strike), a jolt but no crash
   if (o.bump > 0.3) c.cameraKick = Math.max(c.cameraKick || 0, Math.min(0.6, o.bump / 5));
+  topeHit(ctl, c, v);
 
   // the wheels: on their springs, steered, rolling
   const flats = c.damage.flats;
