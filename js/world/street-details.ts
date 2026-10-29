@@ -9,15 +9,15 @@ import { CfeNetwork, cfePoint, cfeHash } from './cfe-network.ts';
 import { mappedTreeSites, clearOfMapped } from './mapped-trees.ts';
 import { lampFinder } from './mapped-lamps.ts';
 import { lotTrees } from './lot-greenery.ts';
-import { campusTrees, inCampus, inCampusBuilding } from './uan-campus.ts';
 import { medianTrees } from './medians.ts';
 import { parkTreeSites, sidewalkBlocks, parkLampSites, medianRuns, onPitch } from './city-grid.ts';
 import { liftAt } from './ground.ts';
 import { surfaceY } from './footways.ts';
 import { LA_LOMA, laLomaKeepsClear, laLomaWoods } from './la-loma-plan.ts';
-import { FORUM } from './forum-plan.ts';
+import { nearPlaceBuilding } from './place-claims.ts';
 import { hashPos } from './hash.ts';
 import { GEO } from './city-geodata.js';
+import type { PlaceClaims } from './place-claims.ts';
 import type { PointXZ, Bounds, CityBlock } from './city-config.ts';
 import type { BreakableProp, PropCollider, PropBody, PropLook } from '../sim/mayhem.ts';
 import type { TreeSite } from './trees.ts';
@@ -174,7 +174,10 @@ function createTrafficSignalLensMaterial(isAvenueHead: boolean, clock: THREE.Uni
 }
 
 // keepClear: lots no tree is planted in ({ contains(x, z) }: the halls of the stores you walk into, the car parks)
-function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x: number, z: number): boolean }[] = []) {
+function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x: number, z: number): boolean }[],
+  places: readonly PlaceClaims[]) {
+  // (the places' buildings run to their curbs, js/places/: no lamp, pole, furniture nor tree against them)
+  const inPlaceBuilding = (x: number, z: number, pad: number) => nearPlaceBuilding(places, x, z, pad);
   const group = new THREE.Group();
   group.name = 'StreetDetails';
 
@@ -278,7 +281,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
 
   // True only when (x, z) is on a non-park, non-median, non-plaza sidewalk with `pad` clearance from all curbs
   const isOnSidewalk = (x: number, z: number, pad = 0.55) => {
-    if (!isOnCurbIsland(x, z, pad) || inCampusBuilding(x, z, pad + 0.3)) return false; // (the UAN's run to their curbs)
+    if (!isOnCurbIsland(x, z, pad) || inPlaceBuilding(x, z, pad + 0.3)) return false; // (the UAN's run to their curbs)
     const b = blockAt(x, z);
     return !(b && b.park > 0.6) && !inPlaza(x, z, 1.0); // (b: on a curb island)
   };
@@ -871,7 +874,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
         const ex = along >= 0 ? bx / lb : ax / la, ez = along >= 0 ? bz / lb : az / la;
         const ox = ax / la + bx / lb, oz = az / la + bz / lb, ol = Math.hypot(ox, oz) || 1;
         const px = v.x + (ox / ol) * t + ex * Math.abs(along), pz = v.z + (oz / ol) * t + ez * Math.abs(along);
-        if (blockAt(px, pz) !== b || !isClearOfPoles(px, pz, 0.8) || inCampusBuilding(px, pz, 0.5)) continue;
+        if (blockAt(px, pz) !== b || !isClearOfPoles(px, pz, 0.8) || inPlaceBuilding(px, pz, 0.5)) continue;
         bollardPositions.push([px, pz]);
       }
     }
@@ -1004,10 +1007,10 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
     t.y = SIDEWALK_Y + 0.012 + liftAt(t.x, t.z);
     treePositions.push(t);
   }
-  // (the UAN's campus planted as its own: uan-campus.ts)
+  // (the places' grounds planted as their own: the UAN's campus, places/uan/plan.ts)
   const yardTrees: TreeSite[] = lotTrees(allBlocks, GEO.houses, { stride: GEO.houseStride || 8, sidewalk: GEO.frame.sidewalk || 2.2, skip: medianBlocks })
-    .filter((t) => !inCampus(t.x, t.z))
-    .concat(campusTrees());
+    .filter((t) => !places.some((c) => c.garden?.grounds(t.x, t.z)))
+    .concat(places.flatMap((c) => c.garden?.trees() ?? []));
   for (const t of yardTrees) {
     t.y = SIDEWALK_Y + 0.012 + liftAt(t.x, t.z);
     treePositions.push(t);
@@ -1017,7 +1020,7 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
   //    off every roadway the traffic drives (city-config.ts onRoadway: the unnamed drives & alleys among them)
   const mappedTrees = mappedTreeSites(GEO.trees, blockAt, liftAt);
   {
-    const kept = new Set(clearOfMapped(treePositions, mappedTrees).filter((t) => !onPitch(t.x, t.z) && !onRoadway(t.x, t.z) && !inCampusBuilding(t.x, t.z, 1.5)));
+    const kept = new Set(clearOfMapped(treePositions, mappedTrees).filter((t) => !onPitch(t.x, t.z) && !onRoadway(t.x, t.z) && !inPlaceBuilding(t.x, t.z, 1.5)));
     const before = treePositions.length;
     const all = treePositions.filter((t) => kept.has(t));
     treePositions.length = 0;
@@ -1074,9 +1077,9 @@ function buildStreetDetails(scene: THREE.Scene, keepClear: readonly { contains(x
 
   // Procedural trees (js/world/trees.ts): species skeletons with leaf-spray cards, one instanced mesh per species, variant &
   // level of detail, each tree's level following the camera
-  // (and the palms on Forum Tepic's sidewalk, forum-plan.ts: inside the mall's lot, kept clear of the others)
+  // (and the places' palms, Forum Tepic's on its sidewalk, places/forum/plan.ts: inside its lot, kept clear of the others)
   const planted = [...(keepClear.length ? treePositions.filter((t) => !keepClear.some((r) => r.contains(t.x, t.z))) : treePositions),
-    ...FORUM.palms.map((t) => ({ ...t, y: liftAt(t.x, t.z) + surfaceY(t.x, t.z), tier: 0 }))];
+    ...places.flatMap((c) => c.palms ?? []).map((t) => ({ ...t, y: liftAt(t.x, t.z) + surfaceY(t.x, t.z), tier: 0 }))];
   const treeField = createTreeField(scene, planted);
   group.add(treeField.group);
   // ...and their trunks stop the player, like the CFE poles (app/city.ts adds both to the player's colliders); those

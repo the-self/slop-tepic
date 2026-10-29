@@ -9,7 +9,6 @@ import { STOREFRONTS } from '../storefronts/index.ts';
 import { signKind, VENUE_KINDS } from '../venues.ts';
 import { LANDMARK_RESERVES } from '../tepic-landmarks.ts';
 import { LA_LOMA_RESERVES } from '../la-loma-plan.ts';
-import { FORUM_RESERVE } from '../forum-plan.ts';
 import { isEnterableStore, storeReserve } from '../store-interiors.ts';
 import { SLOPES, groundHeight, liftAt } from '../ground.ts';
 import { chance, irange, pickW, rand, range, seedDice } from './dice.ts';
@@ -18,8 +17,8 @@ import type { CityBlock } from '../city-config.ts';
 import type { LotReserve } from '../landmark-models.ts';
 import type { CityBuild, HouseBlock, Span } from './types.ts';
 
-// the lots the landmarks, La Loma's buildings & Forum Tepic stand on (tepic-landmarks.ts, la-loma-plan.ts, forum-plan.ts)
-const TEPIC_RESERVES = [...LANDMARK_RESERVES, ...LA_LOMA_RESERVES, FORUM_RESERVE];
+// the lots the landmarks & La Loma's buildings stand on (tepic-landmarks.ts, la-loma-plan.ts); the places' (js/places/) come with buildHouses' call
+const TEPIC_RESERVES = [...LANDMARK_RESERVES, ...LA_LOMA_RESERVES];
 
 // Blocks the real buildings stand on (city-geodata.js `houses`, Overture Maps): built house by house (A2) instead
 const HOUSES = GEO.houses;
@@ -48,7 +47,9 @@ function indexHouseBlocks() {
 //     with a black water tank (tinaco) on most. Big boxes (supermarkets, department stores, malls, warehouses) are one
 //     hall in metal cladding with a glazed front and units on the roof; strip plazas a row of locales 5-7 m wide under
 //     one roof, in one colour. Grouped per block for the maps & the streaming of roof details
-function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[]) {
+/** `placeLots`: the lots the places stand on (js/places/: the UAN's grounds, Forum Tepic), no house built there */
+function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[], placeLots: readonly LotReserve[]) {
+  const reserves = [...TEPIC_RESERVES, ...placeLots];
   const byBlock = new Map<number, HouseBlock>();
   const blockOf = (b: CityBlock | null, cx: number, cz: number) => {
     const key = b ? b.id : -1;
@@ -81,7 +82,7 @@ function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[]) {
   for (let i = 0; i < HOUSES.length; i += HS) {
     const cx0 = HOUSES[i] / 10, cz0 = HOUSES[i + 1] / 10;
     const own = known.get(i / HS);
-    if (TEPIC_RESERVES.some((r) => r.contains(cx0, cz0))) continue; // a landmark stands there (tepic-landmarks.ts)
+    if (reserves.some((r) => r.contains(cx0, cz0))) continue; // a landmark stands there (tepic-landmarks.ts)
     if (!storeHalls.has(i) && storeLots.some((r) => r.contains(cx0, cz0))) continue; // inside a store's hall
     const w0 = HOUSES[i + 2] / 10, d0 = HOUSES[i + 3] / 10;
     const th = HOUSES[i + 4] / 1000;
@@ -143,7 +144,7 @@ function buildHouses(city: CityBuild, houseBlock: (CityBlock | null)[]) {
       // on behind the Catedral's neighbours: their other houses stay)
       const intoLandmark = ([[0, 0], [-1, -1], [1, -1], [1, 1], [-1, 1]] satisfies [number, number][]).some(([a, b]) => {
         const pa = a * Math.max(0, hx - 1.2), pb = b * Math.max(0, hz - 1.2);
-        return TEPIC_RESERVES.some((r) => r.contains(cx + pa * cs + pb * sn, cz - pa * sn + pb * cs));
+        return reserves.some((r) => r.contains(cx + pa * cs + pb * sn, cz - pa * sn + pb * cs));
       });
       if (intoLandmark) return;
       // on a hillside (terrain.ts), and anywhere on the town's slopes (ground.ts), the house stands on

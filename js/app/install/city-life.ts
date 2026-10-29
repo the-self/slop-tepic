@@ -13,8 +13,8 @@ import { Interiors } from '../../world/interiors.ts';
 import { Fires } from '../../sim/fires.ts';
 import { EmergencyServices } from '../../sim/emergency.ts';
 import { GasStations } from '../../sim/gas-stations.ts';
-import { ForumLife } from '../../sim/forum.ts';
-import { CentralLife } from '../../sim/central.ts';
+import { ForumLife } from '../../places/forum/life.ts';
+import { CentralLife } from '../../places/central/life.ts';
 import type { Boot } from './boot.ts';
 import type { CityParts } from '../game.ts';
 import type { PlayerParts } from './player.ts';
@@ -75,7 +75,7 @@ export function installCityLife({ params, scene, loading, events, rain, city, co
   events.on('collision', (impact) => {
     if (impact.kind === 'building' && impact.a === controllers.getActiveEntity()) carParks.strike(impact.x, impact.z, impact.speed);
   });
-  // Forum Tepic (sim/forum.ts): no rain under its roofs; its shoppers fall as bodies in the car's world, and one run
+  // Forum Tepic (places/forum/life.ts): no rain under its roofs; its shoppers fall as bodies in the car's world, and one run
   // over there is a crime as on the street (sim/crime.ts's traffic knock listener), always seen (the mall is full of
   // shoppers); the glass a car drives through goes from its world, heard breaking
   rain.setRoofs(forum.roofs);
@@ -90,7 +90,7 @@ export function installCityLife({ params, scene, loading, events, rain, city, co
   forumLife.glass.sound = audio;
   loading.mark('controllers');
   // The Central de Autobuses' travellers: walking in and out, sitting in the waiting room, in line boarding the coaches
-  // (sim/central.ts), on its floors (ground.ts's decks: the topmost there)
+  // (places/central/life.ts), on its floors (ground.ts's decks: the topmost there)
   // ...and its coaches' roads out of town to Guadalajara, Mazatlán & Miramar, found as the police find theirs (one way
   // streets kept to, far enough to reach the edge of the map)
   city.central.setRouter((x0, z0, x1, z1) => crime.route(x0, z0, x1, z1, 120000, true));

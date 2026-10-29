@@ -24,6 +24,7 @@ const LAYERS = [
   ['world'], // the city: map data and what is built from it
   ['player'], // the player's controllers, physics & cameras
   ['sim'], // traffic, pedestrians, crime, mayhem, fires, emergencies
+  ['places'], // the places built on their own (the UAN, the Central, Forum Tepic): plan, building & life together
   ['audio'], // what the city sounds like
   ['input'], // touch, pad & keyboard
   ['ui'], // map, HUD, weapon wheel
@@ -78,9 +79,7 @@ const EXCEPTIONS = [
   'js/world/street-food.ts -> js/sim/crime.ts',
   // the street furniture & trees a car knocks down (sim/mayhem.ts)
   'js/world/street-details.ts -> js/sim/mayhem.ts',
-  'js/world/trees.ts -> js/sim/mayhem.ts',
-  // the campus's blocks, in the map's shape
-  'js/world/uan.ts -> js/ui/city-map.ts'
+  'js/world/trees.ts -> js/sim/mayhem.ts'
 ];
 
 function walk(dir, out = []) {

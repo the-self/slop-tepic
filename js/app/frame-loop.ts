@@ -93,7 +93,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
     const p = controllers.getActiveEntity().position;
     return controllers.activeMode === 'person' && Math.hypot(p.x - x, p.z - z) < r + 0.6;
   };
-  // ...and its doors open for its travellers coming through them (sim/central.ts), as for the player
+  // ...and its doors open for its travellers coming through them (places/central/life.ts), as for the player
   const centralSomeoneAt = (x: number, z: number, r: number) => centralLife.someoneAt(x, z, r);
   const scheduler = new Scheduler({ profile: debug })
     .run('gamepad', ({ dt }) => { gamepad.update(dt); })
@@ -142,7 +142,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
     .run('traffic', ({ dt, elapsed }) => {
       // the hour sets how much traffic and how many people are out (sim/traffic-demand.ts): rush hours on the avenues
       traffic.setHour(lighting.hourOfDay);
-      // (and the Central's coaches out on the streets: world/central.ts)
+      // (and the Central's coaches out on the streets: places/central/index.ts)
       traffic.setParked(central.addObstacles(crime.addObstacles(controllers.parkedVehicles())));
       const entity = controllers.getActiveEntity();
       traffic.update(dt, elapsed, cameras.currentPos, entity, controllers.activeMode, cameras.camera);
@@ -190,7 +190,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
       }
     })
     // the Central de Autobuses: its doors opening for the player, its gates' arms rising for the vehicles that come
-    // (the traffic's bodies, gathered above), the coaches coming and going on their highways (world/central.ts)
+    // (the traffic's bodies, gathered above), the coaches coming and going on their highways (places/central/index.ts)
     .run('central', ({ dt }) => {
       const eye = cameras.currentPos, at = controllers.getActiveEntity().position;
       central.update(dt, eye.x, eye.z, at.x, at.z, centralVehicleAt, centralBlocked, centralSomeoneAt);

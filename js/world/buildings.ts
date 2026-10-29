@@ -25,12 +25,15 @@ import { createDetailPools, createShedPool } from './buildings/detail-pools.ts';
 import { createSignAtlas } from './buildings/sign-atlas.ts';
 import { createStoreLights, updateStoreLights } from './buildings/store-lights.ts';
 import { streamDetails } from './buildings/detail-streaming.ts';
+import { claimedLots } from './place-claims.ts';
+import type { PlaceClaims } from './place-claims.ts';
 import type { BlockDetail, CityBuild } from './buildings/types.ts';
 import type { DetailStream } from './buildings/detail-streaming.ts';
 
 export type { ColliderObb, Collider, FacadeBox, AtlasPage, Awning, Footprint, BlockDetail } from './buildings/types.ts';
 
-function buildCityBlocks(scene: THREE.Object3D) {
+/** `places`: what the places (js/places/) claim of the ground: their lots, no generic house built there */
+function buildCityBlocks(scene: THREE.Object3D, places: readonly PlaceClaims[]) {
   const group = new THREE.Group();
   group.name = 'CityBlocks';
   // (one dice stream per build, re-seeded from each block's position: see populateBlock)
@@ -57,7 +60,7 @@ function buildCityBlocks(scene: THREE.Object3D) {
   // A. The made-up lots of the blocks no real building stands on, A2. the real buildings, B6. the sitting areas
   const { houseBlocks, houseBlock } = indexHouseBlocks();
   fillMadeUpBlocks(city, houseBlocks);
-  buildHouses(city, houseBlock);
+  buildHouses(city, houseBlock, claimedLots(places, 'houses'));
   plantSittingAreas(city.allBlocks);
 
   // C. The static island-wide massing; D. the streamed pools, the sign atlas & the store lights

@@ -33,7 +33,7 @@ export interface WeatherEffectsSystems {
   crime: CrimeSystem;
   audio: CityAudioSystem;
   interiors: Interiors;
-  /** whether (x, y, z) is under a roof the rain keeps out from under (Forum Tepic's: world/forum.ts) */
+  /** whether (x, y, z) is under a roof the rain keeps out from under (Forum Tepic's: places/forum/index.ts) */
   sheltered: (x: number, y: number, z: number) => boolean;
   /** ° the street grid is turned clockwise from true north (world/city-config.ts CITY.bearingDeg) */
   bearingDeg: number;
