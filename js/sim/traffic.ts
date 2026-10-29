@@ -30,7 +30,8 @@ import type {
   VehicleLook, RouteLook, LookKit, LookWheel, SolidQuery, HillQuery, SurfaceQuery
 } from './traffic/types.ts';
 import {
-  setCollisionListener, setMayhemListener, setKnockListener, setRagdolls, setSolidQuery, setWallQuery, setParked, setSirens, setPoliceAlert, setRoadWater
+  setCollisionListener, setMayhemListener, setKnockListener, setRagdolls, setSolidQuery, setWallQuery, setParked, setSirens, setRailClosed, setPoliceAlert,
+  setRoadWater
 } from './traffic/hooks.ts';
 import { setHillQuery, setSurfaceQuery } from './traffic/surface.ts';
 import { setHour } from './traffic/near.ts';
@@ -78,6 +79,7 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     setSurfaceQuery: (fn: SurfaceQuery | null): void => { setSurfaceQuery(ts, fn); },
     setParked: (list: ParkedVehicle[] | null): void => { setParked(ts, list); },
     setSirens: (list: readonly SirenSource[]): void => { setSirens(ts, list); },
+    setRailClosed: (closed: readonly boolean[]): void => { setRailClosed(ts, closed); },
     setPoliceAlert: (on: boolean): void => { setPoliceAlert(ts, on); },
     setRoadWater: (wet: number, rain: number, grip?: number): void => { setRoadWater(ts, wet, rain, grip); },
     vehicleAt: (x: number, z: number, r?: number): boolean => vehicleAt(ts, x, z, r),

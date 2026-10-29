@@ -15,6 +15,7 @@ import { Fires } from '../../sim/fires.ts';
 import { EmergencyServices } from '../../sim/emergency.ts';
 import { GasStations } from '../../sim/gas-stations.ts';
 import { ForumLife } from '../../sim/forum.ts';
+import { CentralLife } from '../../sim/central.ts';
 import type { Boot } from './boot.ts';
 import type { CityParts } from '../game.ts';
 import type { PlayerParts } from './player.ts';
@@ -90,5 +91,11 @@ export function installCityLife({ params, scene, loading, events, rain, city, co
   forumLife.glass.physics = physics;
   forumLife.glass.sound = audio;
   loading.mark('controllers');
-  return { venues, streetFood, floods, nightlife, rooms, emergency, fires, gasStations, forumLife };
+  // The Central de Autobuses' travellers: walking in and out, sitting in the waiting room, in line boarding the coaches
+  // (sim/central.ts), on its floors (ground.ts's decks: the topmost there)
+  // ...and its coaches' roads out of town to Guadalajara, Mazatlán & Miramar, found as the police find theirs (one way
+  // streets kept to, far enough to reach the edge of the map)
+  city.central.setRouter((x0, z0, x1, z1) => crime.route(x0, z0, x1, z1, 120000, true));
+  const centralLife = new CentralLife(scene, (x, z) => controllers.getGroundHeight(x, z, 'person', Infinity), city.central.andenCoaches);
+  return { venues, streetFood, floods, nightlife, rooms, emergency, fires, gasStations, forumLife, centralLife };
 }

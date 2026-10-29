@@ -11,6 +11,7 @@ import { installPlayer } from './app/install/player.ts';
 import { installAudio } from './app/install/audio.ts';
 import { installCrime } from './app/install/crime.ts';
 import { installCityLife } from './app/install/city-life.ts';
+import { installTrains } from './app/install/trains.ts';
 import { installRendering } from './app/install/rendering.ts';
 import { installControls } from './app/install/controls.ts';
 import { installMultiplayer } from './app/install/multiplayer.ts';
@@ -27,14 +28,15 @@ async function initApp(): Promise<void> {
   const city = buildCity(scene, { stream: params.get('stream') !== '0', mark: (label) => { loading.mark(label); } });
   const withCity = { ...started, city };
 
-  // 3. The player, its cameras and the car's physics; the sound; the crime; the city's life round the player
+  // 3. The player, its cameras and the car's physics; the sound; the crime; the city's life round the player; the trains
   const withPlayer = { ...withCity, ...(await installPlayer(withCity)) };
   const withAudio = { ...withPlayer, ...installAudio(withPlayer) };
   const withCrime = { ...withAudio, ...installCrime(withAudio) };
   const withLife = { ...withCrime, ...installCityLife(withCrime) };
+  const withTrains = { ...withLife, ...installTrains(withLife) };
 
   // 4. With everything in the scene: its culling and the render pipeline (scene pass, SSR, bloom & the colour grade)
-  const withRendering = { ...withLife, ...installRendering(withLife) };
+  const withRendering = { ...withTrains, ...installRendering(withTrains) };
 
   // 5. The controls, the map & the menu; multiplayer (?multiplayer=1); the sky
   const withControls = { ...withRendering, ...installControls(withRendering) };

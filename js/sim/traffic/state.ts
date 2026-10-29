@@ -35,6 +35,9 @@ import { placeStreetCrossings } from './crossings.ts';
 import { placeBusStops } from '../../world/bus-stops.ts';
 import { planTopes } from '../../world/topes.ts';
 import { placeTopes } from './topes.ts';
+import { placeRailCrossings } from './rail-crossings.ts';
+import { levelCrossings } from '../../world/railway.ts';
+import type { LevelCrossing } from '../../world/railway.ts';
 import type { BusStop } from '../../world/bus-stops.ts';
 
 /** Where spawnPed places someone: a track's fields, copied onto them */
@@ -100,6 +103,9 @@ interface TrafficState extends VehicleMeshes {
   streetCrossings: StreetCrossing[];
   /** the bus stops on the streets (world/bus-stops.ts), in STOP_CELL m cells (pickups.ts) */
   stopCells: Map<number, BusStop<TrafficEdge>[]>;
+  /** the railway's level crossings (world/railway.ts), and which a train closes now (hooks.ts setRailClosed) */
+  railCrossings: readonly LevelCrossing[];
+  railClosed: readonly boolean[];
 
   // ---- who there is (fleet.ts, peds.ts) and how they are drawn ----
   cars: Car[];
@@ -297,6 +303,7 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     e.crossings = []; // the street crossings along it (crossings.ts)
     e.stops = []; // the bus stops by its right curb (pickups.ts)
     e.topes = []; // the topes across it (topes.ts)
+    e.rails = []; // the level crossings across it (rail-crossings.ts)
   }
   // The topes, the paint's (world/topes.ts): the traffic slows down for each
   placeTopes(planTopes(network.paintEdges, GEO.topes), edges);
@@ -313,6 +320,9 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
   // The street crossings along the roads, OpenStreetMap's (crossings.ts): the sidewalks split at them, people cross
   // there and the traffic stops for them
   const streetCrossings = placeStreetCrossings(GEO.crossings, edges);
+  // The railway's level crossings (world/railway.ts): the traffic eases over the rails, and waits there for a train
+  const railCrossings = levelCrossings();
+  placeRailCrossings(railCrossings, edges);
 
   // =========================================================================
   // 1-2. THE VEHICLES (fleet.ts: cars, camiones, cyclists and motorcyclists, drawn from the models in that order) AND
@@ -402,6 +412,8 @@ function createTrafficState(scene: THREE.Scene, sidewalks: readonly Footprint[],
     pedRoutes,
     streetCrossings,
     stopCells,
+    railCrossings,
+    railClosed: [],
     cars,
     buses,
     bikes,

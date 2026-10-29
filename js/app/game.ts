@@ -15,6 +15,7 @@ import type { PlayerParts } from './install/player.ts';
 import type { AudioParts } from './install/audio.ts';
 import type { CrimeParts } from './install/crime.ts';
 import type { CityLifeParts } from './install/city-life.ts';
+import type { TrainParts } from './install/trains.ts';
 import type { RenderingParts } from './install/rendering.ts';
 import type { ControlsParts } from './install/controls.ts';
 import type { NetParts } from './install/multiplayer.ts';
@@ -43,4 +44,4 @@ export interface GameEvents {
 export interface CityParts { city: City }
 
 /** Every part of the game, once all installed */
-export type Game = Boot & CityParts & PlayerParts & AudioParts & CrimeParts & CityLifeParts & RenderingParts & ControlsParts & NetParts;
+export type Game = Boot & CityParts & PlayerParts & AudioParts & CrimeParts & CityLifeParts & TrainParts & RenderingParts & ControlsParts & NetParts;
