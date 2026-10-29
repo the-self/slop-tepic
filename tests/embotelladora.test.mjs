@@ -6,7 +6,7 @@ import { GEO } from '../js/world/city-geodata.js';
 import {
   SHED, FRONT, ANNEX, OFFICE, DEPOT, STORES, TANKS, CANOPY, GATE, BOOTH, FENCES, LOT, TRUCK_L, TRUCK_W, TRAILER_L,
   plantAt, plantFrame, plantHeading, truckBays, parkTrucks, trailers, inPlant
-} from '../js/world/embotelladora-plan.ts';
+} from '../js/places/embotelladora/plan.ts';
 import { carParks, inCarPark } from '../js/world/parking.ts';
 import { onRoadway } from '../js/world/city-config.ts';
 

@@ -14,8 +14,7 @@ async function landmarks() {
     imports: {
       'three/webgpu': {}, 'three/tsl': tsl, 'three/addons/utils/BufferGeometryUtils.js': {},
       './city-geodata.js': { GEO }, './city-config.ts': { blockAt }, '../render/tsl-materials.ts': { cityUniforms: {} },
-      './ground.ts': { liftAt: () => 0, landHeight: () => 0 }, './landmark-models.ts': { MODEL_RESERVES: [], geoToWorld: () => [0, 0] },
-      './uan.ts': { UAN_RESERVE: { contains: () => false } }
+      './ground.ts': { liftAt: () => 0, landHeight: () => 0 }, './landmark-models.ts': { MODEL_RESERVES: [], geoToWorld: () => [0, 0] }
     },
     globals: { Math, console, Proxy }
   });

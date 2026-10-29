@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { onRoadway } from '../js/world/city-config.ts';
-import { campusBuildings, campusClaims, campusGates, campusPlan, campusTrees, campusWalls, inCampus } from '../js/world/uan-campus.ts';
+import { campusBuildings, campusClaims, campusGates, campusPlan, campusTrees, campusWalls, inCampus } from '../js/places/uan/plan.ts';
 
 const length = (w) => w.pts.reduce((s, p, i) => (i ? s + Math.hypot(p.x - w.pts[i - 1].x, p.z - w.pts[i - 1].z) : 0), 0);
 

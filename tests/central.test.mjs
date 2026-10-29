@@ -4,8 +4,8 @@ import { GEO } from '../js/world/city-geodata.js';
 import {
   TERMINAL, PLATFORM, ANNEX, WALLS, GATE, FRONT_DOORS, BACK_DOORS, COACH_L, COACH_W, centralAt, centralFrame, coachBays,
   parkCoaches, inPatio, inCentral, hallFurniture, busGate, carParkGates
-} from '../js/world/central-plan.ts';
-import { STEP, ROADS_OUT, coachRuns, runRoom, nextWait, departure, arrival } from '../js/world/central-runs.ts';
+} from '../js/places/central/plan.ts';
+import { STEP, ROADS_OUT, coachRuns, runRoom, nextWait, departure, arrival } from '../js/places/central/plan-runs.ts';
 import { DOCK_CHAINS, atDock, inDockYard, loadingDocks } from '../js/world/loading-docks.ts';
 import { carParks, inCarPark, inMouth } from '../js/world/parking.ts';
 import { indexHouses } from '../js/world/lot-greenery.ts';

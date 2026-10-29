@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-// js/world/forum-plan.ts: Forum Tepic, the mall on the Boulevard Colosio
-const { FORUM: P, FORUM_RESERVE, FLOOR, LEVEL, inRing } = await import('../js/world/forum-plan.ts');
+// js/places/forum/plan.ts: Forum Tepic, the mall on the Boulevard Colosio
+const { FORUM: P, FORUM_RESERVE, FLOOR, LEVEL, inRing } = await import('../js/places/forum/plan.ts');
 const { GEO } = await import('../js/world/city-geodata.js');
 
 const inMall = (x, z) => P.buildings.some((b) => inRing(b.ring, x, z));

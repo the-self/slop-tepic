@@ -21,8 +21,9 @@ import { openness } from './lot-greenery.ts';
 import { lampFinder } from './mapped-lamps.ts';
 import { cyclewayRuns, CYCLEWAY_HALF } from './medians.ts';
 import { insidePoly, insideRing, polyCover } from './rings.ts';
-import { inCampusBuilding } from './uan-campus.ts';
+import { nearPlaceBuilding } from './place-claims.ts';
 import { PARK_WALK_Y as PARK_Y, PARK_BED_Y as BED_Y, isRaisedPark, offsetPolygonInward, parkBed } from './park-floor.ts';
+import type { PlaceClaims } from './place-claims.ts';
 import type { Bounds, CityBlock, PointXZ } from './city-config.ts';
 import type { CyclewayPoint } from './medians.ts';
 import type { TileStreamer } from './streaming.ts';
@@ -253,7 +254,8 @@ function onPitch(x: number, z: number): boolean {
     ([[0, 0], [PLAY_CLEAR, 0], [-PLAY_CLEAR, 0], [0, PLAY_CLEAR], [0, -PLAY_CLEAR]] satisfies [number, number][]).some(([dx, dz]) => insideRing(r, x + dx, z + dz)));
 }
 
-function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addLayer'> | null = null): CityGrid {
+/** `places`: what the places (js/places/) claim of the ground: no lamp, no goal against their buildings */
+function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addLayer'> | null, places: readonly PlaceClaims[]): CityGrid {
   const group = new THREE.Group();
   group.name = 'CityGrid';
 
@@ -462,7 +464,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
 
   const nearMappedLamp = lampFinder(GEO.lamps);
   function addLamp(x: number, y: number, z: number) {
-    if (onPitch(x, z) || inCampusBuilding(x, z, 1)) return;
+    if (onPitch(x, z) || nearPlaceBuilding(places, x, z, 1)) return;
     lampMatrices.push(new THREE.Matrix4().makeTranslation(x, y + liftAt(x, z), z));
   }
 
@@ -697,7 +699,7 @@ function buildCityGrid(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
       const gw = Math.min(7.32, Math.max(3, 7.32 * k)), gh = gw < 5 ? 2 : 2.44;
       for (const end of [-1, 1]) {
         const gx = cx + ux * end * (L / 2 - 0.4), gz = cz + uz * end * (L / 2 - 0.4);
-        if (inCampusBuilding(gx, gz, 1)) continue; // (a building of the UAN's stands over that end of it)
+        if (nearPlaceBuilding(places, gx, gz, 1)) continue; // (a place's building stands over that end of it: the UAN's)
         goals.push(new THREE.Matrix4().compose(new THREE.Vector3(gx, y + liftAt(gx, gz), gz),
           new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a + (end > 0 ? Math.PI : 0)), new THREE.Vector3(gw / 7.32, gh / 2.44, 1)));
       }

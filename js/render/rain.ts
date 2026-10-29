@@ -53,7 +53,7 @@ const ROOFS = 12; // the most roofs the rain keeps out of
 export interface Rain {
   mesh: THREE.Mesh;
   update(intensity: number, windX: number, windZ: number, elapsed: number, camera: THREE.Camera): void;
-  /** The roofs no drop falls under (a mall's: world/forum.ts), at most ROOFS */
+  /** The roofs no drop falls under (a mall's: places/forum/index.ts), at most ROOFS */
   setRoofs(roofs: readonly RainRoof[]): void;
 }
 
