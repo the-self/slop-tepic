@@ -4,6 +4,7 @@ import { groundHeight, landHeight, decks, underpasses } from './ground.ts';
 import { drapeGeometry } from './drape.ts';
 import { createRoadSurfaceMaterial, createBridgeConcreteMaterial, createTrackBedMaterial, createUnderpassEarthMaterial } from '../render/tsl-materials.ts';
 import type { Collider } from './buildings.ts';
+import { RAIL_GAUGE as GAUGE, RAIL_BED_TOP as BED_TOP, RAIL_H } from './railway.ts';
 
 // js/world/bridges.ts
 // The overpasses, their ramps, the underpasses and the railway, drawn from the lifts the geodata builder solved for
@@ -23,9 +24,6 @@ const PARAPET = 0.6; // m: a deck this far up gets parapets
 const PARAPET_H = 0.9;
 const PARAPET_T = 0.3;
 const PIER_EVERY = 18; // m along a span
-const GAUGE = 1.435; // standard gauge (Ferromex's line through Tepic)
-const BED_TOP = 0.25; // the ballast's top over the ground
-const RAIL_H = 0.16;
 const JUNCTION_GAP = 9; // m: parapets stop short of a junction on a deck so traffic can turn
 const EARTH_Y = 0.05; // the earth under a span, over the asphalt (0) and the meadows (0.03)
 const EARTH_PATCH = 2; // m: it is laid in patches about this big, each left out where a road passes under it

@@ -11,7 +11,7 @@ import type { AudioControllers, AudioEntity, AudioSimulation, CollisionImpact, C
 import { CityAcoustics } from './audio-acoustics.ts';
 import type { Point3 } from './audio-acoustics.ts';
 import { createAmbienceResources, createLoopVoice } from './audio-ambience.ts';
-import type { AmbienceResources, AmbientSource, LoopVoice } from './audio-ambience.ts';
+import type { AmbienceKind, AmbienceResources, AmbientSource, LoopVoice } from './audio-ambience.ts';
 
 /** What a spatial emitter places: a point (m) with, optionally, its heading (rad), level (0..1) and seed */
 export interface EmitterSource extends Point3 {
@@ -126,6 +126,9 @@ const audioGlobals: AudioGlobals = globalThis;
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const nearestFirst = (a: AmbientSource, b: AmbientSource) => (a.d2 ?? 0) - (b.d2 ?? 0);
+// m within which each loop is heard at its full level (the panner's refDistance): a plancha up close, a party's music
+// from its door, a train's horn from far down the line
+const AMBIENT_REF: Partial<Record<AmbienceKind, number>> = { sizzle: 1.5, crowd: 3, locomotive: 25, wheels: 12, horn: 60, bell: 5 };
 const smooth = (param: AudioParam, value: number, now: number, time = 0.035, immediate = false) => {
   param.cancelScheduledValues(now);
   if (immediate) param.setValueAtTime(value, now);
@@ -746,7 +749,7 @@ class CityAudioSystem {
       if (++count > this.limits.loops) break;
       let slot = this.loops.get(source.id);
       if (!slot) {
-        const ref = source.kind === 'sizzle' ? 1.5 : source.kind === 'crowd' ? 3 : 7;
+        const ref = AMBIENT_REF[source.kind] ?? 7;
         const emitter = new SpatialEmitter(this.context, this.mix, this.reflections, this.acoustics, ref, 0);
         slot = { emitter, voice: createLoopVoice(this.context, this.ambience, source.kind, emitter.input, source.seed || count), fresh: true };
         this.loops.set(source.id, slot);

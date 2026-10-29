@@ -8,6 +8,7 @@ import { walkOn } from './signals.ts';
 import { stepBlocked } from './bodies.ts';
 import { KERB, QUEUE_GAP, atCurb, curbProgress, mayCross } from './sidewalks.ts';
 import { mayCrossStreet } from './crossings.ts';
+import { railHold } from './rail-crossings.ts';
 import { stopNear } from './pickups.ts';
 
 // Continue through validated sidewalk corners. Crossing tracks retain their curb queues and right of way;
@@ -123,7 +124,11 @@ function walk(ts: TrafficState, p: Ped, dt: number): void {
       // walks on out of it)
       wall = ts.wallAt(nx + fx * 0.45, nz + fz * 0.45) && !ts.wallAt(p.x - fx * 0.35, p.z - fz * 0.35);
     }
-    if (wall || (!up && stepBlocked(ts, p.x, p.z, nx + fx * 0.25, nz + fz * 0.25))) {
+    if (!up && railHold(ts, p.x, p.z, nx + fx * 0.25, nz + fz * 0.25)) {
+      // (a train coming or going by: waiting short of the track, not turning back)
+      t = p.t;
+      p.v = 0;
+    } else if (wall || (!up && stepBlocked(ts, p.x, p.z, nx + fx * 0.25, nz + fz * 0.25))) {
       t = p.t;
       p.v = 0;
       p.blocked = (p.blocked || 0) + dt;

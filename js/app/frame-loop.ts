@@ -18,6 +18,7 @@ import { precompileShaders, warmUpFrame } from './shaders.ts';
 import { savePlayer } from './player-state.ts';
 import { WeatherEffects } from './weather-effects.ts';
 import type { AmbientSource } from '../audio/audio-ambience.ts';
+import type { TrainPlayer } from '../sim/trains.ts';
 import type { Game } from './game.ts';
 
 const PERSON_WAIT = 8000; // ms the loading screen waits for the player's body (3 MB) before the shaders compile
@@ -26,7 +27,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
   const {
     debug, quality, loading, renderer, scene, lighting, rain, roadWater, hud, city, controllers, stateKey, blood, stamina, cameras, aim,
     audio, crime, crimeHud, weaponWheel, weaponIcons, venues, streetFood, floods, nightlife, rooms, emergency, fires, gasStations, forumLife, centralLife,
-    render, gamepad, boarding, map, net, remoteCars
+    render, gamepad, boarding, map, net, remoteCars, trains, railCrossings
   } = game;
   const { streamer, cityBlocks, stores, carParks, central, deliveries, streetDetails, powerLines, traffic, highwayTraffic } = city;
 
@@ -64,7 +65,8 @@ export async function startFrameLoop(game: Game): Promise<void> {
   loading.mark('compile');
 
   // The frame loop. Each system steps once a frame, in this order: input & the player first (what everything else
-  // follows), then the cameras, the world's clock & the traffic (and the props it knocks down), the CFE's lines down,
+  // follows), then the cameras, the trains (and the crossings they close), the world's clock & the traffic (and the
+  // props it knocks down), the CFE's lines down,
   // the crime, the city's life and the emergency services
   // (the fires there call the bomberos), the HUD, the city's
   // level of detail round the camera, the weather, the network, the map & the audio, and the streamed tiles.
@@ -79,6 +81,8 @@ export async function startFrameLoop(game: Game): Promise<void> {
   let nextPlayerSave = 0;
   let warmedUp = false; // see the first frame below
   // a vehicle standing within r m of (x, z): the player's left standing, another player's (no tráiler pulls in on it)
+  // the player as the trains meet them: where they are, and whether on foot (sim/trains/contact.ts)
+  const trainPlayer: TrainPlayer = { position: controllers.getActiveEntity().position, onFoot: true, vehicle: null };
   const vehicleNear = (x: number, z: number, r: number) =>
     controllers.parkedVehicles().some((v) => Math.hypot(v.x - x, v.z - z) < r) ||
     crime.remotes.some((o) => !o.person && Math.hypot(o.x - x, o.z - z) < r);
@@ -123,10 +127,22 @@ export async function startFrameLoop(game: Game): Promise<void> {
       streetDetails.signalClock.value = elapsed;
       cityUniforms.uClock.value = elapsed;
     })
+    // Ferromex's trains: the crossings they close (before the traffic, which stops there), their cars against the
+    // player & the traffic, the crossings' lamps & gates (sim/trains.ts, world/rail-crossings.ts)
+    .run('trains', ({ dt, frameDt }) => {
+      const eye = cameras.currentPos, ear = cameras.camera.position;
+      const entity = controllers.getActiveEntity();
+      trainPlayer.position = entity.position;
+      trainPlayer.onFoot = controllers.activeMode === 'person';
+      trainPlayer.vehicle = 'vehicle' in entity ? entity.vehicle ?? null : null;
+      // (on the player's step: the cars' bodies in Jolt are driven on it, controllers.update)
+      trains.update(frameDt, eye.x, eye.z, trainPlayer, lighting.isNight, ear.x, ear.y, ear.z);
+      railCrossings.update(trains.closed, dt);
+    })
     .run('traffic', ({ dt, elapsed }) => {
       // the hour sets how much traffic and how many people are out (sim/traffic-demand.ts): rush hours on the avenues
       traffic.setHour(lighting.hourOfDay);
-      // (and the coaches out round the Central's block: world/central.ts)
+      // (and the Central's coaches out on the streets: world/central.ts)
       traffic.setParked(central.addObstacles(crime.addObstacles(controllers.parkedVehicles())));
       const entity = controllers.getActiveEntity();
       traffic.update(dt, elapsed, cameras.currentPos, entity, controllers.activeMode, cameras.camera);
@@ -156,6 +172,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
       nightlife.sounds(ambience);
       rooms.sounds(ambience);
       fires.sounds(ambience);
+      for (const s of trains.sounds()) ambience.push(s);
       audio.setAmbience(ambience);
       crime.shakeCamera(cameras.camera);
     })
@@ -173,7 +190,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
       }
     })
     // the Central de Autobuses: its doors opening for the player, its gates' arms rising for the vehicles that come
-    // (the traffic's bodies, gathered above), the coaches coming and going round its block (world/central.ts)
+    // (the traffic's bodies, gathered above), the coaches coming and going on their highways (world/central.ts)
     .run('central', ({ dt }) => {
       const eye = cameras.currentPos, at = controllers.getActiveEntity().position;
       central.update(dt, eye.x, eye.z, at.x, at.z, centralVehicleAt, centralBlocked, centralSomeoneAt);
@@ -210,7 +227,7 @@ export async function startFrameLoop(game: Game): Promise<void> {
     // Debugging handle for the console, only with ?debug in the URL
     Object.assign(window, { __slop: {
       scene, renderer, streamer, streetFood, venues, forum: forumLife, floods, nightlife, interiors: rooms, fires, emergency, gasStations, controllerManager: controllers,
-      deliveries,
+      deliveries, trains,
       trafficSystem: traffic, cameraSystem: cameras, streetDetails, cityGrid: city.cityGrid, cityBlocks, mapSystem: map, audioSystem: audio,
       crimeSystem: crime, stamina, aimControl: aim, weaponWheel, weaponIcons, scheduler, boarding, quality, multiplayer: () => net.current
     } });
