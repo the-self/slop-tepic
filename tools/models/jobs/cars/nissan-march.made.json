@@ -1,6 +1,6 @@
 {
-  "note": "Modelled by script in Blender on the shared shell (blender -b --factory-startup -P tools/models/blender/nissan-march.py -- <nissan-march.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/nissan-march.glb --length 3.827 --roles tools/models/jobs/cars/nissan-march.roles.json --plates 0.43,0.80 (its real length, so it is not rescaled; light enough for no levels of detail)",
+  "note": "Modelled by script in Blender (blender -b --factory-startup -P tools/models/blender/nissan-march.py -- <nissan-march.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/nissan-march.glb --length 3.83 --roles tools/models/jobs/cars/nissan-march.roles.json --plates 0.38,0.46 (its real length, so it is not rescaled; light enough for no levels of detail: tools/models/add-lods.mjs leaves it). Judged against photographs from Wikimedia Commons: 'Nissan March K13 -- Front.jpg', '2013-2022 Nissan March S.jpg', '2015 Nissan Micra -- Front.jpg', '2015 Nissan Micra -- Rear.jpg', 'Nissan Micra (K13) 162330.jpg', 'Nissan Micra DIG-S 2011 (03).jpg', '2011 Nissan Micra (K13) ST-L hatchback (2015-08-07) 02.jpg', 'Nissan MARCH 12S (K13) front.JPG'",
   "license": "our own work",
   "source": "tools/models/blender/nissan-march.py",
-  "args": "--length 3.827 --roles tools/models/jobs/cars/nissan-march.roles.json --plates 0.43,0.80"
+  "args": "--length 3.83 --roles tools/models/jobs/cars/nissan-march.roles.json --plates 0.38,0.46"
 }

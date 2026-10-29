@@ -1,6 +1,6 @@
 {
-  "note": "Modelled by script in Blender on the shared shell (blender -b --factory-startup -P tools/models/blender/nissan-versa.py -- <nissan-versa.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/nissan-versa.glb --length 4.495 --roles tools/models/jobs/cars/nissan-versa.roles.json --plates 0.50,0.80 (its real length, so it is not rescaled; light enough for no levels of detail)",
+  "note": "Modelled by script in Blender (blender -b --factory-startup -P tools/models/blender/nissan-versa.py -- <nissan-versa.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/nissan-versa.glb --length 4.495 --roles tools/models/jobs/cars/nissan-versa.roles.json --plates 0.37,0.73 (its real length, so it is not rescaled; light enough for no levels of detail: tools/models/add-lods.mjs leaves it). Compared against photographs from Wikimedia Commons: 2020 Nissan Versa SV 1.6L, front 2.29.20.jpg and rear 2.29.20.jpg; Nissan Versa 1.6 Advance 2021 (51746403717).jpg; Nissan Versa 1.6 Sense 2020 (54078790361).jpg; 2020 Nissan Versa.jpg",
   "license": "our own work",
   "source": "tools/models/blender/nissan-versa.py",
-  "args": "--length 4.495 --roles tools/models/jobs/cars/nissan-versa.roles.json --plates 0.50,0.80"
+  "args": "--length 4.495 --roles tools/models/jobs/cars/nissan-versa.roles.json --plates 0.37,0.73"
 }

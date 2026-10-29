@@ -67,7 +67,7 @@ class AimControl {
     this.pitch = 0; // rad, up positive
     this.blend = 0; // 0..1 into the shoulder view
     this.onTarget = false; // (crime.ts: the shot would hit someone or a vehicle)
-    this.allowed = true; // on foot and in play (main.ts, every frame)
+    this.allowed = true; // on foot and in play (app/frame-loop.ts, every frame)
     this.crosshair = doc.getElementById('hud-crosshair');
     this.shown = { visible: null, target: null };
     this.mode = controllers.activeMode; // (a toggled aim is dropped when it changes: getting in or out)

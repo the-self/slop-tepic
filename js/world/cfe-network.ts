@@ -123,7 +123,7 @@ function sagging(a: THREE.Vector3, b: THREE.Vector3, sag: number): number[] {
   return out;
 }
 
-/** What befalls the street, for those who react (main.ts: the audio, the player's health) */
+/** What befalls the street, for those who react (on the bus, app/game.ts: the audio, the player's health) */
 type FaultListener = (e: PowerFault) => void;
 
 /** What lampsOut does to the streetlights along some stretches: a flicker's 'off' and 'on' (those with power only),

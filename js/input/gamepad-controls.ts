@@ -10,7 +10,7 @@ export type GamepadTarget = Pick<ThirdPersonControllerManager, 'activeMode' | 's
 export type GamepadCamera = Pick<CameraSystem, 'applyGamepadInput' | 'resetOrbit'>;
 /** The weapon wheel's steps (ui/weapon-wheel.ts): opened, closed taking the weapon pointed at, shut as it was, pointed */
 export type WheelPhase = 'open' | 'close' | 'cancel' | 'aim';
-/** What main.ts does on the pad's buttons; `step` is +1 / -1 */
+/** What app/install/controls.ts does on the pad's buttons; `step` is +1 / -1 */
 export interface GamepadCallbacks {
   onToggleMap?: () => void;
   onCloseMap?: () => void;

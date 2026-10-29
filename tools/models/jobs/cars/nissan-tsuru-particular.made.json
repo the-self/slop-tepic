@@ -1,0 +1,6 @@
+{
+  "note": "Modelled by script in Blender (blender -b --factory-startup -P tools/models/blender/nissan-tsuru.py -- <nissan-tsuru-particular.made.glb>), then prepared with tools/models/prepare-made.mjs <that file> assets/models/cars/nissan-tsuru-particular.glb --length 4.325 --roles tools/models/jobs/cars/nissan-tsuru.roles.json --plates 0.43,0.79 (its real length, so it is not rescaled; light enough for no levels of detail)",
+  "license": "our own work",
+  "source": "tools/models/blender/nissan-tsuru.py",
+  "args": "--length 4.325 --roles tools/models/jobs/cars/nissan-tsuru.roles.json --plates 0.43,0.79"
+}

@@ -34,7 +34,8 @@ LOOKS = {
 def args():
     """The script's own arguments (after Blender's --): the out .glb, and optionally a folder for review renders and a
     .blend to save the model in (to open and work on in Blender); '' skips one"""
-    a = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
+    a = [x for x in (sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []) if not x.startswith('--')]  # (a
+    # script's own switches, '--taxi', aside)
     pick = lambda i: (a[i] or None) if len(a) > i else None
     return pick(0), pick(1), pick(2)
 
@@ -560,6 +561,7 @@ HERO = {
     'plate': dict(base=(0.85, 0.86, 0.84), rough=0.4, metal=0.0),
     'headlamp': dict(base=(0.85, 0.87, 0.9), rough=0.06, metal=0.7),  # (the head lamps' reflectors, unlit by day)
     'beam': dict(base=(1, 1, 1), rough=0.05, metal=0.0, glow=((1.0, 0.98, 0.94), 6.0)),  # (a lit head lamp's lens)
+    'sign': dict(base=(0.95, 0.95, 0.9), rough=0.3, metal=0.0, glow=((1.0, 0.95, 0.8), 1.5)),  # (a taxi's lit roof sign)
 }
 
 
@@ -786,3 +788,21 @@ def onto(ob, target, offset=0.002, axis=None):
         mod.wrap_method = 'NEAREST_SURFACEPOINT'
     apply(ob)
     return ob
+
+
+def disc(name, centre, r, plane_y, role, facing, n=32, rings=3):
+    """A flat filled disc `r` m across round `centre` (x, z), in the plane y = plane_y facing `facing`, in rings of
+    quads (a fan's long thin triangles bent badly laid onto a curve): a round lamp, a lens; laid on by onto()"""
+    cx, cz = centre
+    bm = bmesh.new()
+    mid = bm.verts.new((cx, plane_y, cz))
+    loops = [[bm.verts.new((cx + r * (j + 1) / rings * math.cos(2 * math.pi * i / n), plane_y,
+                            cz + r * (j + 1) / rings * math.sin(2 * math.pi * i / n))) for i in range(n)] for j in range(rings)]
+    faces = [bm.faces.new((mid, loops[0][i], loops[0][(i + 1) % n])) for i in range(n)]
+    for a, b in zip(loops, loops[1:]):
+        faces += [bm.faces.new((a[i], b[i], b[(i + 1) % n], a[(i + 1) % n])) for i in range(n)]
+    for f in faces:
+        f.normal_update()
+        if f.normal.y * facing < 0:
+            f.normal_flip()
+    return to_object(name, bm, [role])

@@ -1,13 +1,11 @@
 {
-  "light": "drl",
-  "headlamp": "light",
+  "housing": "own",
   "lamp": "lamp",
-  "lampbright": "lamp",
-  "aero": "wheel",
+  "amber": "amber",
+  "white": "white",
   "gloss": "trim",
   "pocket": "trim",
-  "screen": "drop",
-  "white": "white",
-  "spoke": "wheel",
-  "beam": "light"
+  "dish": "wheel",
+  "clearlamp": "light",
+  "bowl": "own"
 }

@@ -56,13 +56,18 @@ const NEAR_RADIUS = 60; // m: the full model within it, the stand-in beyond
 const REDRAW = 20; // m the camera moves before the cars round it are handed out again
 const CAR_CELL = 100; // m: the cells the parked cars are found by
 
+/** The ground paved over at (x, z), a point of its block (m over the town's floor): a hair over the block's own */
+function pavedHeight(x: number, z: number): number {
+  const b = blockAt(x, z);
+  return !b || b.rural ? 0.05 : b.park > 0.6 ? PARK_Y + 0.012 : SW_TOP + 0.018;
+}
+
 /** The ground a lot lies on (m over the town's floor): its block's */
 function lotHeight(lot: CarPark): number {
   const p = lot.pts[0];
   // (a point just inside the lot: its first vertex nudged towards the middle)
   const cx = (lot.minX + lot.maxX) / 2, cz = (lot.minZ + lot.maxZ) / 2;
-  const b = blockAt(p.x + (cx - p.x) * 0.02, p.z + (cz - p.z) * 0.02);
-  return !b || b.rural ? 0.05 : b.park > 0.6 ? PARK_Y + 0.012 : SW_TOP + 0.018;
+  return pavedHeight(p.x + (cx - p.x) * 0.02, p.z + (cz - p.z) * 0.02);
 }
 
 /** A layer of flat ground, built at y = 0 in world space: positions, its normals (up) and any other attributes */
@@ -91,7 +96,7 @@ class FlatLayer {
 }
 
 // A lot's outline triangulated into `layer` at height y, each triangle wound to face up (as airport.ts)
-function fillLot(layer: FlatLayer, lot: CarPark, y: number, attrs: Record<string, readonly number[]> = {}): void {
+function fillLot(layer: FlatLayer, lot: Pick<CarPark, 'pts'>, y: number, attrs: Record<string, readonly number[]> = {}): void {
   const contour = lot.pts.map((p) => new THREE.Vector2(p.x, p.z));
   if (contour.length < 3) return;
   const v = contour.map((p) => layer.vertex(p.x, y, p.y, attrs));
@@ -661,4 +666,4 @@ function buildCarParks(scene: THREE.Object3D, streamer: Pick<TileStreamer, 'addL
 type CarParksBuild = ReturnType<typeof buildCarParks>;
 
 export type { CarParksBuild, PlacedCar, TakenParkedCar, Ramp };
-export { SW_TOP, RAMP_OUT, RAMP_IN, rampHeight, rampTriangles, buildCarParks };
+export { SW_TOP, RAMP_OUT, RAMP_IN, FlatLayer, fillLot, paintLine, pavedHeight, rampHeight, rampTriangles, buildCarParks };

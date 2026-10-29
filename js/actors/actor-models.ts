@@ -13,6 +13,15 @@ import {
   buildHelicopterBodyGeometry, buildHelicopterMainRotorGeometry, buildHelicopterTailRotorGeometry
 } from './vehicles/helicopter-geometry.ts';
 import { createLoftedHelicopterMaterial } from './vehicles/helicopter-material.ts';
+import { standingBox } from './vehicles/loft.ts';
+import {
+  COACH_SIZE, buildCoachBodyGeometry, buildCoachWheelsGeometry, buildCoachNameGeometry, coachNameTexture, createCoachMaterial,
+  createCoachNameMaterial
+} from './vehicles/coach.ts';
+import {
+  TRUCK_SIZE, buildTractorTrailerGeometry, buildTrailerNameGeometry, trailerNameTexture, createTractorTrailerMaterial,
+  createTrailerNameMaterial
+} from './vehicles/tractor-trailer.ts';
 
 export type { BloodUniforms } from './vehicles/car-blood-stains.ts';
 export type { BusSpec } from './vehicles/bus-geometry.ts';
@@ -27,7 +36,8 @@ export type { BusSpec } from './vehicles/bus-geometry.ts';
 // The pieces are in vehicles/: loft.ts (LoftGeometry, part), car-specs.ts (CAR_PARTS, BODY_SPECS), car-body.ts (the
 // body profile & glasshouse lofts), car-geometry.ts (a whole car's mesh), car-material.ts (+ tsl-shapes.ts,
 // car-blood-stains.ts), lightbar.ts, bus-geometry.ts & bus-materials.ts, helicopter-geometry.ts &
-// helicopter-material.ts. This module is their public entry.
+// helicopter-material.ts, coach.ts (the intercity coach), tractor-trailer.ts (the supermarkets' tráiler) and
+// lettering.ts (the names on their sides). This module is their public entry.
 
 export {
   CAR_PARTS,
@@ -57,5 +67,19 @@ export {
   buildHelicopterBodyGeometry,
   buildHelicopterMainRotorGeometry,
   buildHelicopterTailRotorGeometry,
-  createLoftedHelicopterMaterial
+  createLoftedHelicopterMaterial,
+  standingBox,
+  COACH_SIZE,
+  buildCoachBodyGeometry,
+  buildCoachWheelsGeometry,
+  buildCoachNameGeometry,
+  coachNameTexture,
+  createCoachMaterial,
+  createCoachNameMaterial,
+  TRUCK_SIZE,
+  buildTractorTrailerGeometry,
+  buildTrailerNameGeometry,
+  trailerNameTexture,
+  createTractorTrailerMaterial,
+  createTrailerNameMaterial
 };

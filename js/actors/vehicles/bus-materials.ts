@@ -19,6 +19,7 @@ import {
 import { CAR_PARTS } from './car-specs.ts';
 import { BUS_PARTS, BUS_SPEC } from './bus-geometry.ts';
 import { roundedRect } from './tsl-shapes.ts';
+import { letteringAtlas, createLetteringMaterial } from './lettering.ts';
 import type { Node } from 'three/webgpu';
 
 // js/actors/vehicles/bus-materials.ts
@@ -39,37 +40,10 @@ export function busLiveryTexture(liveries: [body: number, trim: number][]): THRE
   return tex;
 }
 
-// One row per route of white lettering edged in black on clear (the buses' glass), ROUTE_SIGN_ROWS tall
-const ROUTE_SIGN_ROW = 64;
+// One row per route of white lettering edged in black on clear (the buses' glass)
 export function routeSignTexture(names: string[]): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = ROUTE_SIGN_ROW * Math.max(1, names.length);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('No 2D canvas for the route signs');
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.lineJoin = 'round';
-  names.forEach((name, row) => {
-    const text = name.toUpperCase();
-    let size = 44;
-    ctx.font = `900 ${size}px Georgia, 'Times New Roman', serif`;
-    const w = ctx.measureText(text).width;
-    if (w > 470) {
-      size = Math.floor((size * 470) / w);
-      ctx.font = `900 ${size}px Georgia, 'Times New Roman', serif`;
-    }
-    const y = row * ROUTE_SIGN_ROW + ROUTE_SIGN_ROW / 2 + 2;
-    ctx.lineWidth = 7;
-    ctx.strokeStyle = '#000000';
-    ctx.strokeText(text, 256, y);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(text, 256, y);
-  });
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  return tex;
+  return letteringAtlas(names.map((name) => [name.toUpperCase(), '#ffffff', '#000000'] as const),
+    { width: 512, row: 64, size: 44, font: `900 Georgia, 'Times New Roman', serif`, fit: 470, edge: 7 });
 }
 
 /**
@@ -78,17 +52,10 @@ export function routeSignTexture(names: string[]): THREE.CanvasTexture {
  * - 'box': a combi's roof sign, white with the lettering in navy, lit from inside at night
  */
 export function createRouteSignMaterial(tex: THREE.Texture, rows: number, kind: 'glass' | 'box'): THREE.MeshStandardNodeMaterial {
+  if (kind === 'glass') return createLetteringMaterial(tex, rows, 'signRow');
   const row = attribute('signRow', 'float');
   const t = texture(tex, vec2(uv().x, uv().y.add(float(rows - 1).sub(row)).div(rows)));
   const mat = new THREE.MeshStandardNodeMaterial();
-  if (kind === 'glass') {
-    mat.colorNode = t.rgb;
-    mat.opacityNode = t.a;
-    mat.alphaTest = 0.5;
-    mat.roughnessNode = float(0.5);
-    mat.metalnessNode = float(0.0);
-    return mat;
-  }
   const ink = clamp(t.a.mul(1.4), 0.0, 1.0);
   const face = mix(color(0xf4f6f8), color(0x1b3a8c), ink);
   mat.colorNode = face;

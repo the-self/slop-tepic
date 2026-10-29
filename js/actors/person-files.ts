@@ -3,7 +3,7 @@
 // skinned to its 15 bones), loaded once each in the background for the crowds that draw them (sim/pedestrians.ts
 // PersonCrowd `model`). Each file is its near body ('person'), its far level ('lod1') and their texture; every vertex
 // carries _SKIN, the two bones it follows and the weight of the second. Until a file loads (or if it fails) the crowd
-// draws its own lofted body. main.ts waits a little for the player's before the shaders compile.
+// draws its own lofted body. app/frame-loop.ts waits a little for the player's before the shaders compile.
 import * as THREE from 'three/webgpu';
 
 /** A loaded person model: its body near by and far off (bind pose, metres, facing +z) and its texture */

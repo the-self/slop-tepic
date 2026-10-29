@@ -608,7 +608,8 @@ const SPECIES: TreeSpecies[] = [
   }
 ];
 
-// The month the trees show (0 = January): the Live time's (?live-time=<ISO date>, as main.ts reads it) or today's
+// The month the trees show (0 = January): the Live time's (?live-time=<ISO date>, as app/install/sky.ts reads it) or
+// today's
 function treeMonth() {
   try {
     const q = new URLSearchParams('location' in globalThis ? globalThis.location.search : '').get('live-time');
@@ -1346,7 +1347,8 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
         mesh.visible = n > 0;
         if (n > 0) {
           visible = true;
-          // main.ts swaps instanceMatrix for a storage attribute: look it up here on every changed cell.
+          // app/install/rendering.ts swaps instanceMatrix for a storage attribute: look it up here on every changed
+          // cell.
           const treeData = mesh.geometry.attributes.aTreeData;
           if (!(treeData instanceof THREE.BufferAttribute)) continue; // (always: set up above)
           for (const attr of [mesh.instanceMatrix, treeData]) {
@@ -1459,7 +1461,8 @@ function createTreeField(scene: THREE.Scene, sites: TreeSite[]) {
     const mesh = new THREE.InstancedMesh(geo, material, 1);
     mesh.name = `FelledTree_${i}`;
     _m.fromArray(mats, i * 16).decompose(_p, _q, _s);
-    // (as main.ts left the field's: storage on WebGPU, so the tree's pipeline is the one compiled already)
+    // (as app/install/rendering.ts left the field's: storage on WebGPU, so the tree's pipeline is the one compiled
+    // already)
     const array = new Float32Array(16);
     _m.makeScale(_s.x, _s.y, _s.z).toArray(array);
     mesh.instanceMatrix = instanced.at(0)?.instanceMatrix instanceof THREE.StorageInstancedBufferAttribute

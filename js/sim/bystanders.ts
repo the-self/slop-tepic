@@ -6,7 +6,7 @@ import { PersonCrowd, PersonRig, OUTFIT, OUTFIT_SEED } from './pedestrians.ts';
 // antros and at the house parties dancing (nightlife.ts), the diners & dancers inside (interiors.ts), the bomberos at a
 // fire (fires.ts), the paramédicos by someone hurt (emergency.ts). One skinned crowd (pedestrians.ts PersonCrowd) and a pool of rigs, each kept by the key its owner
 // gives it (a number: no string is built per frame), so a person keeps their looks and their footing from frame to
-// frame. Every frame: begin(), then place() each person in view, then end(dt).
+// frame. Every frame: begin(), then place() each person in view (lay() one a ragdoll has thrown), then end(dt).
 
 // How someone stands (place()'s `style`, shared: nothing is allocated per person): `dance` 0..1 steps to the music,
 // `sway` shifts the weight about; `outfit` an OUTFIT (pedestrians.ts) or 0 for everyday clothes; `female` & `scale`
@@ -28,6 +28,8 @@ interface BystanderSlot {
   z: number;
   heading: number;
   distance: number;
+  /** lying where it was thrown: its rig a ragdoll's (sim/ragdolls.ts), drawn as it lies and not walked */
+  fallen: boolean;
 }
 
 const STYLES = {
@@ -90,11 +92,12 @@ class Bystanders {
           hair: isFemale ? 0.3 + r(5) * 0.7 : r(5) * 0.25, armSwing: 0.9 + r(6) * 0.2
         }),
         phase: r(7) * 6.28,
-        seen: 0, x: 0, z: 0, heading: 0, distance: 0 // (placed just below)
+        seen: 0, x: 0, z: 0, heading: 0, distance: 0, fallen: false // (placed just below)
       };
       this.rigs.set(key, slot);
     }
     slot.seen = this.frame;
+    slot.fallen = false;
     // dancing: a little step from side to side and a turn to the beat (~2 beats/s); swaying: weight shifts
     const t = this.time + slot.phase;
     const step = style.dance * 0.16 * Math.sin(t * 3.1) + style.sway * 0.05 * Math.sin(t * 0.7);
@@ -106,12 +109,33 @@ class Bystanders {
     this.placed.push(slot);
   }
 
+  /** The one kept by `key` lying where a ragdoll threw it (its rig posed by the ragdoll), `distance` m from the camera */
+  lay(key: number, distance: number): void {
+    const slot = this.rigs.get(key);
+    if (!slot || this.placed.length >= this.max) return;
+    slot.seen = this.frame;
+    slot.fallen = true;
+    slot.distance = distance;
+    this.placed.push(slot);
+  }
+
+  /** The one kept by `key`, placed this frame, has just been thrown: its rig is the ragdoll's from now on */
+  fell(key: number): void {
+    const slot = this.rigs.get(key);
+    if (slot) slot.fallen = true;
+  }
+
+  /** The rig of the one kept by `key` (to throw it: sim/ragdolls.ts), if they've been placed */
+  rigOf(key: number): PersonRig | null {
+    return this.rigs.get(key)?.rig ?? null;
+  }
+
   end(dt: number): void {
     this.time += dt;
     this.crowd.begin();
     for (const slot of this.placed) {
-      // (the far ones keep their pose: their footing is too small to see)
-      slot.rig.update(dt, slot.x, slot.z, slot.heading, this.ground, null, 0, slot.distance < 60 || !slot.rig.placed);
+      // (the far ones keep their pose: their footing is too small to see; the fallen are the ragdoll's)
+      if (!slot.fallen) slot.rig.update(dt, slot.x, slot.z, slot.heading, this.ground, null, 0, slot.distance < 60 || !slot.rig.placed);
       this.crowd.add(slot.rig, slot.distance);
     }
     this.crowd.end();

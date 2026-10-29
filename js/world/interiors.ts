@@ -495,8 +495,8 @@ class Interiors {
     this.crime.toast(venue.tapanco ? t('toast.loft', { name: venue.name }) : venue.name);
   }
 
-  // Out of the room without going back through its door (main.ts: a teleport from the map, a respawn), and the room's
-  // lights off; nothing if the player is outside
+  // Out of the room without going back through its door (app/teleport.ts: a teleport from the map, a respawn), and the
+  // room's lights off; nothing if the player is outside
   abandon() {
     if (!this.inside) return;
     for (const l of this.inside.room.lights) l.visible = false;
@@ -563,7 +563,7 @@ class Interiors {
     ppl.end(dt);
   }
 
-  // What F would do here (main.ts updatePrompt)
+  // What F would do here (app/boarding.ts prompt)
   prompt() {
     if (this.inside) {
       if (this.exitNear) return t('prompt.leave');

@@ -1,6 +1,6 @@
 # tools/models/blender/shell.py
 # The body the everyday cars modelled by script share: the Mazdas' lines (mazda-3.py) made a tool, so a car's own
-# script (toyota-corolla.py, nissan-versa.py...) gives its numbers and lays its face and tail onto it. The shell is lofted
+# script (toyota-corolla.py, nissan-sentra.py...) gives its numbers and lays its face and tail onto it. The shell is lofted
 # through cross-sections drawn from three profiles along the car (its centreline's top, its floor, its beltline) and
 # its plan's half-width: the side swelling to its shoulder and drawn in under the glass, the glass sloping in to the
 # roof's rails. Then its windows (the windshield, the side glass between black posts, a quarter light behind the last
