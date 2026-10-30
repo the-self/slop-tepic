@@ -11,7 +11,7 @@ import { roundBox, hitChance, wrapAngle, rayBox } from '../weapons.ts';
 import { shotStopped } from './gunfire.ts';
 import { POLICE, GANGS, NARCO } from '../crime-rules.ts';
 import type { AgentKind, NpcGun, Agent } from './types.ts';
-import { MAX_AGENTS, BODY_R, RUN, THIEF_RUN, WALK, DOWN_TIME, DEAD_TIME, DESPAWN, NPC_GUN, FOE_DAMAGE, FOE_RANGE, SKILL, clamp, rand, dummy } from './constants.ts';
+import { MAX_AGENTS, BODY_R, RUN, THIEF_RUN, WALK, DOWN_TIME, DEAD_TIME, DESPAWN, CORNER_QUIET, NPC_GUN, FOE_DAMAGE, FOE_RANGE, SKILL, clamp, rand, dummy } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
 import { t } from '../../i18n/i18n.ts';
 
@@ -31,7 +31,7 @@ function dropCar(a: Agent): void {
 // (a soldier, `army`, is one of the police: kind 'cop', in fatigues, with a rifle and more to them)
 export function spawnAgent(
   crime: CrimeSystem, kind: AgentKind, x: number, z: number,
-  { gang = -1, weapon = null, army = false }: { gang?: number; weapon?: StreetGun | null; army?: boolean } = {}
+  { gang = -1, weapon = null, army = false, corner = -1 }: { gang?: number; weapon?: StreetGun | null; army?: boolean; corner?: number } = {}
 ): Agent | null {
   if (crime.agents.length >= MAX_AGENTS) return null;
   const outfit = army ? OUTFIT.soldier : kind === 'cop' ? OUTFIT.police : kind === 'thief' ? OUTFIT.thief : GANGS[gang].outfit;
@@ -42,7 +42,7 @@ export function spawnAgent(
   const a: Agent = {
     kind, gang, army, rig, x, z, heading: Math.atan2(crime.huntX - x, crime.huntZ - z), speed: 0, hp: army ? 150 : kind === 'cop' ? 100 : 80,
     fallen: null, dead: false, state: kind === 'thief' ? 'approach' : kind === 'gang' ? 'idle' : 'chase',
-    t: 0, weapon, cooldown: rand(0.5, 1.5), burst: 0, homeX: x, homeZ: z, money: 0, arrest: 0, idleYaw: Math.random() * 6.28,
+    t: 0, weapon, cooldown: rand(0.5, 1.5), burst: 0, homeX: x, homeZ: z, corner, money: 0, arrest: 0, idleYaw: Math.random() * 6.28,
     wanderT: rand(2, 6), los: false, losT: 0, stepT: 0, foe: null, foeT: Math.random() * 0.5, car: null
   };
   crime.agents.push(a);
@@ -108,6 +108,8 @@ export function kill(crime: CrimeSystem, a: Agent): void {
     const narco = a.gang === NARCO;
     if (Math.random() < (narco ? 0.75 : 0.6)) crime.drop(a.weapon ?? 'pistol', a.x, a.z);
     if (Math.random() < 0.7) crime.drop('money', a.x + 0.6, a.z, Math.round(narco ? rand(60, 220) : rand(15, 70)));
+    // the last of a corner's crew: nobody stands on it for a while (crime/dispatch.ts)
+    if (a.corner >= 0 && !crime.agents.some((b) => b !== a && b.corner === a.corner && !b.dead)) crime.cornerQuiet.set(a.corner, crime.clock + CORNER_QUIET);
   }
 }
 

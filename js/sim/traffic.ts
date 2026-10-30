@@ -22,6 +22,7 @@ import type { Footprint } from '../world/road-network.ts';
 import type { Ragdolls } from './ragdolls.ts';
 import type { CarPhysics } from '../player/car-physics.ts';
 import { createTrafficState } from './traffic/state.ts';
+import { visible } from './traffic/view.ts';
 import type {
   Vehicle, Car, Bus, TwoWheeler, Bike, Moto, Hijackable, VehicleBase, VehicleKind, DrivenVehicle, Ped, Bail, Conversation, BikeWreck,
   TrafficNode, TrafficEdge, TrafficMove, TrafficNetwork, LaneEntry, DriverModel, TrafficPlayerEntity, ParkedVehicle, SirenSource, BumpBody,
@@ -74,6 +75,8 @@ function createTrafficSystem(scene: THREE.Scene, sidewalks: readonly Footprint[]
     bumpBody: (b: BumpBody, ram?: boolean, inJolt?: boolean): void => { bumpBody(ts, b, ram, inJolt); },
     roadSpot: (x: number, z: number, rMin: number, rMax: number): RoadSpot | null => roadSpot(ts, x, z, rMin, rMax),
     sidewalkSpot: (x: number, z: number, rMin: number, rMax: number): RoadSpot | null => sidewalkSpot(ts, x, z, rMin, rMax),
+    // (x, z) within `r` m of the camera's view, as of the last frame (false before the first)
+    inView: (x: number, z: number, r: number): boolean => visible(ts, x, z, r),
     setSolidQuery: (fn: SolidQuery | null): void => { setSolidQuery(ts, fn); },
     setHillQuery: (fn: HillQuery | null): void => { setHillQuery(ts, fn); },
     setSurfaceQuery: (fn: SurfaceQuery | null): void => { setSurfaceQuery(ts, fn); },

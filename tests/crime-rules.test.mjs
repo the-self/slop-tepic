@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Wanted, STAR_HEAT, POLICE, GANGS, gangTurf, evadeTime, starsFor, inSight, SIGHT } from '../js/sim/crime-rules.ts';
+import { Wanted, STAR_HEAT, POLICE, evadeTime, starsFor, inSight, SIGHT } from '../js/sim/crime-rules.ts';
 
 test('running people over brings the police: a star at once, two by the third', () => {
   const w = new Wanted();
@@ -59,27 +59,6 @@ test('the police see ahead of them in a cone and right beside them, the helicopt
   const north = [0, 0, 45, Math.PI - 0.1, 0.5, 0];
   assert.ok(inSight(north, 0, 2, -30) && inSight(north, 0, -2, -30));
   assert.ok(inSight(cones, SIGHT, -100, -100), 'the helicopter sees behind it');
-});
-
-test('the gangs hold turf away from the town centre, the cartel out on the edges, deterministically', () => {
-  assert.equal(gangTurf(0, 0), -1, 'the plaza is nobody\'s');
-  let rojos = 0, verdes = 0, narcos = 0;
-  for (let x = -23 * 260; x < 6000; x += 260) {
-    for (let z = -23 * 260; z < 6000; z += 260) {
-      const g = gangTurf(x + 1, z + 1);
-      if (Math.hypot(x, z) < 700) continue; // (the centre's edge cuts squares)
-      assert.equal(g, gangTurf(x + 100, z + 100), 'the same square, the same gang');
-      if (g === 0) rojos++;
-      if (g === 1) verdes++;
-      if (g === 2) {
-        narcos++;
-        assert.ok(Math.hypot(x, z) > 600, 'the cartel keeps to the edges');
-      }
-    }
-  }
-  assert.ok(rojos > 150 && verdes > 150 && narcos > 100, `${rojos} / ${verdes} / ${narcos} squares`);
-  assert.equal(GANGS.length, 3);
-  assert.ok(GANGS[0].hostile && !GANGS[1].hostile && GANGS[2].hostile && GANGS[2].narco);
 });
 
 test('the army and the helicopter come at four stars and five, not before', () => {

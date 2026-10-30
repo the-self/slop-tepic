@@ -278,7 +278,7 @@ export const es: Messages = {
   'toast.armor': 'Chaleco',
   'toast.ammo': '{weapon} +{rounds}',
   'toast.patrol': 'Te vio una patrulla',
-  'toast.turf': 'Territorio de {gang}',
+  'toast.turf': 'Territorio de {gang} · {colonia}',
   'toast.cartel': 'El cártel manda a su gente',
   'toast.copsGang': 'Una patrulla va contra la pandilla',
   'toast.hospital': 'Cuenta del hospital: ${fee}',

@@ -13,6 +13,7 @@ import type { Bounds, CityLandmark, CityRoad, PointXZ } from '../world/city-conf
 import type { Footprint } from '../world/buildings.ts';
 import type { Blips, SightCones } from '../sim/crime.ts';
 import { SIGHT } from '../sim/crime-rules.ts';
+import { townTurf } from '../sim/gang-turf.ts';
 import { keyBindings } from '../input/keybindings.ts';
 import type { Vector3 } from 'three/webgpu';
 import { onLocaleChange, t } from '../i18n/i18n.ts';
@@ -74,6 +75,15 @@ const MAP_BASE = '#101511';
 
 // The city's colonias (GEO.places) at their real places (world metres)
 const AREA_LABELS = GEO.places.map((p): [label: string, x: number, z: number] => [p.name.toUpperCase(), p.x, p.z]);
+// A colonia a gang holds (sim/gang-turf.ts: its colonias are GEO.places, in their order) titled in the gang's blip
+// colour (GANGS order: Los Rojos, Los Verdes, the cartel); the rest in the plain grey
+const LABEL_GREY = 'rgba(168, 178, 192, 0.46)';
+const GANG_LABEL = ['rgba(255, 92, 92, 0.78)', 'rgba(80, 214, 118, 0.74)', 'rgba(214, 172, 80, 0.8)'];
+let labelColours: string[] | null = null;
+function labelColour(i: number): string {
+  labelColours ??= townTurf().colonias.map((c) => (c.gang >= 0 ? GANG_LABEL[c.gang] : LABEL_GREY));
+  return labelColours[i] ?? LABEL_GREY;
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // World-space vector layers: built once into Path2D objects (world metres) and drawn through a canvas transform
@@ -1410,12 +1420,12 @@ class CityMapSystem {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const tracking = 'letterSpacing' in ctx;
-    for (const [label, x, z] of s < 0.035 || s > 1.2 ? [] : AREA_LABELS) {
+    for (const [i, [label, x, z]] of (s < 0.035 || s > 1.2 ? [] : AREA_LABELS).entries()) {
       const dx = v.toX(x, z);
       const dy = v.toY(x, z);
       if (Math.abs(dx) > w * 0.47 || Math.abs(dy) > h * 0.47) continue;
       ctx.font = `700 10.5px ${FONT}`;
-      ctx.fillStyle = 'rgba(168, 178, 192, 0.46)';
+      ctx.fillStyle = labelColour(i);
       if (tracking) ctx.letterSpacing = '1.8px';
       const half = this.textWidth(ctx, label) * 0.5 + 4;
       const box: LabelBox = [dx - half, dy - 8, dx + half, dy + 8];

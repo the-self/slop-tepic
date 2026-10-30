@@ -277,7 +277,7 @@ export const en = {
   'toast.armor': 'Armor',
   'toast.ammo': '{weapon} +{rounds}',
   'toast.patrol': 'A patrol car spotted you',
-  'toast.turf': '{gang} turf',
+  'toast.turf': '{gang} turf · {colonia}',
   'toast.cartel': 'The cartel is sending its people',
   'toast.copsGang': 'A patrol car is going for the gang',
   'toast.hospital': 'Hospital bill: ${fee}',

@@ -5,6 +5,7 @@
 import { struckDamage, hardness, crashDamage, walletAmount, CRASH_GRACE } from '../../player/stats.ts';
 import { groundHeight } from '../../world/ground.ts';
 import { CrimeSystem } from '../../sim/crime.ts';
+import { townTurf } from '../../sim/gang-turf.ts';
 import { CrimeHud } from '../../ui/crime-hud.ts';
 import { WeaponWheel } from '../../ui/weapon-wheel.ts';
 import { WeaponIcons } from '../../ui/weapon-icons.ts';
@@ -24,6 +25,9 @@ export function installCrime({ scene, renderer, events, city, controllers, solid
     scene, controllers, traffic, groundHeight, solidAt, canvas: renderer.domElement, audio, aim,
     onRespawn: (kind) => { events.emit('respawn', kind); }
   });
+  // The gangs' colonias and their corners (sim/gang-turf.ts: ~20 ms over the road graph), worked out while the town
+  // loads rather than on the first gang tick or map draw of play
+  townTurf();
   if (saved.money !== undefined && Number.isFinite(saved.money)) crime.money = Math.max(0, Math.round(saved.money));
   crime.ragdolls = ragdolls;
   // (the patrol cars and the trucks near the player are cars in Jolt: crime/cruiser-bodies.ts)

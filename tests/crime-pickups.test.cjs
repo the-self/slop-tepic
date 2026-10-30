@@ -11,7 +11,7 @@ class Scratch { makeScale() { return this; } }
 const THREE = { Object3D: Scratch, Matrix4: Scratch, Color: Scratch };
 const constants = loadModule(read('js/sim/crime/constants.ts'), { imports: { 'three/webgpu': THREE, '../crime-rules.ts': {}, './types.ts': {} } });
 const { dispatch } = loadModule(read('js/sim/crime/dispatch.ts'), {
-  imports: { '../crime-rules.ts': { POLICE: { helicopter: [false] }, GANGS: [], NARCO: 2, gangTurf: () => -1 }, './constants.ts': constants, '../../i18n/i18n.ts': i18n }
+  imports: { '../crime-rules.ts': { POLICE: { helicopter: [false] }, GANGS: [], NARCO: 2 }, '../gang-turf.ts': { townTurf: () => ({ colonias: [], coloniaAt: () => -1, cornersNear: (x, z, r, out) => { out.length = 0; return out; } }) }, './constants.ts': constants, '../../i18n/i18n.ts': i18n }
 });
 
 // A crime system that only lays pickups: no stars, no turf, no thieves (no money), the bazooka in hand

@@ -53,8 +53,8 @@ import { t } from '../i18n/i18n.ts';
 //   that chase the player along the road graph, ram its car and drop officers off; a patrol of the traffic that sees a
 //   wanted player joins the chase. From four stars the army comes too (soldiers with rifles, their trucks) and a
 //   helicopter circles overhead, its gunner firing from the door.
-// - Two gangs on their turf, who shoot back (Los Rojos at anyone who comes close), and thieves who snatch the player's
-//   money and run.
+// - Two gangs (and the cartel) on corners of the colonias they hold (gang-turf.ts), who shoot back (Los Rojos at
+//   anyone who comes close), and thieves who snatch the player's money and run.
 // - The player's health, armour and money, pickups, and being WASTED (killed) or BUSTED (arrested): back at the
 //   nearest teleport spot (onRespawn: `respawn` on the bus, app/install/controls.ts).
 // - Out on the town's edges a (made-up) cartel with rifles: shooting on sight, at war with the police wherever they
@@ -143,7 +143,9 @@ class CrimeSystem {
   // the traffic's own patrol cars (traffic.ts: every 40th car keeps the livery): witnesses, and they join a chase
   trafficPolice: Car[];
   heli: Helicopter;
-  lastTurf?: number;
+  lastTurf = -1; // the gang's colonia the player was last told it was in (gang-turf.ts), and the clock s it last was
+  lastTurfAt = -Infinity;
+  cornerQuiet = new Map<number, number>(); // a corner's id: the clock s till a crew stands on it again
 
   // the models (buildGuns, buildCruisers, buildPickups)
   playerGuns: Record<string, THREE.Group> = {};
@@ -520,7 +522,7 @@ class CrimeSystem {
   // =========================================================================
   // 7. PEOPLE: police on foot, gangs, thieves (crime/agents.ts)
   // =========================================================================
-  spawnAgent(kind: AgentKind, x: number, z: number, opts?: { gang?: number; weapon?: StreetGun | null; army?: boolean }): Agent | null {
+  spawnAgent(kind: AgentKind, x: number, z: number, opts?: { gang?: number; weapon?: StreetGun | null; army?: boolean; corner?: number }): Agent | null {
     return spawnAgent(this, kind, x, z, opts);
   }
 

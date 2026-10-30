@@ -92,7 +92,7 @@ interface CrimeControllers {
 // patrol cars do to them (walking round its vehicles only where it can tell where they are)
 type CrimeTraffic = Pick<TrafficSystem, 'network' | 'peds' | 'cars' | 'buses' | 'setKnockListener' | 'panic' | 'rayHit' | 'shootPed'
   | 'shootVehicle' | 'shootTyre' | 'spikeTraffic' | 'blast' | 'burnCar' | 'setPoliceAlert' | 'roadSpot' | 'sidewalkSpot' | 'sparks' | 'bumpBody'
-  | 'knockBox' | 'withdraw'>
+  | 'knockBox' | 'withdraw' | 'inView'>
   & Partial<Pick<TrafficSystem, 'vehicleBoxAt' | 'vehicleAt'>>;
 // The sounds crime plays (audio/audio-system.ts CityAudioSystem)
 interface CrimeAudio {
@@ -114,7 +114,8 @@ interface CrimeOptions {
 
 // Someone on foot: police (army: a soldier, in fatigues with a rifle, 150 hp), a gang member (gang: GANGS index, else
 // -1) or a thief. hp of 100 (80: not police); fallen:
-// their ragdoll while down; t: s in this state; cooldown & burst: their gun's; home: a gang's corner; money: what a
+// their ragdoll while down; t: s in this state; cooldown & burst: their gun's; home: a gang's corner (corner: its
+// TurfCorner id, sim/gang-turf.ts, else -1); money: what a
 // thief took; arrest: s an officer has had hold of the player; los: a clear line to the player (checked every losT
 // s); stepT: s of a flinch; foe: the other side's one they are shooting at (rechecked every foeT s)
 interface Agent extends XZ {
@@ -134,6 +135,7 @@ interface Agent extends XZ {
   burst: number;
   homeX: number;
   homeZ: number;
+  corner: number;
   money: number;
   arrest: number;
   idleYaw: number;

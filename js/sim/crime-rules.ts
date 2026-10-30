@@ -1,7 +1,7 @@
 // js/sim/crime-rules.ts
 // The rules of the street: the wanted level (heat from crimes, one to five stars, lost by staying out of the
-// police's sight), the gangs' turf across the town, and how many police each star sends. No three.js, so node --test
-// imports it directly (tests/crime-rules.test.mjs). crime.ts plays them out.
+// police's sight), the gangs (their turf: gang-turf.ts), and how many police each star sends. No three.js, so node
+// --test imports it directly (tests/crime-rules.test.mjs). crime.ts plays them out.
 
 import type { WeaponId } from './weapons.ts';
 import { wrapAngle } from './weapons.ts';
@@ -126,7 +126,7 @@ class Wanted {
 }
 
 // Two street gangs share the town's turf: Los Rojos shoot at whoever comes close, Los Verdes only at whoever starts
-// it. Out on the town's edges the (made-up) Cártel de la Sierra holds the ground with rifles: they shoot on sight,
+// it. Out on the town's edges the (made-up) Cártel de la Sierra holds colonias with rifles: they shoot on sight,
 // fight the police wherever they meet, and send trucks of reinforcements after whoever takes them on (crime.ts).
 // outfit: the colours they wear (pedestrians.ts OUTFIT); sight: m they open fire from
 interface Gang {
@@ -144,26 +144,6 @@ const GANGS: readonly Gang[] = [
   { id: 2, name: 'Cártel de la Sierra', outfit: 5, hostile: true, weapon: 'rifle', sight: 28, narco: true }
 ];
 const NARCO = 2; // GANGS index
-const NARCO_RADIUS = 900; // m from the plaza beyond which the cartel can hold a square
-const TURF_CELL = 260; // m: the turf is cut in squares this big, each one a gang's or nobody's
-
-function hash2(ix: number, iz: number): number {
-  let h = (Math.imul(ix | 0, 374761393) + Math.imul(iz | 0, 668265263)) | 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  h ^= h >>> 16;
-  return (h >>> 0) / 4294967296;
-}
-
-// The gang whose turf (x, z) is in (an index into GANGS), or -1. The town centre (within 300 m of the origin, the
-// plaza) belongs to nobody; the cartel only holds squares on the town's edges.
-function gangTurf(x: number, z: number): number {
-  if (Math.hypot(x, z) < 300) return -1;
-  const ix = Math.floor(x / TURF_CELL), iz = Math.floor(z / TURF_CELL);
-  const h = hash2(ix, iz);
-  // (the cartel's by where the square's centre lies, so a square is all theirs or not at all)
-  const edge = Math.hypot((ix + 0.5) * TURF_CELL, (iz + 0.5) * TURF_CELL) > NARCO_RADIUS;
-  return h < 0.2 ? 0 : h < 0.4 ? 1 : h < 0.55 && edge ? NARCO : -1;
-}
 
 export type { CrimeKind, StreetGun, PoliceByStars, Gang };
-export { STAR_HEAT, CRIME_HEAT, POLICE, GANGS, NARCO, NARCO_RADIUS, TURF_CELL, Wanted, SIGHT, starsFor, evadeTime, inSight, gangTurf };
+export { STAR_HEAT, CRIME_HEAT, POLICE, GANGS, NARCO, Wanted, SIGHT, starsFor, evadeTime, inSight };

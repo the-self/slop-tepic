@@ -27,6 +27,7 @@ const WALK = 1.4;
 const DOWN_TIME = 3.5; // s someone knocked down but alive lies before getting up
 const DEAD_TIME = 30; // s a body stays
 const DESPAWN = 200; // m from the player: gone
+const CORNER_QUIET = 300; // s a gang's corner stays empty once its whole crew is dead
 const GRIP_REACH = 0.045; // m from the rig's wrist on to the middle of the grip in its hand
 const DRAW_TIME = 0.32; // s to put one weapon away and bring the next up (the arsenal's own 0.25 s holds its fire)
 const RESPAWN_TIME = 4.2; // s on the WASTED / BUSTED screen
@@ -74,5 +75,5 @@ const zero = new THREE.Matrix4().makeScale(0, 0, 0);
 const tint = new THREE.Color();
 
 export {
-  MAX_AGENTS, MAX_CRUISERS, MAX_TRUCKS, MAX_ARMY, MAX_PICKUPS, HEALTH_PICKUP, ARMOR_PICKUP, PARKED_Y, BODY_R, PERSON_H, CAR_H, BUS_H, inBody, RUN, THIEF_RUN, WALK, DOWN_TIME, DEAD_TIME, DESPAWN, GRIP_REACH, DRAW_TIME, RESPAWN_TIME, COP_SIGHT, CRUISER_SIGHT, COP_FOV, CRUISER_FOV, ARMY_SIGHT, ARMY_FOV, ARMY_TRUCK_SIGHT, NEAR_SIGHT, CRUISER, CRUISER_HP, HELI_ALT, HELI_ORBIT, HELI_SPEED, HELI_SIGHT, HELI_HP, HELI_R, HELI_GUN, HELI_RESPAWN, NPC_GUN, FOE_DAMAGE, FOE_RANGE, SKILL, PICKUP_COLORS, clamp, rand, dummy, zero, tint
+  MAX_AGENTS, MAX_CRUISERS, MAX_TRUCKS, MAX_ARMY, MAX_PICKUPS, HEALTH_PICKUP, ARMOR_PICKUP, PARKED_Y, BODY_R, PERSON_H, CAR_H, BUS_H, inBody, RUN, THIEF_RUN, WALK, DOWN_TIME, DEAD_TIME, DESPAWN, CORNER_QUIET, GRIP_REACH, DRAW_TIME, RESPAWN_TIME, COP_SIGHT, CRUISER_SIGHT, COP_FOV, CRUISER_FOV, ARMY_SIGHT, ARMY_FOV, ARMY_TRUCK_SIGHT, NEAR_SIGHT, CRUISER, CRUISER_HP, HELI_ALT, HELI_ORBIT, HELI_SPEED, HELI_SIGHT, HELI_HP, HELI_R, HELI_GUN, HELI_RESPAWN, NPC_GUN, FOE_DAMAGE, FOE_RANGE, SKILL, PICKUP_COLORS, clamp, rand, dummy, zero, tint
 };
