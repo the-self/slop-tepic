@@ -69,7 +69,8 @@ const BLIP_STYLES: Partial<Record<string, readonly [colour: string, radius: numb
   fire: ['#ff5a1f', 5], // (a fire burning, sim/fires.ts)
   firetruck: ['#ff3b30', 4.4], ambulance: ['#ffffff', 4.2],
   spikes: ['#ffd24a', 3.6], // (a police spike strip across the road, crime/spikes.ts)
-  fuel: ['#2fbf71', 2.6] // (a gas station, sim/gas-stations.ts) // (the bomberos & the Cruz Roja on their way, sim/emergency.ts)
+  fuel: ['#2fbf71', 2.6], // (a gas station, sim/gas-stations.ts) // (the bomberos & the Cruz Roja on their way, sim/emergency.ts)
+  crew: ['#3ee0c8', 4.8] // (a crew mate, in multiplayer: net/play.ts)
 };
 const MAP_BASE = '#101511';
 

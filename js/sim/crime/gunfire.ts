@@ -174,7 +174,7 @@ export function hitScan(crime: CrimeSystem, ox: number, oy: number, oz: number, 
     const r = target as RemoteTarget;
     crime.fx.impact(ex, ey, ez, r.person ? 'blood' : 'metal', r.person ? dx : -dx, r.person ? dz : -dz);
     if (byPlayer) {
-      crime.onRemoteHit?.(r.id, w.damage);
+      crime.onRemoteHit?.(r.id, w.damage, w.id);
       crime.report('shootPed');
     }
   }
@@ -351,7 +351,7 @@ export function explode(crime: CrimeSystem, x: number, y: number, z: number, rad
   if (byPlayer) {
     for (const r of crime.remotes) {
       const d = Math.hypot(r.x - x, r.z - z);
-      if (d < radius * 1.3) crime.onRemoteHit?.(r.id, 95 * blastFalloff(d, radius * 1.3));
+      if (d < radius * 1.3) crime.onRemoteHit?.(r.id, 95 * blastFalloff(d, radius * 1.3), 'blast');
     }
   }
   const h = crime.heli;

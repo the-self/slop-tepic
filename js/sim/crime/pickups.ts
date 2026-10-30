@@ -62,9 +62,11 @@ export function collect(crime: CrimeSystem, p: Pickup): void {
     crime.toast(t('toast.cash', { amount: p.amount }));
   } else if (p.kind === 'health') {
     crime.health = Math.min(100, crime.health + p.amount);
+    crime.onHeal?.('health');
     crime.toast(t('toast.health'));
   } else if (p.kind === 'armor') {
     crime.armor = Math.min(100, crime.armor + p.amount);
+    crime.onHeal?.('armor');
     crime.toast(t('toast.armor'));
   } else {
     const w: Weapon = WEAPONS[p.kind];

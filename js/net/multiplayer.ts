@@ -5,6 +5,7 @@ import { keyBindings } from '../input/keybindings.ts';
 import { PLAYER_PERSON } from '../player/controllers/constants.ts';
 import { RemoteCarFleet } from './remote-cars.ts';
 import { extrapolate } from './motion.ts';
+import { cloneVisual, counterpart } from './visuals.ts';
 import {
   SEND_HZ,
   MAX_UPDATE_EVERY,
@@ -22,7 +23,12 @@ import {
   decodeServer
 } from '../../shared/protocol.ts';
 import type { Mode, MovedPlayer, PoseSource, RoomRules, ServerMessage, Shot, SkyTime, SkyWeather } from '../../shared/protocol.ts';
+import { isPlayServer } from '../../shared/protocol-play.ts';
+import type { CarLookWire } from '../../shared/protocol-play.ts';
 import { NAME_KEY, rulesSummary } from './lobby.ts';
+import { NetPlay } from './play.ts';
+import type { OwnCarLook, PlayHost } from './play.ts';
+import { savedToken } from './profile.ts';
 import type { CurrentRoom, RoomEntry } from './lobby.ts';
 import type { CrimeSystem, RemoteTarget } from '../sim/crime.ts';
 import type { CarEntity, PersonEntity, PlayerEntity } from '../player/controllers.ts';
@@ -38,6 +44,9 @@ import { onLocaleChange, setLabel, setText, t } from '../i18n/i18n.ts';
 // blasts land on the others (sim/crime.ts traces them against their poses) and theirs on the player, who killed whom,
 // and riding in a friend's car (F by it: the camera rides along, and F again gets out). The sky is the room's: the time
 // of day and weather picked in the menu (app/menu.ts) go to everyone in it, and the room's arrives on joining.
+//
+// How the players play together (crews, passive mode, their cars' looks, the police after them, the profile) is
+// net/play.ts's; the others' cars push the player's (and its traffic) out of their way here.
 //
 //   ?multiplayer=1               connect (to the page's own server, tools/play.ts; ws://<host>:8787 from localhost)
 //   &mp-server=wss://host/path   another server
@@ -57,6 +66,12 @@ const LABEL_DISTANCE = 140; // m within which name tags show
 const RETRY_MAX_MS = 10000;
 const RIDE_REACH = 3.2; // m from a friend's car to get in
 const KILL_WINDOW_MS = 10000; // a player's hit this recent killed the player
+const BUMP_REACH = 12; // m from the player within which another player's car is checked against it...
+const SHOVE_REACH = 150; // ...and from the camera, against the player's traffic
+const CAR_MASS = 1400; // kg: another player's car, as the shoves share the push
+// ms after another player's car struck the player during which it only pushes (it doesn't slow down for the hit as a
+// patrol car does, so a car resting against the player would strike it again every frame)
+const RAM_GRACE_MS = 800;
 const CHAT_LINES = 8; // lines kept on screen
 const CHAT_FADE_MS = 15000; // a line fades after this long
 // A remote player's body to shots, per mode: half width & length (m; a person's is a circle, BODY_R in crime.ts) and height
@@ -105,7 +120,8 @@ export interface MultiplayerControllers {
 }
 
 /** What multiplayer uses of sim/crime.ts's CrimeSystem: the player's state, its targets and hooks, its hurts, the shots seen */
-export type MultiplayerCrime = Pick<CrimeSystem, 'state' | 'remotes' | 'onPlayerShot' | 'onRemoteHit' | 'fireBlocked' | 'hurt' | 'showShot' | 'toast'>;
+export type MultiplayerCrime = Pick<CrimeSystem, 'state' | 'remotes' | 'onPlayerShot' | 'onRemoteHit' | 'fireBlocked' | 'hurt' | 'showShot' | 'toast' |
+  'moreBlips' | 'wanted' | 'cruisers' | 'heli' | 'player' | 'traffic' | 'shovePlayer' | 'onHeal' | 'health' | 'armor' | 'down'>;
 /** What multiplayer uses of player/cameras.ts's CameraSystem: what it follows instead of the player's own entity */
 export interface MultiplayerCameras {
   follow: PlayerEntity | null;
@@ -145,30 +161,6 @@ interface PoseSample extends RemotePose {
 
 const lerpAngle = (a: number, b: number, t: number) => a + ((((b - a) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI) * t;
 
-// The node at the same child-index path in a clone as `node` is in `root`
-function counterpart(root: THREE.Object3D, clone: THREE.Object3D, node: THREE.Object3D | undefined): THREE.Object3D | undefined {
-  const path: number[] = [];
-  for (let n: THREE.Object3D | null | undefined = node; n && n !== root; n = n.parent) {
-    if (!n.parent) return undefined; // (not under root)
-    path.unshift(n.parent.children.indexOf(n));
-  }
-  let c: THREE.Object3D | undefined = clone;
-  for (const i of path) c = c?.children.at(i); // (i ≥ 0: an indexOf of a child that is there)
-  return c;
-}
-
-// A visual copy of a player entity's mesh sharing its geometry & materials, without its lights (dozens of remote
-// headlamps would swamp the clustered light budget)
-function cloneVisual(entity: EntityLook): THREE.Object3D {
-  const copy = entity.mesh.clone(true);
-  const lights: THREE.Light[] = [];
-  copy.traverse((o) => {
-    if (o instanceof THREE.Light) lights.push(o);
-  });
-  for (const l of lights) l.removeFromParent();
-  return copy;
-}
-
 class RemotePlayer {
   id: number;
   name: string;
@@ -179,6 +171,13 @@ class RemotePlayer {
   label: HTMLDivElement | null;
   pedalPhase: number; // rad
   pose: RemotePose;
+  // its tag (net/play.ts): its crew (0: none), passive mode, wanted stars; and its car's look (null: none heard yet)
+  crew = 0;
+  passive = false;
+  stars = 0;
+  look: CarLookWire | null = null;
+  lookKey = ''; // (net/remote-looks.ts lookKey of `look`, worked out once when it comes)
+  rammedAt = -Infinity; // performance.now() ms its car last struck the player
   tickMs: number; // ms between the server's ticks, as its poses come
   // the parts of `visual` that move, found by counterpart() in the local player's mesh
   leanPivot?: THREE.Object3D;
@@ -245,7 +244,7 @@ class RemotePlayer {
   }
 }
 
-class Multiplayer {
+class Multiplayer implements PlayHost {
   scene: THREE.Scene;
   controllers: MultiplayerControllers;
   camera: THREE.Camera;
@@ -292,6 +291,10 @@ class Multiplayer {
   onRejected: ((code: string) => void) | null;
   /** the HUD's Rooms button: app/install/multiplayer.ts opens the lobby */
   onLobby: (() => void) | null;
+  play: NetPlay; // crews, passive mode, car looks, the police after the others, the profile
+  private readonly bump = { x: 0, z: 0, heading: 0, hw: 0, hl: 0, halfW: 0, speed: 0, vx: 0, vz: 0, mass: CAR_MASS };
+  private readonly shove = { x: 0, z: 0, heading: 0, halfW: 0, halfL: 0, speed: 0, vx: 0, vz: 0, mass: CAR_MASS };
+  private readonly placed = { x: 0, y: 0, z: 0, heading: 0, pitch: 0, roll: 0 };
 
   constructor({ scene, controllers, camera, crime = null, cameras = null, url, region = DEFAULT_REGION, name = '', onSky = null, entry = { kind: 'public' }, cars = null }: MultiplayerOptions) {
     this.scene = scene;
@@ -348,13 +351,16 @@ class Multiplayer {
     setText(this.roomsButton, 'mp.rooms');
     this.roomsButton.addEventListener('click', () => { this.onLobby?.(); });
     this.badge.after(this.roomsButton);
+    this.play = new NetPlay(this, scene, crime, (x, z, heading, along, across, out) => controllers.groundTilt(x, z, heading, along, across, out), this.roomsButton);
     this.renderBadge();
     onLocaleChange(() => { this.renderBadge(); }); // (in the new language)
     [this.chat, this.chatLog, this.chatInput] = this.buildChat();
     if (crime) {
       crime.remotes = this.targets;
       crime.onPlayerShot = (shot: Shot) => { this.sendFrame(encodeShot(shot)); };
-      crime.onRemoteHit = (id: number, damage: number) => { if (damage >= 1) this.sendFrame(encodeHit(id, damage)); };
+      crime.onRemoteHit = (id, damage, kind) => { if (damage >= 1) this.sendFrame(encodeHit(id, damage, kind)); };
+      crime.moreBlips = (out) => { this.play.blips(out); };
+      crime.onHeal = (kind) => { this.play.healed(kind); };
     }
     this.connect();
   }
@@ -366,6 +372,33 @@ class Multiplayer {
 
   get online(): boolean {
     return this.status === 'online';
+  }
+
+  // (PlayHost: what net/play.ts asks of the room)
+  toast(text: string): void {
+    this.crime?.toast(text);
+  }
+
+  position(): { x: number; z: number } {
+    return this.controllers.getActiveEntity().position;
+  }
+
+  carLook(): OwnCarLook {
+    return this.controllers.entities.car.look;
+  }
+
+  resetInput(): void {
+    this.controllers.resetInput();
+  }
+
+  // The server says the player is dead (its count of the player's health ran out): it is, whatever this game thought
+  killed(by: number): void {
+    const crime = this.crime;
+    if (crime?.state !== 'play') return;
+    this.lastHurtBy = by;
+    this.lastHurtAt = performance.now();
+    crime.health = 0;
+    crime.down('wasted');
   }
 
   // Sets the room's sky for everyone in it; false when not in a room (the change stays this player's). In a room of
@@ -494,9 +527,10 @@ class Multiplayer {
     this.ws = ws;
     ws.onopen = () => {
       const entry = this.entry;
-      ws.send(entry.kind === 'create' ? encodeCreate(this.region, this.name, entry.spec)
-        : entry.kind === 'join' ? encodeHello(this.region, this.name, entry.room, entry.password)
-          : encodeHello(this.region, this.name));
+      const token = savedToken(); // (the player's profile: '' the first time, and the server hands one out)
+      ws.send(entry.kind === 'create' ? encodeCreate(this.region, this.name, entry.spec, token)
+        : entry.kind === 'join' ? encodeHello(this.region, this.name, entry.room, entry.password, token)
+          : encodeHello(this.region, this.name, '', '', token));
       this.lastSent = null;
     };
     ws.onmessage = (e: MessageEvent<unknown>) => {
@@ -529,7 +563,12 @@ class Multiplayer {
       const sky = entry.kind === 'create' ? entry.spec : { time: 'live' as const, weather: 'live' as const }; // (SKY_SET follows)
       this.current = { title: msg.title, code: msg.code, host: msg.host === msg.id, hostId: msg.host, rules: msg.rules, ...sky };
       this.applyRules(msg.rules, false);
+      this.play.welcome();
       this.renderBadge();
+      return;
+    }
+    if (isPlayServer(msg)) {
+      this.play.receive(msg, performance.now());
       return;
     }
     if (msg.op === OP.ROOM) {
@@ -607,7 +646,7 @@ class Multiplayer {
     const entity = this.controllers.entities[mode];
     // (a car is an instance of the fleet's parts, placed each frame in update: no copy of its own)
     if (mode !== 'person' && mode !== 'car' && entity) {
-      r.visual = cloneVisual(entity);
+      r.visual = cloneVisual(entity.mesh);
       if (mode === 'cyclist' || mode === 'moto') r.leanPivot = counterpart(entity.mesh, r.visual, entity.leanPivot);
       if (mode === 'helicopter') {
         r.mainRotor = counterpart(entity.mesh, r.visual, entity.mainRotorPivot);
@@ -631,6 +670,7 @@ class Multiplayer {
     if (r.visual) r.visual.removeFromParent();
     if (r.label) r.label.remove();
     this.remotes.delete(id);
+    this.play.forget(id);
   }
 
   clearRemotes(): void {
@@ -643,6 +683,7 @@ class Multiplayer {
     const now = performance.now();
     this.sendPose(now);
     this.watchDeath(now);
+    this.play.update(dt, now);
 
     const renderTime = now - INTERP_DELAY_MS;
     const cam = this.camera;
@@ -650,6 +691,8 @@ class Multiplayer {
     let n = 0;
     this.crowd.begin();
     this.cars.begin(dt);
+    this.play.looks.begin(dt);
+    const me = this.controllers.getActiveEntity().position;
     for (const r of this.remotes.values()) {
       if (!r.mode || r.samples.length === 0) continue;
       const p = r.sample(renderTime);
@@ -658,23 +701,31 @@ class Multiplayer {
         this.placeLabel(r, p, Math.hypot(p.x - cam.position.x, p.z - cam.position.z));
         continue;
       }
-      const t = targets[n] ?? (targets[n] = { id: 0, x: 0, y: 0, z: 0, heading: 0, person: true, halfW: 0, halfL: 0, height: 1.85 });
-      n++;
       const body = BODIES[r.mode];
-      t.id = r.id;
-      t.x = p.x;
-      t.y = p.y;
-      t.z = p.z;
-      t.heading = p.heading;
-      t.person = !body;
-      t.halfW = body?.halfW ?? 0;
-      t.halfL = body?.halfL ?? 0;
-      t.height = body?.height ?? 1.85;
+      // (a crew mate, or either in passive mode: the player's shots go through it)
+      const hostile = this.play.hostile(r);
+      if (hostile) {
+        const t = targets[n] ?? (targets[n] = { id: 0, x: 0, y: 0, z: 0, heading: 0, person: true, halfW: 0, halfL: 0, height: 1.85 });
+        n++;
+        t.id = r.id;
+        t.x = p.x;
+        t.y = p.y;
+        t.z = p.z;
+        t.heading = p.heading;
+        t.person = !body;
+        t.halfW = body?.halfW ?? 0;
+        t.halfL = body?.halfL ?? 0;
+        t.height = body?.height ?? 1.85;
+      }
       const dist = Math.hypot(p.x - cam.position.x, p.z - cam.position.z);
       if (r.mode === 'car') {
-        // lying on the slope under its wheels, as the local player's does (controllers.ts tiltToGround)
+        // lying on the slope under its wheels, as the local player's does (controllers.ts tiltToGround); in its own
+        // look when it has come, else as the player's own car
         const tilt = this.controllers.groundTilt(p.x, p.z, p.heading, 1.35, 0.8, this._tilt);
-        this.cars.add(p.x, p.y, p.z, p.heading, tilt.pitch, tilt.roll);
+        const at = this.placed;
+        at.x = p.x; at.y = p.y; at.z = p.z; at.heading = p.heading; at.pitch = tilt.pitch; at.roll = tilt.roll;
+        if (!this.play.looks.add(r.look, r.lookKey, at, dist)) this.cars.add(p.x, p.y, p.z, p.heading, tilt.pitch, tilt.roll);
+        this.bumpInto(r, p, dist, Math.hypot(p.x - me.x, p.z - me.z), hostile, now);
       }
       if (r.visual) {
         r.visual.position.set(p.x, p.y, p.z);
@@ -707,6 +758,37 @@ class Multiplayer {
     targets.length = n;
     this.crowd.end();
     this.cars.end();
+    this.play.looks.end();
+  }
+
+  // Another player's car `r` at pose `p` (as it is drawn), `dist` m from the camera and `near` from the player: it
+  // pushes the player's car or the player out of its way (and hurts it, ramming, when `hostile`: once, then only pushes
+  // for RAM_GRACE_MS), and the player's traffic too. Its own game moves it: what it is pushed back by here is thrown
+  // away. Not while the player rides in a friend's car: its walker waits out of sight where it got in
+  bumpInto(r: RemotePlayer, p: RemotePose, dist: number, near: number, hostile: boolean, now: number): void {
+    const crime = this.crime;
+    if (!crime || this.rideId || (near > BUMP_REACH && dist > SHOVE_REACH)) return;
+    const b = this.bump;
+    const body = BODIES.car;
+    b.x = p.x;
+    b.z = p.z;
+    b.heading = p.heading;
+    b.hw = b.halfW = body?.halfW ?? 0.95;
+    b.hl = body?.halfL ?? 2.3;
+    const grace = now - r.rammedAt < RAM_GRACE_MS;
+    b.speed = grace ? 0 : p.speed;
+    b.vx = b.vz = 0;
+    if (near <= BUMP_REACH && crime.state === 'play' && crime.shovePlayer(b, hostile && !grace) > 0.5 && !grace) r.rammedAt = now;
+    if (dist > SHOVE_REACH) return;
+    const s = this.shove;
+    s.x = p.x;
+    s.z = p.z;
+    s.heading = p.heading;
+    s.halfW = b.halfW;
+    s.halfL = b.hl;
+    s.speed = p.speed;
+    s.vx = s.vz = 0;
+    crime.traffic.bumpBody(s, false);
   }
 
   // The player killed (crime.state turned 'wasted'): the room hears it, and by whom when another player's hit was
@@ -822,6 +904,7 @@ class Multiplayer {
       label.textContent = r.name;
       this.labels.append(label);
       r.label = label;
+      this.play.dressLabel(r); // (its stars, its crew's colour)
     }
     if (!r.label) return;
     const height = r.mode === 'helicopter' ? 3.6 : r.mode === 'car' ? 2.2 : r.mode === 'passenger' ? 2.6 : 2.25;
@@ -852,7 +935,8 @@ class Multiplayer {
 }
 
 // The errors that turn the player away from a room rather than from the server: the lobby is the way on
-const REJECTIONS: ReadonlySet<string> = new Set(['room', 'password', 'roomfull', 'wait']);
+// (and the server's own word on a player it caught cheating: kicked, or banned for a while)
+const REJECTIONS: ReadonlySet<string> = new Set(['room', 'password', 'roomfull', 'wait', 'cheat', 'banned']);
 const NO_TARGETS: RemoteTarget[] = []; // (a room without PvP: the player's shots find nobody)
 
 const groundFor = (controllers: MultiplayerControllers, x: number, z: number) => controllers.getGroundHeight(x, z, 'person');

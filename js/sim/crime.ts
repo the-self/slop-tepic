@@ -12,9 +12,9 @@ import { GunfireFX } from './gunfire-fx.ts';
 import { createLightbarMaterial } from '../actors/actor-models.ts';
 import type {
   CrimeState, DownKind, AgentKind, Faction, PickupKind, Blips, SightCones, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers,
-  CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, TraceHit, RemoteTarget, ShotProp
+  CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, TraceHit, RemoteTarget, ShotProp, ShovingCar
 } from './crime/types.ts';
-import type { Shot } from '../../shared/protocol.ts';
+import type { HitKind, Shot } from '../../shared/protocol.ts';
 import {
   MAX_AGENTS, MAX_PICKUPS, COP_SIGHT, CRUISER_SIGHT, COP_FOV, CRUISER_FOV, ARMY_SIGHT, ARMY_FOV, ARMY_TRUCK_SIGHT, NEAR_SIGHT, HELI_SIGHT, rand, zero
 } from './crime/constants.ts';
@@ -31,7 +31,7 @@ import {
   spawnAgent, angerGang, removeAgent, damageAgent, knockAgent, kill, updateAgent, walkAgent, findFoe, npcShoot
 } from './crime/agents.ts';
 import {
-  spawnCruiser, takeOverPatrol, respondToGang, removeCruiser, damageCruiser, updateCruiser, pursue, blockerAhead, deployOfficers, moveCruiser, collideCruisers,
+  spawnCruiser, takeOverPatrol, respondToGang, removeCruiser, damageCruiser, updateCruiser, pursue, blockerAhead, deployOfficers, moveCruiser, collideCruisers, shovePlayer,
   abandoned
 } from './crime/cruisers.ts';
 import { dispatch } from './crime/dispatch.ts';
@@ -84,7 +84,11 @@ class CrimeSystem {
   remotes: RemoteTarget[] = [];
   props: ShotProp[] = []; // what of the world's shots strike (a gas station's pumps, sim/gas-stations.ts)
   onPlayerShot: ((shot: Shot) => void) | null = null;
-  onRemoteHit: ((id: number, damage: number) => void) | null = null;
+  onRemoteHit: ((id: number, damage: number, kind: HitKind) => void) | null = null;
+  /** the player took a health or an armour pickup (multiplayer: the room server keeps its health, server/vitals.ts) */
+  onHeal: ((kind: 'health' | 'armor') => void) | null = null;
+  /** what else shows on the maps (multiplayer: the player's crew mates), added to blips()'s */
+  moreBlips: ((out: Blips) => void) | null = null;
   fireBlocked = false;
   policeOff = false; // a multiplayer room without police (net/lobby.ts): crimes raise no wanted level
   personGround: (owner: unknown, x: number, z: number) => number;
@@ -618,6 +622,14 @@ class CrimeSystem {
     collideCruisers(this);
   }
 
+  // Another player's car (multiplayer) against the player: pushed out of it, knocked, the crash heard; hurt only when
+  // `hurts` (the two can hurt each other: net/multiplayer.ts).
+  // `car`'s closing speed on the player (m/s), 0 when they don't touch
+  shovePlayer(car: ShovingCar, hurts: boolean): number {
+    const size = this.playerSize();
+    return size && this.onStreet ? shovePlayer(this, car, size, hurts) : 0;
+  }
+
   // =========================================================================
   // 8B. THE POLICE HELICOPTER, four stars on (crime/helicopter.ts)
   // =========================================================================
@@ -668,6 +680,7 @@ class CrimeSystem {
     if (this.heli.active && this.heli.state !== 'down') out.push('heli', this.heli.x, this.heli.z);
     for (const p of this.pickups) out.push(p.kind, p.x, p.z);
     for (const s of this.spikes) if (s.active) out.push('spikes', s.x, s.z);
+    this.moreBlips?.(out);
     return out;
   }
 }
@@ -675,6 +688,6 @@ class CrimeSystem {
 export type {
   CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, SightCones, NpcGun, CrimePlayer,
   CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter,
-  RocketFlight, Pickup, LockTarget, RemoteTarget, TraceHit
+  RocketFlight, Pickup, LockTarget, RemoteTarget, ShovingCar, TraceHit
 } from './crime/types.ts';
 export { CrimeSystem };

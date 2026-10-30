@@ -2575,3 +2575,98 @@ body.hud-minimized .mp-chat-btn { display: none; }
   .lobby-settings { grid-template-columns: 1fr; }
   .lobby-panel { padding: 16px; }
 }
+
+/* ------------------------------------------------------------------------------------------------------------------
+   Multiplayer crews (net/crew.ts): the Crew button, its card, an invitation; the others' tags (net/play.ts)
+   ------------------------------------------------------------------------------------------------------------------ */
+.mp-crew-btn { color: #3ee0c8; }
+.mp-crew-btn-on { background: var(--grain), var(--glass-strong); border-color: rgba(62, 224, 200, 0.55); }
+.mp-label-crew { background: rgba(14, 92, 80, 0.78); color: #d8fff8; box-shadow: 0 0 0 1px rgba(62, 224, 200, 0.6); }
+.mp-label-passive { opacity: 0.55 !important; font-style: italic; }
+.mp-crew {
+  position: fixed;
+  top: max(64px, env(safe-area-inset-top));
+  left: max(var(--edge), env(safe-area-inset-left));
+  z-index: 60;
+  width: min(320px, calc(100vw - 32px));
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--grain), var(--glass-strong);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--shadow);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
+  color: var(--text);
+  pointer-events: auto;
+}
+.mp-crew-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.mp-crew-title { font-size: 15px; font-weight: 800; }
+.mp-crew-sub { margin-top: 12px; font-size: 12.5px; font-weight: 700; color: var(--text-2); }
+.mp-crew-body { display: flex; flex-direction: column; gap: 8px; }
+.mp-crew-note { font-size: 12px; line-height: 1.45; color: var(--text-2); }
+.mp-crew-list { display: flex; flex-direction: column; gap: 6px; list-style: none; }
+.mp-crew-member { padding: 7px 10px; border-radius: 10px; background: rgba(14, 92, 80, 0.45); font: 650 13px var(--font-sans); }
+.mp-crew-player {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+}
+.mp-crew-name { font: 650 13px var(--font-sans); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-crew-dist { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+/* (tall enough to tap on a phone) */
+.mp-crew-action,
+.mp-crew-close {
+  min-height: 36px;
+  padding: 7px 12px;
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font: 650 12.5px var(--font-sans);
+  cursor: pointer;
+}
+.mp-crew-action:hover:not(:disabled),
+.mp-crew-close:hover { background: rgba(255, 255, 255, 0.14); }
+.mp-crew-action:disabled { opacity: 0.55; cursor: default; }
+.mp-crew-report { padding-inline: 9px; color: var(--text-3); }
+.mp-crew-yes { background: rgba(62, 224, 200, 0.22); border-color: rgba(62, 224, 200, 0.55); }
+.mp-crew-wide { width: 100%; }
+.mp-crew-row { display: flex; gap: 8px; }
+.mp-crew-row .mp-crew-action { flex: 1; }
+.mp-crew-asks {
+  position: fixed;
+  top: max(16px, env(safe-area-inset-top));
+  left: 50%;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(340px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.mp-crew-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--grain), var(--glass-strong);
+  border: 1px solid rgba(62, 224, 200, 0.55);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+  animation: rise-in 0.3s var(--ease-out) both;
+}
+.mp-crew-ask-text { font: 650 13.5px var(--font-sans); }
+.lobby-player-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.lobby-rankings { counter-reset: rank; }
+.lobby-rankings .lobby-room { grid-template-columns: 1fr auto; }
+body.hud-minimized .mp-crew-btn { display: none; }
+/* (a finger's size on a touch screen) */
+body.touch-enabled .mp-rooms-btn { padding: 9px 14px; font-size: 13px; }

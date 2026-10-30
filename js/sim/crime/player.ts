@@ -252,7 +252,7 @@ export function punch(crime: CrimeSystem): void {
     const d = Math.hypot(dx, dz);
     if (d > bestD || (dx * fx + dz * fz) < d * 0.45) continue;
     crime.audio?.gunfire?.('punch', r.x, r.y + 1.2, r.z);
-    crime.onRemoteHit?.(r.id, WEAPONS.fists.damage);
+    crime.onRemoteHit?.(r.id, WEAPONS.fists.damage, 'fists');
     crime.report('punch');
     return;
   }

@@ -6,7 +6,7 @@ import { boxHit } from '../mayhem.ts';
 import { boxOverlap, wrapAngle } from '../weapons.ts';
 import { POLICE, NARCO } from '../crime-rules.ts';
 import type { Car } from '../traffic.ts';
-import type { Faction, Cruiser, Agent, XZ } from './types.ts';
+import type { Faction, Cruiser, Agent, XZ, ShovingCar } from './types.ts';
 import { PARKED_Y, DESPAWN, CRUISER, CRUISER_HP, clamp, rand } from './constants.ts';
 import type { CrimeSystem } from '../crime.ts';
 import { cruiserBody, driveCruiserBody, dropCruiserBody, placeCruiserMesh } from './cruiser-bodies.ts';
@@ -523,10 +523,62 @@ function bodyStruck(crime: CrimeSystem, cr: Cruiser, b: CruiserBody): void {
   if (hit.speed > 4) crime.traffic.sparks(x, y, z, hit.nx, hit.nz, hit.speed);
 }
 
+// A car not the player's own driving into it (a patrol car; another player's, net/multiplayer.ts), `size` the player's
+// [half width, half length] (m): the two pushed apart by their masses' shares, the player's vehicle knocked on (or
+// slowed, driven into it), the crash heard; `hurts`: a hard hit hurts the player (on foot, badly). Its closing speed
+// on the player (m/s; 0 when they don't touch)
+export function shovePlayer(crime: CrimeSystem, cr: ShovingCar, size: readonly [number, number], hurts = true): number {
+  const pe = crime.player;
+  const box = crime._playerBox ??= { x: 0, z: 0, heading: 0, hw: 0, hl: 0 };
+  box.x = pe.position.x;
+  box.z = pe.position.z;
+  box.heading = pe.heading;
+  box.hw = size[0];
+  box.hl = size[1];
+  const hit = boxOverlap(cr, box);
+  if (!hit) return 0;
+  const pm = crime.mode === 'car' ? 1300 : crime.mode === 'moto' ? 260 : crime.mode === 'cyclist' ? 95 : 75;
+  const share = cr.mass / (cr.mass + pm); // the player's share of the push
+  pe.position.x += hit.nx * hit.pen * share;
+  pe.position.z += hit.nz * hit.pen * share;
+  cr.x -= hit.nx * hit.pen * (1 - share);
+  cr.z -= hit.nz * hit.pen * (1 - share);
+  const cvx = Math.sin(cr.heading) * cr.speed + cr.vx, cvz = Math.cos(cr.heading) * cr.speed + cr.vz;
+  const approach = (cvx - crime.pvx) * hit.nx + (cvz - crime.pvz) * hit.nz;
+  if (approach <= 0.5) return approach;
+  if (crime.mode === 'car') {
+    const kick = approach * share * 0.7;
+    const fx = Math.sin(pe.heading), fz = Math.cos(pe.heading);
+    const along = fx * hit.nx + fz * hit.nz; // the push along the player's heading: + rammed from behind
+    if (pe.speed * along < 0) {
+      // driven into it: it loses speed and is knocked back
+      pe.speed *= 0.8;
+      pe.vx = (pe.vx || 0) + hit.nx * kick;
+      pe.vz = (pe.vz || 0) + hit.nz * kick;
+    } else {
+      // rammed from behind (or standing): shoved on its way, never braked, so it can still drive off
+      pe.speed += kick * along;
+      pe.vx = (pe.vx || 0) + (hit.nx - fx * along) * kick;
+      pe.vz = (pe.vz || 0) + (hit.nz - fz * along) * kick;
+    }
+    pe.angularVel = (pe.angularVel || 0) + (Math.random() - 0.5) * approach * 0.15;
+    pe.rollVel = (pe.rollVel || 0) + approach * 0.2;
+  }
+  cr.speed *= 0.6;
+  cr.vx -= hit.nx * approach * (1 - share) * 0.5;
+  cr.vz -= hit.nz * approach * (1 - share) * 0.5;
+  crime.rammed(cr, hit.nx, hit.nz); // (n: from it towards the player)
+  crime.audio?.crash?.({ a: cr, b: pe, x: pe.position.x - hit.nx * size[0], y: pe.position.y + 0.6, z: pe.position.z - hit.nz * size[0], speed: approach });
+  if (approach > 2) crime.traffic.sparks(pe.position.x - hit.nx * size[0], pe.position.y + 0.6, pe.position.z - hit.nz * size[0], hit.nx, hit.nz, approach);
+  // a car ramming the player hurts it: badly on foot
+  if (hurts && crime.mode === 'person' && approach > 3) crime.hurt(approach * 3.5, cr.x, cr.z);
+  else if (hurts && approach > 7) crime.hurt((approach - 7) * 1.5, cr.x, cr.z);
+  return approach;
+}
+
 // Patrol cars against the player and each other
 export function collideCruisers(crime: CrimeSystem): void {
   const pe = crime.player;
-  const box = crime._playerBox ??= { x: 0, z: 0, heading: 0, hw: 0, hl: 0 };
   const size = crime.playerSize();
   const standing = crime.controllers.parkedVehicles?.();
   // (the player's vehicle a body in Jolt: it meets the patrol cars' there, as they meet each other and what the player
@@ -536,53 +588,7 @@ export function collideCruisers(crime: CrimeSystem): void {
     if (!cr.active) continue;
     cr.hw = cr.halfW;
     cr.hl = cr.halfL;
-    if (size && crime.onStreet && !(inJolt && cr.body)) {
-      box.x = pe.position.x;
-      box.z = pe.position.z;
-      box.heading = pe.heading;
-      box.hw = size[0];
-      box.hl = size[1];
-      const hit = boxOverlap(cr, box);
-      if (hit) {
-        const pm = crime.mode === 'car' ? 1300 : crime.mode === 'moto' ? 260 : crime.mode === 'cyclist' ? 95 : 75;
-        const share = cr.mass / (cr.mass + pm); // the player's share of the push
-        pe.position.x += hit.nx * hit.pen * share;
-        pe.position.z += hit.nz * hit.pen * share;
-        cr.x -= hit.nx * hit.pen * (1 - share);
-        cr.z -= hit.nz * hit.pen * (1 - share);
-        const cvx = Math.sin(cr.heading) * cr.speed + cr.vx, cvz = Math.cos(cr.heading) * cr.speed + cr.vz;
-        const approach = (cvx - crime.pvx) * hit.nx + (cvz - crime.pvz) * hit.nz;
-        if (approach > 0.5) {
-          if (crime.mode === 'car') {
-            const kick = approach * share * 0.7;
-            const fx = Math.sin(pe.heading), fz = Math.cos(pe.heading);
-            const along = fx * hit.nx + fz * hit.nz; // the push along the player's heading: + rammed from behind
-            if (pe.speed * along < 0) {
-              // driven into it: it loses speed and is knocked back
-              pe.speed *= 0.8;
-              pe.vx = (pe.vx || 0) + hit.nx * kick;
-              pe.vz = (pe.vz || 0) + hit.nz * kick;
-            } else {
-              // rammed from behind (or standing): shoved on its way, never braked, so it can still drive off
-              pe.speed += kick * along;
-              pe.vx = (pe.vx || 0) + (hit.nx - fx * along) * kick;
-              pe.vz = (pe.vz || 0) + (hit.nz - fz * along) * kick;
-            }
-            pe.angularVel = (pe.angularVel || 0) + (Math.random() - 0.5) * approach * 0.15;
-            pe.rollVel = (pe.rollVel || 0) + approach * 0.2;
-          }
-          cr.speed *= 0.6;
-          cr.vx -= hit.nx * approach * (1 - share) * 0.5;
-          cr.vz -= hit.nz * approach * (1 - share) * 0.5;
-          crime.rammed(cr, hit.nx, hit.nz); // (n: from it towards the player)
-          crime.audio?.crash?.({ a: cr, b: pe, x: pe.position.x - hit.nx * size[0], y: pe.position.y + 0.6, z: pe.position.z - hit.nz * size[0], speed: approach });
-          if (approach > 2) crime.traffic.sparks(pe.position.x - hit.nx * size[0], pe.position.y + 0.6, pe.position.z - hit.nz * size[0], hit.nx, hit.nz, approach);
-          // a car ramming the player hurts it: badly on foot
-          if (crime.mode === 'person' && approach > 3) crime.hurt(approach * 3.5, cr.x, cr.z);
-          else if (approach > 7) crime.hurt((approach - 7) * 1.5, cr.x, cr.z);
-        }
-      }
-    }
+    if (size && crime.onStreet && !(inJolt && cr.body)) shovePlayer(crime, cr, size);
     // the player's vehicles left standing (the car it got out of, the bicycle, the cars left behind): they don't give,
     // the patrol car stops against them
     if (standing && !cr.body) {

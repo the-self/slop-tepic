@@ -31,7 +31,7 @@ export async function installMultiplayer({ params, scene, events, controllers, c
         const { roomsUrl, ...connection } = options;
         const lobby = (more: Partial<Parameters<typeof openLobby>[0]> = {}) => {
           controllers.resetInput(); // (whatever key was held stays held otherwise)
-          return openLobby({ roomsUrl, name: net.current?.name ?? connection.name ?? '', ...more });
+          return openLobby({ roomsUrl, name: net.current?.name ?? connection.name ?? '', profile: net.current?.play.profile, ...more });
         };
         const first = await lobby();
         if (!first) return;

@@ -52,7 +52,7 @@ test('a pose round-trips through the 18-byte STATE frame at centimetre precision
 
 test('hello carries version, region and the raw name; the server-side sanitizer cleans it', () => {
   const msg = decodeClient(encodeHello('nayarit', '  Lalo\u200b   el\nTaxista  '));
-  assert.deepEqual(msg, { op: OP.HELLO, version: PROTOCOL_VERSION, region: 'nayarit', name: '  Lalo\u200b   el\nTaxista  ', room: '', password: '' });
+  assert.deepEqual(msg, { op: OP.HELLO, version: PROTOCOL_VERSION, region: 'nayarit', name: '  Lalo\u200b   el\nTaxista  ', room: '', password: '', token: '' });
   assert.equal(sanitizeName(msg.name), 'Lalo el Taxista');
   assert.equal(sanitizeName('', 42), 'Player-0042');
   assert.equal(sanitizeName('ñandú '.repeat(10)).length <= 24, true);
@@ -233,9 +233,12 @@ test('a shot round-trips at centimetre precision; one that reaches too far or na
 });
 
 test('hits carry their target and capped damage; a death names its killer', () => {
-  assert.deepEqual(decodeClient(encodeHit(12, 34.4)), { op: OP.HIT, target: 12, damage: 34 });
-  assert.equal(decodeClient(encodeHit(12, 950)).damage, 100);
-  assert.equal(decodeClient(encodeHit(0, 10)), null, 'nobody is player 0');
+  assert.deepEqual(decodeClient(encodeHit(12, 34.4, 'pistol')), { op: OP.HIT, target: 12, damage: 34, kind: 'pistol' });
+  assert.equal(decodeClient(encodeHit(12, 950, 'blast')).damage, 100);
+  assert.equal(decodeClient(encodeHit(0, 10, 'fists')), null, 'nobody is player 0');
+  const odd = encodeHit(12, 10, 'fists');
+  odd[odd.length - 1] = 99; // (a weapon nobody knows)
+  assert.equal(decodeClient(odd), null);
   assert.deepEqual(decodeClient(encodeDown(12)), { op: OP.DOWN, killer: 12 });
   assert.deepEqual(decodeServer(encodeHurt(4, 22)), { op: OP.HURT, from: 4, damage: 22 });
 });
@@ -243,7 +246,7 @@ test('hits carry their target and capped damage; a death names its killer', () =
 test('a room of one\'s own: CREATE carries its title, password, sky and rules; RULES and ROOM carry the changes', () => {
   const rules = { police: false, pvp: true };
   assert.deepEqual(decodeClient(encodeCreate('nayarit', 'Ana', { title: 'La banda', password: 'secreto', time: 'midnight', weather: 'storm', rules })), {
-    op: OP.CREATE, version: PROTOCOL_VERSION, region: 'nayarit', name: 'Ana', title: 'La banda', password: 'secreto', sky: { time: 4, weather: 5 }, rules
+    op: OP.CREATE, version: PROTOCOL_VERSION, region: 'nayarit', name: 'Ana', title: 'La banda', password: 'secreto', sky: { time: 4, weather: 5 }, rules, token: ''
   });
   assert.deepEqual(decodeClient(encodeHello('nayarit', 'Beto', 'K7Q2M', 'secreto')).room, 'K7Q2M');
   assert.deepEqual(decodeClient(encodeRules(rules)), { op: OP.RULES, rules });
@@ -254,7 +257,7 @@ test('a room of one\'s own: CREATE carries its title, password, sky and rules; R
   assert.equal(welcome.locked, true);
   assert.deepEqual(welcome.rules, rules);
   const bad = encodeCreate('nayarit', 'Ana', { title: '', password: '', time: 'live', weather: 'live', rules });
-  bad[bad.length - 3] = 99; // (a time of day nobody knows)
+  bad[bad.length - 4] = 99; // (a time of day nobody knows: before the weather, the rules and the empty token)
   assert.equal(decodeClient(bad), null);
   assert.equal(sanitizeTitle('  La\nbanda\u200b de la Loma, la mejor de todo Tepic  '), 'La banda de la Loma, la mejor de');
 });
@@ -284,4 +287,68 @@ test('a player\'s own room: a code to find it by, its host passed on when it lea
   assert.equal(rooms.rooms.has(own.id), true);
   rooms.sweep(own.emptyAt + 6000, 5000);
   assert.equal(rooms.rooms.has(own.id), false, 'nobody came back in time: it closes');
+});
+
+test('the play messages travel whole: a car look, a crew\'s actions and members, a tag, the units after a player', async () => {
+  const play = await import('../shared/protocol-play.ts');
+  const look = { body: 'suv', model: 'nissan-xtrail', paint: 0x2a5aa8, police: false };
+  assert.deepEqual(decodeClient(play.encodeLook(look)), { op: OP.LOOK, look });
+  assert.deepEqual(decodeServer(play.encodeLookSeen(7, look)), { op: OP.LOOK_SEEN, id: 7, look });
+  assert.equal(decodeClient(play.encodeLook({ ...look, model: 'no spaces <b>' })), null, 'a look\'s ids are plain words');
+  assert.deepEqual(decodeClient(play.encodeCrew('invite', 9)), { op: OP.CREW, action: 'invite', player: 9 });
+  assert.deepEqual(decodeClient(play.encodeCrew('leave')), { op: OP.CREW, action: 'leave', player: 0 });
+  assert.deepEqual(decodeServer(play.encodeCrewSet(3, [{ id: 1, name: 'Ana' }, { id: 2, name: 'Beto' }])),
+    { op: OP.CREW_SET, crew: 3, members: [{ id: 1, name: 'Ana' }, { id: 2, name: 'Beto' }] });
+  assert.deepEqual(decodeServer(play.encodeTag(5, 3, true, 4)), { op: OP.TAG, id: 5, crew: 3, passive: true, stars: 4 });
+  assert.deepEqual(decodeClient(play.encodePassive(true)), { op: OP.PASSIVE, on: true });
+  assert.deepEqual(decodeClient(play.encodeWanted(9)), { op: OP.WANTED, stars: 5 }, 'five stars at most');
+  const units = [{ kind: 'cruiser', x: 12.5, y: 3, z: -40, heading: 1.25, speed: 18 }, { kind: 'heli', x: 0, y: 80, z: 0, heading: 0, speed: 30 }];
+  const sent = decodeClient(play.encodeUnits(units));
+  assert.equal(sent.units.length, 2);
+  const seen = decodeServer(play.encodeUnitsSeen(4, sent.units));
+  assert.equal(seen.from, 4);
+  assert.deepEqual(seen.units.map((u) => [u.kind, u.x, u.y, u.z, u.speed]), [['cruiser', 12.5, 3, -40, 18], ['heli', 0, 80, 0, 30]]);
+  assert.ok(Math.abs(seen.units[0].heading - 1.25) < 1e-3);
+  const many = Array.from({ length: 20 }, () => units[0]);
+  assert.equal(decodeClient(play.encodeUnits(many)).units.length, play.UNITS_MAX, 'a chase sends UNITS_MAX at most');
+  const profile = { token: 'abcdefghijklmnopqrst', kills: 3, deaths: 1, best: 2, seconds: 3600 };
+  assert.deepEqual(decodeServer(play.encodeProfile(profile)), { op: OP.PROFILE, ...profile });
+  assert.deepEqual(decodeClient(encodeHello('nayarit', 'Ana', '', '', profile.token)).token, profile.token, 'HELLO carries the token');
+});
+
+test('the server\'s hit limits are the weapons\' own', async () => {
+  const { HIT_LIMITS } = await import('../shared/combat.ts');
+  const { WEAPONS, WEAPON_ORDER } = await import('../js/sim/weapons.ts');
+  for (const id of WEAPON_ORDER) {
+    const w = WEAPONS[id];
+    const limit = HIT_LIMITS[id];
+    assert.ok(limit, `${id} has its limits`);
+    // (a rocket's hits are its blast's, ≤ 95 as the others take it, several players at once: crime/gunfire.ts)
+    if (id === 'bazooka') continue;
+    assert.equal(limit.rate, w.rate, `${id}'s rate`);
+    assert.equal(limit.damage, w.damage, `${id}'s damage`);
+    assert.equal(limit.reach, w.range, `${id}'s reach`);
+  }
+});
+
+test('a player code reads off a screen and back, however it is typed', async () => {
+  const { tokenCode, codeToken } = await import('../js/net/profile.ts');
+  const token = 'abcdefghijklmnopqrst';
+  assert.equal(tokenCode(token), 'abcd-efgh-ijkl-mnop-qrst');
+  assert.equal(codeToken(' ABCD efgh-IJKL mnop-qrst '), token);
+  assert.equal(codeToken('abcd-efgh'), '', 'too short');
+  assert.equal(codeToken('abcd-efgh-ijkl-mnop-qrs1'), '', 'not base-32');
+});
+
+test('health, pickups, reports and the server\'s word on a death travel whole; an older client\'s HELLO still decodes', async () => {
+  const play = await import('../shared/protocol-play.ts');
+  assert.deepEqual(decodeClient(play.encodeVitals(37.2, 0)), { op: OP.VITALS, health: 38, armor: 0 }, 'rounded up');
+  assert.deepEqual(decodeClient(play.encodeHeal('armor')), { op: OP.HEAL, kind: 'armor' });
+  assert.deepEqual(decodeClient(play.encodeReport(9, 'cheating')), { op: OP.REPORT, player: 9, reason: 'cheating' });
+  assert.equal(decodeClient(play.encodeReport(0, 'cheating')), null, 'nobody is player 0');
+  assert.deepEqual(decodeServer(play.encodeKilled(4)), { op: OP.KILLED, by: 4 });
+  // (a version-7 HELLO, before the token: decoded, so the server can tell it its version is old)
+  const old = encodeHello('nayarit', 'Ana', '', '', '').slice(0, -1);
+  old[1] = 7;
+  assert.deepEqual(decodeClient(old), { op: OP.HELLO, version: 7, region: 'nayarit', name: 'Ana', room: '', password: '', token: '' });
 });

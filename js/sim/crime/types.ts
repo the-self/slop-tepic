@@ -275,6 +275,22 @@ interface RemoteTarget extends XZ {
   height: number;
 }
 /**
+ * A car not the player's own that drives into it (CrimeSystem.shovePlayer): a patrol car, or another player's in
+ * multiplayer. Where it stands (m), faces (rad) and its box (hw, hl: half width & length, m, as boxOverlap reads them;
+ * halfW the same, for where the crash is heard), its speed along its heading and its sideways shove (m/s), its mass (kg).
+ * Pushed back in place: a remote player's is a throwaway copy, its own game moves it.
+ */
+interface ShovingCar extends XZ {
+  heading: number;
+  hw: number;
+  hl: number;
+  halfW: number;
+  speed: number;
+  vx: number;
+  vz: number;
+  mass: number;
+}
+/**
  * Something of the world's that shots strike (crime.props: a gas station's pumps, sim/gas-stations.ts): a post `r` m
  * round at (x, z), from the ground y up to `top` m over it (none once blown); `shot` is told of each round (its damage,
  * the player's)
@@ -295,5 +311,5 @@ interface TraceHit {
 }
 
 export type {
-  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, SightCones, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, RemoteTarget, ShotProp, TraceTarget, TraceHit
+  CrimeState, DownKind, AgentKind, AgentState, Faction, CruiserState, PickupKind, TraceKind, Blips, SightCones, XZ, NpcGun, NpcGunMesh, CrimePlayer, CrimeControllers, CrimeTraffic, CrimeAudio, CrimeAim, CrimeOptions, Agent, Cruiser, Helicopter, RocketFlight, Pickup, LockTarget, RemoteTarget, ShovingCar, ShotProp, TraceTarget, TraceHit
 };

@@ -2,7 +2,7 @@
 // The keyboard's bindings: which keys (KeyboardEvent.code, so they stay put whatever the layout) do what, the
 // defaults, and the player's own from the menu's Keys tab (ui/key-config.ts), remembered in localStorage. Every part of
 // the game that listens to a key asks here (controllers/input.ts, aim.ts, crime/player.ts, the weapon wheel, the map,
-// the chat, app/install/controls.ts), so a key changed in the menu changes everywhere at once. Free of three.js and of
+// the chat & the crew, app/install/controls.ts), so a key changed in the menu changes everywhere at once. Free of three.js and of
 // imports (but the type of its labels' message keys, i18n/en.ts), so node --test runs it as it is.
 //
 // Some keys stay fixed: Esc (the menu), 1-4 (weapons), 5-0 (cameras) and the mouse.
@@ -13,7 +13,7 @@ export type BindAction =
   | 'forward' | 'backward' | 'left' | 'right' | 'boost' | 'up' | 'down'
   | 'handbrake' | 'shiftUp' | 'shiftDown' | 'gearbox' | 'board' | 'horn' | 'refuel'
   | 'fire' | 'aim' | 'weaponWheel' | 'nextWeapon'
-  | 'camera' | 'map' | 'cleanView' | 'sound' | 'chat';
+  | 'camera' | 'map' | 'cleanView' | 'sound' | 'chat' | 'crew' | 'passive';
 
 /** How the menu shows a binding: its name (a message key, i18n/), the group it is listed under, its default keys */
 export interface BindSpec {
@@ -50,7 +50,9 @@ export const BIND_ACTIONS: Readonly<Record<BindAction, BindSpec>> = {
   map: { label: 'bind.map', group: 'game', keys: ['KeyM'] },
   cleanView: { label: 'bind.cleanView', group: 'game', keys: ['KeyH'] },
   sound: { label: 'bind.sound', group: 'game', keys: ['KeyN'] },
-  chat: { label: 'bind.chat', group: 'game', keys: ['Enter'] }
+  chat: { label: 'bind.chat', group: 'game', keys: ['Enter'] },
+  crew: { label: 'bind.crew', group: 'game', keys: ['KeyU'] },
+  passive: { label: 'bind.passive', group: 'game', keys: ['KeyP'] }
 };
 
 // (BIND_ACTIONS' keys are the actions)

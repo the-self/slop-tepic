@@ -5,10 +5,12 @@
 // A player can also open a room of their own (create): a title, a short code friends type to join it, an optional
 // password (kept hashed, server/passwords.ts), the sky it starts with and its rules (police, PvP), which only its host
 // changes. When the host leaves, the oldest player left takes over. Left empty, it waits a while (sweep) for its
-// players to come back, a dropped connection rejoining by its code, before it closes.
+// players to come back, a dropped connection rejoining by its code, before it closes. Each room keeps its players'
+// crews (server/crews.ts).
 
 import { randomInt } from 'node:crypto';
 import { SpatialGrid } from './aoi.ts';
+import { Crews } from './crews.ts';
 import { DEFAULT_RULES, SKY_TIMES, SKY_WEATHERS } from '../shared/protocol.ts';
 import type { RoomRules, SkyTime, SkyWeather, WireSky } from '../shared/protocol.ts';
 import type { PasswordHash } from './passwords.ts';
@@ -36,6 +38,7 @@ export interface Room<P> {
   fails: number; // passwords tried (and not right) since failsAt (ms, Date.now()): the brake on guessing
   failsAt: number;
   emptyAt: number; // ms (Date.now()) a player's own room was left empty (0: someone is in it)
+  crews: Crews; // its players' crews (server/crews.ts)
 }
 
 /** A room as the room list (GET /rooms) shows it */
@@ -167,7 +170,7 @@ class RoomManager<P extends { id: number }> {
   private room(id: string, region: string, index: number, code: string, { title, password, sky, rules }: RoomOpening): Room<P> {
     return {
       id, region, index, players: new Map(), grid: new SpatialGrid(this.cellSize, this.unit), sky: { ...sky }, title, code, password,
-      rules: { ...rules }, host: 0, fails: 0, failsAt: 0, emptyAt: 0
+      rules: { ...rules }, host: 0, fails: 0, failsAt: 0, emptyAt: 0, crews: new Crews()
     };
   }
 

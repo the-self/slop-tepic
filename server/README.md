@@ -31,8 +31,40 @@ Besides poses, the server passes on what players do to each other:
 
 - **Chat (`CHAT` → `CHAT_LINE`):** a line (up to 140 characters, cleaned like names) goes to the whole room. Each player may say a line a second after a burst of five; past that, lines are dropped.
 - **Shots (`SHOT` → `SHOT_SEEN`):** each shot the player fires (its two ends, its weapon, rocket or bullet) goes to the players who have the shooter in view, so they see and hear it.
-- **Hits (`HIT` → `HURT`):** the shooter's client traces its shots, blows and blasts against the others' poses and says whom they struck. The server passes the damage on if the target is in the same room and within 400 m. It is a game among friends: nothing more is checked.
-- **Deaths (`DOWN`):** a killed player says who killed it (the last player to hit it in the last 10 s), and the server tells the room (`NOTE`: who killed whom, or who changed the sky), which each client words in its player's language ("Ana mató a Beto", "Ana killed Beto") in its chat.
+- **Hits (`HIT` → `HURT`):** the shooter's client traces its shots, blows and blasts against the others' poses and says whom they struck, and with what (`fists`, `pistol`, `smg`, `rifle`, `bazooka`, `blast`). The server passes the damage on only when the two can hurt each other (PvP on, not crew mates, neither in passive mode) and the hit is one its weapon could land ([`checks.ts`](checks.ts), by [`shared/combat.ts`](../shared/combat.ts)'s limits).
+- **Deaths (`DOWN`):** a killed player says who killed it, and the server believes it only if that player's hit really struck it last, in the last 10 s, and only once. It tells the room (`NOTE`: who killed whom, or who changed the sky), which each client words in its player's language ("Ana mató a Beto", "Ana killed Beto") in its chat, and counts the kill on both profiles.
+
+## Playing together
+
+[`play.ts`](play.ts), and on the wire [`shared/protocol-play.ts`](../shared/protocol-play.ts):
+
+- **Crews (`CREW` → `CREW_ASK`, `CREW_SET`):** a player invites another (the game's Crew button, or U), who accepts or declines within a minute. Up to 8 friends in one crew ([`crews.ts`](crews.ts)). Crew mates can't hurt each other, see each other on the map in their own colour, and the server keeps them in each other's view however far apart they are.
+- **Passive mode (`PASSIVE`):** a player in it (the Crew card's button, or P) can't hurt other players and can't be hurt by them. Not within 10 s of a fight: the server turns it down, and the player's own `TAG` says so.
+- **Tags (`TAG`):** each player's crew, passive mode and wanted stars, sent to those who have it in view (and to a newcomer to that view). The stars show after its name.
+- **Car looks (`LOOK` → `LOOK_SEEN`):** the model, paint and livery of the player's car, so the others draw it as it is ([`js/net/remote-looks.ts`](../js/net/remote-looks.ts)), not as their own.
+- **The police after a player (`WANTED`, `UNITS` → `UNITS_SEEN`):** every game runs its own chase, after its own player. Now it sends the units after it (patrol cars, the cartel's and the army's trucks, the helicopter, 4 times a second) to those who see it, who draw them and show them on the map ([`js/net/remote-police.ts`](../js/net/remote-police.ts)). They are drawn only: they don't shoot at the others.
+
+The others' cars also push the player's car (and its traffic) out of their way, in each player's own game: a ram hurts only when the two can hurt each other.
+
+## What the server decides
+
+The game is the client's to draw and the server's to judge: like RuneScape's or Fortnite's, the server assumes any client may be modified, and believes it only as far as it must. It runs no physics and doesn't see the city, so it can't stop an aimbot or a shot through a wall, but it decides everything one player does to another:
+
+- **Moves** ([`checks.ts`](checks.ts)): no faster across the ground than the player's mode goes ([`shared/combat.ts`](../shared/combat.ts) `MODE_SPEED`, with slack and a couple of seconds saved up for poses that arrive in a burst). A jump further than that is a teleport (the map's, a respawn), allowed every 4 s. Any other move is dropped: the player stays where it was for the others.
+- **Shots:** a `SHOT` must start where the shooter stands; one from anywhere else, or fired dead, shows to nobody.
+- **Hits:** a gun's hit must lie on the line of a round of that gun the server saw in the last 2 s, and each round strikes once; a blast must be near a rocket's line or where a round ended; a punch within arm's reach. No more damage than the weapon does, no faster than it fires, and all of a player's guns and fists together no more damage a second than the strongest of them alone.
+- **Health** ([`vitals.ts`](vitals.ts)): the server keeps every player's health and armour. The others' hits take them as the player's own game does; the game's own reports (`VITALS`) only ever lower them (the city's harm, which the server doesn't see); pickups (`HEAL`) raise them no more often than the game drops them. When the health runs out the player is dead, whatever its game says (`KILLED`): a god-mode client still dies, and for the 4 s it is down it hurts nobody.
+- **Kills:** only the player whose hit really struck the victim last, and on the rankings once every 3 minutes for the same killer and victim, so two friends can't trade kills up the table.
+- **Kicks and bans** ([`conduct.ts`](conduct.ts)): a player whose moves or hits the server keeps turning down, beyond what lag explains, is kicked (`ERROR cheat`); kicked three times in half an hour, its profile and its address are banned for an hour, then twice as long each time (`ERROR banned`), kept in `DATA_DIR/bans.json`. Behind a proxy (Fly.io), `TRUST_PROXY=1` takes the address from its headers.
+- **Reports** (`REPORT`, the Crew card's Report button): written to `DATA_DIR/reports.log`, one JSON line each, with what the server knows of the one reported (how many of its moves and hits it turned down), for a person to read.
+
+Everything travels as the protocol's own binary frames over the WebSocket (`wss://` behind Fly's https: nobody in between reads or changes them), and is checked as it arrives, not on a tick: only the others' poses go out on the 10 Hz tick.
+
+## Profiles and rankings
+
+There's no sign-up. A player's first `HELLO` gets a token (`PROFILE`), which its browser keeps (`localStorage`); a new profile is kept once it has played a minute or fought. The token is the profile, its kills and deaths of other players, its best run of kills without dying and its time played ([`profiles.ts`](profiles.ts)). The lobby shows it as a code (`abcd-efgh-ijkl-mnop-qrst`) to type on another device, a phone say, to be the same player there.
+
+The profiles are kept in `DATA_DIR/profiles.json`, a few seconds after each change and when the server stops. The file holds only each token's SHA-256, so a copy of it lets nobody in as anyone. Without `DATA_DIR` they are kept in memory and lost when it stops. `GET /rankings` lists the 20 players with the most kills, shown in the lobby.
 
 A player can also ride in a friend's car (F by it, F again to get out): it then sends the car's pose with the mode `passenger`, and the others draw nothing for it but its name.
 
@@ -76,8 +108,10 @@ Then open the game with `?multiplayer=1` from `localhost`. It connects to `ws://
 | `MAX_PLAYERS` | 5000 | Per server process |
 | `ALLOWED_ORIGINS` | any | Comma-separated page origins allowed to connect |
 | `STATIC_DIR` | none | The game's folder: the server serves its page (`index.html`, `css/`, `dist/`, `assets/`) and nothing else of it |
+| `DATA_DIR` | none | Where the profiles (`profiles.json`), the bans (`bans.json`) and the reports (`reports.log`) are kept. Unset, in memory only |
+| `TRUST_PROXY` | unset | `1` behind a proxy that says who connected (Fly.io): the bans go by that address |
 
-`GET /rooms?region=<region>` lists the region's rooms. `GET /health` returns the rooms, the player count, the tick cost (`tickMs`) and the bytes sent per tick.
+`GET /rooms?region=<region>` lists the region's rooms. `GET /rankings` lists the players with the most kills. `GET /health` returns the rooms, the player count, the tick cost (`tickMs`) and the bytes sent per tick.
 
 ## Test and measure
 
@@ -95,8 +129,31 @@ BOTS=1000 SPREAD=20000 node bench.ts
 
 (Measured 2026-10-27 on an M3 MacBook already loaded with other work: the bots share the process too.)
 
+One room of 1000 (`ROOM_CAPACITY=1000 BOTS=1000`), measured 2026-10-29: 18 ms a tick and 630 KB out per tick crowded into 3 km (about 50 Mbit/s out), 10 ms and 145 KB spread over 10 km. Each player still sees only its nearest `VIEW_MAX` (64).
+
+## Deploy
+
+GitHub Pages only serves the static game. The room server has to run somewhere that keeps a process alive. The [`Dockerfile`](../Dockerfile) at the repository's root makes one image of both, the server serving the game's page, so the game's address is the server's:
+
+```bash
+docker build -t slop-tepic .
+docker run -p 8787:8787 -v slop-data:/data slop-tepic
+```
+
+On [Fly.io](https://fly.io), with [`fly.toml`](../fly.toml) (one machine in Querétaro, always on, the profiles on a volume):
+
+```bash
+brew install flyctl
+fly auth login
+fly launch --no-deploy --copy-config    # pick a name of your own for the app
+fly volumes create slop_data --size 1 --region qro
+fly deploy
+```
+
+Then the game is at `https://<app>.fly.dev/?multiplayer=1`, for anyone, phones included. Keep it to **one machine**: the rooms live in its memory, so two machines would be two worlds that never meet. A 2-CPU, 1 GB machine handles a few rooms of 200; a room of 1000 crowded together sends about 50 Mbit/s, which is what to budget for.
+
+To keep the page on GitHub Pages and only the server on Fly, open it as `https://<you>.github.io/<repo>/?multiplayer=1&mp-server=wss://<app>.fly.dev`, and set `ALLOWED_ORIGINS=https://<you>.github.io` on the server.
+
 ## Scope
 
-The server relays poses as clients send them. It checks their shape and rate, but it runs no physics and doesn't validate movement. Anti-cheat, accounts and persistence (economy, rankings) belong in later layers.
-
-GitHub Pages only serves the static game. This server has to run somewhere that keeps a process alive: a VPS, Fly.io, Railway, and so on.
+The server holds poses, shots, hits and health to what the players could do (above), but it runs no physics and has no line of sight: an aimbot, or a shot through a wall, still works. Weapons and ammunition are the client's (picked up in its own city), held only to their rates. The world besides the players and the police after them (the traffic, the pedestrians) is each game's own. Accounts are a token, with no email or password to recover one lost with its browser's storage (unless its code was written down).

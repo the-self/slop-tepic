@@ -1,0 +1,10 @@
+# What the image never needs (Dockerfile): installs, the old bundle, git, the editors' and the geodata's downloads
+**/node_modules
+dist
+.git
+.github
+.claude
+.DS_Store
+.env
+tools/data/tepic/overture
+tools/data/tepic/fetch.log

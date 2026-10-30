@@ -3,11 +3,14 @@
 // /rooms on the room server) to join, a friend's room by its code and password, and a room of one's own to open with
 // its title, password, sky (the time of day and the weather) and rules (police, PvP). Opened again from the HUD's
 // Rooms button, it also shows the room the player is in, its code to share and, to its host, its sky and rules to
-// change. Safe DOM APIs only.
+// change. And the player's profile (its kills and deaths, the code to be the same player on another device:
+// net/profile.ts) and the server's rankings (GET /rankings). Safe DOM APIs only.
 import { DEFAULT_RULES, NAME_MAX, PASSWORD_MAX, SKY_TIMES, SKY_WEATHERS, TITLE_MAX } from '../../shared/protocol.ts';
 import type { RoomRules, RoomSpec, SkyTime, SkyWeather } from '../../shared/protocol.ts';
+import type { ProfileWire } from '../../shared/protocol-play.ts';
 import { setText, t } from '../i18n/i18n.ts';
 import type { MessageKey } from '../i18n/i18n.ts';
+import { codeToken, saveToken, savedToken, tokenCode } from './profile.ts';
 
 /** Where the player goes: the region's public rooms, a room by its id or code, or a room of its own */
 export type RoomEntry =
@@ -43,6 +46,16 @@ export interface LobbyOptions {
   current?: CurrentRoom | null;
   /** the host saved the room's new sky and rules */
   onSave?: (setup: RoomSetup) => void;
+  /** the player's profile as the server last said it (null: not in a room yet) */
+  profile?: ProfileWire | null;
+}
+
+/** One row of GET /rankings (server/profiles.ts Ranking) */
+interface RankingRow {
+  name: string;
+  kills: number;
+  deaths: number;
+  best: number;
 }
 
 /** One room of GET /rooms (server/rooms.ts RoomSummary) */
@@ -66,7 +79,7 @@ const TIME_LABELS: Readonly<Record<SkyTime, MessageKey>> = {
 // Why the server turned the player away
 const ERRORS: Readonly<Partial<Record<string, MessageKey>>> = {
   room: 'lobby.error.room', password: 'lobby.error.password', roomfull: 'lobby.error.roomfull', wait: 'lobby.error.wait',
-  full: 'lobby.error.full', version: 'lobby.error.version'
+  full: 'lobby.error.full', version: 'lobby.error.version', cheat: 'lobby.error.cheat', banned: 'lobby.error.banned'
 };
 const NAME_KEY = 'mp-name';
 let closeOpen: (() => void) | null = null; // the lobby on screen, if any: opening another closes it first
@@ -164,7 +177,7 @@ function setupForm(start: RoomSetup): { node: HTMLDivElement; read: () => RoomSe
  * Opens the lobby over the game; resolves with the player's choice, or null when they close it to stay where they
  * are (only offered while they are in a room)
  */
-function openLobby({ roomsUrl, name, error, current = null, onSave }: LobbyOptions): Promise<LobbyChoice | null> {
+function openLobby({ roomsUrl, name, error, current = null, onSave, profile = null }: LobbyOptions): Promise<LobbyChoice | null> {
   closeOpen?.();
   return new Promise((resolve) => {
     const overlay = el('div', 'mp-lobby');
@@ -322,9 +335,83 @@ function openLobby({ roomsUrl, name, error, current = null, onSave }: LobbyOptio
     createCard.append(el('h3', 'lobby-sub', 'lobby.create'), field('lobby.roomTitle', titleBox), field('lobby.passwordOptional', createPassword), form.node, createBtn);
     panel.append(createCard);
 
+    panel.append(profileCard(profile), rankingsCard(roomsUrl));
+
     document.body.append(overlay);
     (current ? panel : nameBox).focus();
   });
+}
+
+// The player's profile: its counts, its code (to copy), and a field for another device's code to play as that player
+function profileCard(profile: ProfileWire | null): HTMLElement {
+  const card = el('section', 'lobby-card');
+  card.append(el('h3', 'lobby-sub', 'lobby.profile'));
+  if (profile) {
+    const stats = el('p', 'lobby-note');
+    stats.textContent = t('lobby.stats', { kills: profile.kills, deaths: profile.deaths, best: profile.best, hours: (profile.seconds / 3600).toFixed(1) });
+    card.append(stats);
+  }
+  const token = profile?.token || savedToken();
+  if (token) {
+    const row = el('div', 'lobby-row');
+    const code = el('code', 'lobby-code lobby-player-code');
+    code.textContent = tokenCode(token);
+    const copy = button('lobby-ghost', 'lobby.copy');
+    copy.addEventListener('click', () => {
+      void navigator.clipboard.writeText(tokenCode(token)).then(() => { setText(copy, 'lobby.copied'); }, () => { /* no clipboard: it reads off the screen */ });
+    });
+    row.append(code, copy);
+    card.append(el('p', 'lobby-note', 'lobby.myCode'), row);
+  } else {
+    card.append(el('p', 'lobby-note', 'lobby.noCode'));
+  }
+  const other = input('text', 32, 'lobby.useCode');
+  const use = button('lobby-ghost lobby-wide', 'lobby.useCodeBtn');
+  const said = el('p', 'lobby-note');
+  use.addEventListener('click', () => {
+    const typed = codeToken(other.value);
+    if (!typed) {
+      setText(said, 'lobby.badCode');
+      return;
+    }
+    saveToken(typed);
+    setText(said, 'lobby.codeSaved');
+  });
+  card.append(field('lobby.useCode', other), use, said);
+  return card;
+}
+
+// The server's rankings: the players with the most kills
+function rankingsCard(roomsUrl: string): HTMLElement {
+  const card = el('section', 'lobby-card');
+  const list = el('ol', 'lobby-list lobby-rankings');
+  card.append(el('h3', 'lobby-sub', 'lobby.rankings'), list);
+  list.append(el('li', 'lobby-note', 'lobby.rankingsLoading'));
+  const url = new URL(roomsUrl);
+  url.pathname = '/rankings';
+  url.search = '';
+  fetch(url, { cache: 'no-store' })
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+      return res.json() as Promise<{ rankings?: RankingRow[] }>; // (server/index.ts RankingList)
+    })
+    .then(({ rankings = [] }) => {
+      if (!rankings.length) {
+        list.replaceChildren(el('li', 'lobby-note', 'lobby.rankingsEmpty'));
+        return;
+      }
+      list.replaceChildren(...rankings.map((r) => {
+        const row = el('li', 'lobby-room');
+        const who = el('span', 'lobby-room-title');
+        who.textContent = r.name;
+        const meta = el('span', 'lobby-room-meta');
+        meta.textContent = t('lobby.rankingRow', { kills: r.kills, deaths: r.deaths, best: r.best });
+        row.append(who, meta);
+        return row;
+      }));
+    })
+    .catch(() => { list.replaceChildren(el('li', 'lobby-note lobby-error', 'lobby.unreachable')); });
+  return card;
 }
 
 export { openLobby, rulesSummary, setupSummary, NAME_KEY };
