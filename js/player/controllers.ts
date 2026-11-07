@@ -211,7 +211,7 @@ class ThirdPersonControllerManager {
     return Collisions.isSolidAt(this, x, z, height, ground, minSize);
   }
   nearColliders(x: number, z: number, r: number): PlayerCollider[] { return Collisions.nearColliders(this, x, z, r); }
-  // More walls (a gas station's pump islands, sim/gas-stations.ts): the cells nearColliders looks them up in, built again
+  // More walls (a gas station's pump islands & canopy posts, sim/gas-stations.ts): the cells nearColliders looks them up in, built again
   addColliders(list: PlayerCollider[]): void {
     this.colliders.push(...list);
     this._colliderCells = null;

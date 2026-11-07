@@ -1,0 +1,114 @@
+// tools/build-tepic-fuel-lots.mjs
+// Writes js/world/fuel-lot-data.ts: Tepic's gas stations (city-geodata.js `fuel`) as OpenStreetMap maps them, from its
+// amenity=fuel points & outlines (tools/data/tepic/osm_tepic_details.json), in the game's frame (the same projection &
+// grid bearing as build-tepic-geodata.mjs): each station's own point where a mapper put one (Overture's, which the
+// geodata keeps first, may stand off it: in the avenue's median at Chedraui's), and its lot's outline where one is drawn
+// round the whole station (the small outlines are its canopy alone: their middle is its point). The game lays each
+// station's forecourt in its lot (world/gas-station-plan.ts). Run: node tools/build-tepic-fuel-lots.mjs
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { GEO } from '../js/world/city-geodata.js';
+import { pointInRing, ringArea } from './tepic-lib.mjs';
+
+const DATA = process.env.GEO_DATA || fileURLToPath(new URL('data/tepic/', import.meta.url));
+const OUT = process.argv[2] || fileURLToPath(new URL('../js/world/fuel-lot-data.ts', import.meta.url));
+const load = (f) => JSON.parse(fs.readFileSync(DATA + f, 'utf8'));
+
+// The frame of build-tepic-geodata.mjs (section 1): origin at the Plaza Principal, axes along the centro's grid
+const LAT0 = 21.51224;
+const LON0 = -104.89269;
+const A = 6378137.0;
+const E2 = 6.69437999014e-3;
+const PHI0 = (LAT0 * Math.PI) / 180;
+const SIN0 = Math.sin(PHI0);
+const NRAD = A / Math.sqrt(1 - E2 * SIN0 * SIN0);
+const MRAD = (A * (1 - E2)) / Math.pow(1 - E2 * SIN0 * SIN0, 1.5);
+const KX = (Math.PI / 180) * NRAD * Math.cos(PHI0);
+const KY = (Math.PI / 180) * MRAD;
+const enu = (lon, lat) => [(lon - LON0) * KX, (lat - LAT0) * KY];
+const DRIVE = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street',
+  'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link']);
+const roads = load('osm_tepic_roads.json').elements.filter((e) => e.type === 'way' && e.geometry && e.tags && DRIVE.has(e.tags.highway));
+// the grid bearing: the length-weighted circular mean (mod 90°) of the street directions within 1.2 km of the plaza
+let THETA;
+{
+  let sx = 0, sy = 0;
+  for (const w of roads) {
+    const g = w.geometry;
+    for (let i = 0; i + 1 < g.length; i++) {
+      const [e0, n0] = enu(g[i].lon, g[i].lat);
+      const [e1, n1] = enu(g[i + 1].lon, g[i + 1].lat);
+      if (Math.hypot(e0, n0) > 1200) continue;
+      const L = Math.hypot(e1 - e0, n1 - n0);
+      if (L < 5) continue;
+      const a = Math.atan2(e1 - e0, n1 - n0);
+      sx += L * Math.cos(4 * a);
+      sy += L * Math.sin(4 * a);
+    }
+  }
+  THETA = Math.atan2(sy, sx) / 4;
+}
+function toWorld(lon, lat) {
+  const [e, n] = enu(lon, lat);
+  const c = Math.cos(THETA), s = Math.sin(THETA);
+  return [e * c - n * s, -(e * s + n * c)];
+}
+
+const LOT_MIN = 450; // m²: an outline smaller is the canopy alone (Tepic's mapped canopies are 100-350 m²)
+const SAME = 70; // m: an OpenStreetMap station this near one of the geodata's is that one (build-tepic-geodata.mjs FUEL_SAME)
+const q = (v) => Math.round(v * 10) / 10;
+
+// OpenStreetMap's stations: their points (a node, or an outline's middle) and the outlines round a whole lot
+const points = [], lots = [];
+for (const e of load('osm_tepic_details.json').elements) {
+  if (e.tags?.amenity !== 'fuel') continue;
+  if (e.type === 'node') points.push(toWorld(e.lon, e.lat));
+  else if (e.type === 'way' && e.geometry) {
+    const ring = e.geometry.map((g) => toWorld(g.lon, g.lat));
+    if (ring.length > 1 && ring[0][0] === ring.at(-1)[0] && ring[0][1] === ring.at(-1)[1]) ring.pop();
+    const area = Math.abs(ringArea(ring));
+    if (area >= LOT_MIN) lots.push({ ring, area });
+    else points.push([ring.reduce((t, p) => t + p[0], 0) / ring.length, ring.reduce((t, p) => t + p[1], 0) / ring.length]);
+  }
+}
+
+const out = [];
+let withPoint = 0, withLot = 0;
+GEO.fuel.forEach(([x, z], index) => {
+  // its lot: the outline it stands in, else the nearest one within SAME m that no other station stands in
+  let lot = lots.find((l) => pointInRing(x, z, l.ring)) ?? null;
+  if (!lot) {
+    let best = SAME;
+    for (const l of lots) {
+      const d = Math.min(...l.ring.map(([px, pz]) => Math.hypot(px - x, pz - z)));
+      if (d < best && !GEO.fuel.some(([ox, oz], o) => o !== index && pointInRing(ox, oz, l.ring))) { best = d; lot = l; }
+    }
+  }
+  // its point: the one in its lot, else the nearest within SAME m
+  let at = null, best = SAME;
+  for (const p of points) {
+    const d = Math.hypot(p[0] - x, p[1] - z);
+    if (lot ? pointInRing(p[0], p[1], lot.ring) : d < best) { best = d; at = p; if (lot) break; }
+  }
+  if (!at && !lot) return;
+  if (at) withPoint++;
+  if (lot) withLot++;
+  out.push([x, z, at ? q(at[0]) : x, at ? q(at[1]) : z, lot ? lot.ring.flatMap(([px, pz]) => [q(px), q(pz)]) : []]);
+});
+
+const body = `// js/world/fuel-lot-data.ts
+// GENERATED by tools/build-tepic-fuel-lots.mjs from OpenStreetMap (ODbL) — do not edit by hand.
+// Tepic's gas stations (city-geodata.js \`fuel\`) as OpenStreetMap maps them: ${withPoint} with a point of their own,
+// ${withLot} with their lot's outline.
+
+/** A station of GEO.fuel as OpenStreetMap maps it: its point there (m, as the geodata has it: the key it is found by),
+ *  its own point (m: OpenStreetMap's, else the geodata's), and its lot's outline (x, z pairs, m; empty where none is
+ *  drawn) */
+export type FuelLot = readonly [geoX: number, geoZ: number, x: number, z: number, ring: readonly number[]];
+
+export const FUEL_LOTS: readonly FuelLot[] = [
+${out.map((r) => `  ${JSON.stringify(r)}`).join(',\n')}
+];
+`;
+fs.writeFileSync(OUT, body);
+console.log(`[fuel lots] ${out.length} of ${GEO.fuel.length} stations: ${withPoint} with OpenStreetMap's point, ${withLot} with their lot -> ${OUT}`);

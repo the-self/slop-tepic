@@ -48,6 +48,12 @@ The streets that are not asphalt (`js/world/pavement-data.ts`: empedrado, adoqu√
 node tools/build-tepic-pavements.mjs
 ```
 
+The gas stations' own points and lots (`js/world/fuel-lot-data.ts`, which the game lays each station's forecourt in) come from OpenStreetMap's `amenity=fuel`, matched to the geodata's stations; run it after the geodata:
+
+```bash
+node tools/build-tepic-fuel-lots.mjs
+```
+
 ## Making the centro look like Tepic
 
 Neither OpenStreetMap nor Overture records a height, a storey count or a colour for any building

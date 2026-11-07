@@ -1,9 +1,10 @@
 // js/app/city.ts
-// Builds the city into the scene, in the order its parts depend on each other: the streamed ground (tiles laid round
-// the camera by workers, world/streaming.ts; ?stream=0 lays all of them at start-up), the streets, the floor painted
-// beyond the tiles, the hills, the rivers, the landmarks (and Forum Tepic), the blocks and stores, the car parks, the
-// Central de Autobuses, the bottling plant and the supermarkets' loading docks, the bardas, the street details, the traffic on the road
-// network, the paint, the pavements, the airport and the overpasses; and gathers what the player collides with.
+// Builds the city into the scene, in the order its parts depend on each other: the gas stations' forecourts laid out
+// first (the town keeps off them), the streamed ground (tiles laid round the camera by workers, world/streaming.ts;
+// ?stream=0 lays all of them at start-up), the streets, the floor painted beyond the tiles, the hills, the rivers, the
+// landmarks (and Forum Tepic), the blocks and stores, the car parks, the Central de Autobuses, the bottling plant and
+// the supermarkets' loading docks, the bardas, the street details, the traffic on the road network, the paint, the
+// pavements, the airport and the overpasses; and gathers what the player collides with.
 import type * as THREE from 'three/webgpu';
 import { color } from 'three/tsl';
 import { ISLAND_BOUNDS } from '../world/city-config.ts';
@@ -36,6 +37,7 @@ import { buildFootways } from '../world/footways.ts';
 import { buildFurniture } from '../world/furniture.ts';
 import { buildBardas } from '../world/bardas.ts';
 import { claimed, claimedLots } from '../world/place-claims.ts';
+import { planGasStations } from '../world/gas-station-plan.ts';
 import { UAN_PLACE } from '../places/uan/index.ts';
 import { FORUM_PLACE } from '../places/forum/index.ts';
 import { CENTRAL_PLACE } from '../places/central/index.ts';
@@ -55,6 +57,10 @@ const TRAFFIC_CLEARANCE = 3.5;
 
 /** `stream`: lay the heavy ground layers tile by tile round the camera (false: all at start-up); `mark` ends a phase */
 export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolean; mark: (label: string) => void }) {
+  // The gas stations' forecourts, laid out first (world/gas-station-plan.ts: as big as the real ones, off the places'
+  // grounds): no house, yard tree nor barda on them, nor a lamp across their driveways, like the places' claims
+  const fuel = planGasStations((x, z) => claimedLots(PLACE_CLAIMS, 'houses').some((r) => r.contains(x, z)));
+  const claims = [...PLACE_CLAIMS, fuel.claims];
   const box = { x0: ISLAND_BOUNDS.minX, x1: ISLAND_BOUNDS.maxX, z0: ISLAND_BOUNDS.minZ, z1: ISLAND_BOUNDS.maxZ };
   const holes = deckHoles(); // (the river channels' and the open underpasses')
   const streamer = stream ? new TileStreamer({
@@ -65,7 +71,7 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
     holes: holes.length ? Float32Array.from(holes) : null,
     workers: Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 4) - 2))
   }) : null;
-  const cityGrid = buildCityGrid(scene, streamer, PLACE_CLAIMS);
+  const cityGrid = buildCityGrid(scene, streamer, claims);
   mark('cityGrid');
   // Beyond the streamed tiles the city's floor is painted with the streets, lots & parks they lay (far-ground.ts): the
   // hills' floor under them on the slopes, the valley floor in the flat city
@@ -92,7 +98,7 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   // (and Forum Tepic: the mall, walked into, its two floors, its shoppers, places/forum/)
   const forum = FORUM_PLACE.build({ scene, streamer });
   mark('landmarks');
-  const cityBlocks = buildCityBlocks(scene, PLACE_CLAIMS);
+  const cityBlocks = buildCityBlocks(scene, claims);
   // The big chain stores you can walk into: their walls, door, shelves & tills (world/store-interiors.ts)
   const stores = buildStores(scene, cityBlocks.stores);
   mark('blocks');
@@ -112,8 +118,8 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   const colliders: Collider[] = [...landmarkColliders, ...glorietaColliders, ...modelColliders, ...lomaColliders, ...cityBlocks.colliders, ...stores.colliders, ...cotoColliders, ...cityGrid.colliders];
   // The bardas round the big open plots (the canchas, the ranchos, the vacant lots), not across a car park, the
   // Central's block, the bottling plant's nor on the UAN's grounds (walled by their own: the places' claims)
-  const bardas = buildBardas(scene, (x, z) => carParks.keepsOpen(x, z) || claimed(PLACE_CLAIMS, 'open', x, z),
-    (x, z) => claimed(PLACE_CLAIMS, 'walled', x, z));
+  const bardas = buildBardas(scene, (x, z) => carParks.keepsOpen(x, z) || claimed(claims, 'open', x, z),
+    (x, z) => claimed(claims, 'walled', x, z));
   mark('bardas');
   // (and the places' walls, buildings & coaches, all built by now)
   const places: Place[] = [uan, forum, central, embotelladora];
@@ -125,8 +131,8 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
 
   // (no yard tree in a store's hall, a car park, a loading dock's yard, the glorieta or a place's lot: the Central's
   // block, the mall's; the places' own trees and their buildings kept clear of the street's)
-  const streetDetails = buildStreetDetails(scene, [...stores.reserves, carParks, deliveries.yards, GLORIETA_CLEAR, ...claimedLots(PLACE_CLAIMS, 'trees')],
-    PLACE_CLAIMS);
+  const streetDetails = buildStreetDetails(scene, [...stores.reserves, carParks, deliveries.yards, GLORIETA_CLEAR, ...claimedLots(claims, 'trees')],
+    claims);
   mark('streetDetails');
   // Buildings turned along non-grid streets have oriented colliders whose world bounds reach past their lots: they stay
   // inside the property line anyway, so the road network (lanes & sidewalks) doesn't need them.
@@ -163,5 +169,6 @@ export function buildCity(scene: THREE.Scene, { stream, mark }: { stream: boolea
   // The benches OpenStreetMap maps (they stop the player)
   for (const c of buildFurniture(scene).colliders) colliders.push(c);
   mark('bridges');
-  return { streamer, cityGrid, farGround, rivers, cityBlocks, places, uan, forum, stores, carParks, central, embotelladora, deliveries, streetDetails, powerLines, traffic, highwayTraffic, bridges, colliders };
+  return { streamer, cityGrid, farGround, rivers, cityBlocks, places, uan, forum, stores, carParks, central, embotelladora, deliveries, streetDetails, powerLines, traffic, highwayTraffic, bridges, colliders,
+    gasStations: fuel.stations };
 }

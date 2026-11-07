@@ -48,16 +48,15 @@ export function installCityLife({ params, scene, loading, events, rain, city, co
   // Burning wrecks, house fires, the dry season's quemas, and the bomberos who come for them (sim/fires.ts)
   const fires = new Fires({ scene, crime, services: emergency, controllers, houses: GEO.houses, stride: GEO.houseStride || 8,
     reserved: city.cityBlocks.inReservedLot });
-  // Tepic's gas stations (sim/gas-stations.ts): the car fills up stopped by a pump (G); a pump shot, rammed or caught in a
-  // blast goes up
+  // Tepic's gas stations (sim/gas-stations.ts, laid out by app/city.ts): the customers' cars queuing at the pumps; the car
+  // fills up stopped by a pump (G); a pump shot, rammed or caught in a blast goes up
   const gasStations = new GasStations({
     scene, crime, car: controllers.entities.car,
-    isSolidAt: (x, z, height, ground, minSize) => controllers.isSolidAt(x, z, height, ground, minSize),
     groundAt: (x, z) => controllers.getGroundHeight(x, z, 'person'),
     active: () => controllers.getActiveEntity(), activeMode: () => controllers.activeMode,
     addColliders: (list) => { controllers.addColliders(list); },
     ignite: (kind, x, z, size) => fires.ignite(kind, x, z, size)
-  });
+  }, city.gasStations);
   // (the stations' driveways over the curb too, besides the car parks')
   controllers.setCurbRamps((x, z) => Math.max(carParks.rampAt(x, z), gasStations.rampAt(x, z)));
   controllers.onFuelOut = () => { crime.toast(t('toast.outOfGas')); };
