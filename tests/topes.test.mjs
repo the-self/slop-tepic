@@ -4,7 +4,7 @@ import { planTopes, topeBumps } from '../js/world/topes.ts';
 import { placeTopes, topeCap, topeJolt } from '../js/sim/traffic/topes.ts';
 
 // Two-way residential streets east along z = 0 and z = 1000, 100 m between their corners: the paint's edges (each road
-// both ways) with node ids picked so the guess gives each road its topes
+// both ways)
 function streets() {
   const edges = [];
   let id = 0;
@@ -16,26 +16,19 @@ function streets() {
   return edges;
 }
 
-test('a mapped tope is drawn where it is, and none is guessed near it; elsewhere the streets get theirs', () => {
+test('only the topes OpenStreetMap maps are laid, where they are: none is made up', () => {
   const edges = streets();
-  const guessed = planTopes(edges, []);
-  const road = (t) => (t.z === 0 ? 0 : 1);
-  // (with the ids above, whether a road gets guessed topes is fixed: find one that does)
-  const withGuess = new Set(guessed.map(road));
-  assert.ok(withGuess.size > 0, 'some street has a guessed tope');
-  const r = [...withGuess][0];
-  const z = r === 0 ? 0 : 1000;
-  const topes = planTopes(edges, [55, z + 1, 0]);
-  const mapped = topes.filter((t) => t.mapped);
-  assert.equal(mapped.length, 1);
-  assert.ok(Math.abs(mapped[0].x - 55) < 1e-9 && Math.abs(mapped[0].z - z) < 1e-9, 'where it is mapped, on the street\'s centre line');
-  assert.ok(!topes.some((t) => !t.mapped && road(t) === r), 'no guessed one on its street');
+  assert.deepEqual(planTopes(edges, []), [], 'no tope where none is mapped');
+  const topes = planTopes(edges, [55, 1001, 0]);
+  assert.equal(topes.length, 1);
+  assert.ok(Math.abs(topes[0].x - 55) < 1e-9 && Math.abs(topes[0].z - 1000) < 1e-9, 'where it is mapped, on the street\'s centre line');
+  assert.equal(topes[0].boyas, false);
 });
 
 test('the traffic eases off to cross a tope at a crawl, on either edge of its road', () => {
   const edges = streets().map((e) => ({ ...e, topes: [] }));
   for (const e of edges) { e.from.out ??= []; e.from.out.push(e); }
-  placeTopes([{ x: 50, z: 0, dx: 1, dz: 0, rx: 0, rz: 1, half: 4, mapped: true }], edges);
+  placeTopes([{ x: 50, z: 0, dx: 1, dz: 0, rx: 0, rz: 1, half: 4, boyas: false }], edges);
   const [ab, ba] = edges;
   assert.deepEqual(ab.topes, [44]);
   assert.deepEqual(ba.topes, [44]);
@@ -71,7 +64,7 @@ test('a car of the traffic bucks as each axle rolls over a tope: the nose up, th
 });
 
 test("the player's car rides a tope's hump: 12 cm high in the middle of the street, nothing off it", () => {
-  const bump = topeBumps([{ x: 50, z: 0, dx: 1, dz: 0, rx: 0, rz: 1, half: 4, mapped: true, boyas: false }]);
+  const bump = topeBumps([{ x: 50, z: 0, dx: 1, dz: 0, rx: 0, rz: 1, half: 4, boyas: false }]);
   assert.ok(Math.abs(bump(50, 0) - 0.12) < 1e-9);
   assert.ok(bump(50.2, 3) > 0.05 && bump(50.2, 3) < 0.12);
   assert.equal(bump(51, 0), 0);

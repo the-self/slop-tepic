@@ -17,7 +17,7 @@ import { GEO } from './city-geodata.js';
 // lines, continental crosswalks across every intersection approach and at the marked crossings OpenStreetMap maps
 // along the streets (crossings.ts), one per crossing however its street is mapped (zebras.ts), and green bike lanes
 // along wide one-way avenues.
-// And the topes (topes.ts): the speed bumps OpenStreetMap maps and those of a third of the two-way residential streets,
+// And the topes (topes.ts): only the speed bumps OpenStreetMap maps, none made up,
 // painted in yellow & black stripes (the traffic slows down for them; the player's car rolls over them). The empedrado and
 // earth streets (pavement-data.ts) get no paint: nobody paints lines on river stones.
 
@@ -322,7 +322,7 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
     }
   }
 
-  // Topes (topes.ts: OpenStreetMap's, and a third of the two-way residential streets' where none is mapped near): a
+  // Topes (topes.ts: OpenStreetMap's, none made up): a
   // low rounded hump curb to curb (cosine profile along the street), or rows of yellow boyas. uv.x: metres across the
   // street (the stripes; a boya all yellow)
   const tPos: number[] = [];
@@ -370,7 +370,7 @@ function buildRoadPaint(scene: THREE.Scene, network: RoadNetwork, streamer: Laye
     const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.75 });
     // 50 cm stripes, the yellow worn a little darker
     mat.colorNode = mix(color(0xd9a520), color(0x1c1c1a), step(0.5, fract(uv().x.div(1.0)))).mul(float(0.92));
-    console.info(`[roads] ${topes.length} topes (${topes.filter((t) => t.mapped).length} mapped, ${topes.filter((t) => t.boyas).length} of boyas)`);
+    console.info(`[roads] ${topes.length} topes (OpenStreetMap's, ${topes.filter((t) => t.boyas).length} of boyas)`);
     if (streamer) {
       // (shaded by the bump's own normals; the worker tilts its top with the street's slope)
       tg.computeVertexNormals();
