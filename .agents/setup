@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Prepares a fresh Amp orb: checks the Node toolchain and installs the game's and the server's npm dependencies
+# from their lockfiles, as CI does (.github/workflows/ci.yml). Runs again on a stale snapshot, so it stays idempotent.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+step() {
+  local label=$1 start=$SECONDS
+  shift
+  echo "==> $label"
+  "$@"
+  echo "    $label: $((SECONDS - start))s"
+}
+
+# package.json wants Node >= 24 (it runs the .ts sources by stripping their types); the orb image ships a newer one.
+node_major=$(node -p 'process.versions.node.split(".")[0]')
+if ((node_major < 24)); then
+  echo "Node $(node -v) is too old: this repository needs Node >= 24" >&2
+  exit 1
+fi
+echo "Node $(node -v), npm $(npm -v)"
+
+step "npm ci (game)" npm ci --no-audit --no-fund --no-update-notifier
+step "npm ci (server)" npm ci --no-audit --no-fund --no-update-notifier --prefix server

@@ -1,0 +1,15 @@
+services:
+  # esbuild rebuilding dist/ on every change (npm run dev). Its own server answers only localhost: esbuild refuses
+  # any other Host header, the portal's included, so the portal goes through the room server below.
+  dev:
+    command: npm run dev
+    health: /
+  # The room server serving the page that dev builds, as npm run play does: on the portal's https address WebGPU
+  # works, and ?multiplayer=1 joins this same server.
+  game:
+    command: STATIC_DIR=.. node index.ts
+    cwd: server
+    health: /
+    portal:
+      title: Tepic
+      description: The game, rebuilt on every change. Add ?debug, ?quality=low, ?multiplayer=1 or ?live-weather=rain to the URL.
