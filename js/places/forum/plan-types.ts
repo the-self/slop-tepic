@@ -105,8 +105,8 @@ export interface ForumPlan {
   rails: { ax: number; az: number; bx: number; bz: number }[];
   frontages: Frontage[];
   entrances: ForumEntrance[];
-  /** the square columns: centre (m), turn as cos / sin */
-  columns: { x: number; z: number; cs: number; sn: number }[];
+  /** the square columns: centre (m), turn as cos / sin; the rotunda's are white, the corridors' orange */
+  columns: { x: number; z: number; cs: number; sn: number; white?: boolean }[];
   escalators: Escalator[];
   /** the food court's tables (centres, m: upstairs) */
   tables: Vec2[];
@@ -114,6 +114,16 @@ export interface ForumPlan {
   kiosks: { x: number; z: number; cs: number; sn: number; name: string }[];
   /** the planters & benches (centres, m) */
   planters: Vec2[];
+  /** the sitting places downstairs: armchairs round a low table, the group's centre (m) and turn (cos, sin) */
+  lounges: { x: number; z: number; cs: number; sn: number }[];
+  /** the benches upstairs along the balustrades (wooden slats on a steel frame): centre (m), turn along the rail */
+  benches: { x: number; z: number; cs: number; sn: number }[];
+  /** the tiled planters upstairs either side of each bridge, a white lamp post rising from each: as boxes */
+  beds: ForumBox[];
+  /** the brown bands in the floor along the shops' fronts (and the rotunda's star): rings (world m), on either floor */
+  inlays: { ring: Vec2[]; level: 0 | 1 }[];
+  /** the wire spheres hung over the voids at Christmas: centre (m; y over the floor), radius (m) */
+  ornaments: { x: number; z: number; y: number; r: number }[];
   /** the walls that stop the player (beyond the frontages': the outer walls, the entrances' sides) */
   walls: ForumBox[];
   /** the glass a car breaks through: the shops' downstairs and the entrances' */

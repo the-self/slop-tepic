@@ -401,7 +401,7 @@ function planForum(): ForumPlan {
   for (let k = 0; k < 8; k++) {
     // (one ahead of the corridor between the escalators, the rest every 45° round)
     const a = (k / 8) * 2 * Math.PI + Math.atan2(A.uz, A.ux);
-    columns.push({ x: rx + Math.cos(a) * rotunda.void, z: rz + Math.sin(a) * rotunda.void, cs: Math.cos(a), sn: -Math.sin(a) });
+    columns.push({ x: rx + Math.cos(a) * rotunda.void, z: rz + Math.sin(a) * rotunda.void, cs: Math.cos(a), sn: -Math.sin(a), white: true });
   }
   column(A, 186, VA[0]);
   column(A, 186, 35);
@@ -428,6 +428,66 @@ function planForum(): ForumPlan {
   const planters: Vec2[] = [];
   for (const u of [80, 104, 122, 146, 166]) planters.push(at(A, u, 18));
   for (const v of [16, 54, 88]) planters.push(at(B, 34, v));
+
+  // THE SITTING PLACES (the user's photographs): downstairs, armchairs in orange & black leather round a low table, under
+  // the bridges and in the rotunda; upstairs, wooden benches along the balustrades between the columns, and either side
+  // of each bridge a planter of beige tiles with a white lamp post rising out of it
+  const lounges: ForumPlan['lounges'] = [];
+  const lounge = (f: Frame, u: number, v: number) => {
+    const [x, z] = at(f, u, v), th = frameYaw(f);
+    lounges.push({ x, z, cs: Math.cos(th), sn: Math.sin(th) });
+  };
+  for (const u of BRIDGES_A) lounge(A, u, 18);
+  for (const v of BRIDGES_B) lounge(B, 34, v);
+  // (in the rotunda west of its escalators, clear of its columns and the walks through it)
+  lounge(A, rotunda.u - 7, rotunda.v);
+  lounge(A, rotunda.u - 5.1, rotunda.v - 6.2);
+  const benches: ForumPlan['benches'] = [], beds: ForumBox[] = [];
+  const bench = (f: Frame, u: number, v: number, alongU: boolean) => {
+    const [x, z] = at(f, u, v), th = frameYaw(f) + (alongU ? 0 : Math.PI / 2);
+    benches.push({ x, z, cs: Math.cos(th), sn: Math.sin(th) });
+  };
+  const bed = (f: Frame, u: number, v: number, alongU: boolean) => {
+    const [cx, cz] = at(f, u, v), th = frameYaw(f) + (alongU ? 0 : Math.PI / 2);
+    beds.push({ cx, cz, hu: 0.95, hv: 0.5, cs: Math.cos(th), sn: Math.sin(th), y0: LEVEL, y1: LEVEL + 1.0 });
+  };
+  // (between the columns, 6 m from them, clear of the bridges' planters and the escalators up to Liverpool)
+  for (let u = aStart + 10; u < A_END - 6; u += 12) {
+    if (BRIDGES_A.some((b) => Math.abs(b - u) < 5.6)) continue;
+    bench(A, u, VA[0] - 0.65, true);
+    bench(A, u, VA[1] + 0.65, true);
+  }
+  for (let v = bStart + 10; v < COURT_S.v0 - 4; v += 12) {
+    if (BRIDGES_B.some((b) => Math.abs(b - v) < 5.6)) continue;
+    bench(B, VB[0] - 0.65, v, false);
+    bench(B, VB[1] + 0.65, v, false);
+  }
+  for (const u of BRIDGES_A) for (const s of [-3.5, 3.5]) { bed(A, u + s, VA[0] - 0.55, true); bed(A, u + s, VA[1] + 0.55, true); }
+  for (const v of BRIDGES_B) for (const s of [-3.5, 3.5]) { bed(B, VB[0] - 0.55, v + s, false); bed(B, VB[1] + 0.55, v + s, false); }
+
+  // THE BANDS IN THE FLOOR: brown, along the shops' fronts a metre off them on both floors, and a star of eight points
+  // under the rotunda's dome
+  const inlays: ForumPlan['inlays'] = [];
+  for (const level of [0, 1] as const) {
+    inlays.push({ ring: rectRing(A, aStart, A_END, 12, 12.6), level }, { ring: rectRing(A, aStart, level ? FOOD.u0 : A_END, 23.4, 24), level });
+    if (level) inlays.push({ ring: rectRing(A, FOOD.u1, A_END, 23.4, 24), level });
+    inlays.push({ ring: rectRing(B, 28, 28.6, bStart, COURT_S.v0), level }, { ring: rectRing(B, 39.4, 40, bStart, COURT_S.v0), level });
+  }
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * 2 * Math.PI + Math.atan2(A.uz, A.ux) + Math.PI / 8, p = (r: number, da: number): Vec2 => [rx + Math.cos(a + da) * r, rz + Math.sin(a + da) * r];
+    inlays.push({ ring: [p(2.2, 0), p(4, -0.32), p(rotunda.void - 0.8, 0), p(4, 0.32)], level: 0 });
+  }
+
+  // THE CHRISTMAS SPHERES: wire globes hung over the voids, every 12 m down their middles at two heights
+  const ornaments: ForumPlan['ornaments'] = [];
+  for (let u = aVoid + 6, k = 0; u < 184; u += 12, k++) {
+    const [x, z] = at(A, u, 18 + (k % 2 ? 1 : -1));
+    ornaments.push({ x, z, y: LEVEL + (k % 2 ? 3.6 : 5.0), r: k % 3 ? 0.75 : 1.0 });
+  }
+  for (let v = bVoid + 6, k = 0; v < CV.v0; v += 12, k++) {
+    const [x, z] = at(B, 34 + (k % 2 ? 1 : -1), v);
+    ornaments.push({ x, z, y: LEVEL + (k % 2 ? 3.6 : 5.0), r: k % 3 ? 0.75 : 1.0 });
+  }
 
   // THE ROOMS behind the fronts: each locale's as deep as it can run (9 m a shop, 30 an anchor) inside the buildings,
   // off the open floor and the rooms already laid on its floor (the Cinemex's floor is the south passage's ceiling)
@@ -531,6 +591,9 @@ function planForum(): ForumPlan {
   for (const r of rails) walls.push(segmentBox(r.ax, r.az, r.bx, r.bz, 0.15, LEVEL, LEVEL + RAIL));
   for (const k of kiosks) walls.push({ cx: k.x, cz: k.z, hu: 1.6, hv: 1.0, cs: k.cs, sn: k.sn, y0: 0, y1: 1.2 });
   for (const [x, z] of planters) walls.push({ cx: x, cz: z, hu: 1.1, hv: 1.1, cs: 1, sn: 0, y0: 0, y1: 0.8 });
+  for (const l of lounges) walls.push({ cx: l.x, cz: l.z, hu: 1.45, hv: 1.45, cs: l.cs, sn: l.sn, y0: 0, y1: 0.9 });
+  for (const b of benches) walls.push({ cx: b.x, cz: b.z, hu: 0.9, hv: 0.25, cs: b.cs, sn: b.sn, y0: LEVEL, y1: LEVEL + 0.45 });
+  walls.push(...beds);
   for (const c of columns) walls.push({ cx: c.x, cz: c.z, hu: 0.5, hv: 0.5, cs: c.cs, sn: c.sn, y0: 0, y1: ROOF });
   for (const e of escalators) {
     // (its sides, from the floor: a walker steps onto its foot between them)
@@ -635,7 +698,7 @@ function planForum(): ForumPlan {
 
   return {
     A, B, buildings, palms, roofs, panes, rotunda: { x: rx, z: rz, r: rotunda.r, void: rotunda.void }, floors, voids, slabs, rails, frontages,
-    entrances, columns, escalators, tables, kiosks, planters, walls, decks, paths, liverpool,
+    entrances, columns, escalators, tables, kiosks, planters, lounges, benches, beds, inlays, ornaments, walls, decks, paths, liverpool,
     skylights: [rectRing(A, aStart + 3, A_END - 2, 16.6, 19.4), rectRing(A, A_END + 2, 184, 17, 36.5), rectRing(B, 32.6, 35.4, rbV + rotunda.r + 3, COURT_S.v0 - 3)]
   };
 }

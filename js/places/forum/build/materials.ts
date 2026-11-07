@@ -65,16 +65,15 @@ function createRoofMaterial() {
   return mat;
 }
 
-// The polished floor: cream tiles of 60 cm, a band of darker beige every 6 m; the slabs' tops share it, their edges white
+// The polished floor: cream tiles of 60 cm (the brown bands along the shops are the plan's inlays, laid square to the
+// corridors); the slabs' tops share it, their edges white
 function createFloorMaterial() {
   // (half its colour its own light: indoors the city's light probe, the sky's, would turn the beige blue)
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.55 });
   const p = positionWorld;
   const g = abs(fract(p.xz.div(0.6)).sub(0.5));
   const joint = smoothstep(0.47, 0.49, max(g.x, g.y));
-  const b = abs(fract(p.xz.div(6.0)).sub(0.5));
-  const band = step(0.44, max(b.x, b.y));
-  const tile = mix(mix(color(0xd6bf98), color(0x9c7550), band), color(0xa38a68), joint);
+  const tile = mix(color(0xd6bf98), color(0xa38a68), joint);
   const top = step(0.5, normalGeometry.y);
   const c = mix(color(0xe6ddcc), tile, top);
   mat.colorNode = c.mul(mix(float(1), float(0.55), top));
@@ -155,6 +154,17 @@ function createApronMaterial() {
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.9 });
   const g = abs(fract(positionWorld.xz.div(1.5)).sub(0.5));
   mat.colorNode = mix(color(0xc9c4b8), color(0x9e998e), smoothstep(0.46, 0.49, max(g.x, g.y)));
+  return mat;
+}
+
+// The planters upstairs: beige tiles of 30 cm, their joints darker
+function createTileMaterial() {
+  const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.4 });
+  const p = positionWorld;
+  const joint = max(step(0.95, fract(p.y.div(0.3))), step(0.95, fract(p.x.add(p.z).div(0.3))));
+  const c = mix(color(0xd9c7a6), color(0xa8977a), joint);
+  mat.colorNode = c;
+  mat.emissiveNode = c.mul(0.3);
   return mat;
 }
 
@@ -260,7 +270,16 @@ function createForumMaterials(atlas: THREE.Texture, mural: THREE.Texture, rotund
     hotel: createHotelMaterial(),
     plant: lit(color(0x4a3a2a), 0.15),
     apron: createApronMaterial(),
-    seat: lit(color(0xe8742a), 0.3, { roughness: 0.6 })
+    seat: lit(color(0xe8742a), 0.3, { roughness: 0.6 }),
+    // (the floor's brown bands: its tiles' polish & share of light, as createFloorMaterial's)
+    inlay: lit(color(0x9c7550).mul(0.55), 0.76, { roughness: 0.55 }),
+    leather: lit(color(0xb9562c), 0.28, { roughness: 0.45 }),
+    leatherBlack: lit(color(0x2a2b2e), 0.25, { roughness: 0.4 }),
+    tiles: createTileMaterial(),
+    greenery: lit(color(0x3c7434), 0.3, { roughness: 0.9 }),
+    // (the lamp posts' discs, lit from under; the Christmas spheres' gilt wire, glowing)
+    lamp: lit(color(0xfff6e2), 0.9),
+    ornament: lit(color(0xd9c08a), 0.7, { roughness: 0.4, metalness: 0.3, side: THREE.DoubleSide })
   };
 }
 export type ForumMaterials = ReturnType<typeof createForumMaterials>;

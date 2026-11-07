@@ -2,9 +2,11 @@
 // Forum Tepic inside: the polished floor, the shops' fronts on both floors (their lit windows, the signs over them,
 // white pilasters & fascias), the anchors' wide fronts (Liverpool under its Huichol painting, Sears, the Cinemex,
 // Suburbia, the casino), the food court's stalls & tables, the gallery slabs and their glass balustrades, the orange
-// columns, the escalators, the kiosks and planters.
+// columns (the rotunda's white), the escalators, the kiosks and planters; the armchairs round their tables, the benches,
+// the tiled planters & lamp posts by the bridges, the brown bands in the floor, and at Christmas the wire spheres hung
+// over the voids.
 import * as THREE from 'three/webgpu';
-import { FLOOR, FORUM, GLASS, LEVEL, PANE, RAIL, ROOF, SIGN, SLAB, segmentBox } from '../plan.ts';
+import { FLOOR, FORUM, GLASS, LANTERN, LEVEL, PANE, RAIL, ROOF, SIGN, SLAB, segmentBox } from '../plan.ts';
 import { MeshList, addMesh } from '../../kit/mesh-list.ts';
 import type { Frontage, ForumPlan } from '../plan.ts';
 import type { ForumMaterials } from './materials.ts';
@@ -21,13 +23,16 @@ function shopTag(atlas: SignAtlas, name: string, seed: number): [number, number,
   return [_c.r, _c.g, _c.b, (Math.sin(seed * 91.3) * 0.5 + 0.5) * 0.98];
 }
 
-export function buildInterior(group: THREE.Group, mats: ForumMaterials, atlas: SignAtlas, base: (x: number, z: number) => number): void {
+/** `festive`: the Christmas spheres hung (November to Epiphany) */
+export function buildInterior(group: THREE.Group, mats: ForumMaterials, atlas: SignAtlas, base: (x: number, z: number) => number, festive: boolean): void {
   const P: ForumPlan = FORUM;
   const floor = new MeshList(), slab = new MeshList(), white = new MeshList(), ochre = new MeshList(), win = new MeshList();
   const signs = new MeshList(), column = new MeshList(), railGlass = new MeshList(), steel = new MeshList(), dark = new MeshList();
   const plant = new MeshList(), seat = new MeshList(), mural = new MeshList(), cladding = new MeshList();
   const glass = new MeshList(), wood = new MeshList(), roomFloor = new MeshList(), roomWall = new MeshList(), granite = new MeshList();
   const stepsUp = new MeshList(), stepsDown = new MeshList();
+  const inlay = new MeshList(), leather = new MeshList(), leatherBlack = new MeshList(), tiles = new MeshList(), greenery = new MeshList();
+  const lamp = new MeshList(), ornament = new MeshList();
 
   // a sign of the atlas on the front a → b at its middle, `w` x `h`, its middle y (over the floor under it)
   const sign = (f: Frontage, t: number, name: string, w: number, h: number, ym: number) => {
@@ -210,7 +215,7 @@ export function buildInterior(group: THREE.Group, mats: ForumMaterials, atlas: S
   for (const c of P.columns) {
     const y = base(c.x, c.z), box = { cx: c.x, cz: c.z, hu: 0.5, hv: 0.5, cs: c.cs, sn: c.sn };
     granite.box({ ...box, hu: 0.53, hv: 0.53, y0: 0, y1: 1.3 }, y, 0b011111);
-    column.box({ ...box, y0: 1.3, y1: ROOF }, y, 0b001111);
+    (c.white ? white : column).box({ ...box, y0: 1.3, y1: ROOF }, y, 0b001111);
   }
 
   // THE ESCALATORS: a steel truss under a band of dark steps, glass sides with black handrails, level at either end
@@ -273,7 +278,83 @@ export function buildInterior(group: THREE.Group, mats: ForumMaterials, atlas: S
     plant.cylinder(x, z, 0.95, y + 0.8, y + 0.83, 16);
   }
 
+  // THE BROWN BANDS in the floor, a hair over its tiles (downstairs) or the gallery's
+  for (const b of P.inlays) inlay.polygon(b.ring, [], () => FLOOR + (b.level ? LEVEL + 0.012 : 0.028));
+
+  // THE SITTING PLACES: four armless armchairs (steel legs, a cushioned seat & back) facing a little white table, in
+  // orange leather and a black one among them
+  P.lounges.forEach((l, k) => {
+    const y = base(l.x, l.z), th = Math.atan2(l.sn, l.cs);
+    white.cylinder(l.x, l.z, 0.42, y + 0.42, y + 0.46, 14);
+    steel.cylinder(l.x, l.z, 0.04, y, y + 0.42, 6);
+    for (let i = 0; i < 4; i++) {
+      // (the chair's outward direction from the table: its back that side, its front to the table)
+      const a = -th + (i * Math.PI) / 2 + 0.2, rx = Math.cos(a), rz = Math.sin(a);
+      const cx = l.x + rx * 1.05, cz = l.z + rz * 1.05, chair = { cx, cz, hu: 0.34, hv: 0.34, cs: rz, sn: rx };
+      const g = (k + i) % 3 === 2 ? leatherBlack : leather;
+      g.box({ ...chair, y0: 0.2, y1: 0.45 }, y);
+      g.box({ ...chair, cx: cx + rx * 0.27, cz: cz + rz * 0.27, hv: 0.08, y0: 0.45, y1: 0.9 }, y);
+      for (const [p, q] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        steel.cylinder(cx + (rz * p + rx * q) * 0.29, cz + (-rx * p + rz * q) * 0.29, 0.018, y, y + 0.2, 4);
+      }
+    }
+  });
+  // THE BENCHES upstairs: five wooden slats on two steel frames
+  for (const b of P.benches) {
+    const y = base(b.x, b.z) + LEVEL, ax = b.cs, az = -b.sn, vx = b.sn, vz = b.cs;
+    for (let s = -2; s <= 2; s++) wood.box({ cx: b.x + vx * s * 0.09, cz: b.z + vz * s * 0.09, hu: 0.9, hv: 0.04, cs: b.cs, sn: b.sn, y0: 0.4, y1: 0.45 }, y);
+    for (const e of [-0.72, 0.72]) {
+      const fx = b.x + ax * e, fz = b.z + az * e;
+      steel.box({ cx: fx, cz: fz, hu: 0.04, hv: 0.24, cs: b.cs, sn: b.sn, y0: 0, y1: 0.4 }, y, 0b101111);
+    }
+  }
+  // THE PLANTERS by the bridges: a box of beige tiles, a hedge of leaves over its soil, a white lamp post out of it with
+  // a disc of light on top
+  for (const b of P.beds) {
+    const y = base(b.cx, b.cz);
+    tiles.box(b, y);
+    greenery.box({ ...b, hu: b.hu - 0.06, hv: b.hv - 0.06, y0: b.y1, y1: b.y1 + 0.35 }, y, 0b011111);
+    for (let k = 0; k < 3; k++) {
+      const t = (k - 1) * 0.55, px = b.cx + b.cs * t, pz = b.cz - b.sn * t;
+      greenery.box({ ...b, cx: px, cz: pz, hu: 0.22, hv: 0.22, cs: Math.cos(k * 0.7 + 0.3), sn: Math.sin(k * 0.7 + 0.3), y0: b.y1 + 0.3, y1: b.y1 + 0.75 + (k % 2) * 0.2 }, y, 0b011111);
+    }
+    const top = y + LEVEL + 4.6;
+    white.cylinder(b.cx, b.cz, 0.09, y + b.y1, top, 10);
+    lamp.cylinder(b.cx, b.cz, 0.55, top, top + 0.06, 18);
+    lamp.polygon(Array.from({ length: 18 }, (_, k): Vec2 => [b.cx + Math.cos((k / 18) * 2 * Math.PI) * 0.55, b.cz + Math.sin((k / 18) * 2 * Math.PI) * 0.55]), [], () => top, true);
+  }
+  // THE CHRISTMAS SPHERES: globes of gilt wire (three meridians, the equator and two parallels as thin rings), each on its
+  // wire down from the lanterns' ceiling
+  if (festive) {
+    for (const o of P.ornaments) {
+      const cy = base(o.x, o.z) + o.y, w = 0.035, n = 28;
+      // a ring round (o.x, cy, o.z) in the plane spanned by e1 & e2, radius r, at height h along their normal
+      const ring = (e1: [number, number, number], e2: [number, number, number], nrm: [number, number, number], r: number, h: number) => {
+        const P3 = (t: number, rr: number): [number, number, number] => [o.x + (e1[0] * Math.cos(t) + e2[0] * Math.sin(t)) * rr + nrm[0] * h,
+          cy + (e1[1] * Math.cos(t) + e2[1] * Math.sin(t)) * rr + nrm[1] * h, o.z + (e1[2] * Math.cos(t) + e2[2] * Math.sin(t)) * rr + nrm[2] * h];
+        for (let k = 0; k < n; k++) {
+          const t0 = (k / n) * 2 * Math.PI, t1 = ((k + 1) / n) * 2 * Math.PI;
+          ornament.quad(P3(t0, r), P3(t1, r), P3(t1, r - w), P3(t0, r - w), nrm, [[0, 0], [1, 0], [1, 1], [0, 1]]);
+        }
+      };
+      for (let m = 0; m < 3; m++) {
+        const phi = (m / 3) * Math.PI;
+        ring([Math.cos(phi), 0, Math.sin(phi)], [0, 1, 0], [-Math.sin(phi), 0, Math.cos(phi)], o.r, 0);
+      }
+      for (const lat of [0, 0.55, -0.55]) ring([1, 0, 0], [0, 0, 1], [0, 1, 0], o.r * Math.cos(lat), o.r * Math.sin(lat));
+      const ceiling = base(o.x, o.z) + LANTERN - 0.35;
+      dark.face(o.x - 0.01, o.z, o.x + 0.01, o.z, cy + o.r, ceiling, 0, 1);
+    }
+  }
+
   addMesh(group, floor, mats.floor, 'ForumFloor', { drape: true, shadows: false });
+  addMesh(group, inlay, mats.inlay, 'ForumFloorBands', { drape: true, shadows: false });
+  addMesh(group, leather, mats.leather, 'ForumArmchairs');
+  addMesh(group, leatherBlack, mats.leatherBlack, 'ForumArmchairsBlack');
+  addMesh(group, tiles, mats.tiles, 'ForumPlanterBoxes');
+  addMesh(group, greenery, mats.greenery, 'ForumPlanterLeaves');
+  addMesh(group, lamp, mats.lamp, 'ForumLampDiscs', { shadows: false });
+  addMesh(group, ornament, mats.ornament, 'ForumChristmasSpheres', { shadows: false });
   addMesh(group, slab, mats.floor, 'ForumGalleries', { drape: true });
   addMesh(group, white, mats.white, 'ForumWhite');
   addMesh(group, ochre, mats.ochre, 'ForumInsideOchre');

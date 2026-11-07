@@ -43,7 +43,9 @@ export function buildForum({ scene }: PlaceContext) {
   buildExterior(outside, mats, atlas, base);
   const inside = new THREE.Group();
   inside.name = 'ForumInside';
-  buildInterior(inside, mats, atlas, base);
+  // (its Christmas spheres hang from November to Epiphany, as the mall's do)
+  const today = new Date(), festive = today.getMonth() >= 10 || (today.getMonth() === 0 && today.getDate() <= 6);
+  buildInterior(inside, mats, atlas, base, festive);
   scene.add(outside, inside);
 
   // what stops the player: the walls, fronts, balustrades, columns, kiosks & escalators' sides, on the floor under each
